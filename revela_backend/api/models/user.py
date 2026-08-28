@@ -4,7 +4,7 @@ from app import mysql
 def find_user_by_email(email):
     """Fetch a single user row by email."""
     cur = mysql.connection.cursor()
-    cur.execute("SELECT * FROM USERS WHERE email = %s", (email,))
+    cur.execute("SELECT * FROM users WHERE email = %s", (email,))
     user = cur.fetchone()  # returns dict because of DictCursor
     cur.close()
     return user
@@ -12,7 +12,7 @@ def find_user_by_email(email):
 
 def find_user_by_id(user_id):
     cur = mysql.connection.cursor()
-    cur.execute("SELECT * FROM USERS WHERE userID = %s", (user_id,))
+    cur.execute("SELECT * FROM users WHERE userID = %s", (user_id,))
     user = cur.fetchone()
     cur.close()
     return user
@@ -20,7 +20,7 @@ def find_user_by_id(user_id):
 
 def find_user_by_phone(phone):
     cur = mysql.connection.cursor()
-    cur.execute("SELECT * FROM USERS WHERE phone = %s", (phone,))
+    cur.execute("SELECT * FROM users WHERE phone = %s", (phone,))
     user = cur.fetchone()
     cur.close()
     return user
@@ -29,7 +29,7 @@ def find_user_by_phone(phone):
 def update_password(user_id, hashed_password, must_change_password=False):
     cur = mysql.connection.cursor()
     cur.execute("""
-        UPDATE USERS SET userPassword = %s, mustChangePassword = %s, updatedAt = NOW()
+        UPDATE users SET userPassword = %s, mustChangePassword = %s, updatedAt = NOW()
         WHERE userID = %s
     """, (hashed_password, must_change_password, user_id))
     mysql.connection.commit()
@@ -40,7 +40,7 @@ def update_last_login(user_id):
     """Stamp lastLoginAt on successful login."""
     cur = mysql.connection.cursor()
     cur.execute(
-        "UPDATE USERS SET lastLoginAt = NOW() WHERE userID = %s",
+        "UPDATE users SET lastLoginAt = NOW() WHERE userID = %s",
         (user_id,)
     )
     mysql.connection.commit()
@@ -50,7 +50,7 @@ def set_reset_requested(user_id, value):
     """Set the resetRequested flag for a user."""
     cur = mysql.connection.cursor()
     cur.execute(
-        "UPDATE USERS SET resetRequested = %s WHERE userID = %s",
+        "UPDATE users SET resetRequested = %s WHERE userID = %s",
         (1 if value else 0, user_id)
     )
     mysql.connection.commit()
@@ -63,7 +63,7 @@ def get_all_users():
     cur.execute("""
         SELECT userID, fullName, email, phone, userRole, 
                createdAt, lastLoginAt, mustChangePassword, resetRequested, isActive
-        FROM USERS
+        FROM users
         ORDER BY createdAt DESC
     """)
     users = cur.fetchall()
@@ -82,7 +82,7 @@ def get_users_by_role(role):
     cur.execute("""
         SELECT userID, fullName, email, phone, userRole, 
                createdAt, lastLoginAt, mustChangePassword, resetRequested, isActive
-        FROM USERS
+        FROM users
         WHERE LOWER(userRole) = LOWER(%s)
         ORDER BY createdAt DESC
     """, (role,))
@@ -101,7 +101,7 @@ def create_user(full_name, email, hashed_password, role, phone=None, must_change
     """Insert a new user."""
     cur = mysql.connection.cursor()
     cur.execute("""
-        INSERT INTO USERS 
+        INSERT INTO users 
             (fullName, email, userPassword, userRole, phone, mustChangePassword)
         VALUES (%s, %s, %s, %s, %s, %s)
     """, (full_name, email, hashed_password, role, phone, must_change_password))
@@ -115,7 +115,7 @@ def update_user(user_id, full_name, email, role, phone=None):
     """Update user profile fields."""
     cur = mysql.connection.cursor()
     cur.execute("""
-        UPDATE USERS
+        UPDATE users
         SET fullName = %s, email = %s, userRole = %s, phone = %s, updatedAt = NOW()
         WHERE userID = %s
     """, (full_name, email, role, phone, user_id))
@@ -126,7 +126,7 @@ def update_user(user_id, full_name, email, role, phone=None):
 def delete_user(user_id):
     """Delete a user by ID."""
     cur = mysql.connection.cursor()
-    cur.execute("DELETE FROM USERS WHERE userID = %s", (user_id,))
+    cur.execute("DELETE FROM users WHERE userID = %s", (user_id,))
     mysql.connection.commit()
     cur.close()
 
@@ -135,7 +135,7 @@ def enable_user_2fa(user_id, is_enabled):
     """Enable or disable 2FA for a user."""
     cur = mysql.connection.cursor()
     cur.execute(
-        "UPDATE USERS SET is_2fa_enabled = %s, updatedAt = NOW() WHERE userID = %s",  # ← fixed
+        "UPDATE users SET is_2fa_enabled = %s, updatedAt = NOW() WHERE userID = %s",  # ← fixed
         (is_enabled, user_id))
     mysql.connection.commit()
     cur.close()
@@ -146,7 +146,7 @@ def update_user_2fa_secret(user_id, secret):
     """Store the 2FA secret for a user."""
     cur = mysql.connection.cursor()
     cur.execute(
-        "UPDATE USERS SET two_factor_secret = %s, updatedAt = NOW() WHERE userID = %s", (secret, user_id))
+        "UPDATE users SET two_factor_secret = %s, updatedAt = NOW() WHERE userID = %s", (secret, user_id))
     mysql.connection.commit()
     cur.close()
 
@@ -155,7 +155,7 @@ def get_user_2fa_secret(user_id):
     """Retrieve the 2FA secret for a user."""
     cur = mysql.connection.cursor()
     cur.execute(
-        "SELECT two_factor_secret FROM USERS WHERE userID = %s", (user_id,))
+        "SELECT two_factor_secret FROM users WHERE userID = %s", (user_id,))
     user = cur.fetchone()
     cur.close()
     return user['two_factor_secret'] if user else None

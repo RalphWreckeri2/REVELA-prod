@@ -911,7 +911,7 @@ def check_and_expire_old_permits():
             # 4. Fetch admin userIDs
             cursor.execute(
                 """
-                SELECT userID FROM USERS
+                SELECT userID FROM users
                 WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
                 """
             )
