@@ -72,7 +72,6 @@ PyOTP==2.10.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
-python-magic-bin==0.4.14
 reportlab==4.4.5
 requests==2.34.2
 rich==14.1.0
