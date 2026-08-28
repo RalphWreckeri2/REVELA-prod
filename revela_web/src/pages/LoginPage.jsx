@@ -609,38 +609,7 @@ export default function LoginPage() {
             )}
           </button>
 
-          <div style={{ marginTop: 24, borderTop: "1px solid rgba(255, 255, 255, 0.1)", paddingTop: 16, textAlign: "center" }}>
-            <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 8 }}>
-              Need to inspect on the field?
-            </p>
-            <a 
-              href="/revela.apk" 
-              download 
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 16px",
-                borderRadius: "8px",
-                backgroundColor: "rgba(34, 197, 94, 0.1)",
-                color: "#22c55e",
-                border: "1px solid rgba(34, 197, 94, 0.2)",
-                fontSize: 13,
-                fontWeight: 600,
-                textDecoration: "none",
-                transition: "all 0.2s ease"
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.2)"}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "rgba(34, 197, 94, 0.1)"}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Download Field App (APK)
-            </a>
-          </div>
+
 
           <p className="legal-note">
             RESTRICTED ACCESS: Authorized BPLO personnel only.<br />
