@@ -23,5 +23,5 @@ COPY . .
 
 EXPOSE 5000
 
-# Run with Gunicorn on port 5000 (bind to 0.0.0.0 for Railway to detect)
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:create_app()"]
+# Run with Gunicorn on port 5000 with multiple threads to prevent SSE blocking
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "app:create_app()"]
