@@ -1,0 +1,638 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+/* ── Reset ── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Root / Page background ── */
+.login-root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f0f4f0; /* Bright, clean, subtle green-gray base */
+  font-family:
+    "Inter",
+    -apple-system,
+    sans-serif;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Topographic Overlay to emphasize GIS */
+.topo-overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M54.627 0l.83.83v58.34l-.83.83H5.373l-.83-.83V.83l.83-.83h49.254zm-1.66 2.49H7.033v55.02h45.934V2.49z' fill='%231a3a1a' fill-opacity='0.4' fill-rule='evenodd'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Fluid Ambient Orbs ── */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 1;
+  animation: liquidFloat 20s infinite alternate ease-in-out;
+}
+
+.orb-tl {
+  width: 400px;
+  height: 400px;
+  background: rgba(168, 224, 99, 0.35);
+  top: -100px;
+  left: -50px;
+  animation-delay: 0s;
+}
+
+.orb-br {
+  width: 350px;
+  height: 350px;
+  background: rgba(247, 201, 72, 0.3);
+  bottom: -100px;
+  right: -50px;
+  animation-delay: -5s;
+}
+
+.orb-mid {
+  width: 250px;
+  height: 250px;
+  background: rgba(86, 171, 47, 0.15);
+  top: 30%;
+  right: 25%;
+  animation-duration: 25s;
+}
+
+.seal {
+  width: 48px;
+  height: 48px;
+  object-fit: contain; /* Keeps the picture from warping */
+}
+
+@keyframes liquidFloat {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(40px, 40px) scale(1.05);
+  }
+  100% {
+    transform: translate(-20px, -40px) scale(0.95);
+  }
+}
+
+/* ── Light Frosted Glass Card ── */
+.login-card {
+  display: flex;
+  width: 800px;
+  min-height: 500px;
+  border-radius: 20px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.75); /* High opacity for readability */
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 1);
+  box-shadow:
+    0 25px 50px rgba(26, 58, 26, 0.1),
+    0 5px 15px rgba(0, 0, 0, 0.05);
+  position: relative;
+  z-index: 2;
+}
+
+/* ── LEFT PANEL ── */
+.left-panel {
+  width: 320px;
+  flex-shrink: 0;
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(
+    180deg,
+    rgba(86, 171, 47, 0.05) 0%,
+    rgba(255, 255, 255, 0.4) 100%
+  );
+  border-right: 1px solid rgba(26, 58, 26, 0.08);
+  position: relative;
+}
+
+.left-inner-orb {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(247, 201, 72, 0.15) 0%,
+    transparent 70%
+  );
+  top: -50px;
+  left: -50px;
+  pointer-events: none;
+}
+
+.seal-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 1;
+}
+
+.seal {
+  width: 48px;
+  height: 48px;
+}
+
+.muni-pre {
+  font-size: 10px;
+  color: rgba(26, 58, 26, 0.6);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+.muni-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a3a1a;
+  letter-spacing: 0.2px;
+  line-height: 1.2;
+}
+.muni-loc {
+  font-size: 11px;
+  color: rgba(26, 58, 26, 0.5);
+}
+
+.left-brand {
+  z-index: 1;
+}
+.gold-bar {
+  width: 32px;
+  height: 4px;
+  background: #d4af37;
+  border-radius: 2px;
+  margin-bottom: 24px;
+}
+.powered-by {
+  font-size: 10px;
+  color: rgba(26, 58, 26, 0.5);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.wordmark {
+  font-size: 36px;
+  font-weight: 800;
+  color: #1a3a1a;
+  letter-spacing: 2px;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+.tagline {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(26, 58, 26, 0.7);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+.brand-divider {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(26, 58, 26, 0.15), transparent);
+  margin-bottom: 16px;
+}
+.brand-desc {
+  font-size: 11px;
+  color: rgba(26, 58, 26, 0.6);
+  line-height: 1.6;
+}
+
+/* ── RIGHT FORM PANEL ── */
+.right-panel {
+  flex: 1;
+  padding: 56px 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.portal-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.portal-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #56ab2f;
+  box-shadow: 0 0 8px rgba(86, 171, 47, 0.5);
+}
+.portal-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a3a1a;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.form-heading {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a3a1a;
+  margin-bottom: 8px;
+  letter-spacing: -0.5px;
+}
+.form-sub {
+  font-size: 14px;
+  color: rgba(26, 58, 26, 0.6);
+  margin-bottom: 36px;
+  font-weight: 400;
+}
+
+/* ── Boomer-Friendly Form Fields ── */
+.field {
+  margin-bottom: 22px;
+}
+
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #1a3a1a;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.input-wrap {
+  position: relative;
+}
+
+.input-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: rgba(26, 58, 26, 0.4);
+  transition: color var(--duration-normal) var(--ease-in-out);
+}
+
+/* Bounded, clear input boxes */
+.glass-input {
+  width: 100%;
+  background: #ffffff;
+  border: 1px solid rgba(26, 58, 26, 0.15);
+  border-radius: 10px;
+  padding: 14px 14px 14px 42px;
+  font-size: 15px; /* Larger text */
+  color: #1a3a1a;
+  outline: none;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.02);
+  transition: all var(--duration-normal) var(--ease-in-out);
+}
+
+.glass-input::placeholder {
+  color: rgba(26, 58, 26, 0.3);
+  font-weight: 400;
+}
+
+.glass-input:focus {
+  border-color: #56ab2f;
+  box-shadow: 0 0 0 4px rgba(86, 171, 47, 0.15);
+}
+
+.glass-input:focus ~ .input-icon {
+  color: #56ab2f;
+}
+
+.glass-input--pw {
+  padding-right: 48px;
+} /* Ensures text doesn't hide behind the eye icon */
+.glass-input--otp {
+  padding-left: 14px;
+}
+
+/* ── Password Toggle Visibility Fixed ── */
+.pw-toggle {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(26, 58, 26, 0.5); /* High contrast */
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-normal);
+}
+
+.pw-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+.pw-toggle:hover {
+  color: #1a3a1a;
+}
+
+.forgot-row {
+  text-align: right;
+  margin-bottom: 28px;
+  margin-top: -8px;
+}
+.forgot-btn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: #56ab2f;
+  cursor: pointer;
+  transition: color var(--duration-normal);
+}
+.forgot-btn:hover {
+  color: #1a3a1a;
+  text-decoration: underline;
+}
+
+/* ── OTP Recovery ── */
+.otp-box {
+  background: #f9fbf9;
+  border: 1px solid rgba(86, 171, 47, 0.2);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+  animation: revela-slide-down var(--duration-slow) var(--ease-out);
+}
+
+/* fadeIn keyframe — now unified as revela-slide-down in global.css */
+
+.otp-desc {
+  font-size: 13px;
+  color: #1a3a1a;
+  margin-bottom: 16px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.otp-action-row {
+  display: flex;
+  gap: 12px;
+}
+.otp-action-row .glass-input {
+  flex: 1;
+  padding: 12px 14px;
+  font-size: 14px;
+}
+
+.otp-send-btn {
+  padding: 0 20px;
+  border-radius: 8px;
+  border: none;
+  background: #56ab2f;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--duration-normal);
+}
+
+.otp-send-btn:hover {
+  background: #458a25;
+}
+
+/* ── Primary CTA ── */
+.signin-btn {
+  width: 100%;
+  padding: 16px;
+  border-radius: 10px;
+  border: none;
+  background: #059669;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+  transition: all var(--duration-normal) var(--ease-in-out);
+  margin-bottom: 28px;
+  box-shadow: 0 8px 16px rgba(5, 150, 105, 0.25);
+}
+
+.signin-btn:hover {
+  background: #10b981;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 20px rgba(26, 58, 26, 0.25);
+}
+.signin-btn:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+/* ── Legal Warning ── */
+.legal-note {
+  font-size: 11px;
+  color: #8b0000;
+  text-align: center;
+  line-height: 1.6;
+  letter-spacing: 0.2px;
+  padding: 14px;
+  background: rgba(139, 0, 0, 0.04);
+  border-radius: 8px;
+  border: 1px solid rgba(139, 0, 0, 0.1);
+  font-weight: 500;
+}
+
+/* ── Error & Success Messages ── */
+.message-alert {
+  margin-bottom: 24px;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  animation: revela-slide-down var(--duration-slow) var(--ease-out);
+  border: 1px solid;
+}
+
+.btn-loader-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* spin & slideDown keyframes — now unified in global.css */
+
+.message-alert svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.message-alert--error {
+  background: rgba(220, 53, 69, 0.08);
+  border-color: rgba(220, 53, 69, 0.3);
+  color: #7a1a1f;
+}
+
+.message-alert--error svg {
+  color: #dc3545;
+}
+
+.message-alert--success {
+  background: rgba(40, 167, 69, 0.08);
+  border-color: rgba(40, 167, 69, 0.3);
+  color: #1a4d2e;
+}
+
+.message-alert--success svg {
+  color: #28a745;
+}
+
+/* ── Responsive ── */
+@media (max-width: 800px) {
+  .login-card {
+    flex-direction: column;
+    width: 92%;
+    min-height: auto;
+  }
+  .left-panel {
+    width: 100%;
+    padding: 32px;
+    border-right: none;
+    border-bottom: 1px solid rgba(26, 58, 26, 0.08);
+  }
+  .right-panel {
+    padding: 40px 32px;
+  }
+}
+
+/* ── Dark Mode Overrides ── */
+html.theme-dark .login-root {
+  background: var(--color-page-bg);
+}
+html.theme-dark .orb-tl { background: rgba(52, 211, 153, 0.15); }
+html.theme-dark .orb-br { background: rgba(252, 211, 77, 0.1); }
+html.theme-dark .orb-mid { background: rgba(16, 185, 129, 0.08); }
+html.theme-dark .topo-overlay { opacity: 0.03; filter: invert(1); }
+
+html.theme-dark .login-card {
+  background: rgba(17, 24, 39, 0.86);
+  border-color: #1f2937;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+}
+
+html.theme-dark .left-panel {
+  background: rgba(15, 23, 42, 0.4);
+  border-right-color: var(--color-border);
+}
+
+html.theme-dark .muni-name,
+html.theme-dark .wordmark,
+html.theme-dark .portal-label,
+html.theme-dark .form-heading {
+  color: var(--color-ink);
+}
+
+html.theme-dark .muni-pre,
+html.theme-dark .muni-loc,
+html.theme-dark .powered-by,
+html.theme-dark .brand-desc,
+html.theme-dark .form-sub,
+html.theme-dark .field-label,
+html.theme-dark .forgot-btn {
+  color: var(--color-muted);
+}
+
+html.theme-dark .legal-note {
+  color: #ff8a8a;
+  background: rgba(255, 138, 138, 0.1);
+  border-color: rgba(255, 138, 138, 0.2);
+}
+
+.text-accent {
+  color: #56ab2f !important;
+}
+html.theme-dark .text-accent {
+  color: #81c784 !important;
+}
+
+html.theme-dark .tagline {
+  color: var(--color-subtle);
+}
+
+html.theme-dark .glass-input {
+  background: #1f2937;
+  border-color: #374151;
+  color: #fff;
+}
+
+html.theme-dark .glass-input:focus {
+  border-color: #10b981;
+  background: #1f2937;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
+}
+
+html.theme-dark .signin-btn { background: #059669; color: #fff; }
+html.theme-dark .signin-btn:hover { background: #10b981; }
+
+html.theme-dark .pw-toggle,
+html.theme-dark .input-icon {
+  color: var(--color-muted);
+}
+html.theme-dark .pw-toggle:hover {
+  color: var(--color-ink);
+}
+
+html.theme-dark .otp-box {
+  background: rgba(15, 23, 42, 0.4);
+  border-color: var(--color-border);
+}
+html.theme-dark .otp-desc {
+  color: var(--color-ink);
+}
+
+html.theme-dark .modal-backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+html.theme-dark .modal-content {
+  background: var(--color-modal-bg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+html.theme-dark .modal-close {
+  color: var(--color-subtle);
+}
+html.theme-dark .modal-close:hover {
+  color: var(--color-danger);
+  background: rgba(239, 68, 68, 0.1);
+}
+html.theme-dark .btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--color-border);
+  color: var(--color-ink);
+}
+html.theme-dark .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}

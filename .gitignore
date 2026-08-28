@@ -1,0 +1,34 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.env
+revela_backend/instance/
+
+# Node
+node_modules/
+dist/
+
+# Flutter
+revela_mobile/build/
+revela_mobile/.dart_tool/
+revela_mobile/.flutter-plugins
+revela_mobile/.flutter-plugins-dependencies
+revela_mobile/.idea/
+*.apk
+!revela_web/public/revela.apk
+*.aab
+
+# General
+.DS_Store
+Thumbs.db
+
+# Mobile
+.vscode/
+
+# macOS generated files
+revela_mobile/macos/Flutter/GeneratedPluginRegistrant.swift
+revela_mobile/macos/Flutter/ephemeral/
+
+# Analytics and Colab Exports
+revela_backend/colab_export/
