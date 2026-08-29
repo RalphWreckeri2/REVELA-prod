@@ -1181,10 +1181,29 @@ def analytics_chat():
             parts=[types.Part.from_text(text=user_query)]
         ))
 
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
-        models_to_try = [model_name, "gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash-8b"]
-        # Deduplicate preserving order
-        models_to_try = list(dict.fromkeys(models_to_try))
+        preferred_model = os.environ.get("GEMINI_MODEL")
+        models_to_try = [preferred_model] if preferred_model else []
+
+        # 1. Discover available models from the Gemini API directly for this key
+        try:
+            for m in client.models.list():
+                m_name = (m.name or "").replace("models/", "").strip()
+                actions = getattr(m, "supported_actions", None) or []
+                if "generateContent" in actions or not actions:
+                    if m_name and m_name not in models_to_try:
+                        if "flash" in m_name:
+                            models_to_try.insert(1 if preferred_model else 0, m_name)
+                        elif "gemini" in m_name:
+                            models_to_try.append(m_name)
+        except Exception as le:
+            print(f"[Gemini] Note on model discovery: {le}")
+
+        # 2. Add standard candidate fallbacks
+        for f in ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+            if f not in models_to_try:
+                models_to_try.append(f)
+
+        print(f"[Gemini] Candidate models: {models_to_try}")
 
         response = None
         last_error = None
@@ -1200,6 +1219,7 @@ def analytics_chat():
                     )
                 )
                 if response and response.text:
+                    print(f"[Gemini] Succeeded with model '{m}'")
                     break
             except Exception as me:
                 print(f"[Gemini] Failed with model '{m}': {me}")
