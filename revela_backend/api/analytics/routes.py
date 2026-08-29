@@ -1181,8 +1181,8 @@ def analytics_chat():
             parts=[types.Part.from_text(text=user_query)]
         ))
 
-        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-        models_to_try = [model_name, "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+        models_to_try = [model_name, "gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash-8b"]
         # Deduplicate preserving order
         models_to_try = list(dict.fromkeys(models_to_try))
 
@@ -1202,6 +1202,7 @@ def analytics_chat():
                 if response and response.text:
                     break
             except Exception as me:
+                print(f"[Gemini] Failed with model '{m}': {me}")
                 last_error = me
                 continue
 
