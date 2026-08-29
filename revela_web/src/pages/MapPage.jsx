@@ -611,11 +611,17 @@ function MapCanvas({
   loadingFlags,
 }) {
   const [mapInstance, setMapInstance] = useState(null);
+  const [currentZoom, setCurrentZoom] = useState(zoom || 13);
   const markerRefs = useRef(new Map());
   const internalMapRef = useRef(null);
   const clusterRef = useRef(null);
   const diagnosticCircleRefs = useRef([]);
   const geoJsonDataRef = useRef(null);
+
+  // Sync zoom prop if parent changes it
+  useEffect(() => {
+    if (zoom != null) setCurrentZoom(zoom);
+  }, [zoom]);
 
   // — Draw / clear DBSCAN cluster circles ————————————————————————————————————————————————————————————————————————
   useEffect(() => {
@@ -700,12 +706,18 @@ function MapCanvas({
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
     setMapInstance(map);
+    setCurrentZoom(map.getZoom() || zoom || 13);
     if (mapRef) mapRef.current = map;
+
+    map.addListener("zoom_changed", () => {
+      const z = map.getZoom();
+      if (z != null) setCurrentZoom(z);
+    });
 
     if (isPickingLocation) {
       map.setOptions({ draggableCursor: 'crosshair' });
     }
-  }, [mapRef, isPickingLocation]);
+  }, [mapRef, isPickingLocation, zoom]);
 
   const handleMapUnmount = useCallback(() => {
     markerRefs.current.forEach(m => {
@@ -805,7 +817,94 @@ function MapCanvas({
     const dl = geoJsonDataRef.current;
     if (!dl) return;
     dl.setStyle(geoJsonFeatureStyle);
-  }, [geoJsonFeatureStyle]);  // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
+  }, [geoJsonFeatureStyle]);
+
+  // Natural deterministic scatter for flags without exact GPS coordinates
+  const getScatteredPosition = useCallback((flag) => {
+    const isAdjusting = flag.id === adjustingFlagId;
+    if (isAdjusting && adjustingLatLng) {
+      return { lat: adjustingLatLng.lat, lng: adjustingLatLng.lng };
+    }
+
+    const rawLat = flag.latitude != null ? Number(flag.latitude) : null;
+    const rawLng = flag.longitude != null ? Number(flag.longitude) : null;
+    const hasExact = flag.hasExactCoords && rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
+
+    if (hasExact) {
+      return { lat: rawLat, lng: rawLng };
+    }
+
+    // Stable pseudo-random natural scatter within barangay (~60m - 350m radius)
+    const centroid = getBarangayCentroid(flag.barangayName || flag.barangay);
+    const seed = hashString(String(flag.id ?? "") + String(flag.name ?? "") + String(flag.address ?? ""));
+    const angle = ((seed % 360) * Math.PI) / 180;
+    const distance = 0.0006 + ((seed % 100) / 100) * 0.0032;
+
+    return {
+      lat: centroid.lat + Math.sin(angle) * (distance * 0.72),
+      lng: centroid.lng + Math.cos(angle) * distance,
+    };
+  }, [adjustingFlagId, adjustingLatLng]);
+
+  // Build cluster badge element matching the design with numbers
+  const buildClusterContent = useCallback((cluster) => {
+    const { count, dominantColor, hasActiveInspection } = cluster;
+    const fc = getFlagColor(dominantColor);
+    const size = count > 100 ? 56 : count > 50 ? 48 : count > 10 ? 42 : 36;
+    const fontSize = count > 99 ? 12 : 14;
+
+    const el = document.createElement("div");
+    el.style.cssText = `
+      width: ${size}px;
+      height: ${size}px;
+      background: ${fc.marker};
+      border: 3px solid rgba(255, 255, 255, 0.95);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #ffffff;
+      font-weight: 800;
+      font-size: ${fontSize}px;
+      font-family: system-ui, -apple-system, sans-serif;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+      text-shadow: ${dominantColor === "Yellow" ? "none" : "0 1px 2px rgba(0, 0, 0, 0.4)"};
+      position: relative;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      user-select: none;
+    `;
+
+    el.onmouseenter = () => {
+      el.style.transform = "scale(1.12)";
+      el.style.boxShadow = "0 6px 18px rgba(0, 0, 0, 0.45)";
+    };
+    el.onmouseleave = () => {
+      el.style.transform = "scale(1.0)";
+      el.style.boxShadow = "0 4px 14px rgba(0, 0, 0, 0.35)";
+    };
+
+    let innerHtml = `<span>${count}</span>`;
+
+    if (hasActiveInspection) {
+      innerHtml += `
+        <div style="position: absolute; top: -5px; right: -5px; background: white; border-radius: 50%; padding: 2px; box-shadow: 0 2px 5px rgba(0,0,0,0.3); z-index: 10;">
+          <div style="background: #3b82f6; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
+             <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+               <circle cx="11" cy="8"></circle>
+               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+             </svg>
+          </div>
+        </div>
+      `;
+    }
+
+    el.innerHTML = innerHtml;
+    el.title = `${count} ${fc.label || 'flags'} — Click to zoom`;
+    return el;
+  }, []);
+
+  // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
   const buildMarkerContent = useCallback((flag, selected) => {
     const fc = getFlagColor(flag.color);
     const color = selected ? "#2563eb" : fc.marker;
@@ -835,7 +934,7 @@ function MapCanvas({
         <div style="position: absolute; top: -4px; right: -4px; background: white; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 10;">
           <div style="background: #3b82f6; width: 14px; height: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-               <circle cx="11" cy="11" r="8"></circle>
+               <circle cx="11" cy="8"></circle>
                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
              </svg>
           </div>
@@ -848,7 +947,7 @@ function MapCanvas({
     return el;
   }, []);
 
-  // Recreate markers whenever map instance, flags, layers, or selection changes
+  // Recreate markers whenever map instance, flags, layers, zoom, or selection changes
   useEffect(() => {
     const activeMap = mapInstance || internalMapRef.current;
     if (!isLoaded || !activeMap) return;
@@ -865,100 +964,200 @@ function MapCanvas({
     const visibleFlags = flags.filter(
       f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
     );
-    const coordCounts = {};
 
     const canUseAdvanced = Boolean(
       window.google?.maps?.marker?.AdvancedMarkerElement
     );
 
-    visibleFlags.forEach(flag => {
-      const isAdjusting = flag.id === adjustingFlagId;
-      let lat = Number(flag.latitude);
-      let lng = Number(flag.longitude);
+    // If zoomed out and not adjusting/inspecting a single pin, cluster flags into circular numbered badges
+    const shouldCluster = currentZoom < 16 && !adjustingFlagId && !selectedFlagId;
 
-      if (isAdjusting && adjustingLatLng) {
-        lat = adjustingLatLng.lat;
-        lng = adjustingLatLng.lng;
-      } else if (!isAdjusting) {
-        const coordKey = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
-        const countIndex = coordCounts[coordKey] || 0;
-        coordCounts[coordKey] = countIndex + 1;
+    if (shouldCluster) {
+      const groups = {};
+      visibleFlags.forEach(flag => {
+        const bName = (flag.barangayName || flag.barangay || "Mataasnakahoy").trim();
+        if (!groups[bName]) groups[bName] = [];
+        groups[bName].push(flag);
+      });
 
-        if (countIndex > 0) {
-          const angle = countIndex * 2.39996;
-          const radius = 0.00015 * Math.sqrt(countIndex);
-          lat += Math.cos(angle) * radius;
-          lng += Math.sin(angle) * radius;
+      Object.entries(groups).forEach(([bName, groupFlags]) => {
+        if (groupFlags.length > 1) {
+          const centroid = getBarangayCentroid(bName);
+          const position = { lat: centroid.lat, lng: centroid.lng };
+
+          const colors = groupFlags.map(f => canonicalFlagColor(f.color || f.flagColor));
+          const dominant = colors.includes("Black") ? "Black"
+            : colors.includes("Red") ? "Red"
+            : colors.includes("Orange") ? "Orange"
+            : colors.includes("Yellow") ? "Yellow"
+            : colors.includes("Purple") ? "Purple"
+            : "Green";
+          const hasActiveInspection = groupFlags.some(f => f.hasActiveInspection);
+
+          const clusterData = { count: groupFlags.length, dominantColor: dominant, hasActiveInspection };
+
+          let marker = null;
+          if (canUseAdvanced) {
+            try {
+              marker = new window.google.maps.marker.AdvancedMarkerElement({
+                position,
+                map: activeMap,
+                content: buildClusterContent(clusterData),
+                zIndex: 800 + flagSeverityRank(dominant) * 10 + Math.min(groupFlags.length, 99),
+              });
+              marker.addListener("gmp-click", () => {
+                activeMap.panTo(position);
+                activeMap.setZoom(16);
+              });
+              marker.addListener("click", () => {
+                activeMap.panTo(position);
+                activeMap.setZoom(16);
+              });
+            } catch (err) {
+              marker = null;
+            }
+          }
+
+          if (!marker) {
+            const fc = getFlagColor(dominant);
+            const size = groupFlags.length > 100 ? 56 : groupFlags.length > 50 ? 48 : groupFlags.length > 10 ? 42 : 36;
+            const svg = `<svg fill="${fc.marker}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="${size}" height="${size}">
+              <circle cx="120" cy="120" opacity=".95" r="90" stroke="#ffffff" stroke-width="14" />
+              <text x="50%" y="50%" style="fill:#fff;font-weight:bold" text-anchor="middle" font-size="68" dominant-baseline="central" font-family="sans-serif">${groupFlags.length}</text>
+            </svg>`;
+            marker = new window.google.maps.Marker({
+              position,
+              map: activeMap,
+              zIndex: 800 + flagSeverityRank(dominant) * 10 + Math.min(groupFlags.length, 99),
+              title: `${groupFlags.length} flags — Click to zoom`,
+              icon: {
+                url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+                anchor: new window.google.maps.Point(size / 2, size / 2),
+              },
+            });
+            marker.addListener("click", () => {
+              activeMap.panTo(position);
+              activeMap.setZoom(16);
+            });
+          }
+
+          markerRefs.current.set(`cluster_${bName}`, marker);
+        } else if (groupFlags.length === 1) {
+          const flag = groupFlags[0];
+          const position = getScatteredPosition(flag);
+          const isSelected = flag.id === selectedFlagId;
+          let marker = null;
+
+          if (canUseAdvanced) {
+            try {
+              marker = new window.google.maps.marker.AdvancedMarkerElement({
+                position,
+                map: activeMap,
+                content: buildMarkerContent(flag, isSelected),
+                title: flag.name,
+                zIndex: isSelected ? 9999 : 100,
+              });
+              marker.addListener("gmp-click", () => onMarkerClick(flag.id));
+              marker.addListener("click", () => onMarkerClick(flag.id));
+            } catch (err) {
+              marker = null;
+            }
+          }
+
+          if (!marker) {
+            const fc = getFlagColor(flag.color);
+            marker = new window.google.maps.Marker({
+              position,
+              map: activeMap,
+              title: flag.name,
+              zIndex: isSelected ? 9999 : 100,
+              icon: {
+                path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+                fillColor: fc.marker,
+                fillOpacity: 1,
+                strokeColor: "#ffffff",
+                strokeWeight: 1.5,
+                scale: 1.0,
+                anchor: new window.google.maps.Point(12, 32),
+              }
+            });
+            marker.addListener("click", () => onMarkerClick(flag.id));
+          }
+
+          markerRefs.current.set(flag.id, marker);
         }
-      }
+      });
+    } else {
+      // Zoomed in (zoom >= 16) or inspecting / adjusting: render individual scattered pins
+      visibleFlags.forEach(flag => {
+        const isAdjusting = flag.id === adjustingFlagId;
+        const position = getScatteredPosition(flag);
+        const isSelected = flag.id === selectedFlagId || isAdjusting;
+        let marker = null;
 
-      let marker = null;
-      const position = { lat, lng };
-      const isSelected = flag.id === selectedFlagId || isAdjusting;
+        if (canUseAdvanced) {
+          try {
+            marker = new window.google.maps.marker.AdvancedMarkerElement({
+              position,
+              map: activeMap,
+              content: buildMarkerContent(flag, isSelected),
+              gmpDraggable: isAdjusting,
+              title: flag.name,
+              zIndex: isSelected ? 9999 : 100,
+            });
 
-      if (canUseAdvanced) {
-        try {
-          marker = new window.google.maps.marker.AdvancedMarkerElement({
+            if (isAdjusting) {
+              marker.addListener("dragend", (e) => {
+                const newLat = typeof marker.position?.lat === 'function' ? marker.position.lat() : (marker.position?.lat ?? e.latLng?.lat());
+                const newLng = typeof marker.position?.lng === 'function' ? marker.position.lng() : (marker.position?.lng ?? e.latLng?.lng());
+                if (newLat != null && newLng != null) {
+                  onAdjustDragEnd({ lat: Number(newLat), lng: Number(newLng) });
+                }
+              });
+            } else {
+              marker.addListener("gmp-click", () => onMarkerClick(flag.id));
+              marker.addListener("click", () => onMarkerClick(flag.id));
+            }
+          } catch (e) {
+            console.warn("[MapPage] AdvancedMarkerElement failed, falling back to standard Marker:", e);
+            marker = null;
+          }
+        }
+
+        if (!marker) {
+          const fc = getFlagColor(flag.color);
+          const color = isSelected ? "#2563eb" : fc.marker;
+          marker = new window.google.maps.Marker({
             position,
             map: activeMap,
-            content: buildMarkerContent(flag, isSelected),
-            gmpDraggable: isAdjusting,
+            draggable: isAdjusting,
             title: flag.name,
             zIndex: isSelected ? 9999 : 100,
+            icon: {
+              path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+              fillColor: color,
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 1.5,
+              scale: isSelected ? 1.3 : 1.0,
+              anchor: new window.google.maps.Point(12, 32),
+            }
           });
 
           if (isAdjusting) {
             marker.addListener("dragend", (e) => {
-              const newLat = typeof marker.position?.lat === 'function' ? marker.position.lat() : (marker.position?.lat ?? e.latLng?.lat());
-              const newLng = typeof marker.position?.lng === 'function' ? marker.position.lng() : (marker.position?.lng ?? e.latLng?.lng());
-              if (newLat != null && newLng != null) {
-                onAdjustDragEnd({ lat: Number(newLat), lng: Number(newLng) });
+              if (e.latLng) {
+                onAdjustDragEnd({ lat: e.latLng.lat(), lng: e.latLng.lng() });
               }
             });
           } else {
-            marker.addListener("gmp-click", () => onMarkerClick(flag.id));
             marker.addListener("click", () => onMarkerClick(flag.id));
           }
-        } catch (e) {
-          console.warn("[MapPage] AdvancedMarkerElement failed, falling back to standard Marker:", e);
-          marker = null;
         }
-      }
 
-      // Robust fallback to standard google.maps.Marker
-      if (!marker) {
-        const fc = getFlagColor(flag.color);
-        const color = isSelected ? "#2563eb" : fc.marker;
-        marker = new window.google.maps.Marker({
-          position,
-          map: activeMap,
-          draggable: isAdjusting,
-          title: flag.name,
-          zIndex: isSelected ? 9999 : 100,
-          icon: {
-            path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
-            fillColor: color,
-            fillOpacity: 1,
-            strokeColor: "#ffffff",
-            strokeWeight: 1.5,
-            scale: isSelected ? 1.3 : 1.0,
-            anchor: new window.google.maps.Point(12, 32),
-          }
-        });
-
-        if (isAdjusting) {
-          marker.addListener("dragend", (e) => {
-            if (e.latLng) {
-              onAdjustDragEnd({ lat: e.latLng.lat(), lng: e.latLng.lng() });
-            }
-          });
-        } else {
-          marker.addListener("click", () => onMarkerClick(flag.id));
-        }
-      }
-
-      markerRefs.current.set(flag.id, marker);
-    });
+        markerRefs.current.set(flag.id, marker);
+      });
+    }
 
     return () => {
       markerRefs.current.forEach(m => {
@@ -967,7 +1166,7 @@ function MapCanvas({
       });
       markerRefs.current.clear();
     };
-  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd]);
+  }, [isLoaded, mapInstance, currentZoom, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, buildClusterContent, getScatteredPosition, adjustingFlagId, adjustingLatLng, onAdjustDragEnd]);
 
   // Update cursor dynamically if picking state changes
   useEffect(() => {

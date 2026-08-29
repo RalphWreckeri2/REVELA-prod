@@ -950,7 +950,11 @@ html.theme-dark td {
   color: var(--color-ink);
 }
 
-/* SweetAlert2 Dark Mode Overrides */
+/* SweetAlert2 Global & Dark Mode Overrides */
+.swal2-container {
+  z-index: 999999 !important;
+}
+
 html.theme-dark .swal2-popup {
   background: var(--color-modal-bg) !important;
   color: var(--color-ink) !important;
