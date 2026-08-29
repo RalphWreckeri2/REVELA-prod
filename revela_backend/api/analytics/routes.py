@@ -2,7 +2,8 @@ import json
 import math
 import traceback
 import os
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from flask import Blueprint, jsonify, request
 from api.middleware.decorators import jwt_required, admin_required
@@ -949,7 +950,7 @@ def analytics_chat():
     if not gemini_api_key:
         return jsonify({"error": "GEMINI_API_KEY is not configured in the backend environment."}), 500
 
-    genai.configure(api_key=gemini_api_key)
+    client = genai.Client(api_key=gemini_api_key)
 
     # ── Summarize global dashboard data so the LLM gets digestible context ──
     if chart_id == "global_dashboard" and isinstance(chart_data, dict):
@@ -1165,21 +1166,26 @@ def analytics_chat():
         )
 
     try:
-        model = genai.GenerativeModel(
-            model_name="gemini-3-flash-preview",
-            system_instruction=system_message
-        )
-
-        gemini_messages = []
+        contents = []
         for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            gemini_messages.append({"role": role, "parts": [msg["content"]]})
+            role = "user" if msg.get("role") == "user" else "model"
+            content_text = msg.get("content", "")
+            if content_text:
+                contents.append(types.Content(
+                    role=role,
+                    parts=[types.Part.from_text(text=content_text)]
+                ))
         
-        gemini_messages.append({"role": "user", "parts": [user_query]})
+        contents.append(types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=user_query)]
+        ))
 
-        response = model.generate_content(
-            gemini_messages,
-            generation_config=genai.types.GenerationConfig(
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_message,
                 temperature=0.4,
                 max_output_tokens=1024,
             )

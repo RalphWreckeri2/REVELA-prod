@@ -485,8 +485,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             SELECT
                 g.logID,
                 g.detectedName,
-                g.latitude,
-                g.longitude,
+                COALESCE(g.latitude, r.latitude) AS latitude,
+                COALESCE(g.longitude, r.longitude) AS longitude,
                 g.flagColor,
                 g.detectedDate,
                 g.nearestLandmark,

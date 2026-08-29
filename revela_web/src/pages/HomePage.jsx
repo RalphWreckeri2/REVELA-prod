@@ -13,6 +13,7 @@ import KpiCard from "../components/KpiCard";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getOpsRankingsRequest, markNotificationsReadRequest } from "../services/api";
+import { getBarangayCentroid } from "./MapPage";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 
@@ -366,11 +367,17 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
     const canUseAdvanced = Boolean(window.google?.maps?.marker?.AdvancedMarkerElement);
 
     flags
-      .filter(f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude)))
       .slice(0, 100) // cap for performance
       .forEach(f => {
         const fc = getFlagColor(parseColor(f));
-        const position = { lat: Number(f.latitude), lng: Number(f.longitude) };
+        const rawLat = f.latitude != null ? Number(f.latitude) : null;
+        const rawLng = f.longitude != null ? Number(f.longitude) : null;
+        const hasCoords = rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
+        const centroid = !hasCoords ? getBarangayCentroid(f.barangayName || f.barangay) : null;
+        const position = {
+          lat: hasCoords ? rawLat : (centroid?.lat ?? DEFAULT_CENTER.lat),
+          lng: hasCoords ? rawLng : (centroid?.lng ?? DEFAULT_CENTER.lng),
+        };
         let marker = null;
 
         if (canUseAdvanced) {

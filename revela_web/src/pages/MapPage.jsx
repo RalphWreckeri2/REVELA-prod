@@ -271,13 +271,60 @@ function canonicalFlagColor(raw) {
   return FLAG_COLORS[cap] ? cap : "Red";
 }
 
-// â”€â”€ Normalise flag from API â†’ UI shape â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Barangay centroid coordinates used as fallback for establishments without exact GPS
+export const BARANGAY_CENTROIDS = {
+  "barangay ii-a": { lat: 13.952260, lng: 121.115799 },
+  "barangay ii-a (pob.)": { lat: 13.952260, lng: 121.115799 },
+  "bayorbor": { lat: 13.979234, lng: 121.095818 },
+  "bubuyan": { lat: 13.983266, lng: 121.108556 },
+  "calingatan": { lat: 13.962879, lng: 121.121234 },
+  "district i": { lat: 13.955117, lng: 121.110199 },
+  "district i (pob.)": { lat: 13.955117, lng: 121.110199 },
+  "barangay i": { lat: 13.955117, lng: 121.110199 },
+  "district ii": { lat: 13.960630, lng: 121.113447 },
+  "district ii (pob.)": { lat: 13.960630, lng: 121.113447 },
+  "barangay ii": { lat: 13.960630, lng: 121.113447 },
+  "district iii": { lat: 13.961458, lng: 121.109487 },
+  "district iii (pob.)": { lat: 13.961458, lng: 121.109487 },
+  "barangay iii": { lat: 13.961458, lng: 121.109487 },
+  "district iv": { lat: 13.956173, lng: 121.117793 },
+  "district iv (pob.)": { lat: 13.956173, lng: 121.117793 },
+  "barangay iv": { lat: 13.956173, lng: 121.117793 },
+  "kinalaglagan": { lat: 14.005574, lng: 121.094954 },
+  "loob": { lat: 13.980785, lng: 121.114404 },
+  "lumang lipa": { lat: 13.974504, lng: 121.087937 },
+  "manggahan": { lat: 13.967686, lng: 121.088860 },
+  "nangkaan": { lat: 13.990223, lng: 121.089892 },
+  "san sebastian": { lat: 13.984496, lng: 121.103597 },
+  "san seb.": { lat: 13.984496, lng: 121.103597 },
+  "santol": { lat: 13.972238, lng: 121.104850 },
+  "upa": { lat: 13.968345, lng: 121.111783 },
+};
+
+export function getBarangayCentroid(barangayName) {
+  if (!barangayName) return DEFAULT_MAP_CENTER;
+  const raw = String(barangayName).toLowerCase().replace("barangay ", "").replace("brgy. ", "").trim();
+  if (BARANGAY_CENTROIDS[raw]) return BARANGAY_CENTROIDS[raw];
+  for (const key in BARANGAY_CENTROIDS) {
+    if (raw.includes(key) || key.includes(raw)) {
+      return BARANGAY_CENTROIDS[key];
+    }
+  }
+  return DEFAULT_MAP_CENTER;
+}
+
+// ── Normalise flag from API → UI shape ────────────────────────────────────────
 function normalizeFlag(flag) {
   const color = canonicalFlagColor(flag.flagColor);
-  const coords =
-    flag.latitude != null && flag.longitude != null
-      ? `${Number(flag.latitude).toFixed(6)}Â°N, ${Number(flag.longitude).toFixed(6)}Â°E`
-      : "No coordinates";
+  const rawLat = flag.latitude != null ? Number(flag.latitude) : null;
+  const rawLng = flag.longitude != null ? Number(flag.longitude) : null;
+  const hasExactCoords = rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
+
+  const centroid = !hasExactCoords ? getBarangayCentroid(flag.barangayName || flag.barangay) : null;
+  const lat = hasExactCoords ? rawLat : (centroid?.lat ?? DEFAULT_MAP_CENTER.lat);
+  const lng = hasExactCoords ? rawLng : (centroid?.lng ?? DEFAULT_MAP_CENTER.lng);
+
+  const coords = `${Number(lat).toFixed(6)}°N, ${Number(lng).toFixed(6)}°E`;
 
   const hasActiveInspection = (flag.verificationStatus != null && flag.verificationStatus !== 'Verified') ||
     flag.hasActiveInspection === true;
@@ -290,8 +337,11 @@ function normalizeFlag(flag) {
     address: flag.resolvedAddress ?? flag.nearestLandmark ?? "",
     notes: flag.notes || "",
     source: flag.flagSource ?? "registry_only",
-    size: flag.businessSize ?? "â€”",
+    size: flag.businessSize ?? "—",
     coords,
+    latitude: lat,
+    longitude: lng,
+    hasExactCoords,
     color,
     verificationStatus: flag.verificationStatus,
     hasActiveInspection
