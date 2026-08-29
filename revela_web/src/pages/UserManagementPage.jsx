@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -474,31 +474,64 @@ export default function UserManagementPage() {
   const [userToReset,    setUserToReset]    = useState(null);
   const [search,         setSearch]         = useState("");
   const [roleFilter,     setRoleFilter]     = useState("all");
+  const [isRefreshing,   setIsRefreshing]   = useState(false);
 
-  const fetchUsers = async () => {
-    setLoading(true);
+  const fetchUsers = useCallback(async (isSilent = false) => {
+    if (!token) return;
+    if (!isSilent) {
+      setLoading(true);
+      setIsRefreshing(true);
+    }
     try {
       const data = await getUsersRequest(token);
       setUsers(data.filter(u => u.isActive !== 0 && u.isActive !== false));
     } catch (err) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Error',
-        text: err.message || "Failed to load users."
-      });
+      if (!isSilent) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Error',
+          text: err.message || "Failed to load users."
+        });
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, [token]);
 
   useEffect(() => { 
-    fetchUsers(); 
-    const handleReset = () => {
-      fetchUsers();
+    fetchUsers(false); 
+    const handleSync = () => {
+      fetchUsers(true);
     };
-    window.addEventListener("revela:password-reset", handleReset);
-    return () => window.removeEventListener("revela:password-reset", handleReset);
-  }, [token]);
+
+    window.addEventListener("revela:password-reset", handleSync);
+    window.addEventListener("revela:user-update", handleSync);
+    window.addEventListener("revela:global-refresh", handleSync);
+
+    const pollTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchUsers(true);
+      }
+    }, 30000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchUsers(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+
+    return () => {
+      window.removeEventListener("revela:password-reset", handleSync);
+      window.removeEventListener("revela:user-update", handleSync);
+      window.removeEventListener("revela:global-refresh", handleSync);
+      window.clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
+  }, [fetchUsers]);
 
   // Derived stats
   const stats = useMemo(() => {
@@ -546,9 +579,33 @@ export default function UserManagementPage() {
           <h1 className="page-title">User Management</h1>
           <p className="page-subtitle">Manage system access, roles, and administrator accounts.</p>
         </div>
-        <button className="primary-btn" type="button" onClick={() => setShowCreate(true)}>
-          {Icons.plus} Create User
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button
+            className="quick-refresh-btn"
+            type="button"
+            onClick={() => fetchUsers(false)}
+            disabled={isRefreshing}
+            title="Refresh user list"
+          >
+            <svg
+              className={isRefreshing ? "spin-icon" : ""}
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+            </svg>
+            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
+          </button>
+          <button className="primary-btn" type="button" onClick={() => setShowCreate(true)}>
+            {Icons.plus} Create User
+          </button>
+        </div>
       </div>
 
       {/* Banners */}

@@ -899,11 +899,15 @@ export default function InspectionPage() {
   // Filter state (admin only)
   const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
-  const fetchReports = useCallback(async () => {
+  const fetchReports = useCallback(async (isSilent = false) => {
     if (!token) return;
-    setLoading(true);
+    if (!isSilent) {
+      setLoading(true);
+      setIsRefreshing(true);
+    }
     setError("");
     try {
       let result;
@@ -922,19 +926,48 @@ export default function InspectionPage() {
         setTotalRows(result.total_rows ?? result.total ?? 0);
       }
     } catch (err) {
-      setError(err.message || "Failed to load inspections.");
+      if (!isSilent) {
+        setError(err.message || "Failed to load inspections.");
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, [token, isAdmin, filterStatus]);
 
-  useEffect(() => { fetchReports(); }, [fetchReports]);
+  useEffect(() => {
+    fetchReports(false);
+  }, [fetchReports]);
 
   useEffect(() => {
-    const onInspectionUpdate = () => fetchReports();
+    const onInspectionUpdate = () => fetchReports(true);
     window.addEventListener("revela:inspection-update", onInspectionUpdate);
-    return () =>
+    window.addEventListener("revela:flag-update", onInspectionUpdate);
+    window.addEventListener("revela:global-refresh", onInspectionUpdate);
+
+    // Silent background auto-polling every 15s
+    const pollTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchReports(true);
+      }
+    }, 15000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchReports(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+
+    return () => {
       window.removeEventListener("revela:inspection-update", onInspectionUpdate);
+      window.removeEventListener("revela:flag-update", onInspectionUpdate);
+      window.removeEventListener("revela:global-refresh", onInspectionUpdate);
+      window.clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
   }, [fetchReports]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
@@ -979,7 +1012,31 @@ export default function InspectionPage() {
               : "Your active inspection assignments."}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {/* Quick manual refresh button */}
+          <button
+            className="quick-refresh-btn"
+            type="button"
+            onClick={() => fetchReports(false)}
+            disabled={isRefreshing}
+            title="Refresh inspection list"
+          >
+            <svg
+              className={isRefreshing ? "spin-icon" : ""}
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+            </svg>
+            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
+          </button>
+
           {/* Total badge */}
           {!loading && (
             <span

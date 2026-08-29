@@ -1458,3 +1458,121 @@ html.theme-dark .ambient-bg-mesh {
     padding: 32px 24px;
   }
 }
+
+/* ── 15. LIVE SYNC & DYNAMIC REFRESH COMPONENTS ──────────── */
+@keyframes liveDotPulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+  }
+  70% {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+}
+
+@keyframes spinSync {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin-icon {
+  animation: spinSync 0.75s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.live-sync-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-soft);
+  border-radius: 9999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-ink);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
+  user-select: none;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.live-dot {
+  width: 7.5px;
+  height: 7.5px;
+  border-radius: 50%;
+  background: #22c55e;
+  display: inline-block;
+  animation: liveDotPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.live-dot.live-dot--syncing {
+  background: var(--color-gold);
+  box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7);
+}
+
+.live-dot.live-dot--offline {
+  background: var(--color-muted);
+  animation: none;
+}
+
+.quick-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease-out;
+}
+
+.quick-refresh-btn:hover:not(:disabled) {
+  background: var(--color-card-alt);
+  border-color: var(--color-border);
+  transform: translateY(-1px);
+}
+
+.quick-refresh-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.quick-refresh-icon-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-soft);
+  background: var(--color-surface);
+  color: var(--color-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease-out;
+}
+
+.quick-refresh-icon-btn:hover:not(:disabled) {
+  background: var(--color-card-alt);
+  border-color: var(--color-border);
+  transform: translateY(-1px);
+}
+
+.quick-refresh-icon-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+

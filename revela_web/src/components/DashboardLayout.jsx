@@ -228,6 +228,9 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
   const isAdmin = authUser?.role === "Admin" || authUser?.role === "SUPER_ADMIN" || authUser?.role === "System Administrator";
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(() => new Date());
 
   const refreshNotifications = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -238,65 +241,123 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
       ]);
       setNotifications(listRes?.data ?? []);
       setUnreadCount(countRes?.count ?? 0);
+      setLastSyncTime(new Date());
     } catch {
       /* ignore */
     }
   }, [token, isAdmin]);
 
+  const handleGlobalSync = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      await refreshNotifications();
+      window.dispatchEvent(new CustomEvent("revela:global-refresh", { detail: { timestamp: Date.now() } }));
+      setLastSyncTime(new Date());
+    } finally {
+      setTimeout(() => setIsSyncing(false), 600);
+    }
+  }, [refreshNotifications]);
+
   useEffect(() => {
     if (!token || !isAdmin) return undefined;
     refreshNotifications();
 
-    let es;
-    try {
-      es = new EventSource(getNotificationStreamUrl(token));
-      es.onmessage = (event) => {
-        let data;
-        try {
-          data = JSON.parse(event.data);
-        } catch {
-          return;
-        }
-        if (data.type === "heartbeat" || data.type === "connected") return;
-        if (data.type !== "detection_progress") {
-          refreshNotifications();
-        }
-        if (data.type === "inspection_submitted") {
-          window.dispatchEvent(
-            new CustomEvent("revela:inspection-update", { detail: data }),
-          );
-        } else if (data.type === "yellow_flag_reported") {
-          window.dispatchEvent(
-            new CustomEvent("revela:yellow-flag", { detail: data }),
-          );
-        } else if (data.type === "detection_progress") {
-          window.dispatchEvent(
-            new CustomEvent("revela:detection-progress", { detail: data }),
-          );
-        } else if (data.type === "registry_progress") {
-          window.dispatchEvent(
-            new CustomEvent("revela:registry-progress", { detail: data }),
-          );
-        } else if (data.type === "password_reset_requested") {
-          window.dispatchEvent(
-            new CustomEvent("revela:password-reset", { detail: data }),
-          );
-        }
-      };
-      es.onerror = () => {
-        try {
-          es.close();
-        } catch {
-          /* ignore */
-        }
-      };
-    } catch {
-      /* EventSource unsupported */
-    }
+    let es = null;
+    let reconnectTimeout = null;
+    let isSubscribed = true;
 
-    const poll = window.setInterval(refreshNotifications, 45000);
+    const connectSSE = () => {
+      if (!isSubscribed) return;
+      try {
+        es = new EventSource(getNotificationStreamUrl(token));
+        
+        es.onopen = () => {
+          if (!isSubscribed) return;
+          setIsLiveConnected(true);
+        };
+
+        es.onmessage = (event) => {
+          if (!isSubscribed) return;
+          let data;
+          try {
+            data = JSON.parse(event.data);
+          } catch {
+            return;
+          }
+          if (data.type === "heartbeat" || data.type === "connected") {
+            setIsLiveConnected(true);
+            return;
+          }
+          setIsLiveConnected(true);
+          setLastSyncTime(new Date());
+
+          if (data.type !== "detection_progress") {
+            refreshNotifications();
+          }
+
+          if (data.type === "inspection_submitted" || data.type === "inspection_updated") {
+            window.dispatchEvent(
+              new CustomEvent("revela:inspection-update", { detail: data }),
+            );
+          } else if (data.type === "yellow_flag_reported") {
+            window.dispatchEvent(
+              new CustomEvent("revela:yellow-flag", { detail: data }),
+            );
+          } else if (data.type === "flag_updated" || data.type === "flag_deleted") {
+            window.dispatchEvent(
+              new CustomEvent("revela:flag-update", { detail: data }),
+            );
+          } else if (data.type === "detection_progress") {
+            window.dispatchEvent(
+              new CustomEvent("revela:detection-progress", { detail: data }),
+            );
+          } else if (data.type === "registry_progress") {
+            window.dispatchEvent(
+              new CustomEvent("revela:registry-progress", { detail: data }),
+            );
+          } else if (data.type === "registry_updated") {
+            window.dispatchEvent(
+              new CustomEvent("revela:registry-update", { detail: data }),
+            );
+          } else if (data.type === "password_reset_requested") {
+            window.dispatchEvent(
+              new CustomEvent("revela:password-reset", { detail: data }),
+            );
+          } else if (data.type === "user_updated") {
+            window.dispatchEvent(
+              new CustomEvent("revela:user-update", { detail: data }),
+            );
+          }
+        };
+
+        es.onerror = () => {
+          if (!isSubscribed) return;
+          setIsLiveConnected(false);
+          try {
+            es.close();
+          } catch {
+            /* ignore */
+          }
+          // Reconnect with 4s backoff
+          reconnectTimeout = setTimeout(connectSSE, 4000);
+        };
+      } catch {
+        setIsLiveConnected(false);
+        reconnectTimeout = setTimeout(connectSSE, 6000);
+      }
+    };
+
+    connectSSE();
+
+    // Fallback polling every 20s
+    const poll = window.setInterval(() => {
+      refreshNotifications();
+    }, 20000);
+
     return () => {
+      isSubscribed = false;
       window.clearInterval(poll);
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
       if (es) {
         try {
           es.close();
@@ -363,7 +424,40 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
         <input type="text" placeholder={searchPlaceholder} />
       </div>*/}
 
-      <div className="top-nav-right">
+      <div className="top-nav-right" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        {/* Live sync pill badge */}
+        <div
+          className="live-sync-badge"
+          title={`Server Sync Status: ${isLiveConnected ? "Connected (Real-time SSE active)" : "Polling (Auto-reconnecting)"}`}
+        >
+          <span className={`live-dot ${isLiveConnected ? "" : "live-dot--offline"}`} />
+          <span>{isLiveConnected ? "Live Sync" : "Syncing…"}</span>
+        </div>
+
+        {/* Instant manual sync button */}
+        <button
+          className="quick-refresh-icon-btn"
+          type="button"
+          aria-label="Refresh Data"
+          title="Refresh All Data (In-Place)"
+          onClick={handleGlobalSync}
+          disabled={isSyncing}
+        >
+          <svg
+            className={isSyncing ? "spin-icon" : ""}
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+          </svg>
+        </button>
+
         <div className="notification-wrapper" style={{ position: "relative" }}>
           <button
             ref={notificationButtonRef}

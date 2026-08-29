@@ -1508,10 +1508,15 @@ export default function MapPage() {
   const [adjustingLatLng, setAdjustingLatLng] = useState(null);
   const [saveAdjustLoading, setSaveAdjustLoading] = useState(false);
 
-  // â”€â”€ Fetch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const fetchFlags = useCallback(async () => {
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // ── Fetch ──────────────────────────────────────────────────────────────────
+  const fetchFlags = useCallback(async (isSilent = false) => {
     if (!token) return;
-    setLoadingFlags(true);
+    if (!isSilent) {
+      setLoadingFlags(true);
+      setIsRefreshing(true);
+    }
     setFlagsError("");
     try {
       const result = await getFlagsRequest({ limit: 1000 }, token);
@@ -1538,9 +1543,12 @@ export default function MapPage() {
         console.error("Failed to load analytics for map", err);
       }
     } catch (err) {
-      setFlagsError(err.message || "Unable to load flags.");
+      if (!isSilent) {
+        setFlagsError(err.message || "Unable to load flags.");
+      }
     } finally {
       setLoadingFlags(false);
+      setIsRefreshing(false);
     }
   }, [token]);
 
@@ -1558,13 +1566,13 @@ export default function MapPage() {
     return counts;
   }, [flags]);
 
-  useEffect(() => { fetchFlags(); }, [fetchFlags]);
+  useEffect(() => { fetchFlags(false); }, [fetchFlags]);
 
   useEffect(() => {
     if (!token || !isAdmin) return;
     getBarangaysRequest(token)
       .then(data => {
-        // API may return a bare array or a {data: [...]} wrapper â€” handle
+        // API may return a bare array or a {data: [...]} wrapper — handle
         // both so the dropdown doesn't silently end up empty.
         const list = Array.isArray(data)
           ? data
@@ -1599,6 +1607,7 @@ export default function MapPage() {
           clearInterval(timerIntervalRef.current);
           timerIntervalRef.current = null;
         }
+        fetchFlags(true);
       }
     };
     window.addEventListener("revela:detection-progress", handleProgress);
@@ -1608,13 +1617,39 @@ export default function MapPage() {
         clearInterval(timerIntervalRef.current);
       }
     };
-  }, []);
+  }, [fetchFlags]);
 
-  // Refresh flag pins when an inspector submits a yellow flag (SSE push)
+  // Real-time flag and inspection event listeners + 20s background polling
   useEffect(() => {
-    const handleYellowFlag = () => { fetchFlags(); };
-    window.addEventListener("revela:yellow-flag", handleYellowFlag);
-    return () => window.removeEventListener("revela:yellow-flag", handleYellowFlag);
+    const handleSync = () => { fetchFlags(true); };
+    window.addEventListener("revela:yellow-flag", handleSync);
+    window.addEventListener("revela:flag-update", handleSync);
+    window.addEventListener("revela:inspection-update", handleSync);
+    window.addEventListener("revela:global-refresh", handleSync);
+
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchFlags(true);
+      }
+    }, 20000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchFlags(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+
+    return () => {
+      window.removeEventListener("revela:yellow-flag", handleSync);
+      window.removeEventListener("revela:flag-update", handleSync);
+      window.removeEventListener("revela:inspection-update", handleSync);
+      window.removeEventListener("revela:global-refresh", handleSync);
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
   }, [fetchFlags]);
 
 
@@ -1919,7 +1954,30 @@ export default function MapPage() {
             </p>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="quick-refresh-btn"
+            type="button"
+            onClick={() => fetchFlags(false)}
+            disabled={isRefreshing}
+            title="Refresh map pins and flags"
+          >
+            <svg
+              className={isRefreshing ? "spin-icon" : ""}
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+            </svg>
+            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
+          </button>
+
           <span style={styles.livePill}>
             <span style={styles.liveDot} />
             {flags.filter(f => f.color !== "Green").length} Active Flags
@@ -1930,7 +1988,7 @@ export default function MapPage() {
                 + Add Flag
               </button>
               <button className="primary-btn" type="button" onClick={handleRunDetection} disabled={runDetectionLoading}>
-                {runDetectionLoading ? "Runningâ€¦" : "Run Detection"}
+                {runDetectionLoading ? "Running…" : "Run Detection"}
               </button>
             </>
           )}

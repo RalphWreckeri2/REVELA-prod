@@ -190,6 +190,19 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         mysql.connection.commit()
         cursor.close()
 
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "inspection_updated",
+                "reportID": report_id,
+                "logID": log_id,
+                "inspectorID": inspector_user_id,
+                "inspector": inspector["fullName"],
+                "status": new_status,
+            })
+        except Exception:
+            pass
+
         return {
             "reportID":   report_id,
             "logID":      log_id,
@@ -273,6 +286,18 @@ def submit_inspection(log_id, user_id, inspection_result,
         mysql.connection.commit()
         cursor.close()
 
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "inspection_submitted",
+                "reportID": report["reportID"],
+                "logID": log_id,
+                "inspectionResult": inspection_result,
+                "status": "Submitted",
+            })
+        except Exception:
+            pass
+
         return {
             "reportID":         report["reportID"],
             "inspectionResult": inspection_result,
@@ -349,6 +374,19 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
         mysql.connection.commit()
         cursor.close()
 
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "inspection_updated",
+                "reportID": report_id,
+                "logID": report["targetID"],
+                "inspectorID": inspector_user_id,
+                "inspector": inspector["fullName"],
+                "status": "Reassigned",
+            })
+        except Exception:
+            pass
+
         return {
             "reportID": report_id,
             "logID": report["targetID"],
@@ -420,6 +458,18 @@ def verify_inspection(report_id):
 
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "inspection_updated",
+                "reportID": report_id,
+                "logID": report["targetID"],
+                "status": "Verified",
+                "newFlagColor": report["inspectionResult"],
+            })
+        except Exception:
+            pass
 
         return {
             "reportID":         report_id,

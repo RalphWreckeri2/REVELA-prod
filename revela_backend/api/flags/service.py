@@ -614,6 +614,17 @@ def update_flag_color(log_id, color):
 
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "flag_updated",
+                "logID": log_id,
+                "color": color
+            })
+        except Exception:
+            pass
+
         return True, None
     except Exception as e:
         return False, str(e)
@@ -655,6 +666,17 @@ def escalate_to_black(log_id):
         
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "flag_updated",
+                "logID": log_id,
+                "color": "Black"
+            })
+        except Exception:
+            pass
+
         return True, None
 
     except Exception as e:
@@ -707,6 +729,16 @@ def delete_flag(log_id):
 
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "flag_deleted",
+                "logID": log_id
+            })
+        except Exception:
+            pass
+
         return True, None
 
     except Exception as e:

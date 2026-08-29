@@ -430,9 +430,14 @@ export default function RegistryPage() {
     return () => clearTimeout(t);
   }, [search]);
 
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   // ── Fetch businesses ──────────────────────────────────────────────────────
-  const fetchBusinesses = useCallback(async () => {
-    setLoading(true);
+  const fetchBusinesses = useCallback(async (isSilent = false) => {
+    if (!isSilent) {
+      setLoading(true);
+      setIsRefreshing(true);
+    }
     setError("");
     try {
       const params = { page, limit: pageSize };
@@ -445,9 +450,12 @@ export default function RegistryPage() {
       setTotal(result.total ?? 0);
       setTotalPages(Math.max(1, result.pages ?? Math.ceil((result.total ?? 0) / pageSize)));
     } catch (err) {
-      setError(err.message || "Failed to load registry.");
+      if (!isSilent) {
+        setError(err.message || "Failed to load registry.");
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, [page, debouncedSearch, barangay, status, pageSize, token]);
 
@@ -514,8 +522,45 @@ export default function RegistryPage() {
   // Fetch whenever page or filters change
   useEffect(() => {
     if (!token) return;
-    fetchBusinesses();
+    fetchBusinesses(false);
   }, [fetchBusinesses, token]);
+
+  // Real-time and background sync listeners
+  useEffect(() => {
+    const handleSync = () => { fetchBusinesses(true); };
+    window.addEventListener("revela:registry-update", handleSync);
+    window.addEventListener("revela:global-refresh", handleSync);
+
+    const handleProgress = (e) => {
+      if (e.detail?.status === "Import complete!") {
+        fetchBusinesses(true);
+      }
+    };
+    window.addEventListener("revela:registry-progress", handleProgress);
+
+    const pollTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchBusinesses(true);
+      }
+    }, 25000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchBusinesses(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+
+    return () => {
+      window.removeEventListener("revela:registry-update", handleSync);
+      window.removeEventListener("revela:global-refresh", handleSync);
+      window.removeEventListener("revela:registry-progress", handleProgress);
+      window.clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
+  }, [fetchBusinesses]);
 
   // ── Summary counts (derived from the full total, not just current page) ───
   // These come from a dedicated summary endpoint in later sprints.
@@ -531,7 +576,30 @@ export default function RegistryPage() {
           <h1 className="page-title">Business Registry</h1>
           <p className="page-subtitle">Official BPLO-registered establishments in Mataasnakahoy.</p>
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="quick-refresh-btn"
+            type="button"
+            onClick={() => fetchBusinesses(false)}
+            disabled={isRefreshing}
+            title="Refresh registry"
+          >
+            <svg
+              className={isRefreshing ? "spin-icon" : ""}
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+            </svg>
+            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
+          </button>
+
           <button
             className="ghost-btn"
             onClick={handleImport}

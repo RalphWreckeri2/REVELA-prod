@@ -834,19 +834,26 @@ export default function AnalyticsPage() {
 
   const [filterMeta, setFilterMeta] = useState(null);
   const [barangaysList, setBarangaysList] = useState([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const fetchAnalytics = useCallback(async () => {
+  const fetchAnalytics = useCallback(async (isSilent = false) => {
     if (!token) return;
 
-    setLoading(true);
+    if (!isSilent) {
+      setLoading(true);
+      setIsRefreshing(true);
+    }
     setError(null);
     try {
       const json = await getAnalyticsOverviewRequest(token, appliedFilters);
       setData(json);
     } catch (e) {
-      setError(e.message);
+      if (!isSilent) {
+        setError(e.message);
+      }
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   }, [token, appliedFilters]);
 
@@ -867,7 +874,7 @@ export default function AnalyticsPage() {
     setSavingWlc(true);
     try {
       await updateWlcConfigRequest(wlcConfig, token);
-      await fetchAnalytics();
+      await fetchAnalytics(false);
       setShowWlcConfig(false);
     } catch (e) {
       console.error(e);
@@ -882,9 +889,47 @@ export default function AnalyticsPage() {
   };
 
   useEffect(() => {
-    fetchAnalytics();
+    fetchAnalytics(false);
     fetchWlcConfig();
   }, [fetchAnalytics, fetchWlcConfig]);
+
+  // Real-time event listeners and auto-polling
+  useEffect(() => {
+    const handleSync = () => {
+      fetchAnalytics(true);
+    };
+
+    window.addEventListener("revela:inspection-update", handleSync);
+    window.addEventListener("revela:yellow-flag", handleSync);
+    window.addEventListener("revela:flag-update", handleSync);
+    window.addEventListener("revela:registry-update", handleSync);
+    window.addEventListener("revela:global-refresh", handleSync);
+
+    const pollTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchAnalytics(true);
+      }
+    }, 30000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        fetchAnalytics(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+
+    return () => {
+      window.removeEventListener("revela:inspection-update", handleSync);
+      window.removeEventListener("revela:yellow-flag", handleSync);
+      window.removeEventListener("revela:flag-update", handleSync);
+      window.removeEventListener("revela:registry-update", handleSync);
+      window.removeEventListener("revela:global-refresh", handleSync);
+      window.clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
+  }, [fetchAnalytics]);
 
   useEffect(() => {
     if (!token) return;
@@ -1523,8 +1568,27 @@ export default function AnalyticsPage() {
             </p>
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            <button className="analytics-tab-btn" onClick={fetchAnalytics} title="Refresh data">
-              ↻ Refresh
+            <button
+              className="quick-refresh-btn"
+              type="button"
+              onClick={() => fetchAnalytics(false)}
+              disabled={isRefreshing}
+              title="Refresh analytics data"
+            >
+              <svg
+                className={isRefreshing ? "spin-icon" : ""}
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+              </svg>
+              <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
             </button>
           </div>
         </div>

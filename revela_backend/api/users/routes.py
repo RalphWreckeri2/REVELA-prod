@@ -97,6 +97,12 @@ def create_user_route():
         must_change_password=True,  # Force change on first login
     )
 
+    try:
+        from api.notifications import hub
+        hub.publish_to_admins({"type": "user_updated", "userID": user_id})
+    except Exception:
+        pass
+
     return jsonify({
         "message":      "User created successfully",
         "userID":       user_id,
@@ -142,6 +148,12 @@ def update_user_route(user_id):
         phone=phone,
     )
 
+    try:
+        from api.notifications import hub
+        hub.publish_to_admins({"type": "user_updated", "userID": user_id})
+    except Exception:
+        pass
+
     return jsonify({"message": "User updated successfully"}), 200
 
 
@@ -178,6 +190,12 @@ def reset_user_password_route(user_id):
         # in the model layer to ensure atomicity.
         update_password(user_id, hashed, must_change_password=True)
         set_reset_requested(user_id, False)
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({"type": "user_updated", "userID": user_id})
+        except Exception:
+            pass
 
         return jsonify({
             "message": f"Password for user {user_to_reset['fullName']} has been reset.",
@@ -229,10 +247,24 @@ def delete_user_route(user_id):
             "UPDATE users SET isActive = FALSE WHERE userID = %s", (user_id,))
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({"type": "user_updated", "userID": user_id})
+        except Exception:
+            pass
+
         return jsonify({"message": "User deactivated successfully (soft delete) to preserve inspection history."}), 200
 
     cursor.close()
 
     # 3. HARD DELETE: Safe to obliterate since they have absolutely zero history
     delete_user(user_id)
+
+    try:
+        from api.notifications import hub
+        hub.publish_to_admins({"type": "user_updated", "userID": user_id})
+    except Exception:
+        pass
+
     return jsonify({"message": "User deleted successfully"}), 200

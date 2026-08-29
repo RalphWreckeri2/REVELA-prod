@@ -58,7 +58,7 @@ const WEATHER_CODES = {
   95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm",
 };
 
-function HeroBanner({ user, kpis, mapsReady, navigate }) {
+function HeroBanner({ user, kpis, mapsReady, navigate, onRefresh, isRefreshing }) {
   // Live clock — ticks every second
   const [now, setNow] = useState(() => new Date());
   // Live weather for Mataasnakahoy (Open-Meteo, keyless)
@@ -102,13 +102,29 @@ function HeroBanner({ user, kpis, mapsReady, navigate }) {
 
       {/* ── Left: greeting + steps ── */}
       <div className="hero-left">
-        <div className="hero-status-pill">
-          <span className="hero-status-item">
-            <span className="hero-status-dot" />
-            BPLO Geospatial Engine Active
-          </span>
-          <span className="hero-status-divider" aria-hidden="true" />
-          <span className="hero-status-item">Mataasnakahoy Compliance Portal</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div className="hero-status-pill">
+            <span className="hero-status-item">
+              <span className="hero-status-dot" />
+              BPLO Geospatial Engine Active
+            </span>
+            <span className="hero-status-divider" aria-hidden="true" />
+            <span className="hero-status-item">Mataasnakahoy Compliance Portal</span>
+          </div>
+
+          {onRefresh && (
+            <button
+              className="quick-refresh-btn"
+              type="button"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              style={{ padding: "4px 10px", fontSize: 11.5, height: 28 }}
+              title="Refresh overview metrics"
+            >
+              <svg className={isRefreshing ? "spin-icon" : ""} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" /></svg>
+              <span>{isRefreshing ? "Syncing…" : "Sync Live"}</span>
+            </button>
+          )}
         </div>
 
         <h1 className="hero-greeting">
@@ -746,14 +762,29 @@ export default function HomePage() {
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [opsRankings, setOpsRankings] = useState([]);
   const [opsLoading, setOpsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
+  const fetchDashboardData = useCallback(async (isSilent = false) => {
     if (!token) return;
+    if (!isSilent) {
+      setIsRefreshing(true);
+    }
 
-    // Fetch KPIs
-    getAnalyticsOverviewRequest(token)
-      .then(data => {
+    try {
+      const [analyticsRes, flagsRes, inspRes, inspectorsRes, opsRes] = await Promise.allSettled([
+        getAnalyticsOverviewRequest(token),
+        getFlagsRequest({ limit: 200 }, token),
+        getInspectionsRequest({ limit: 1000 }, token),
+        getInspectorsRequest(token),
+        getOpsRankingsRequest(token),
+      ]);
+
+      // KPIs & Rollover
+      if (analyticsRes.status === "fulfilled" && analyticsRes.value) {
+        const data = analyticsRes.value;
         setKpis(data?.descriptive?.kpis ?? null);
+        setKpiError(false);
+
         if (data?.new_year_rollover?.detected) {
           Swal.fire({
             title: "Happy New Year!",
@@ -775,7 +806,6 @@ export default function HomePage() {
               cancelButton: 'ghost-btn'
             }
           }).then((result) => {
-            // Mark the rollover notification as read so the alert does not show again
             if (data.new_year_rollover.notification_id) {
               markNotificationsReadRequest(token, [data.new_year_rollover.notification_id]).catch(() => {});
             }
@@ -784,39 +814,77 @@ export default function HomePage() {
             }
           });
         }
-      })
-      .catch(() => setKpiError(true));
+      } else if (analyticsRes.status === "rejected") {
+        setKpiError(true);
+      }
 
-    // Fetch flags for map + recent list
-    setFlagsLoading(true);
-    getFlagsRequest({ limit: 200 }, token)
-      .then(res => {
-        const data = res?.data ?? [];
-        setAllFlags(data);
-      })
-      .catch(() => { })
-      .finally(() => setFlagsLoading(false));
+      // Flags
+      if (flagsRes.status === "fulfilled" && flagsRes.value) {
+        setAllFlags(flagsRes.value?.data ?? []);
+      }
 
-    // Fetch inspection tracker counts
-    getInspectionsRequest({ limit: 1000 }, token)
-      .then(res => {
-        const data = res?.data ?? [];
-        setInspections(data);
-      })
-      .catch(() => { });
+      // Inspections
+      if (inspRes.status === "fulfilled" && inspRes.value) {
+        setInspections(inspRes.value?.data ?? []);
+      }
 
-    // Fetch inspectors
-    getInspectorsRequest(token)
-      .then(res => setInspectors(res || []))
-      .catch(() => { });
+      // Inspectors
+      if (inspectorsRes.status === "fulfilled" && inspectorsRes.value) {
+        setInspectors(inspectorsRes.value || []);
+      }
 
-    // Fetch OPS rankings for High-Priority Alerts
-    setOpsLoading(true);
-    getOpsRankingsRequest(token)
-      .then(res => setOpsRankings(res?.data || []))
-      .catch(() => { })
-      .finally(() => setOpsLoading(false));
-  }, [token]);
+      // OPS Rankings
+      if (opsRes.status === "fulfilled" && opsRes.value) {
+        setOpsRankings(opsRes.value?.data || []);
+      }
+    } catch {
+      /* ignore */
+    } finally {
+      setFlagsLoading(false);
+      setOpsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [token, navigate]);
+
+  useEffect(() => {
+    fetchDashboardData(false);
+
+    const handleEventUpdate = () => {
+      fetchDashboardData(true);
+    };
+
+    window.addEventListener("revela:inspection-update", handleEventUpdate);
+    window.addEventListener("revela:yellow-flag", handleEventUpdate);
+    window.addEventListener("revela:flag-update", handleEventUpdate);
+    window.addEventListener("revela:registry-update", handleEventUpdate);
+    window.addEventListener("revela:global-refresh", handleEventUpdate);
+
+    // Silent background auto-polling every 20s
+    const pollInterval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        fetchDashboardData(true);
+      }
+    }, 20000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchDashboardData(true);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("revela:inspection-update", handleEventUpdate);
+      window.removeEventListener("revela:yellow-flag", handleEventUpdate);
+      window.removeEventListener("revela:flag-update", handleEventUpdate);
+      window.removeEventListener("revela:registry-update", handleEventUpdate);
+      window.removeEventListener("revela:global-refresh", handleEventUpdate);
+      window.clearInterval(pollInterval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+    };
+  }, [fetchDashboardData]);
 
   const kpiCards = [
     {
@@ -861,14 +929,19 @@ export default function HomePage() {
 
   return (
     <DashboardLayout>
-      {/* shimmer keyframe now defined globally in global.css */}
-
       {/* Main Layout: 2 Columns */}
       <div style={{ display: "grid", gridTemplateColumns: "3fr 1fr", gap: 24, alignItems: "start" }}>
 
         {/* Left Column (Main Content) */}
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          <HeroBanner user={user} kpis={kpis} mapsReady={isLoaded} navigate={navigate} />
+          <HeroBanner
+            user={user}
+            kpis={kpis}
+            mapsReady={isLoaded}
+            navigate={navigate}
+            onRefresh={() => fetchDashboardData(false)}
+            isRefreshing={isRefreshing}
+          />
 
           {kpiError && (
             <div style={{
