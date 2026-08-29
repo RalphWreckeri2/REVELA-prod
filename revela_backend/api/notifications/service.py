@@ -394,12 +394,19 @@ def notify_yellow_flag_reported(
         _ensure_tables()
         cur = mysql.connection.cursor()
 
-        # Inspector name
+        # Check reporter role and name
         cur.execute(
-            "SELECT fullName FROM users WHERE userID = %s",
+            "SELECT fullName, userRole FROM users WHERE userID = %s",
             (reporter_user_id,),
         )
         insp_row = cur.fetchone() or {}
+        role = (insp_row.get("userRole") or "").strip().lower()
+
+        # If flagged by an Admin, do not generate admin notifications
+        if role in ("admin", "super_admin", "system administrator"):
+            cur.close()
+            return
+
         inspector_name = insp_row.get("fullName") or "An inspector"
 
         # Barangay name

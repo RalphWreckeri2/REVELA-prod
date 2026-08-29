@@ -1181,15 +1181,32 @@ def analytics_chat():
             parts=[types.Part.from_text(text=user_query)]
         ))
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=system_message,
-                temperature=0.4,
-                max_output_tokens=1024,
-            )
-        )
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+        models_to_try = [model_name, "gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.5-flash"]
+        # Deduplicate preserving order
+        models_to_try = list(dict.fromkeys(models_to_try))
+
+        response = None
+        last_error = None
+        for m in models_to_try:
+            try:
+                response = client.models.generate_content(
+                    model=m,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_message,
+                        temperature=0.4,
+                        max_output_tokens=1024,
+                    )
+                )
+                if response and response.text:
+                    break
+            except Exception as me:
+                last_error = me
+                continue
+
+        if not response or not response.text:
+            raise last_error or Exception("No response returned by the Gemini AI model.")
 
         return jsonify({
             "response": response.text
