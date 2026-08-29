@@ -167,28 +167,17 @@ def submit():
 
     has_photo = bool(data.get("photoURL"))
 
-    # Fire notification in background so the inspector gets an immediate response
-    app_instance = current_app._get_current_object()
-    notif_args = {
-        "report_id": result["reportID"],
-        "log_id": data["logID"],
-        "inspector_user_id": int(user_id),
-        "inspection_result": data["inspectionResult"],
-        "has_evidence_photo": has_photo,
-    }
-
-    def _bg_notify(app, kwargs):
-        with app.app_context():
-            try:
-                notify_inspection_submitted(**kwargs)
-            except Exception as exc:
-                print(f"notify_inspection_submitted bg error: {exc}")
-
-    threading.Thread(
-        target=_bg_notify,
-        args=(app_instance, notif_args),
-        daemon=True,
-    ).start()
+    # Fire notification and push SSE to connected dashboards instantly
+    try:
+        notify_inspection_submitted(
+            report_id=result["reportID"],
+            log_id=data["logID"],
+            inspector_user_id=int(user_id),
+            inspection_result=data["inspectionResult"],
+            has_evidence_photo=has_photo,
+        )
+    except Exception as exc:
+        print(f"notify_inspection_submitted error: {exc}")
 
     return jsonify(result), 200
 

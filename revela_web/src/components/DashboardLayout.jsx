@@ -209,11 +209,14 @@ function Sidebar({ onLogout }) {
 
 function formatTimeAgo(iso) {
   if (!iso) return "";
-  const t = new Date(iso).getTime();
+  const str = String(iso).trim();
+  // If the timestamp doesn't specify timezone or Z, treat it as UTC from MySQL
+  const normalizedIso = str.endsWith("Z") || str.includes("+") ? str : `${str.replace(" ", "T")}Z`;
+  const t = new Date(normalizedIso).getTime();
   if (Number.isNaN(t)) return "";
   const s = Math.floor((Date.now() - t) / 1000);
   if (s < 45) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
 }

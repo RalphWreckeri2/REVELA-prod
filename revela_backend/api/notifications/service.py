@@ -92,9 +92,19 @@ def list_notifications(user_id: int, limit: int = 50) -> Tuple[Dict[str, Any], N
     cur.close()
     for r in rows:
         if r.get("createdAt"):
-            r["createdAt"] = str(r["createdAt"])
+            dt = r["createdAt"]
+            if hasattr(dt, "isoformat"):
+                r["createdAt"] = dt.isoformat() + "Z"
+            else:
+                s = str(dt).replace(" ", "T")
+                r["createdAt"] = s if s.endswith("Z") else f"{s}Z"
         if r.get("readAt"):
-            r["readAt"] = str(r["readAt"])
+            dt = r["readAt"]
+            if hasattr(dt, "isoformat"):
+                r["readAt"] = dt.isoformat() + "Z"
+            else:
+                s = str(dt).replace(" ", "T")
+                r["readAt"] = s if s.endswith("Z") else f"{s}Z"
     return {"data": rows}, None
 
 
