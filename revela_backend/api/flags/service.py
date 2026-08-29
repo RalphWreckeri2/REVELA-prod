@@ -92,9 +92,15 @@ def _fetch_places_for_point(lat, lng, radius_m, places_dict):
 
     outside_count = 0
 
+    headers = {
+        "User-Agent": "REVELA-Backend/1.0",
+        "Referer": os.getenv("FRONTEND_URL", "https://revela-web.up.railway.app/"),
+        "Origin": os.getenv("FRONTEND_URL", "https://revela-web.up.railway.app/").rstrip("/"),
+    }
+
     while True:
         try:
-            resp = http.get(url, params=params, timeout=10)
+            resp = http.get(url, params=params, headers=headers, timeout=10)
             data = resp.json()
         except Exception as he:
             print(f"[Run Detection] HTTP error querying point ({lat}, {lng}): {he}")
