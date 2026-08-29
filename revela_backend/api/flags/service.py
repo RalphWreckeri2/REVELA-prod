@@ -73,22 +73,36 @@ def _match_registry_to_google(place_id, business_id, detected_name):
 # ── Google Places fetch ───────────────────────────────────────────────────────
 
 def _fetch_places_for_point(lat, lng, radius_m, places_dict):
+    api_key = (
+        os.getenv("GOOGLE_MAPS_API_KEY")
+        or os.getenv("GOOGLE_PLACES_API_KEY")
+        or os.getenv("VITE_GOOGLE_MAPS_API_KEY")
+    )
+    if not api_key:
+        print("[Run Detection] Error: GOOGLE_MAPS_API_KEY environment variable is not configured.")
+        return 0
+
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     params = {
         "location": f"{lat},{lng}",
         "radius":   radius_m,
         "type":     "establishment",
-        "key":      GOOGLE_MAPS_API_KEY,
+        "key":      api_key,
     }
 
     outside_count = 0
 
     while True:
-        resp = http.get(url, params=params, timeout=10)
-        data = resp.json()
+        try:
+            resp = http.get(url, params=params, timeout=10)
+            data = resp.json()
+        except Exception as he:
+            print(f"[Run Detection] HTTP error querying point ({lat}, {lng}): {he}")
+            break
 
         status = data.get("status")
         if status not in ("OK", "ZERO_RESULTS"):
+            print(f"[Run Detection] Places API status: {status}, message: {data.get('error_message')}")
             break
 
         for p in data.get("results", []):
@@ -114,7 +128,7 @@ def _fetch_places_for_point(lat, lng, radius_m, places_dict):
             break
 
         time.sleep(2)
-        params = {"pagetoken": next_token, "key": GOOGLE_MAPS_API_KEY}
+        params = {"pagetoken": next_token, "key": api_key}
 
     return outside_count
 
@@ -165,12 +179,19 @@ def _fetch_all_places(progress_cb=None):
 # ── Registry loader ───────────────────────────────────────────────────────────
 
 def _load_registry():
-    """Load all official registry entries that have coordinates."""
+    """Load all official registry entries that have coordinates or linked geospatial logs."""
     cursor = mysql.connection.cursor()
     cursor.execute("""
-        SELECT businessID, barangayID, businessName, latitude, longitude
-        FROM official_registry
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        SELECT r.businessID, r.barangayID, r.businessName,
+               COALESCE(r.latitude, g.latitude) AS latitude,
+               COALESCE(r.longitude, g.longitude) AS longitude
+        FROM official_registry r
+        LEFT JOIN (
+            SELECT detectedName, barangayID, latitude, longitude
+            FROM geospatial_logs
+            WHERE flagColor = 'Green'
+        ) g ON LOWER(r.businessName) = LOWER(g.detectedName) AND r.barangayID = g.barangayID
+        WHERE r.latitude IS NOT NULL OR g.latitude IS NOT NULL
     """)
     rows = cursor.fetchall()
     cursor.close()
@@ -388,22 +409,14 @@ def run_detection():
             if not lat or not lng or not place_id:
                 continue
 
-            # ── STRICT TEXT-BASED LOCATION FILTER ──────────────────────────
-            # The spatial polygon boundary might overlap with neighboring towns
-            # according to Google Maps. We double-check the text representation.
-            location_text = f"{address or ''} {compound_code}".lower()
-
-            # 1. Reject if it doesn't mention Mataasnakahoy (with spelling variations)
-            valid_spellings = ["mataasnakahoy",
-                               "mataas na kahoy", "mataas nakahoy"]
-            if not any(v in location_text for v in valid_spellings):
+            # Ensure coordinates are within municipality polygon
+            if not _within_municipality(lat, lng):
                 continue
 
-            # 2. Reject explicitly if it belongs to a neighboring municipality
-            forbidden_neighbors = ["lipa", "balete", "cuenca", "san jose"]
-            if any(town in location_text for town in forbidden_neighbors):
+            # Only reject if the specific street address explicitly belongs to an adjacent town
+            addr_lower = (address or "").lower()
+            if any(t in addr_lower for t in ["lipa city", "cuenca,", "balete,", "san jose,"]):
                 continue
-            # ───────────────────────────────────────────────────────────────
 
             if _already_flagged(place_id):
                 continue

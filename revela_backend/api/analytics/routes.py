@@ -2,8 +2,46 @@ import json
 import math
 import traceback
 import os
+import time
 from google import genai
 from google.genai import types
+
+# ── Gemini Model Discovery Cache (30-day TTL) ───────────────────────────────
+_CACHED_GEMINI_MODEL = "gemini-3.6-flash"
+_LAST_MODEL_DISCOVERY_TIME = 0
+_DISCOVERY_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+
+
+def _get_candidate_gemini_models(client, force_refresh=False):
+    global _CACHED_GEMINI_MODEL, _LAST_MODEL_DISCOVERY_TIME
+
+    preferred_env = os.environ.get("GEMINI_MODEL")
+    if preferred_env:
+        return [preferred_env]
+
+    now = time.time()
+    # Fast path: use cached working model directly without API discovery latency
+    if not force_refresh and _CACHED_GEMINI_MODEL and (now - _LAST_MODEL_DISCOVERY_TIME < _DISCOVERY_TTL_SECONDS):
+        return [_CACHED_GEMINI_MODEL, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    discovered = []
+    try:
+        for m in client.models.list():
+            m_name = (m.name or "").replace("models/", "").strip()
+            actions = getattr(m, "supported_actions", None) or []
+            if "generateContent" in actions or not actions:
+                if m_name and m_name not in discovered:
+                    if "flash" in m_name:
+                        discovered.insert(0, m_name)
+                    elif "gemini" in m_name:
+                        discovered.append(m_name)
+        _LAST_MODEL_DISCOVERY_TIME = now
+        print(f"[Gemini] Monthly model auto-discovery completed. Found: {discovered}")
+    except Exception as e:
+        print(f"[Gemini] Model auto-discovery note: {e}")
+
+    candidates = discovered + [_CACHED_GEMINI_MODEL, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    return list(dict.fromkeys(candidates))
 
 from flask import Blueprint, jsonify, request
 from api.middleware.decorators import jwt_required, admin_required
@@ -1181,32 +1219,12 @@ def analytics_chat():
             parts=[types.Part.from_text(text=user_query)]
         ))
 
-        preferred_model = os.environ.get("GEMINI_MODEL")
-        models_to_try = [preferred_model] if preferred_model else []
+        global _CACHED_GEMINI_MODEL
 
-        # 1. Discover available models from the Gemini API directly for this key
-        try:
-            for m in client.models.list():
-                m_name = (m.name or "").replace("models/", "").strip()
-                actions = getattr(m, "supported_actions", None) or []
-                if "generateContent" in actions or not actions:
-                    if m_name and m_name not in models_to_try:
-                        if "flash" in m_name:
-                            models_to_try.insert(1 if preferred_model else 0, m_name)
-                        elif "gemini" in m_name:
-                            models_to_try.append(m_name)
-        except Exception as le:
-            print(f"[Gemini] Note on model discovery: {le}")
-
-        # 2. Add standard candidate fallbacks
-        for f in ["gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
-            if f not in models_to_try:
-                models_to_try.append(f)
-
-        print(f"[Gemini] Candidate models: {models_to_try}")
-
+        models_to_try = _get_candidate_gemini_models(client, force_refresh=False)
         response = None
         last_error = None
+
         for m in models_to_try:
             try:
                 response = client.models.generate_content(
@@ -1219,12 +1237,36 @@ def analytics_chat():
                     )
                 )
                 if response and response.text:
-                    print(f"[Gemini] Succeeded with model '{m}'")
+                    _CACHED_GEMINI_MODEL = m
                     break
             except Exception as me:
-                print(f"[Gemini] Failed with model '{m}': {me}")
+                print(f"[Gemini] Model '{m}' failed: {me}")
                 last_error = me
                 continue
+
+        # If cached candidates failed (e.g. model version expired), force refresh discovery once and retry
+        if not response or not response.text:
+            refreshed_models = _get_candidate_gemini_models(client, force_refresh=True)
+            for m in refreshed_models:
+                if m in models_to_try:
+                    continue
+                try:
+                    response = client.models.generate_content(
+                        model=m,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_message,
+                            temperature=0.4,
+                            max_output_tokens=1024,
+                        )
+                    )
+                    if response and response.text:
+                        _CACHED_GEMINI_MODEL = m
+                        print(f"[Gemini] Switched and cached new active model: '{m}'")
+                        break
+                except Exception as me:
+                    last_error = me
+                    continue
 
         if not response or not response.text:
             raise last_error or Exception("No response returned by the Gemini AI model.")
