@@ -213,6 +213,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
       const data = await getBusinessByIdRequest(businessId, token);
       setBusiness(data);
       if (onSuccess) onSuccess();
+      window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { timestamp: Date.now() } }));
     } catch (err) {
       Swal.fire({ icon: 'error', title: 'Error', text: err.message || 'Failed to update.' });
     } finally {
@@ -246,6 +247,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
         }
         Swal.fire({ icon: 'success', title: 'Deleted', text: 'Business deleted successfully.', timer: 1500, showConfirmButton: false });
         if (onSuccess) onSuccess();
+        window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { timestamp: Date.now() } }));
         onClose();
       } catch (err) {
         setError(err.message || "Failed to delete business.");

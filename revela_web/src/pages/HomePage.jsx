@@ -857,6 +857,7 @@ export default function HomePage() {
     window.addEventListener("revela:yellow-flag", handleEventUpdate);
     window.addEventListener("revela:flag-update", handleEventUpdate);
     window.addEventListener("revela:registry-update", handleEventUpdate);
+    window.addEventListener("revela:user-update", handleEventUpdate);
     window.addEventListener("revela:global-refresh", handleEventUpdate);
 
     // Silent background auto-polling every 20s
@@ -879,6 +880,7 @@ export default function HomePage() {
       window.removeEventListener("revela:yellow-flag", handleEventUpdate);
       window.removeEventListener("revela:flag-update", handleEventUpdate);
       window.removeEventListener("revela:registry-update", handleEventUpdate);
+      window.removeEventListener("revela:user-update", handleEventUpdate);
       window.removeEventListener("revela:global-refresh", handleEventUpdate);
       window.clearInterval(pollInterval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);

@@ -903,6 +903,7 @@ export default function AnalyticsPage() {
     window.addEventListener("revela:yellow-flag", handleSync);
     window.addEventListener("revela:flag-update", handleSync);
     window.addEventListener("revela:registry-update", handleSync);
+    window.addEventListener("revela:user-update", handleSync);
     window.addEventListener("revela:global-refresh", handleSync);
 
     const pollTimer = window.setInterval(() => {
@@ -924,6 +925,7 @@ export default function AnalyticsPage() {
       window.removeEventListener("revela:yellow-flag", handleSync);
       window.removeEventListener("revela:flag-update", handleSync);
       window.removeEventListener("revela:registry-update", handleSync);
+      window.removeEventListener("revela:user-update", handleSync);
       window.removeEventListener("revela:global-refresh", handleSync);
       window.clearInterval(pollTimer);
       document.removeEventListener("visibilitychange", handleVisibility);

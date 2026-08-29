@@ -69,12 +69,29 @@ export function AuthProvider({ children }) {
     return me;
   }
 
-  async function refreshUser() {
+  const refreshUser = async () => {
     if (token) {
-      const me = await getMeRequest(token);
-      setUser(me);
+      try {
+        const me = await getMeRequest(token);
+        setUser(me);
+      } catch {
+        /* ignore */
+      }
     }
-  }
+  };
+
+  useEffect(() => {
+    if (!token) return;
+    const handleUserUpdate = () => {
+      refreshUser();
+    };
+    window.addEventListener("revela:user-update", handleUserUpdate);
+    window.addEventListener("revela:global-refresh", handleUserUpdate);
+    return () => {
+      window.removeEventListener("revela:user-update", handleUserUpdate);
+      window.removeEventListener("revela:global-refresh", handleUserUpdate);
+    };
+  }, [token]);
 
   function logout() {
     setToken(null);

@@ -128,7 +128,8 @@ function CreateUserModal({ onClose, onSuccess, token }) {
     setLoading(true);
     try {
       const result = await createUserRequest({ ...formData, password }, token);
-      onSuccess();
+      if (onSuccess) onSuccess();
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'User Created',
@@ -235,7 +236,8 @@ function EditUserModal({ user, onClose, onSuccess, token }) {
     setLoading(true);
     try {
       await updateUserRequest(user.userID, formData, token);
-      onSuccess();
+      if (onSuccess) onSuccess();
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'User Updated',
@@ -327,7 +329,8 @@ function DeleteUserModal({ targetUser, onClose, onSuccess, token }) {
     setLoading(true);
     try {
       await deleteUserRequest(targetUser.userID, token);
-      onSuccess();
+      if (onSuccess) onSuccess();
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'User Removed',
@@ -401,6 +404,7 @@ function ResetPasswordModal({ targetUser, onClose, onSuccess, token }) {
       if (!res.ok) throw new Error(data?.error || "Failed to reset password.");
       setNewPass(data.tempPassword);
       if (onSuccess) onSuccess();
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'Password Reset',

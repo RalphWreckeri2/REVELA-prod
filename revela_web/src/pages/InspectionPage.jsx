@@ -943,6 +943,8 @@ export default function InspectionPage() {
     const onInspectionUpdate = () => fetchReports(true);
     window.addEventListener("revela:inspection-update", onInspectionUpdate);
     window.addEventListener("revela:flag-update", onInspectionUpdate);
+    window.addEventListener("revela:registry-update", onInspectionUpdate);
+    window.addEventListener("revela:user-update", onInspectionUpdate);
     window.addEventListener("revela:global-refresh", onInspectionUpdate);
 
     // Silent background auto-polling every 15s
@@ -963,6 +965,8 @@ export default function InspectionPage() {
     return () => {
       window.removeEventListener("revela:inspection-update", onInspectionUpdate);
       window.removeEventListener("revela:flag-update", onInspectionUpdate);
+      window.removeEventListener("revela:registry-update", onInspectionUpdate);
+      window.removeEventListener("revela:user-update", onInspectionUpdate);
       window.removeEventListener("revela:global-refresh", onInspectionUpdate);
       window.clearInterval(pollTimer);
       document.removeEventListener("visibilitychange", handleVisibility);

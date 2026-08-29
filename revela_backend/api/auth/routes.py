@@ -139,6 +139,12 @@ def update_me():
         phone=user.get("phone")
     )
 
+    try:
+        from api.notifications import hub
+        hub.publish_to_admins({"type": "user_updated", "userID": user_id})
+    except Exception:
+        pass
+
     return jsonify({"message": "Profile updated successfully"}), 200
 
 
