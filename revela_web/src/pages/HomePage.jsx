@@ -332,6 +332,7 @@ function HighPriorityAlertsWidget({ opsRankings, navigate, loading }) {
 
 // ── Mini Map Widget ───────────────────────────────────────────────────────────
 function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
+  const [mapInstance, setMapInstance] = useState(null);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
 
@@ -347,34 +348,70 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
+    setMapInstance(map);
   }, []);
 
   // Place markers once map + flags are ready
   useEffect(() => {
-    if (!isLoaded || !mapRef.current || !window.google?.maps?.marker) return;
+    const activeMap = mapInstance || mapRef.current;
+    if (!isLoaded || !activeMap) return;
 
     // Clear old markers
-    markerRefs.current.forEach(m => { m.map = null; });
+    markerRefs.current.forEach(m => {
+      if (typeof m.setMap === "function") m.setMap(null);
+      else m.map = null;
+    });
     markerRefs.current = [];
 
+    const canUseAdvanced = Boolean(window.google?.maps?.marker?.AdvancedMarkerElement);
+
     flags
-      .filter(f => f.latitude != null && f.longitude != null)
+      .filter(f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude)))
       .slice(0, 100) // cap for performance
       .forEach(f => {
         const fc = getFlagColor(parseColor(f));
-        const marker = new window.google.maps.marker.AdvancedMarkerElement({
-          position: { lat: Number(f.latitude), lng: Number(f.longitude) },
-          map: mapRef.current,
-          content: buildMarkerEl(fc.marker),
-        });
+        const position = { lat: Number(f.latitude), lng: Number(f.longitude) };
+        let marker = null;
+
+        if (canUseAdvanced) {
+          try {
+            marker = new window.google.maps.marker.AdvancedMarkerElement({
+              position,
+              map: activeMap,
+              content: buildMarkerEl(fc.marker),
+            });
+          } catch (e) {
+            marker = null;
+          }
+        }
+
+        if (!marker) {
+          marker = new window.google.maps.Marker({
+            position,
+            map: activeMap,
+            icon: {
+              path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+              fillColor: fc.marker,
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 1,
+              scale: 0.8,
+              anchor: new window.google.maps.Point(12, 32),
+            }
+          });
+        }
+
         markerRefs.current.push(marker);
       });
 
     return () => {
-      markerRefs.current.forEach(m => { m.map = null; });
+      markerRefs.current.forEach(m => {
+        if (typeof m.setMap === "function") m.setMap(null);
+        else m.map = null;
+      });
       markerRefs.current = [];
     };
-  }, [isLoaded, flags]);
+  }, [isLoaded, mapInstance, flags]);
 
   return (
     <div className="dashboard-widget frosted-glass saas-card map-widget">

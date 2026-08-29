@@ -9,9 +9,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
-import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import { useLoadScript, GoogleMap, Data } from "@react-google-maps/api";
-import { darkMapStyle } from "../utils/mapStyles";
 import DashboardLayout from "../components/DashboardLayout";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import StatusBadge from "../components/StatusBadge";
@@ -534,7 +532,35 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
 // — Map Canvas —————————————————————————————————————————————————————————————————————————————————————————————————————
 // darkMapStyle + REVELA_MAP_ID are shared with SettingsPage / HomePage via src/utils/mapStyles.js
 
-function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, flags, barangayRiskLevels, selectedFlagId, onMarkerClick, onMapClick, onDataClick, isPickingLocation, runDetectionLoading, detectionProgress, elapsedTime, satellite, clusters, barangayRedFlagCounts, adjustingFlagId, adjustingLatLng, onAdjustDragEnd, cancellingDetection, handleCancelDetection }) {
+function MapCanvas({
+  isDark,
+  isLoaded,
+  loadError,
+  center,
+  zoom,
+  mapRef,
+  layers,
+  flags,
+  barangayRiskLevels,
+  selectedFlagId,
+  onMarkerClick,
+  onMapClick,
+  onDataClick,
+  isPickingLocation,
+  runDetectionLoading,
+  detectionProgress,
+  elapsedTime,
+  satellite,
+  clusters,
+  barangayRedFlagCounts,
+  adjustingFlagId,
+  adjustingLatLng,
+  onAdjustDragEnd,
+  cancellingDetection,
+  handleCancelDetection,
+  loadingFlags,
+}) {
+  const [mapInstance, setMapInstance] = useState(null);
   const markerRefs = useRef(new Map());
   const internalMapRef = useRef(null);
   const clusterRef = useRef(null);
@@ -543,21 +569,15 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
 
   // — Draw / clear DBSCAN cluster circles ————————————————————————————————————————————————————————————————————————
   useEffect(() => {
-    // Clean up previous circles regardless of whether we're drawing new ones
     diagnosticCircleRefs.current.forEach(c => c.setMap(null));
     diagnosticCircleRefs.current = [];
 
-    if (!isLoaded || !internalMapRef.current) return;
+    const activeMap = mapInstance || internalMapRef.current;
+    if (!isLoaded || !activeMap) return;
     if (!layers.diagnostics) return;
     if (!clusters || clusters.length === 0) return;
 
     clusters.forEach((cl) => {
-      // Visual intensity encoding — recalibrate thresholds to match eps/MinPts tuning:
-      //   size ≥ 10 → deep red    (major hotspot)
-      //   size 4–9  → amber       (moderate cluster)
-      //   size 3    → soft orange (minimum qualifying cluster — MinPts = 3)
-      // Note: noise points (isolated flags) are filtered server-side and never
-      // reach this loop, per the system design's anomaly-discard rule.
       let fillColor, strokeColor, fillOpacity, strokeOpacity, strokeWeight, zIndex;
 
       if (cl.size >= 10) {
@@ -575,7 +595,6 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
         strokeWeight = 2;
         zIndex = 3;
       } else {
-        // size === 3 — minimum cluster (MinPts threshold)
         fillColor = "#fb923c";
         strokeColor = "#c2410c";
         fillOpacity = 0.16;
@@ -585,9 +604,8 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
       }
 
       const circle = new window.google.maps.Circle({
-        map: internalMapRef.current,
+        map: activeMap,
         center: { lat: cl.centroidLat, lng: cl.centroidLng },
-        // Minimum 30 m so tiny clusters are still visible at town zoom
         radius: Math.max(cl.radius_m, 30),
         fillColor,
         fillOpacity,
@@ -598,7 +616,6 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
         clickable: true,
       });
 
-      // Info window on click showing cluster stats
       const infoWindow = new window.google.maps.InfoWindow({
         content: `
           <div style="font-family:sans-serif;font-size:13px;line-height:1.6;padding:4px 6px;">
@@ -618,7 +635,7 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
 
       circle.addListener("click", (e) => {
         infoWindow.setPosition(e.latLng);
-        infoWindow.open(internalMapRef.current);
+        infoWindow.open(activeMap);
       });
 
       diagnosticCircleRefs.current.push(circle);
@@ -628,21 +645,30 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
       diagnosticCircleRefs.current.forEach(c => c.setMap(null));
       diagnosticCircleRefs.current = [];
     };
-  }, [isLoaded, layers.diagnostics, clusters]);
+  }, [isLoaded, mapInstance, layers.diagnostics, clusters]);
 
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
+    setMapInstance(map);
     if (mapRef) mapRef.current = map;
 
     if (isPickingLocation) {
       map.setOptions({ draggableCursor: 'crosshair' });
     }
-  }, [mapRef]);
+  }, [mapRef, isPickingLocation]);
 
   const handleMapUnmount = useCallback(() => {
-    markerRefs.current.forEach(m => m.setMap(null));
+    markerRefs.current.forEach(m => {
+      if (typeof m.setMap === "function") m.setMap(null);
+      else m.map = null;
+    });
     markerRefs.current.clear();
+    if (clusterRef.current) {
+      clusterRef.current.clearMarkers();
+      clusterRef.current = null;
+    }
     internalMapRef.current = null;
+    setMapInstance(null);
   }, []);
 
   // google.maps.Data does not re-apply the react-google-maps <Data> `options`
@@ -652,7 +678,6 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
       if (!layers.barangay && !layers.diagnostics && !isPickingLocation) return { visible: false };
 
       if (layers.diagnostics) {
-        // — Name resolution (unchanged from original) —————————————————————————————————————————————————————————
         const rawName = (
           feature.getProperty('ADM4_EN') ||
           feature.getProperty('NAME_4') ||
@@ -691,7 +716,6 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
                 ? "Low"
                 : undefined;
         } else {
-          // — Red Flag count for this barangay —————————————————————————————————————————————————————————————
           count = barangayRedFlagCounts?.[bName] ?? 0;
           if (count === 0) {
             const fuzzyKey = Object.keys(barangayRedFlagCounts || {}).find(
@@ -731,29 +755,28 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
     const dl = geoJsonDataRef.current;
     if (!dl) return;
     dl.setStyle(geoJsonFeatureStyle);
-  }, [geoJsonFeatureStyle]);
-
-  // Build a proper pin-shaped SVG marker element
+  }, [geoJsonFeatureStyle]);  // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
   const buildMarkerContent = useCallback((flag, selected) => {
-    console.log(`[marker] ${flag.name} | hasActiveInspection=${flag.hasActiveInspection} | verificationStatus=${flag.verificationStatus}`);
     const fc = getFlagColor(flag.color);
     const color = selected ? "#2563eb" : fc.marker;
-    const size = selected ? 36 : 30;
+    const w = selected ? 32 : 26;
+    const h = selected ? 42 : 34;
 
     const el = document.createElement("div");
     el.style.cssText = `
-      width: ${size}px;
-      height: ${size}px;
+      width: ${w}px;
+      height: ${h}px;
       cursor: pointer;
-      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
-      transition: transform 0.15s;
+      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+      transition: transform 0.15s ease;
       position: relative;
+      user-select: none;
     `;
 
     let innerHtml = `
-      <svg viewBox="0 0 24 32" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">
-        <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="${color}" />
-        <circle cx="12" cy="12" r="5" fill="white" opacity="0.9"/>
+      <svg viewBox="0 0 24 32" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="${color}" stroke="#ffffff" stroke-width="1.2" />
+        <circle cx="12" cy="11" r="4.5" fill="white" opacity="0.95"/>
       </svg>
     `;
 
@@ -775,24 +798,28 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
     return el;
   }, []);
 
-  // Recreate markers whenever flags or selection changes
-
+  // Recreate markers whenever map instance, flags, layers, or selection changes
   useEffect(() => {
-    if (!isLoaded || !internalMapRef.current) return;
+    const activeMap = mapInstance || internalMapRef.current;
+    if (!isLoaded || !activeMap) return;
 
-    // Clear old markers and cluster
-    markerRefs.current.forEach(m => m.map = null);
+    // Clear old markers
+    markerRefs.current.forEach(m => {
+      if (typeof m.setMap === "function") m.setMap(null);
+      else m.map = null;
+    });
     markerRefs.current.clear();
-    if (clusterRef.current) {
-      clusterRef.current.clearMarkers();
-      clusterRef.current = null;
-    }
 
     if (!layers.flags) return;
 
-    const visibleFlags = flags.filter(f => f.latitude != null && f.longitude != null);
-    const markers = [];
+    const visibleFlags = flags.filter(
+      f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
+    );
     const coordCounts = {};
+
+    const canUseAdvanced = Boolean(
+      window.google?.maps?.marker?.AdvancedMarkerElement
+    );
 
     visibleFlags.forEach(flag => {
       const isAdjusting = flag.id === adjustingFlagId;
@@ -800,144 +827,126 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
       let lng = Number(flag.longitude);
 
       if (isAdjusting && adjustingLatLng) {
-        // Snap to exactly where the user is dragging it
         lat = adjustingLatLng.lat;
         lng = adjustingLatLng.lng;
       } else if (!isAdjusting) {
-        // Group overlapping pins by rounding to ~11 meters (4 decimal places)
         const coordKey = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
         const countIndex = coordCounts[coordKey] || 0;
         coordCounts[coordKey] = countIndex + 1;
 
         if (countIndex > 0) {
-          // Apply Golden Spiral jitter so hidden pins fan out beautifully instead of perfectly overlapping
-          const angle = countIndex * 2.39996; // Golden angle
-          const radius = 0.00015 * Math.sqrt(countIndex); // Expand outward
+          const angle = countIndex * 2.39996;
+          const radius = 0.00015 * Math.sqrt(countIndex);
           lat += Math.cos(angle) * radius;
           lng += Math.sin(angle) * radius;
         }
       }
 
-      const marker = new window.google.maps.marker.AdvancedMarkerElement({
-        position: { lat, lng },
-        map: internalMapRef.current,
-        content: buildMarkerContent(flag, flag.id === selectedFlagId || isAdjusting),
-        gmpDraggable: isAdjusting
-      });
+      let marker = null;
+      const position = { lat, lng };
+      const isSelected = flag.id === selectedFlagId || isAdjusting;
 
-      if (isAdjusting) {
-        marker.addListener("dragend", (e) => {
-          onAdjustDragEnd({ lat: e.latLng.lat(), lng: e.latLng.lng() });
-        });
-      } else {
-        marker.addListener("gmp-click", () => onMarkerClick(flag.id));
-        markers.push(marker);
+      if (canUseAdvanced) {
+        try {
+          marker = new window.google.maps.marker.AdvancedMarkerElement({
+            position,
+            map: activeMap,
+            content: buildMarkerContent(flag, isSelected),
+            gmpDraggable: isAdjusting,
+            title: flag.name,
+            zIndex: isSelected ? 9999 : 100,
+          });
+
+          if (isAdjusting) {
+            marker.addListener("dragend", (e) => {
+              const newLat = typeof marker.position?.lat === 'function' ? marker.position.lat() : (marker.position?.lat ?? e.latLng?.lat());
+              const newLng = typeof marker.position?.lng === 'function' ? marker.position.lng() : (marker.position?.lng ?? e.latLng?.lng());
+              if (newLat != null && newLng != null) {
+                onAdjustDragEnd({ lat: Number(newLat), lng: Number(newLng) });
+              }
+            });
+          } else {
+            marker.addListener("gmp-click", () => onMarkerClick(flag.id));
+            marker.addListener("click", () => onMarkerClick(flag.id));
+          }
+        } catch (e) {
+          console.warn("[MapPage] AdvancedMarkerElement failed, falling back to standard Marker:", e);
+          marker = null;
+        }
       }
 
-      marker._revelaFlagColor = flag.color;
-      marker._revelaHasActiveInspection = flag.hasActiveInspection;
+      // Robust fallback to standard google.maps.Marker
+      if (!marker) {
+        const fc = getFlagColor(flag.color);
+        const color = isSelected ? "#2563eb" : fc.marker;
+        marker = new window.google.maps.Marker({
+          position,
+          map: activeMap,
+          draggable: isAdjusting,
+          title: flag.name,
+          zIndex: isSelected ? 9999 : 100,
+          icon: {
+            path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+            fillColor: color,
+            fillOpacity: 1,
+            strokeColor: "#ffffff",
+            strokeWeight: 1.5,
+            scale: isSelected ? 1.3 : 1.0,
+            anchor: new window.google.maps.Point(12, 32),
+          }
+        });
+
+        if (isAdjusting) {
+          marker.addListener("dragend", (e) => {
+            if (e.latLng) {
+              onAdjustDragEnd({ lat: e.latLng.lat(), lng: e.latLng.lng() });
+            }
+          });
+        } else {
+          marker.addListener("click", () => onMarkerClick(flag.id));
+        }
+      }
+
       markerRefs.current.set(flag.id, marker);
     });
 
-    // Cluster markers that are close together
-    clusterRef.current = new MarkerClusterer({
-      map: internalMapRef.current,
-      markers,
-      algorithm: new SuperClusterAlgorithm({
-        radius: 80,        // smaller = breaks apart sooner
-        maxZoom: 17,       // at zoom 17+, show individual pins
-        minPoints: 2,      // only cluster if 2+ pins overlap
-      }),
-      renderer: {
-        render: (cluster /* , stats, map */) => {
-          const { count, position, markers: clusterMarkers } = cluster;
-          const hasInspection = clusterMarkers.some(m => m._revelaHasActiveInspection);
-          const dominant = getDominantFlagColorFromMarkers(clusterMarkers);
-          const fc = getFlagColor(dominant);
-          const sev = flagSeverityRank(dominant);
-          // Always keep the cluster count legible over the severity overlay.
-          const countColor = "#ffffff";
-          const size = count > 100 ? 56 : count > 50 ? 48 : count > 10 ? 42 : 36;
-          const el = document.createElement("div");
-          el.style.cssText = `
-            width: ${size}px;
-            height: ${size}px;
-            background: ${fc.marker};
-            border: 3px solid ${fc.text};
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: ${countColor};
-            font-weight: 800;
-            font-size: ${count > 99 ? 11 : 13}px;
-            font-family: sans-serif;
-            cursor: pointer;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-            text-shadow: ${dominant === "Yellow" ? "none" : "0 1px 2px rgba(0,0,0,0.35)"};
-            position: relative;
-          `;
-
-          let html = `<span>${count}</span>`;
-          if (hasInspection) {
-            html += `
-              <div style="position: absolute; top: -6px; right: -6px; background: white; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 10;">
-                <div style="background: #3b82f6; width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
-                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
-                     <circle cx="11" cy="11" r="8"></circle>
-                     <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                   </svg>
-                </div>
-              </div>
-            `;
-          }
-
-          el.innerHTML = html;
-          el.title = `${count} flags (${fc.label})`;
-
-          return new window.google.maps.marker.AdvancedMarkerElement({
-            position,
-            content: el,
-            zIndex: 800 + sev * 50 + Math.min(count, 99),
-          });
-        },
-      },
-    });
-
     return () => {
-      markerRefs.current.forEach(m => m.map = null);
+      markerRefs.current.forEach(m => {
+        if (typeof m.setMap === "function") m.setMap(null);
+        else m.map = null;
+      });
       markerRefs.current.clear();
-      if (clusterRef.current) {
-        clusterRef.current.clearMarkers();
-        clusterRef.current = null;
-      }
     };
-  }, [isLoaded, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd]);
+  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd]);
 
   // Update cursor dynamically if picking state changes
   useEffect(() => {
-    if (internalMapRef.current) {
-      internalMapRef.current.setOptions({ draggableCursor: isPickingLocation ? 'crosshair' : null });
+    const activeMap = mapInstance || internalMapRef.current;
+    if (activeMap) {
+      activeMap.setOptions({ draggableCursor: isPickingLocation ? 'crosshair' : null });
     }
-  }, [isPickingLocation]);
+  }, [isPickingLocation, mapInstance]);
 
   // Zoom controls that actually work
   const handleZoomIn = () => {
-    if (internalMapRef.current) {
-      internalMapRef.current.setZoom(internalMapRef.current.getZoom() + 1);
+    const activeMap = mapInstance || internalMapRef.current;
+    if (activeMap) {
+      activeMap.setZoom(activeMap.getZoom() + 1);
     }
   };
 
   const handleZoomOut = () => {
-    if (internalMapRef.current) {
-      internalMapRef.current.setZoom(internalMapRef.current.getZoom() - 1);
+    const activeMap = mapInstance || internalMapRef.current;
+    if (activeMap) {
+      activeMap.setZoom(activeMap.getZoom() - 1);
     }
   };
 
   const handleCenter = () => {
-    if (internalMapRef.current) {
-      internalMapRef.current.panTo(DEFAULT_MAP_CENTER);
-      internalMapRef.current.setZoom(13);
+    const activeMap = mapInstance || internalMapRef.current;
+    if (activeMap) {
+      activeMap.panTo(DEFAULT_MAP_CENTER);
+      activeMap.setZoom(13);
     }
   };
 
@@ -976,7 +985,6 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
           mapTypeId: satellite ? "satellite" : "roadmap",
           mapId: "34390388b3abb63aa84876a7",
           colorScheme: isDark && !satellite ? "DARK" : "LIGHT",
-          styles: (isDark && !satellite) ? darkMapStyle : undefined,
         }}
         onLoad={handleMapLoad}
         onUnmount={handleMapUnmount}
@@ -999,6 +1007,73 @@ function MapCanvas({ isDark, isLoaded, loadError, center, zoom, mapRef, layers, 
           />
         )}
       </GoogleMap>
+
+      {/* Notice while flags are loading or plotting */}
+      {loadingFlags && (
+        <div style={{
+          position: "absolute",
+          top: 16,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 40,
+          background: "rgba(15, 23, 42, 0.88)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          color: "#f8fafc",
+          borderRadius: 30,
+          padding: "9px 20px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          boxShadow: "0 8px 30px rgba(0, 0, 0, 0.4)",
+          border: "1px solid rgba(255, 255, 255, 0.15)",
+          fontSize: 13,
+          fontWeight: 600,
+          pointerEvents: "none",
+          animation: "fadeIn 0.25s ease-out"
+        }}>
+          <span style={{ display: "inline-flex", animation: "spin 1s linear infinite" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+          </span>
+          <span>Plotting establishments… The pins are on their way!</span>
+        </div>
+      )}
+
+      {/* Helpful banner when 0 flags exist */}
+      {!loadingFlags && !runDetectionLoading && flags.length === 0 && (
+        <div style={{
+          position: "absolute",
+          top: 16,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 40,
+          background: "rgba(15, 23, 42, 0.9)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          color: "#e2e8f0",
+          borderRadius: 14,
+          padding: "10px 18px",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          fontSize: 12,
+          maxWidth: "min(90%, 460px)",
+        }}>
+          <span style={{ color: "#f59e0b", display: "flex", flexShrink: 0 }}>
+            <Icon.AlertTriangle />
+          </span>
+          <div style={{ lineHeight: 1.4 }}>
+            <span style={{ fontWeight: 700, color: "#fff", display: "block" }}>No flagged establishments yet</span>
+            <span style={{ color: "#94a3b8" }}>
+              Run <strong>Geospatial Scan</strong> or click <strong>+ Add Flag</strong> to plot suspect establishments on the map.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Zoom / Center controls */}
       <div style={styles.zoomControls}>
@@ -1520,12 +1595,13 @@ export default function MapPage() {
     setFlagsError("");
     try {
       const result = await getFlagsRequest({ limit: 1000 }, token);
-      setFlags((result.data ?? []).map(normalizeFlag));
+      const rawList = Array.isArray(result) ? result : (result?.data ?? result?.flags ?? []);
+      setFlags(rawList.map(normalizeFlag));
 
       // Fetch analytics for border-to-border risk heatmap (current state of the barangay)
       try {
         const ops = await getOpsRankingsRequest(token);
-        const rankings = ops?.data || [];
+        const rankings = Array.isArray(ops) ? ops : (ops?.data ?? []);
         setOpsRankings(rankings);
 
         const riskMap = {};
@@ -2094,6 +2170,7 @@ export default function MapPage() {
               onAdjustDragEnd={setAdjustingLatLng}
               cancellingDetection={cancellingDetection}
               handleCancelDetection={handleCancelDetection}
+              loadingFlags={loadingFlags}
             />
             {/* Discrete risk legend â€” matches HEATMAP_RISK_STYLE on the Data layer */}
             {layers.diagnostics && (

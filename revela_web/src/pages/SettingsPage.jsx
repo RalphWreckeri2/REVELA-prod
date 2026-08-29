@@ -258,7 +258,6 @@ function MapPickerModal({ isLoaded, loadError, isDark, center, marker, onPick, o
                 clickableIcons: false, // POI clicks must not swallow map picks
                 mapId: REVELA_MAP_ID,
                 colorScheme: isDark ? "DARK" : "LIGHT",
-                styles: isDark ? darkMapStyle : undefined,
               }}
               onClick={(e) => {
                 if (!e.latLng) return; // guard: some click events carry no coordinates
