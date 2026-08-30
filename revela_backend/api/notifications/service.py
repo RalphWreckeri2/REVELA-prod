@@ -323,7 +323,7 @@ def notify_password_reset_request(inspector_name: str) -> None:
 
         cur.execute(
             """
-            SELECT userID FROM USERS
+            SELECT userID FROM users
             WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
             """
         )
@@ -373,7 +373,7 @@ def notify_inspection_submitted(
         cur = mysql.connection.cursor()
 
         cur.execute(
-            "SELECT fullName FROM USERS WHERE userID = %s",
+            "SELECT fullName FROM users WHERE userID = %s",
             (inspector_user_id,),
         )
         insp_row = cur.fetchone() or {}
@@ -388,7 +388,7 @@ def notify_inspection_submitted(
 
         cur.execute(
             """
-            SELECT userID, email, fullName FROM USERS
+            SELECT userID, email, fullName FROM users
             WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
             """
         )
@@ -482,7 +482,7 @@ def notify_yellow_flag_reported(
 
         # Inspector name
         cur.execute(
-            "SELECT fullName FROM USERS WHERE userID = %s",
+            "SELECT fullName FROM users WHERE userID = %s",
             (reporter_user_id,),
         )
         insp_row = cur.fetchone() or {}
@@ -499,7 +499,7 @@ def notify_yellow_flag_reported(
         # All admins
         cur.execute(
             """
-            SELECT userID FROM USERS
+            SELECT userID FROM users
             WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
             """
         )

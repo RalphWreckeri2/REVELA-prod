@@ -54,7 +54,7 @@ with app.app_context():
     # 2. Check Database for Inspectors and Tokens
     print("\n[STEP 2] Checking Inspector FCM tokens in database...")
     cur = mysql.connection.cursor()
-    cur.execute("SELECT userID, fullName, email, userRole, fcm_token FROM USERS WHERE userRole = 'Inspector' OR userRole LIKE '%Inspector%'")
+    cur.execute("SELECT userID, fullName, email, userRole, fcm_token FROM users WHERE userRole = 'Inspector' OR userRole LIKE '%Inspector%'")
     inspectors = cur.fetchall() or []
     cur.close()
 
@@ -74,9 +74,9 @@ with app.app_context():
         print(f"\n[STEP 3] Sending test push notification to target: {target}...")
         cur = mysql.connection.cursor()
         if target.isdigit():
-            cur.execute("SELECT userID, fullName, email, fcm_token FROM USERS WHERE userID = %s", (int(target),))
+            cur.execute("SELECT userID, fullName, email, fcm_token FROM users WHERE userID = %s", (int(target),))
         else:
-            cur.execute("SELECT userID, fullName, email, fcm_token FROM USERS WHERE email = %s", (target,))
+            cur.execute("SELECT userID, fullName, email, fcm_token FROM users WHERE email = %s", (target,))
         user = cur.fetchone()
         cur.close()
 
