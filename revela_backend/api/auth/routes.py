@@ -2,7 +2,15 @@ import traceback
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity, get_jwt, create_access_token
-from api.auth.service import login_user, request_otp, reset_password, update_user_password, generate_2fa_setup, verify_totp_code
+from api.auth.service import (
+    login_user,
+    request_otp,
+    reset_password,
+    update_user_password,
+    generate_2fa_setup,
+    verify_totp_code,
+    send_otp_via_philsms,
+)
 from api.middleware.decorators import jwt_required
 from api.models.user import find_user_by_id, find_user_by_email, enable_user_2fa, update_user_2fa_secret, get_user_2fa_secret, set_reset_requested
 from api.notifications.service import get_email_inspection_alerts, set_email_inspection_alerts, notify_password_reset_request
@@ -165,12 +173,21 @@ def patch_me_preferences():
 # ── POST /api/auth/request-otp ────────────────────────────────────────────────
 @auth_bp.route("/request-otp", methods=["POST"])
 def request_otp_route():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
+    identifier = (
+        data.get("identifier")
+        or data.get("phone_number")
+        or data.get("email")
+        or ""
+    )
 
-    if not data or not data.get("identifier"):
+    if isinstance(identifier, str):
+        identifier = identifier.strip()
+
+    if not identifier:
         return jsonify({"error": "Email or phone number is required"}), 400
 
-    request_otp(data["identifier"])
+    request_otp(identifier)
 
     # Always return success — never reveal if user exists
     return jsonify({"message": "If an account exists, an OTP has been sent"}), 200

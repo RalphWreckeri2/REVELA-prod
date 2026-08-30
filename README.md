@@ -64,8 +64,8 @@ This repository contains the production code for the REVELA system. Based on mod
      - `GOOGLE_MAPS_API_KEY` = `[Your Google Maps API Key]`
      - `RESEND_API_KEY` = `[Your Resend API Key]`
      - `RESEND_FROM` = `alerts@revelasys.site`
-     - `MOCEAN_API_KEY` = `[Your Mocean API Bearer Key]`
-     - `MOCEAN_FROM` = `REVELA`
+     - `PHILSMS_API_TOKEN` = `[Your PhilSMS API Token]`
+     - `PHILSMS_SENDER_ID` = `PhilSMS` (Default sender ID, or your custom approved sender ID)
      - **Database Credentials** (Link these directly from your Railway MySQL service):
        - `DB_HOST` = `${{MySQL.MYSQLHOST}}`
        - `DB_PORT` = `${{MySQL.MYSQLPORT}}`
@@ -120,13 +120,12 @@ Resend enforces a domain verification check in production. Using `onboarding@res
 - Add the DNS records (DKIM and SPF TXT/MX records) provided by Resend to your Namecheap **Advanced DNS** table.
 - Once verified (status changes to `Verified`), you can send compliance alerts to any email address using `RESEND_FROM=alerts@revelasys.site`.
 
-### 2. Mocean SMS Gateway (2FA / Passwords)
-Mocean uses IP whitelisting to restrict API requests. Because Railway servers have dynamic IPs that rotate, you must allow all IP addresses to use your token.
-- Go to the **Mocean API Dashboard** -> **API Account** -> **API Setting**.
-- In **Account Connect Allow IP**, set:
-  - **IP Start**: `*.*.*.*`
-  - **IP End**: `*.*.*.*`
-- Save settings. This allows Railway backend nodes to invoke the SMS gateway successfully.
+### 2. PhilSMS Gateway (2FA / Passwords)
+PhilSMS provides SMS delivery across Philippine mobile carriers (Globe, Smart, DITO) without requiring static IP whitelisting.
+- Endpoint: `https://dashboard.philsms.com/api/v3/sms/send`
+- Environment Variables required on Railway:
+  - `PHILSMS_API_TOKEN`: Your API token generated from the PhilSMS Dashboard.
+  - `PHILSMS_SENDER_ID`: `PhilSMS` (Default works for Globe; or your registered Sender ID).
 
 ---
 

@@ -65,6 +65,14 @@ def request_otp(identifier):
     else:
         from api.models.user import find_user_by_phone
         user = find_user_by_phone(identifier)
+        if not user:
+            try:
+                from api.users.routes import _normalize_phone
+                norm = _normalize_phone(identifier)
+                if norm and norm != identifier:
+                    user = find_user_by_phone(norm)
+            except Exception:
+                pass
 
     if not user:
         # Don't reveal if user exists or not — always return success
@@ -85,83 +93,109 @@ def request_otp(identifier):
     if "@" in identifier:
         send_otp_email(identifier, otp_code)
     else:
-        send_otp_sms(identifier, otp_code)
+        send_otp_via_philsms(identifier, otp_code)
 
     return True
 
 
-def send_otp_sms(phone_number, otp_code):
-    """Send OTP via Mocean SMS gateway."""
+def send_otp_via_philsms(phone_number, otp_code):
+    """Send OTP via PhilSMS API gateway."""
     try:
-        # Format phone number to international format (+63...)
+        # Format phone number to PhilSMS format (639XXXXXXXXX)
         formatted_phone = format_phone_number(phone_number)
 
         if not formatted_phone:
             print(f"SMS error: Invalid phone number format: {phone_number}")
             return False
 
-        response = requests.post(
-            "https://rest.moceanapi.com/rest/2/sms",
-            headers={
-                "Authorization": f"Bearer {os.getenv('MOCEAN_API_KEY')}",
-            },
-            data={
-                "mocean-from": os.getenv("MOCEAN_FROM", "REVELA"),
-                "mocean-to": formatted_phone,
-                "mocean-text": f"Your REVELA password reset code is: {otp_code}. Valid for 15 minutes. Do not share this code.",
-            },
-            timeout=10
-        )
+        token = os.getenv("PHILSMS_API_TOKEN") or os.getenv("PHILSMS_TOKEN") or os.getenv("PHILSMS_API_KEY")
+        if not token:
+            print("SMS error: PHILSMS_API_TOKEN is not configured in environment variables.")
+            return False
+
+        url = "https://dashboard.philsms.com/api/v3/sms/send"
+        sender_id = os.getenv("PHILSMS_SENDER_ID", "PhilSMS")
+        message_content = f"Your REVELA OTP is {otp_code}. Do not share this code with anyone. It expires in 15 minutes."
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+
+        payload = {
+            "recipient": formatted_phone,
+            "sender_id": sender_id,
+            "type": "plain",
+            "message": message_content
+        }
+
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
 
         # Check HTTP status
-        if response.status_code != 200:
-            print(f"SMS error: HTTP {response.status_code} - {response.text}")
+        if response.status_code not in (200, 201):
+            print(f"PhilSMS error: HTTP {response.status_code} - {response.text}")
             return False
 
         # Parse JSON response and check API status
         try:
             api_response = response.json()
-            if api_response.get("status") == 0:
-                print(f"SMS sent successfully to {formatted_phone}")
+            status_val = api_response.get("status")
+            if status_val in ("success", "Success", 1, True) or "data" in api_response:
+                print(f"SMS sent successfully via PhilSMS to {formatted_phone}")
                 return True
-            else:
-                print(f"SMS API error: {api_response}")
+            elif status_val in ("error", "failed", 0, False):
+                print(f"PhilSMS API error: {api_response}")
                 return False
-        except Exception as parse_err:
-            print(f"SMS error parsing response: {parse_err}")
-            return False
+            else:
+                print(f"PhilSMS response: {api_response}")
+                return True
+        except Exception:
+            return response.ok
 
+    except requests.exceptions.RequestException as e:
+        print(f"OTP Dispatch Failed: {e}")
+        return False
     except Exception as e:
         print(f"SMS error: {type(e).__name__} - {e}")
         return False
 
 
+# Backward compatibility alias
+send_otp_sms = send_otp_via_philsms
+
+
 def format_phone_number(phone):
     """
-    Convert phone number to international format (+63...)
-    Handles: 09123456789 → +639123456789
-             +639123456789 → +639123456789
-             639123456789 → +639123456789
+    Convert phone number to PhilSMS format (639XXXXXXXXX).
+    Handles:
+        09123456789   → 639123456789
+        +639123456789 → 639123456789
+        639123456789  → 639123456789
+        9123456789    → 639123456789
     """
     if not phone:
         return None
 
-    # Remove all non-digit characters except leading +
-    clean_phone = phone.strip()
-    if clean_phone.startswith("+"):
-        clean_phone = clean_phone[1:]
+    # Remove all non-digit characters
+    clean_phone = "".join(filter(str.isdigit, str(phone).strip()))
 
-    clean_phone = "".join(filter(str.isdigit, clean_phone))
-
-    # Handle Philippine numbers
-    if clean_phone.startswith("0"):
-        # Convert 09123456789 to 639123456789
+    # Handle Philippine number formats
+    if clean_phone.startswith("09") and len(clean_phone) == 11:
         clean_phone = "63" + clean_phone[1:]
-    elif not clean_phone.startswith("63"):
-        # Assume it's a partial number and prepend 63
+    elif clean_phone.startswith("9") and len(clean_phone) == 10:
         clean_phone = "63" + clean_phone
+    elif clean_phone.startswith("6309") and len(clean_phone) == 13:
+        clean_phone = "63" + clean_phone[3:]
+    elif clean_phone.startswith("639") and len(clean_phone) == 12:
+        pass
+    else:
+        if clean_phone.startswith("0"):
+            clean_phone = "63" + clean_phone[1:]
+        elif not clean_phone.startswith("63"):
+            clean_phone = "63" + clean_phone
 
-    return f"+{clean_phone}" if len(clean_phone) > 10 else None
+    return clean_phone if len(clean_phone) == 12 and clean_phone.startswith("639") else None
 
 
 def send_otp_email(email, otp_code):
@@ -199,6 +233,14 @@ def reset_password(identifier, otp_code, new_password):
     else:
         from api.models.user import find_user_by_phone
         user = find_user_by_phone(identifier)
+        if not user:
+            try:
+                from api.users.routes import _normalize_phone
+                norm = _normalize_phone(identifier)
+                if norm and norm != identifier:
+                    user = find_user_by_phone(norm)
+            except Exception:
+                pass
 
     if not user:
         return False, "Invalid request"
