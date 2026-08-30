@@ -30,6 +30,7 @@ import {
   deleteFlagRequest,
   updateFlagColorRequest,
   cancelRunDetection,
+  getDetectionQuotaRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -1706,6 +1707,7 @@ export default function MapPage() {
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
+  const [detectionQuota, setDetectionQuota] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
@@ -1806,7 +1808,22 @@ export default function MapPage() {
     return counts;
   }, [flags]);
 
-  useEffect(() => { fetchFlags(false); }, [fetchFlags]);
+  const fetchDetectionQuota = useCallback(async () => {
+    if (!token || !isAdmin) return;
+    try {
+      const data = await getDetectionQuotaRequest(token);
+      if (data) {
+        setDetectionQuota(data);
+      }
+    } catch (err) {
+      console.error("Failed to load detection quota", err);
+    }
+  }, [token, isAdmin]);
+
+  useEffect(() => {
+    fetchFlags(false);
+    fetchDetectionQuota();
+  }, [fetchFlags, fetchDetectionQuota]);
 
   useEffect(() => {
     if (!token || !isAdmin) return;
@@ -1848,6 +1865,7 @@ export default function MapPage() {
           timerIntervalRef.current = null;
         }
         fetchFlags(true);
+        fetchDetectionQuota();
       }
     };
     window.addEventListener("revela:detection-progress", handleProgress);
@@ -1857,7 +1875,7 @@ export default function MapPage() {
         clearInterval(timerIntervalRef.current);
       }
     };
-  }, [fetchFlags]);
+  }, [fetchFlags, fetchDetectionQuota]);
 
   // Real-time flag and inspection event listeners + 20s background polling
   useEffect(() => {
@@ -1956,6 +1974,40 @@ export default function MapPage() {
   };
 
   const handleRunDetection = async () => {
+    if (detectionQuota && detectionQuota.remaining_this_month <= 0) {
+      await Swal.fire({
+        title: 'Monthly Scan Limit Reached',
+        html: `<p style="font-size:14px; margin-bottom:8px;">Detection scans are limited to <strong>2 times per month</strong>.</p>
+               <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
+                 You have used <strong>${detectionQuota.used_this_month || 2}/2</strong> scans this month.<br/>
+                 Next scan will be available on <strong>${detectionQuota.resets_on || 'the 1st of next month'}</strong>.
+               </p>`,
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
+    const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
+    const confirmRes = await Swal.fire({
+      title: 'Run Detection Scan?',
+      html: `<p style="margin-bottom:12px; font-size:14px;">This will scan Google Places within Mataasnakahoy and cross-reference against the official business registry.</p>
+             <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); border-radius:8px; padding:10px 14px; font-size:13px; color:#6366f1; text-align:left;">
+               📊 <strong>Monthly Quota:</strong> ${remaining} of 2 scans remaining for this month.<br/>
+               <span style="font-size:12px; opacity:0.85;">(Resets on ${detectionQuota?.resets_on || 'the 1st of next month'})</span>
+             </div>`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#6366f1',
+      cancelButtonColor: 'var(--color-muted, #64748b)',
+      confirmButtonText: 'Start Detection Scan'
+    });
+
+    if (!confirmRes.isConfirmed) {
+      return;
+    }
+
     setRunDetectionLoading(true);
     setDetectionProgress({
       stage: "initializing",
@@ -1976,10 +2028,11 @@ export default function MapPage() {
     try {
       const result = await runDetectionRequest(token);
       await fetchFlags();
+      await fetchDetectionQuota();
       setClusters([]);
       // Show result summary briefly
       if (result?.new_flags !== undefined) {
-        setActionError(`Detection complete â€” ${result.new_flags} new Red Flag${result.new_flags !== 1 ? "s" : ""} found.`);
+        setActionError(`Detection complete — ${result.new_flags} new Red Flag${result.new_flags !== 1 ? "s" : ""} found.`);
         setTimeout(() => setActionError(""), 5000);
       }
     } catch (err) {
@@ -2231,9 +2284,43 @@ export default function MapPage() {
               <button className="ghost-btn" type="button" onClick={() => setShowYellowModal(true)}>
                 + Add Flag
               </button>
-              <button className="primary-btn" type="button" onClick={handleRunDetection} disabled={runDetectionLoading}>
-                {runDetectionLoading ? "Running…" : "Run Detection"}
-              </button>
+              <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <button
+                  className="primary-btn"
+                  type="button"
+                  onClick={handleRunDetection}
+                  disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0)}
+                  title={
+                    detectionQuota && detectionQuota.remaining_this_month === 0
+                      ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
+                      : "Run geospatial detection scan (Max 2x/month)"
+                  }
+                  style={{
+                    opacity: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? 0.6 : 1,
+                    cursor: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {runDetectionLoading ? "Running…" : "Run Detection"}
+                </button>
+                {detectionQuota && (
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      padding: "3px 8px",
+                      borderRadius: "12px",
+                      background: detectionQuota.remaining_this_month === 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(99, 102, 241, 0.15)",
+                      color: detectionQuota.remaining_this_month === 0 ? "#ef4444" : "#818cf8",
+                      border: `1px solid ${detectionQuota.remaining_this_month === 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(99, 102, 241, 0.3)"}`,
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                      userSelect: "none"
+                    }}
+                    title={`Monthly scan limit: ${detectionQuota.used_this_month}/${detectionQuota.monthly_limit} used this month. Resets on ${detectionQuota.resets_on}`}
+                  >
+                    {detectionQuota.remaining_this_month}/2 scans left
+                  </span>
+                )}
+              </div>
             </>
           )}
         </div>

@@ -116,6 +116,7 @@ export default function LoginPage() {
   const [forgotStep, setForgotStep] = useState(1); // 1 = email, 2 = otp, 3 = new password
   const [identifier, setIdentifier] = useState("");
   const [otpCode, setOtpCode] = useState("");
+  const [otpNotice, setOtpNotice] = useState(null);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -245,9 +246,15 @@ export default function LoginPage() {
       return;
     }
     setForgotError(null);
+    setOtpNotice(null);
     setForgotLoading(true);
     try {
-      await requestOtpRequest(identifier);
+      const res = await requestOtpRequest(identifier);
+      if (res?.notice) {
+        setOtpNotice(res.notice);
+      } else if (res?.isFinalAttempt) {
+        setOtpNotice("Notice: This is your 2nd and final OTP attempt for today.");
+      }
       setForgotStep(2);
     } catch (err) {
       setForgotError(err.message);
@@ -289,6 +296,7 @@ export default function LoginPage() {
         setForgotStep(1);
         setIdentifier("");
         setOtpCode("");
+        setOtpNotice(null);
         setNewPassword("");
         setConfirmPassword("");
         setForgotSuccess(null);
@@ -305,6 +313,7 @@ export default function LoginPage() {
     setForgotStep(1);
     setIdentifier("");
     setOtpCode("");
+    setOtpNotice(null);
     setNewPassword("");
     setConfirmPassword("");
     setForgotError(null);
@@ -492,6 +501,25 @@ export default function LoginPage() {
                   {forgotStep === 2 && (
                     <>
                       <p className="otp-desc">Enter the 5-digit OTP sent to <strong>{identifier}</strong>.</p>
+                      {otpNotice && (
+                        <div style={{
+                          margin: "8px 0 12px 0",
+                          padding: "8px 12px",
+                          borderRadius: "6px",
+                          background: "rgba(245, 158, 11, 0.12)",
+                          border: "1px solid rgba(245, 158, 11, 0.35)",
+                          color: "#f59e0b",
+                          fontSize: "12px",
+                          lineHeight: "1.4",
+                          textAlign: "left",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "8px"
+                        }}>
+                          <span style={{ fontSize: "14px" }}>⚠️</span>
+                          <span>{otpNotice}</span>
+                        </div>
+                      )}
                       <div className="otp-action-row">
                         <input
                           type="text"

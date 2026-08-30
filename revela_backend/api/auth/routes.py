@@ -187,13 +187,24 @@ def request_otp_route():
     if not identifier:
         return jsonify({"error": "Email or phone number is required"}), 400
 
-    success, error = request_otp(identifier)
+    success, error, meta = request_otp(identifier)
 
     if not success:
-        status_code = 404 if "No account found" in (error or "") else 400
+        if "Daily OTP request limit reached" in (error or ""):
+            status_code = 429
+        elif "No account found" in (error or ""):
+            status_code = 404
+        else:
+            status_code = 400
         return jsonify({"error": error or "Failed to send OTP"}), status_code
 
-    return jsonify({"message": "OTP has been sent successfully"}), 200
+    response_payload = {
+        "message": "OTP has been sent successfully",
+        "remainingAttempts": meta.get("remainingAttempts", 1) if meta else 1,
+        "isFinalAttempt": meta.get("isFinalAttempt", False) if meta else False,
+        "notice": meta.get("notice") if meta else None,
+    }
+    return jsonify(response_payload), 200
 
 # ── POST /api/auth/request-manual-reset ───────────────────────────────────────
 @auth_bp.route("/request-manual-reset", methods=["POST"])

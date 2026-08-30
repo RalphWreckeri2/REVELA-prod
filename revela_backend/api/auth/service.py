@@ -3,7 +3,14 @@ import bcrypt
 import os
 import requests
 from api.models.user import find_user_by_email, find_user_by_id, update_last_login, update_password
-from api.models.otp import create_otp, get_valid_otp, delete_otp, invalidate_user_otps
+from api.models.otp import (
+    create_otp,
+    get_valid_otp,
+    delete_otp,
+    mark_otp_used,
+    invalidate_user_otps,
+    get_daily_otp_count,
+)
 from flask_jwt_extended import create_access_token
 import pyotp
 
@@ -56,9 +63,11 @@ def request_otp(identifier):
     """
     identifier can be email or phone number.
     1. Find user
-    2. Generate 5-digit OTP
-    3. Store in DB
-    4. Send via SMS or Email
+    2. Enforce max 2 OTP requests per day limit
+    3. Invalidate existing OTPs
+    4. Generate 5-digit OTP
+    5. Store in DB
+    6. Send via SMS or Email with notice if 2nd attempt
     """
     if "@" in identifier:
         user = find_user_by_email(identifier)
@@ -75,11 +84,18 @@ def request_otp(identifier):
                 pass
 
     if not user:
-        return False, "No account found with this email or phone number."
+        return False, "No account found with this email or phone number.", None
 
     # Only allow Admin / SUPER_ADMIN on this portal
     if user.get("userRole") not in ("Admin", "SUPER_ADMIN"):
-        return False, "This account is not authorized for password reset on this portal."
+        return False, "This account is not authorized for password reset on this portal.", None
+
+    # Rate limiting: Max 2 OTP attempts per day
+    daily_count = get_daily_otp_count(user["userID"])
+    if daily_count >= 2:
+        return False, "Daily OTP request limit reached (2/2 attempts used). Please try again tomorrow or contact your administrator.", None
+
+    is_final_attempt = (daily_count == 1)
 
     # Invalidate any existing OTPs for this user
     invalidate_user_otps(user["userID"])
@@ -90,17 +106,24 @@ def request_otp(identifier):
 
     # Decide channel based on identifier format
     if "@" in identifier:
-        sent = send_otp_email(identifier, otp_code)
+        sent = send_otp_email(identifier, otp_code, is_final_attempt=is_final_attempt)
     else:
-        sent = send_otp_via_philsms(identifier, otp_code)
+        sent = send_otp_via_philsms(identifier, otp_code, is_final_attempt=is_final_attempt)
 
     if not sent:
-        return False, "Failed to send OTP. Please verify your contact information or try again later."
+        return False, "Failed to send OTP. Please verify your contact information or try again later.", None
 
-    return True, None
+    meta = {
+        "dailyCount": daily_count + 1,
+        "isFinalAttempt": is_final_attempt,
+        "remainingAttempts": 0 if is_final_attempt else 1,
+        "notice": "Notice: This is your 2nd and final OTP attempt for today." if is_final_attempt else None
+    }
+
+    return True, None, meta
 
 
-def send_otp_via_philsms(phone_number, otp_code):
+def send_otp_via_philsms(phone_number, otp_code, is_final_attempt=False):
     """Send OTP via PhilSMS API gateway."""
     try:
         # Format phone number to PhilSMS format (639XXXXXXXXX)
@@ -117,7 +140,11 @@ def send_otp_via_philsms(phone_number, otp_code):
 
         url = "https://dashboard.philsms.com/api/v3/sms/send"
         sender_id = os.getenv("PHILSMS_SENDER_ID", "PhilSMS")
-        message_content = f"Your REVELA OTP is {otp_code}. Do not share this code with anyone. It expires in 15 minutes."
+        
+        if is_final_attempt:
+            message_content = f"Your REVELA OTP is {otp_code}. Notice: This is your 2nd and final OTP attempt for today. Do not share this code."
+        else:
+            message_content = f"Your REVELA OTP is {otp_code}. Valid for 15 minutes. Do not share this code."
 
         headers = {
             "Authorization": f"Bearer {token}",
@@ -200,9 +227,16 @@ def format_phone_number(phone):
     return clean_phone if len(clean_phone) == 12 and clean_phone.startswith("639") else None
 
 
-def send_otp_email(email, otp_code):
+def send_otp_email(email, otp_code, is_final_attempt=False):
     """Send OTP via Resend email API."""
     try:
+        if is_final_attempt:
+            subject = "REVELA Password Reset OTP (Final Daily Attempt)"
+            text = f"Your REVELA password reset code is: {otp_code}. Valid for 15 minutes. Note: This is your 2nd and final OTP attempt for today. Do not share this code."
+        else:
+            subject = "REVELA Password Reset OTP"
+            text = f"Your REVELA password reset code is: {otp_code}. Valid for 15 minutes. Do not share this code."
+
         response = requests.post(
             "https://api.resend.com/emails",
             headers={
@@ -212,8 +246,8 @@ def send_otp_email(email, otp_code):
             json={
                 "from": os.getenv("RESEND_FROM"),
                 "to": [email],
-                "subject": "REVELA Password Reset OTP",
-                "text": f"Your REVELA password reset code is: {otp_code}. Valid for 15 minutes. Do not share this code.",
+                "subject": subject,
+                "text": text,
             }
         )
         return response.status_code == 200
@@ -259,7 +293,7 @@ def reset_password(identifier, otp_code, new_password):
     hashed = bcrypt.hashpw(new_password.encode(
         "utf-8"), bcrypt.gensalt()).decode("utf-8")
     update_password(user["userID"], hashed)
-    delete_otp(otp_record["uprID"])
+    mark_otp_used(otp_record["uprID"])
 
     return True, None
 

@@ -13,6 +13,15 @@ from api.middleware.decorators import jwt_required, admin_required
 flags_bp = Blueprint("flags", __name__)
 
 from api.utils.cancellation import set_cancel 
+from api.models.detection_runs import get_detection_quota_info
+
+# ── GET /api/flags/detection-quota ────────────────────────────────────────────
+@flags_bp.route("/detection-quota", methods=["GET"])
+@jwt_required()
+def get_detection_quota_route():
+    """Get detection scan quota and status for the current month."""
+    quota = get_detection_quota_info()
+    return jsonify(quota), 200
 
 # ── POST /api/flags/cancel-detection ──────────────────────────────────────────
 @flags_bp.route("/cancel-detection", methods=["POST"])
@@ -27,10 +36,18 @@ def cancel_detection_route():
 @admin_required()
 def run_detection_route():
     """Trigger full Places API fetch + cross-reference + Red Flag insertion."""
-    result, error = run_detection()
+    user_id = None
+    try:
+        user_id = int(get_jwt_identity())
+    except Exception:
+        pass
+
+    result, error = run_detection(user_id=user_id)
     if error:
         if error == "Detection cancelled by user.":
             return jsonify({"message": error}), 200
+        if "Monthly detection limit reached" in error:
+            return jsonify({"error": error}), 429
         return jsonify({"error": error}), 500
     return jsonify(result), 200
 

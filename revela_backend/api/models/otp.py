@@ -59,3 +59,20 @@ def invalidate_user_otps(user_id):
     """, (user_id,))
     mysql.connection.commit()
     cur.close()
+
+
+def get_daily_otp_count(user_id):
+    """Count how many OTP requests this user made today."""
+    cur = mysql.connection.cursor()
+    cur.execute("""
+        SELECT COUNT(*) as cnt FROM user_password_resets
+        WHERE userID = %s
+          AND DATE(createdAt) = CURDATE()
+    """, (user_id,))
+    row = cur.fetchone()
+    cur.close()
+    if isinstance(row, dict):
+        return int(row.get("cnt", 0))
+    elif isinstance(row, (list, tuple)):
+        return int(row[0])
+    return 0

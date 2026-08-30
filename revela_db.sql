@@ -40,6 +40,27 @@ INSERT INTO `barangays` VALUES (1,'Barangay I'),(2,'Barangay II'),(3,'Barangay I
 UNLOCK TABLES;
 
 --
+-- Table structure for table `detection_runs`
+--
+
+DROP TABLE IF EXISTS `detection_runs`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `detection_runs` (
+  `runID` int NOT NULL AUTO_INCREMENT,
+  `triggeredByUserID` int DEFAULT NULL,
+  `startedAt` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `completedAt` datetime DEFAULT NULL,
+  `status` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'running',
+  `newFlags` int DEFAULT '0',
+  `totalChecked` int DEFAULT '0',
+  PRIMARY KEY (`runID`),
+  KEY `fk_detection_user` (`triggeredByUserID`),
+  CONSTRAINT `fk_detection_user` FOREIGN KEY (`triggeredByUserID`) REFERENCES `users` (`userID`) ON DELETE SET NULL ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `geospatial_logs`
 --
 

@@ -327,17 +327,32 @@ def _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address=None):
     return flag_id
 
 
+from api.models.detection_runs import (
+    get_monthly_detection_count,
+    create_detection_run,
+    update_detection_run_status,
+    get_detection_quota_info,
+)
+
 # ── Main detection runner ─────────────────────────────────────────────────────
 
-def run_detection():
+def run_detection(user_id=None):
     """
     Full detection cycle:
-    1. Fetch Places API POIs — filter to municipality boundary
-    2. Cross-reference against OFFICIAL_REGISTRY (20m threshold)
-    3. Insert Red Flags for unmatched POIs
-    Returns { new_flags, total_checked, outside_boundary }
+    1. Enforce monthly limit (max 2 completed scans per calendar month)
+    2. Fetch Places API POIs — filter to municipality boundary
+    3. Cross-reference against OFFICIAL_REGISTRY (20m threshold)
+    4. Insert Red Flags for unmatched POIs
+    Returns { new_flags, total_checked, outside_boundary, quota }
     """
     set_cancel("run_detection", False)
+
+    # Check monthly quota
+    monthly_scans = get_monthly_detection_count()
+    if monthly_scans >= 2:
+        return None, "Monthly detection limit reached (2/2 scans used for this month). Detection scans can only be run twice a month."
+
+    run_id = create_detection_run(user_id)
     try:
         from api.registry.service import check_and_expire_old_permits
         check_and_expire_old_permits()
@@ -357,6 +372,7 @@ def run_detection():
         places, outside_count = _fetch_all_places(progress_callback)
 
         if is_cancelled("run_detection"):
+            update_detection_run_status(run_id, "cancelled")
             hub.publish_to_admins({
                 "type": "detection_progress",
                 "stage": "completed",
@@ -394,6 +410,7 @@ def run_detection():
                     cursor.execute(f"DELETE FROM geospatial_logs WHERE logID IN ({format_strings})", tuple(inserted_flag_ids))
                     mysql.connection.commit()
                     cursor.close()
+                update_detection_run_status(run_id, "cancelled")
                 hub.publish_to_admins({
                     "type": "detection_progress",
                     "stage": "completed",
@@ -449,6 +466,8 @@ def run_detection():
                 _match_registry_to_google(
                     place_id, nearest['businessID'], nearest['businessName'])
 
+        update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
+
         hub.publish_to_admins({
             "type": "detection_progress",
             "stage": "completed",
@@ -456,13 +475,17 @@ def run_detection():
             "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
         })
 
+        quota_info = get_detection_quota_info()
+
         return {
             "new_flags":        new_flags,
             "total_checked":    total_checked,
             "outside_boundary": outside_count,
+            "quota":            quota_info,
         }, None
 
     except Exception as e:
+        update_detection_run_status(run_id, "failed")
         return None, str(e)
 
 

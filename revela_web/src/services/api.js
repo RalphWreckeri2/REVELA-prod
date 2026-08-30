@@ -478,6 +478,19 @@ export async function cancelRunDetection(token) {
   }
 }
 
+export async function getDetectionQuotaRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/flags/detection-quota`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 export async function updateFlagLocationRequest(logId, lat, lng, token) {
   if (!token) {
     throw new Error("Missing authentication token.");
