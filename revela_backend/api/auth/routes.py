@@ -2,17 +2,9 @@ import traceback
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity, get_jwt, create_access_token
-from api.auth.service import (
-    login_user,
-    request_otp,
-    reset_password,
-    update_user_password,
-    generate_2fa_setup,
-    verify_totp_code,
-    send_otp_via_philsms,
-)
+from api.auth.service import login_user, request_otp, reset_password, update_user_password, generate_2fa_setup, verify_totp_code
 from api.middleware.decorators import jwt_required
-from api.models.user import find_user_by_id, find_user_by_email, enable_user_2fa, update_user_2fa_secret, get_user_2fa_secret, set_reset_requested
+from api.models.user import find_user_by_id, find_user_by_email, enable_user_2fa, update_user_2fa_secret, get_user_2fa_secret, set_reset_requested, update_fcm_token, clear_fcm_token
 from api.notifications.service import get_email_inspection_alerts, set_email_inspection_alerts, notify_password_reset_request
 from datetime import timedelta
 
@@ -79,6 +71,8 @@ def login():
         "user": {
             "userID": user["userID"],
             "fullName": user["fullName"],
+            "email": user.get("email") or "",
+            "phone": user.get("phone") or "",
             "userRole": user["userRole"],
             "mustChangePassword": bool(user.get("mustChangePassword", False))
         }
@@ -87,9 +81,27 @@ def login():
 
 # ── POST /api/auth/logout ─────────────────────────────────────────────────────
 @auth_bp.route("/logout", methods=["POST"])
+@jwt_required()
 def logout():
-    """No-op endpoint — JWT is stateless, but the mobile app calls this on logout."""
+    """Clear the device token only when the user explicitly logs out."""
+    clear_fcm_token(int(get_jwt_identity()))
     return jsonify({"message": "Logged out"}), 200
+
+
+@auth_bp.route("/fcm-token", methods=["PUT"])
+@jwt_required()
+def save_fcm_token():
+    """Save/refresh the device FCM token for the authenticated inspector."""
+    data = request.get_json(silent=True) or {}
+    fcm_token = data.get("fcmToken")
+    if not isinstance(fcm_token, str) or not fcm_token.strip():
+        return jsonify({"error": "fcmToken is required"}), 400
+
+    user_id = int(get_jwt_identity())
+    if not update_fcm_token(user_id, fcm_token.strip()):
+        return jsonify({"error": "User not found"}), 404
+    print(f"FCM token saved for user {user_id}")
+    return jsonify({"message": "FCM token saved"}), 200
 
 
 # ── GET /api/auth/me ──────────────────────────────────────────────────────────
@@ -109,6 +121,7 @@ def me():
         "userID":   user["userID"],
         "fullName": user["fullName"],
         "email":    user["email"],
+        "phone":    user.get("phone") or "",
         "role":     claims.get("role"),
         "is_2fa_enabled": bool(user.get("is_2fa_enabled")),
         "mustChangePassword": bool(user.get("mustChangePassword", False)),
@@ -120,7 +133,7 @@ def me():
 @auth_bp.route("/me", methods=["PATCH"])
 @jwt_required()
 def update_me():
-    """Allow users to update their own profile (name, email)."""
+    """Allow users to update their own profile (name, email, phone)."""
     user_id = int(get_jwt_identity())
     data = request.get_json()
 
@@ -136,22 +149,27 @@ def update_me():
         if find_user_by_email(data["email"]):
             return jsonify({"error": "Email already in use by another account"}), 409
 
+    # Validate phone number if provided
+    phone = data.get("phone")
+    if phone is not None and phone.strip():
+        from api.auth.service import format_phone_number
+        formatted_phone = format_phone_number(phone)
+        if not formatted_phone:
+            return jsonify({"error": "Invalid phone number format. Please use a valid Philippine number."}), 400
+        phone = formatted_phone
+    else:
+        phone = user.get("phone")  # Keep existing phone if not provided
+
     from api.models.user import update_user
     
-    # Update user (keeping their existing role and phone if not provided)
+    # Update user (keeping their existing role if not provided)
     update_user(
         user_id=user_id,
         full_name=data.get("fullName", user["fullName"]),
         email=data.get("email", user["email"]),
         role=user["userRole"], # Cannot change own role
-        phone=user.get("phone")
+        phone=phone
     )
-
-    try:
-        from api.notifications import hub
-        hub.publish_to_admins({"type": "user_updated", "userID": user_id})
-    except Exception:
-        pass
 
     return jsonify({"message": "Profile updated successfully"}), 200
 
@@ -173,38 +191,15 @@ def patch_me_preferences():
 # ── POST /api/auth/request-otp ────────────────────────────────────────────────
 @auth_bp.route("/request-otp", methods=["POST"])
 def request_otp_route():
-    data = request.get_json(silent=True) or {}
-    identifier = (
-        data.get("identifier")
-        or data.get("phone_number")
-        or data.get("email")
-        or ""
-    )
+    data = request.get_json()
 
-    if isinstance(identifier, str):
-        identifier = identifier.strip()
-
-    if not identifier:
+    if not data or not data.get("identifier"):
         return jsonify({"error": "Email or phone number is required"}), 400
 
-    success, error, meta = request_otp(identifier)
+    request_otp(data["identifier"])
 
-    if not success:
-        if "Daily OTP request limit reached" in (error or ""):
-            status_code = 429
-        elif "No account found" in (error or ""):
-            status_code = 404
-        else:
-            status_code = 400
-        return jsonify({"error": error or "Failed to send OTP"}), status_code
-
-    response_payload = {
-        "message": "OTP has been sent successfully",
-        "remainingAttempts": meta.get("remainingAttempts", 1) if meta else 1,
-        "isFinalAttempt": meta.get("isFinalAttempt", False) if meta else False,
-        "notice": meta.get("notice") if meta else None,
-    }
-    return jsonify(response_payload), 200
+    # Always return success — never reveal if user exists
+    return jsonify({"message": "If an account exists, an OTP has been sent"}), 200
 
 # ── POST /api/auth/request-manual-reset ───────────────────────────────────────
 @auth_bp.route("/request-manual-reset", methods=["POST"])

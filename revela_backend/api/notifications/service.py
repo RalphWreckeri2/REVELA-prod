@@ -1,13 +1,86 @@
+import logging
+import os
+import smtplib
+import socket
+import ssl
 import threading
+from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-import os
 
 from app import mysql
 from api.notifications import hub
+from api.notifications.fcm import send_inspection_dispatch_push
 
 _tables_ready = False
+logger = logging.getLogger(__name__)
+
+
+def _is_revela_dev() -> bool:
+    """Keep the SMTP alert implementation isolated to the development stack."""
+    return os.getenv("REVELA_ENV", "").strip().lower() == "revela-dev"
+
+
+def _send_smtp_email(to_email: str, subject: str, text_body: str) -> bool:
+    """Send one dev alert with bounded SMTP I/O and actionable server logs."""
+    host = os.getenv("MAIL_SERVER", "").strip()
+    username = os.getenv("MAIL_USERNAME", "").strip()
+    password = os.getenv("MAIL_PASSWORD", "")
+    sender = os.getenv("MAIL_DEFAULT_SENDER", "").strip() or username
+    try:
+        port = int(os.getenv("MAIL_PORT", "587"))
+    except ValueError:
+        logger.error("Inspection email not sent: MAIL_PORT must be an integer")
+        return False
+
+    if not all((host, username, password, sender)):
+        logger.error(
+            "Inspection email not sent: MAIL_SERVER, MAIL_USERNAME, "
+            "MAIL_PASSWORD, and MAIL_DEFAULT_SENDER are required in revela-dev"
+        )
+        return False
+
+    message = EmailMessage()
+    message["From"] = sender
+    message["To"] = to_email
+    message["Subject"] = subject
+    message.set_content(text_body)
+
+    timeout = float(os.getenv("MAIL_TIMEOUT_SECONDS", "15"))
+    use_ssl = os.getenv("MAIL_USE_SSL", "false").lower() == "true"
+    use_tls = os.getenv("MAIL_USE_TLS", "true").lower() == "true"
+
+    try:
+        context = ssl.create_default_context()
+        if use_ssl:
+            with smtplib.SMTP_SSL(host, port, timeout=timeout, context=context) as server:
+                server.login(username, password)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=timeout) as server:
+                server.ehlo()
+                if use_tls:
+                    server.starttls(context=context)
+                    server.ehlo()
+                server.login(username, password)
+                server.send_message(message)
+        logger.info("Inspection alert email sent to %s", to_email)
+        return True
+    except smtplib.SMTPAuthenticationError:
+        logger.exception("Inspection email authentication failed for %s", to_email)
+    except (socket.timeout, TimeoutError):
+        logger.exception("Inspection email timed out for %s", to_email)
+    except (smtplib.SMTPException, OSError):
+        logger.exception("Inspection email transport failed for %s", to_email)
+    return False
+
+
+def _send_inspection_alert_email(to_email: str, subject: str, text_body: str) -> bool:
+    """Use SMTP only in revela-dev; retain the existing production transport."""
+    if _is_revela_dev():
+        return _send_smtp_email(to_email, subject, text_body)
+    return _send_resend_email(to_email, subject, text_body)
 
 
 def _ensure_tables() -> None:
@@ -92,19 +165,9 @@ def list_notifications(user_id: int, limit: int = 50) -> Tuple[Dict[str, Any], N
     cur.close()
     for r in rows:
         if r.get("createdAt"):
-            dt = r["createdAt"]
-            if hasattr(dt, "isoformat"):
-                r["createdAt"] = dt.isoformat() + "Z"
-            else:
-                s = str(dt).replace(" ", "T")
-                r["createdAt"] = s if s.endswith("Z") else f"{s}Z"
+            r["createdAt"] = str(r["createdAt"])
         if r.get("readAt"):
-            dt = r["readAt"]
-            if hasattr(dt, "isoformat"):
-                r["readAt"] = dt.isoformat() + "Z"
-            else:
-                s = str(dt).replace(" ", "T")
-                r["readAt"] = s if s.endswith("Z") else f"{s}Z"
+            r["readAt"] = str(r["readAt"])
     return {"data": rows}, None
 
 
@@ -177,9 +240,8 @@ def delete_notifications(user_id: int, notif_ids: Optional[List[int]] = None) ->
 
 def _send_resend_email(to_email: str, subject: str, text_body: str) -> bool:
     key = os.getenv("RESEND_API_KEY")
-    from_addr = os.getenv("RESEND_FROM") or "onboarding@resend.dev"
-    if not key:
-        print("[notifications] RESEND_API_KEY environment variable is not configured.")
+    from_addr = os.getenv("RESEND_FROM")
+    if not key or not from_addr:
         return False
     try:
         r = requests.post(
@@ -196,13 +258,9 @@ def _send_resend_email(to_email: str, subject: str, text_body: str) -> bool:
             },
             timeout=15,
         )
-        if r.status_code not in (200, 201):
-            print(f"[notifications] Resend API error ({r.status_code}): {r.text}")
-            return False
-        print(f"[notifications] Inspection email alert dispatched successfully to {to_email}")
-        return True
-    except Exception as e:
-        print(f"[notifications] Resend inspection alert error: {e}")
+        return r.status_code in (200, 201)
+    except requests.RequestException:
+        logger.exception("Resend inspection alert request failed for %s", to_email)
         return False
 
 
@@ -252,8 +310,8 @@ def notify_inspection_assigned(
             ),
         )
         mysql.connection.commit()
-        mysql.connection.commit()
         cur.close()
+        send_inspection_dispatch_push(report_id, int(inspector_user_id), biz)
     except Exception as e:
         print(f"notify_inspection_assigned error: {e}")
 
@@ -265,7 +323,7 @@ def notify_password_reset_request(inspector_name: str) -> None:
 
         cur.execute(
             """
-            SELECT userID FROM users
+            SELECT userID FROM USERS
             WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
             """
         )
@@ -315,7 +373,7 @@ def notify_inspection_submitted(
         cur = mysql.connection.cursor()
 
         cur.execute(
-            "SELECT fullName FROM users WHERE userID = %s",
+            "SELECT fullName FROM USERS WHERE userID = %s",
             (inspector_user_id,),
         )
         insp_row = cur.fetchone() or {}
@@ -330,8 +388,8 @@ def notify_inspection_submitted(
 
         cur.execute(
             """
-            SELECT userID, email, fullName FROM users
-            WHERE LOWER(userRole) IN ('admin', 'super_admin', 'system administrator')
+            SELECT userID, email, fullName FROM USERS
+            WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
             """
         )
         admins = cur.fetchall() or []
@@ -370,38 +428,41 @@ def notify_inspection_submitted(
             }
         )
 
-        # Pre-fetch email preferences in the main thread
+        # Pre-fetch email preferences in the main thread to avoid Flask app context errors
         recipients = []
         for a in admins:
             aid = int(a["userID"])
             email = (a.get("email") or "").strip()
-            alerts_on = get_email_inspection_alerts(aid)
-            if email and alerts_on:
+            if email and get_email_inspection_alerts(aid):
                 recipients.append(email)
-            else:
-                print(f"[notifications] Skipping inspection email for Admin ID {aid} (email: {email}, alerts_on: {alerts_on})")
+
+        email_subject = f"[REVELA] Inspection Alert — {biz}"
+        email_body = (
+            f'{inspector_name} submitted a field inspection for "{biz}". '
+            f"Recorded result: {inspection_result}. "
+            f"Open Inspections to review (report #{report_id})."
+            "\n\n— REVELA Municipality Dashboard"
+        )
 
         def _emails(targets):
             for email in targets:
-                _send_resend_email(
-                    email,
-                    f"[REVELA] Inspection Submitted — {biz}",
-                    f"Hello Admin,\n\n"
-                    f"{inspector_name} has submitted a field inspection report for \"{biz}\".\n\n"
-                    f"Inspection Details:\n"
-                    f"• Target Business: {biz}\n"
-                    f"• Result: {inspection_result}\n"
-                    f"• Evidence Photo: {'Yes' if has_evidence_photo else 'None'}\n"
-                    f"• Report ID: #{report_id}\n\n"
-                    f"Please visit your REVELA Admin Portal to review the inspection report.\n\n"
-                    f"— REVELA Municipality Dashboard\n"
-                )
+                _send_inspection_alert_email(email, email_subject, email_body)
 
         if recipients:
-            threading.Thread(target=_emails, args=(recipients,), daemon=True).start()
+            threading.Thread(
+                target=_emails,
+                args=(tuple(dict.fromkeys(recipients)),),
+                name=f"inspection-email-{report_id}",
+                daemon=True,
+            ).start()
+        else:
+            logger.warning(
+                "Inspection alert email skipped for report #%s: no opted-in admin email recipients",
+                report_id,
+            )
 
-    except Exception as e:
-        print(f"notify_inspection_submitted error: {e}")
+    except Exception:
+        logger.exception("notify_inspection_submitted failed")
 
 
 def notify_yellow_flag_reported(
@@ -419,19 +480,12 @@ def notify_yellow_flag_reported(
         _ensure_tables()
         cur = mysql.connection.cursor()
 
-        # Check reporter role and name
+        # Inspector name
         cur.execute(
-            "SELECT fullName, userRole FROM users WHERE userID = %s",
+            "SELECT fullName FROM USERS WHERE userID = %s",
             (reporter_user_id,),
         )
         insp_row = cur.fetchone() or {}
-        role = (insp_row.get("userRole") or "").strip().lower()
-
-        # If flagged by an Admin, do not generate admin notifications
-        if role in ("admin", "super_admin", "system administrator"):
-            cur.close()
-            return
-
         inspector_name = insp_row.get("fullName") or "An inspector"
 
         # Barangay name
@@ -445,7 +499,7 @@ def notify_yellow_flag_reported(
         # All admins
         cur.execute(
             """
-            SELECT userID FROM users
+            SELECT userID FROM USERS
             WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
             """
         )
