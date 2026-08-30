@@ -1990,18 +1990,27 @@ export default function MapPage() {
     }
 
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
+    const isFinalScan = remaining === 1;
+
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
       html: `<p style="margin-bottom:12px; font-size:14px;">This will scan Google Places within Mataasnakahoy and cross-reference against the official business registry.</p>
+             ${isFinalScan ? `
+             <div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:8px; padding:10px 14px; font-size:13px; color:#f59e0b; text-align:left;">
+               ⚠️ <strong>Notice: This is your 2nd and final scan for this month.</strong><br/>
+               <span style="font-size:12px; opacity:0.95;">After this scan, detection will be locked until <strong>${detectionQuota?.resets_on || 'the 1st of next month'}</strong>.</span>
+             </div>
+             ` : `
              <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); border-radius:8px; padding:10px 14px; font-size:13px; color:#6366f1; text-align:left;">
-               📊 <strong>Monthly Quota:</strong> ${remaining} of 2 scans remaining for this month.<br/>
-               <span style="font-size:12px; opacity:0.85;">(Resets on ${detectionQuota?.resets_on || 'the 1st of next month'})</span>
-             </div>`,
-      icon: 'question',
+               📊 <strong>Monthly Quota:</strong> 2 of 2 scans remaining for this month.<br/>
+               <span style="font-size:12px; opacity:0.85;">(Limited to 2 scans/month; resets on ${detectionQuota?.resets_on || 'the 1st of next month'})</span>
+             </div>
+             `}`,
+      icon: isFinalScan ? 'warning' : 'question',
       showCancelButton: true,
       confirmButtonColor: '#6366f1',
       cancelButtonColor: 'var(--color-muted, #64748b)',
-      confirmButtonText: 'Start Detection Scan'
+      confirmButtonText: isFinalScan ? 'Proceed with Final Scan' : 'Start Detection Scan'
     });
 
     if (!confirmRes.isConfirmed) {
@@ -2032,8 +2041,11 @@ export default function MapPage() {
       setClusters([]);
       // Show result summary briefly
       if (result?.new_flags !== undefined) {
-        setActionError(`Detection complete — ${result.new_flags} new Red Flag${result.new_flags !== 1 ? "s" : ""} found.`);
-        setTimeout(() => setActionError(""), 5000);
+        const quotaNote = result?.quota?.remaining_this_month === 0
+          ? ` (Notice: Final monthly scan used. Next scan on ${result.quota.resets_on})`
+          : "";
+        setActionError(`Detection complete — ${result.new_flags} new Red Flag${result.new_flags !== 1 ? "s" : ""} found.${quotaNote}`);
+        setTimeout(() => setActionError(""), 7000);
       }
     } catch (err) {
       setActionError(err.message || "Detection failed.");
