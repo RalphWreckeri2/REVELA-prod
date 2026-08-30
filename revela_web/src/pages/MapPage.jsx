@@ -184,6 +184,7 @@ const FLAG_COLORS = {
   Black: { marker: "#000000", bg: "var(--flag-black-bg)", text: "var(--flag-black-text)", label: "Blacklisted / Non-Responsive" },
   Purple: { marker: "#7c3aed", bg: "var(--flag-purple-bg)", text: "var(--flag-purple-text)", label: "Closed / Abandoned" },
   Green: { marker: "#22c55e", bg: "var(--flag-green-bg)", text: "var(--flag-green-text)", label: "Active Business" },
+  in_inspection: { marker: "#0284c7", bg: "rgba(2, 132, 199, 0.12)", text: "#0284c7", label: "Currently Being Inspected / Dispatched" },
 };
 
 const defaultColor = { marker: "var(--color-muted)", bg: "var(--flag-default-bg)", text: "var(--flag-default-text)", label: "Unknown" };
@@ -2219,6 +2220,11 @@ export default function MapPage() {
     let matchColor = filterColor === "all" || f.color === filterColor;
     if (filterColor === "Yellow_Inspector") {
       matchColor = f.color === "Yellow" && f.reportedByUserID;
+    } else if (filterColor === "in_inspection") {
+      matchColor = Boolean(
+        f.hasActiveInspection ||
+        ['Assigned', 'Reassigned', 'In Progress', 'Submitted'].includes(f.verificationStatus)
+      );
     }
     const matchSearch = (f.name || "").toLowerCase().includes(search.toLowerCase()) ||
       (f.barangay || "").toLowerCase().includes(search.toLowerCase());
@@ -2238,6 +2244,7 @@ export default function MapPage() {
   // Flag counts
   const counts = {
     all: flags.length,
+    in_inspection: flags.filter(f => f.hasActiveInspection || ['Assigned', 'Reassigned', 'In Progress', 'Submitted'].includes(f.verificationStatus)).length,
     Red: flags.filter(f => f.color === "Red").length,
     Yellow: flags.filter(f => f.color === "Yellow").length,
     Yellow_Inspector: flags.filter(f => f.color === "Yellow" && f.reportedByUserID).length,
@@ -2289,50 +2296,51 @@ export default function MapPage() {
 
           <span style={styles.livePill}>
             <span style={styles.liveDot} />
-            {flags.filter(f => f.color !== "Green").length} Active Flags
+            {flags.filter(f => f.color !== "Green").length} Inactive Flags
           </span>
           {isAdmin && (
             <>
               <button className="ghost-btn" type="button" onClick={() => setShowYellowModal(true)}>
                 + Add Flag
               </button>
-              <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                <button
-                  className="primary-btn"
-                  type="button"
-                  onClick={handleRunDetection}
-                  disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0)}
-                  title={
-                    detectionQuota && detectionQuota.remaining_this_month === 0
-                      ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
-                      : "Run geospatial detection scan (Max 2x/month)"
-                  }
-                  style={{
-                    opacity: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? 0.6 : 1,
-                    cursor: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? "not-allowed" : "pointer"
-                  }}
-                >
-                  {runDetectionLoading ? "Running…" : "Run Detection"}
-                </button>
+              <button
+                className="primary-btn"
+                type="button"
+                onClick={handleRunDetection}
+                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0)}
+                title={
+                  detectionQuota && detectionQuota.remaining_this_month === 0
+                    ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
+                    : "Run geospatial detection scan (Max 2x/month)"
+                }
+                style={{
+                  opacity: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? 0.6 : 1,
+                  cursor: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? "not-allowed" : "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "7px"
+                }}
+              >
+                <span>{runDetectionLoading ? "Running…" : "Run Detection"}</span>
                 {detectionQuota && (
                   <span
                     style={{
                       fontSize: "11px",
-                      padding: "3px 8px",
-                      borderRadius: "12px",
-                      background: detectionQuota.remaining_this_month === 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(99, 102, 241, 0.15)",
-                      color: detectionQuota.remaining_this_month === 0 ? "#ef4444" : "#818cf8",
-                      border: `1px solid ${detectionQuota.remaining_this_month === 0 ? "rgba(239, 68, 68, 0.3)" : "rgba(99, 102, 241, 0.3)"}`,
-                      fontWeight: 600,
-                      whiteSpace: "nowrap",
-                      userSelect: "none"
+                      padding: "1px 7px",
+                      borderRadius: "10px",
+                      background: detectionQuota.remaining_this_month === 0 ? "rgba(0, 0, 0, 0.3)" : "rgba(255, 255, 255, 0.22)",
+                      color: "#ffffff",
+                      fontWeight: 700,
+                      letterSpacing: "0.02em",
+                      lineHeight: 1.4,
+                      display: "inline-flex",
+                      alignItems: "center"
                     }}
-                    title={`Monthly scan limit: ${detectionQuota.used_this_month}/${detectionQuota.monthly_limit} used this month. Resets on ${detectionQuota.resets_on}`}
                   >
-                    {detectionQuota.remaining_this_month}/2 scans left
+                    {detectionQuota.remaining_this_month}/2
                   </span>
                 )}
-              </div>
+              </button>
             </>
           )}
         </div>
@@ -2526,7 +2534,7 @@ export default function MapPage() {
 
             {/* Legend / Filter List */}
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {["all", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"].map(c => {
+              {["all", "in_inspection", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"].map(c => {
                 const isSelected = filterColor === c;
                 const dotColor = c === "all" ? "var(--color-ink)" : (FLAG_COLORS[c]?.marker ?? "var(--color-ink)");
                 const label = c === "all" ? "All Locations" : (FLAG_COLORS[c]?.label ?? c);
