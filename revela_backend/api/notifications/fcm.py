@@ -25,7 +25,15 @@ def _messaging_client():
         if service_account_json:
             try:
                 cert_dict = json.loads(service_account_json)
+                if isinstance(cert_dict, dict) and "private_key" in cert_dict:
+                    if isinstance(cert_dict["private_key"], str):
+                        cert_dict["private_key"] = cert_dict["private_key"].replace("\\n", "\n")
                 cred = credentials.Certificate(cert_dict)
+                logger.info(
+                    "[FCM DISPATCH] Initialized Firebase Admin from FIREBASE_SERVICE_ACCOUNT_JSON for project=%s (client=%s)",
+                    cert_dict.get("project_id"),
+                    cert_dict.get("client_email"),
+                )
             except Exception as exc:
                 logger.error("[FCM DISPATCH ERROR: Invalid FIREBASE_SERVICE_ACCOUNT_JSON: %s]", exc)
 

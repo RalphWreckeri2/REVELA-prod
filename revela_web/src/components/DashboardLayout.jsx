@@ -234,6 +234,9 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(() => new Date());
+  const [showSnippet, setShowSnippet] = useState(false);
+  const lastAlertIdRef = useRef(null);
+  const snippetTimerRef = useRef(null);
 
   const refreshNotifications = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -372,6 +375,29 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
   }, [token, isAdmin, refreshNotifications]);
 
   useEffect(() => {
+    if (!isAdmin || notifications.length === 0 || unreadCount === 0) {
+      setShowSnippet(false);
+      return;
+    }
+    const latest = notifications[0];
+    if (latest && !latest.readAt && latest.id !== lastAlertIdRef.current) {
+      lastAlertIdRef.current = latest.id;
+      setShowSnippet(true);
+
+      if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+      snippetTimerRef.current = setTimeout(() => {
+        setShowSnippet(false);
+      }, 7000);
+    }
+  }, [notifications, unreadCount, isAdmin]);
+
+  useEffect(() => {
+    return () => {
+      if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
     const handleClickOutside = (event) => {
       if (
         showNotifications &&
@@ -391,6 +417,8 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
   const toggleNotifications = async () => {
     const next = !showNotifications;
     setShowNotifications(next);
+    setShowSnippet(false);
+    if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
     if (next && isAdmin && token) {
       await refreshNotifications();
     }
@@ -514,7 +542,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
             ) : null}
           </button>
 
-          {isAdmin && unreadCount > 0 && !showNotifications && notifications.length > 0 && (
+          {isAdmin && unreadCount > 0 && showSnippet && !showNotifications && notifications.length > 0 && (
             <div 
               onClick={toggleNotifications}
               style={{
@@ -546,8 +574,35 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
                 borderBottom: "6px solid var(--color-primary)"
               }}></div>
               
-              <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.9, marginBottom: 4, fontWeight: 700 }}>
-                {unreadCount} New Alert{unreadCount > 1 ? 's' : ''}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.9, fontWeight: 700 }}>
+                  {unreadCount} New Alert{unreadCount > 1 ? 's' : ''}
+                </div>
+                <button
+                  type="button"
+                  aria-label="Dismiss alert popup"
+                  title="Dismiss"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "rgba(255,255,255,0.85)",
+                    cursor: "pointer",
+                    fontSize: "11px",
+                    lineHeight: 1,
+                    padding: "2px 4px",
+                    marginLeft: "8px",
+                    borderRadius: "3px"
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowSnippet(false);
+                    if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.color = "#fff"}
+                  onMouseLeave={(e) => e.currentTarget.style.color = "rgba(255,255,255,0.85)"}
+                >
+                  ✕
+                </button>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--color-modal-bg)", display: "inline-block", animation: "snippetPulse 2s infinite", flexShrink: 0 }}></span>
