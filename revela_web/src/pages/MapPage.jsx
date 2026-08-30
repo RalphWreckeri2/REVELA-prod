@@ -463,21 +463,21 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
 
         {canShowDispatchButton && (
           <button
-            style={{ 
-              width: "100%", 
-              display: "flex", 
-              alignItems: "center", 
-              justifyContent: "center", 
-              gap: 8, 
-              height: 48, 
-              borderRadius: 10, 
-              fontWeight: 600, 
-              fontSize: 15, 
-              cursor: flag.hasActiveInspection ? "not-allowed" : "pointer", 
-              background: flag.hasActiveInspection ? "var(--color-border)" : "#16a34a", 
-              color: flag.hasActiveInspection ? "var(--color-muted)" : "#ffffff", 
-              border: "none", 
-              transition: "all 0.2s" 
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              height: 48,
+              borderRadius: 10,
+              fontWeight: 600,
+              fontSize: 15,
+              cursor: flag.hasActiveInspection ? "not-allowed" : "pointer",
+              background: flag.hasActiveInspection ? "var(--color-border)" : "#16a34a",
+              color: flag.hasActiveInspection ? "var(--color-muted)" : "#ffffff",
+              border: "none",
+              transition: "all 0.2s"
             }}
             disabled={actionLoading || flag.hasActiveInspection}
             onClick={() => onDispatch(flag)}
@@ -1998,12 +1998,12 @@ export default function MapPage() {
       html: `<p style="margin-bottom:12px; font-size:14px;">This will scan Google Places within Mataasnakahoy and cross-reference against the official business registry.</p>
              ${isFinalScan ? `
              <div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:8px; padding:10px 14px; font-size:13px; color:#f59e0b; text-align:left;">
-               ⚠️ <strong>Notice: This is your 2nd and final scan for this month.</strong><br/>
+               <strong>Notice: This is your 2nd and final scan for this month.</strong><br/>
                <span style="font-size:12px; opacity:0.95;">After this scan, detection will be locked until <strong>${detectionQuota?.resets_on || 'the 1st of next month'}</strong>.</span>
              </div>
              ` : `
              <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); border-radius:8px; padding:10px 14px; font-size:13px; color:#6366f1; text-align:left;">
-               📊 <strong>Monthly Quota:</strong> 2 of 2 scans remaining for this month.<br/>
+               <strong>Monthly Quota:</strong> 2 of 2 scans remaining for this month.<br/>
                <span style="font-size:12px; opacity:0.85;">(Limited to 2 scans/month; resets on ${detectionQuota?.resets_on || 'the 1st of next month'})</span>
              </div>
              `}`,
