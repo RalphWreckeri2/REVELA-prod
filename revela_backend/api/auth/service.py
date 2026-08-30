@@ -75,12 +75,11 @@ def request_otp(identifier):
                 pass
 
     if not user:
-        # Don't reveal if user exists or not — always return success
-        return True
+        return False, "No account found with this email or phone number."
 
-    # Don't reveal if user is not an admin — always return success
+    # Only allow Admin / SUPER_ADMIN on this portal
     if user.get("userRole") not in ("Admin", "SUPER_ADMIN"):
-        return True
+        return False, "This account is not authorized for password reset on this portal."
 
     # Invalidate any existing OTPs for this user
     invalidate_user_otps(user["userID"])
@@ -91,11 +90,14 @@ def request_otp(identifier):
 
     # Decide channel based on identifier format
     if "@" in identifier:
-        send_otp_email(identifier, otp_code)
+        sent = send_otp_email(identifier, otp_code)
     else:
-        send_otp_via_philsms(identifier, otp_code)
+        sent = send_otp_via_philsms(identifier, otp_code)
 
-    return True
+    if not sent:
+        return False, "Failed to send OTP. Please verify your contact information or try again later."
+
+    return True, None
 
 
 def send_otp_via_philsms(phone_number, otp_code):
@@ -243,16 +245,16 @@ def reset_password(identifier, otp_code, new_password):
                 pass
 
     if not user:
-        return False, "Invalid request"
+        return False, "No account found with this email or phone number."
 
     # Guard: Only allow password reset for Admins on this portal
     if user.get("userRole") not in ("Admin", "SUPER_ADMIN"):
-        return False, "Invalid request"
+        return False, "This account is not authorized for password reset on this portal."
 
     otp_record = get_valid_otp(user["userID"], otp_code)
 
     if not otp_record:
-        return False, "OTP is invalid or has expired"
+        return False, "OTP is invalid or has expired."
 
     hashed = bcrypt.hashpw(new_password.encode(
         "utf-8"), bcrypt.gensalt()).decode("utf-8")
