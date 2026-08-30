@@ -177,8 +177,9 @@ def delete_notifications(user_id: int, notif_ids: Optional[List[int]] = None) ->
 
 def _send_resend_email(to_email: str, subject: str, text_body: str) -> bool:
     key = os.getenv("RESEND_API_KEY")
-    from_addr = os.getenv("RESEND_FROM")
-    if not key or not from_addr:
+    from_addr = os.getenv("RESEND_FROM") or "onboarding@resend.dev"
+    if not key:
+        print("[notifications] RESEND_API_KEY environment variable is not configured.")
         return False
     try:
         r = requests.post(
@@ -195,9 +196,13 @@ def _send_resend_email(to_email: str, subject: str, text_body: str) -> bool:
             },
             timeout=15,
         )
-        return r.status_code in (200, 201)
+        if r.status_code not in (200, 201):
+            print(f"[notifications] Resend API error ({r.status_code}): {r.text}")
+            return False
+        print(f"[notifications] Inspection email alert dispatched successfully to {to_email}")
+        return True
     except Exception as e:
-        print(f"Resend inspection alert error: {e}")
+        print(f"[notifications] Resend inspection alert error: {e}")
         return False
 
 
@@ -326,7 +331,7 @@ def notify_inspection_submitted(
         cur.execute(
             """
             SELECT userID, email, fullName FROM users
-            WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
+            WHERE LOWER(userRole) IN ('admin', 'super_admin', 'system administrator')
             """
         )
         admins = cur.fetchall() or []
@@ -365,25 +370,35 @@ def notify_inspection_submitted(
             }
         )
 
-        # Pre-fetch email preferences in the main thread to avoid Flask app context errors
+        # Pre-fetch email preferences in the main thread
         recipients = []
         for a in admins:
             aid = int(a["userID"])
             email = (a.get("email") or "").strip()
-            if email and get_email_inspection_alerts(aid):
+            alerts_on = get_email_inspection_alerts(aid)
+            if email and alerts_on:
                 recipients.append(email)
+            else:
+                print(f"[notifications] Skipping inspection email for Admin ID {aid} (email: {email}, alerts_on: {alerts_on})")
 
         def _emails(targets):
             for email in targets:
                 _send_resend_email(
                     email,
-                    f"[REVELA] {title} — {biz}",
-                    body + "\n\n— REVELA Municipality Dashboard",
+                    f"[REVELA] Inspection Submitted — {biz}",
+                    f"Hello Admin,\n\n"
+                    f"{inspector_name} has submitted a field inspection report for \"{biz}\".\n\n"
+                    f"Inspection Details:\n"
+                    f"• Target Business: {biz}\n"
+                    f"• Result: {inspection_result}\n"
+                    f"• Evidence Photo: {'Yes' if has_evidence_photo else 'None'}\n"
+                    f"• Report ID: #{report_id}\n\n"
+                    f"Please visit your REVELA Admin Portal to review the inspection report.\n\n"
+                    f"— REVELA Municipality Dashboard\n"
                 )
 
         if recipients:
-            threading.Thread(target=_emails, args=(
-                recipients,), daemon=True).start()
+            threading.Thread(target=_emails, args=(recipients,), daemon=True).start()
 
     except Exception as e:
         print(f"notify_inspection_submitted error: {e}")

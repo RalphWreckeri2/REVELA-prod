@@ -393,16 +393,51 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
     setShowNotifications(next);
     if (next && isAdmin && token) {
       await refreshNotifications();
+    }
+  };
+
+  const handleMarkAllAsRead = async (e) => {
+    if (e) e.stopPropagation();
+    setUnreadCount(0);
+    setNotifications((prev) =>
+      prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
+    );
+    if (token) {
       try {
         await markNotificationsReadRequest(token);
-        setUnreadCount(0);
+      } catch (err) {
+        console.error("Failed to mark all as read", err);
+      }
+    }
+  };
+
+  const handleClearAll = async (e) => {
+    if (e) e.stopPropagation();
+    setNotifications([]);
+    setUnreadCount(0);
+    if (token) {
+      try {
+        await deleteNotificationsRequest(token);
+      } catch (err) {
+        console.error("Failed to delete notifications", err);
+      }
+    }
+  };
+
+  const handleNotificationClick = async (note) => {
+    if (!note.readAt && token) {
+      try {
+        markNotificationsReadRequest(token, [note.id]).catch(() => {});
         setNotifications((prev) =>
-          prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() })),
+          prev.map((n) => (n.id === note.id ? { ...n, readAt: new Date().toISOString() } : n))
         );
+        setUnreadCount((c) => Math.max(0, c - 1));
       } catch {
         /* ignore */
       }
     }
+    if (note.link) navigate(note.link);
+    setShowNotifications(false);
   };
 
   return (
@@ -533,34 +568,20 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
                     style={{ background: "transparent", border: "none", color: "var(--color-primary)", cursor: "pointer", padding: "6px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", transition: "background 0.2s" }}
                     onMouseEnter={e => e.currentTarget.style.background = "rgba(52, 211, 153, 0.15)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      setUnreadCount(0);
-                      if (token) await markNotificationsReadRequest(token);
-                    }}
+                    onClick={handleMarkAllAsRead}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M18 6 7 17l-5-5"></path>
                       <path d="m22 10-7.5 7.5L13 16"></path>
                     </svg>
                   </button>
-                    <button 
-                      title="Clear all"
-                      style={{ background: "transparent", border: "none", color: "var(--color-muted)", cursor: "pointer", padding: "6px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", transition: "background 0.2s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "var(--color-hover)"}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        setNotifications([]);
-                        if (token) {
-                          try {
-                            await deleteNotificationsRequest(token);
-                          } catch (err) {
-                            console.error("Failed to delete notifications", err);
-                          }
-                        }
-                      }}
-                    >
+                  <button 
+                    title="Clear all"
+                    style={{ background: "transparent", border: "none", color: "var(--color-muted)", cursor: "pointer", padding: "6px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", transition: "background 0.2s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--color-hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    onClick={handleClearAll}
+                  >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M3 6h18"></path>
                       <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
@@ -586,37 +607,59 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
                   </div>
                 )}
                 {isAdmin &&
-                  notifications.map((note) => (
-                    <div
-                      key={note.id}
-                      className="notification-item"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => {
-                        if (note.link) navigate(note.link);
-                        setShowNotifications(false);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          if (note.link) navigate(note.link);
-                          setShowNotifications(false);
-                        }
-                      }}
-                      style={{ cursor: note.link ? "pointer" : "default" }}
-                    >
-                      <div className="notification-item-icon">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                        </svg>
+                  notifications.map((note) => {
+                    const isUnread = !note.readAt;
+                    return (
+                      <div
+                        key={note.id}
+                        className={`notification-item ${isUnread ? "notification-item--unread" : ""}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => handleNotificationClick(note)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            handleNotificationClick(note);
+                          }
+                        }}
+                        style={{
+                          cursor: note.link ? "pointer" : "default",
+                          position: "relative",
+                          background: isUnread ? "rgba(52, 211, 153, 0.05)" : "transparent",
+                          borderColor: isUnread ? "rgba(52, 211, 153, 0.25)" : "var(--color-border-soft)"
+                        }}
+                      >
+                        {isUnread && (
+                          <span
+                            style={{
+                              position: "absolute",
+                              top: 14,
+                              right: 14,
+                              width: 8,
+                              height: 8,
+                              borderRadius: "50%",
+                              background: "var(--color-primary)",
+                              boxShadow: "0 0 8px var(--color-primary)",
+                              display: "block"
+                            }}
+                            title="Unread"
+                          />
+                        )}
+                        <div className="notification-item-icon" style={{
+                          background: isUnread ? "rgba(52, 211, 153, 0.22)" : "rgba(52, 211, 153, 0.12)"
+                        }}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                          </svg>
+                        </div>
+                        <div className="notification-item-content">
+                          <strong style={{ color: isUnread ? "var(--color-ink)" : "var(--color-muted)", fontWeight: isUnread ? 700 : 600 }}>{note.title}</strong>
+                          <p>{note.body}</p>
+                          <span>{formatTimeAgo(note.createdAt)}</span>
+                        </div>
                       </div>
-                      <div className="notification-item-content">
-                        <strong>{note.title}</strong>
-                        <p>{note.body}</p>
-                        <span>{formatTimeAgo(note.createdAt)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             </div>
           )}
