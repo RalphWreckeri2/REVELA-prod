@@ -1504,32 +1504,43 @@ function YellowFlagModal({ token, barangays, draft, onPickLocation, onClose, onS
             </div>
           )}
 
-          {[
-            { label: "Business Name *", key: "businessName", placeholder: "e.g. Aling Nena's Tindahan", readOnly: false },
-            { label: "Latitude *", key: "lat", placeholder: "e.g. 13.9667", readOnly: true },
-            { label: "Longitude *", key: "lng", placeholder: "e.g. 121.1167", readOnly: true },
-          ].map(({ label, key, placeholder, readOnly }) => (
-            <div key={key} style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                {label}
-              </label>
-              <input
-                style={{
-                  width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)",
-                  borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)",
-                  color: readOnly ? "var(--color-muted)" : "var(--color-ink)",
-                  background: readOnly ? "var(--color-hover)" : "var(--color-input-bg)",
-                  outline: "none",
-                  cursor: readOnly ? "not-allowed" : "text"
-                }}
-                placeholder={placeholder}
-                value={form[key]}
-                onChange={e => !readOnly && set(key, e.target.value)}
-                readOnly={readOnly}
-              />
-            </div>
-          ))}
+          {/* Business Name */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Business Name *
+            </label>
+            <input
+              style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-input-bg)", outline: "none" }}
+              placeholder="e.g. Aling Nena's Tindahan"
+              value={form.businessName}
+              onChange={e => set("businessName", e.target.value)}
+            />
+          </div>
 
+          {/* Location status pill — replaces raw lat/lng fields */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Location *
+            </label>
+            {form.lat && form.lng ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8, border: "1px solid var(--color-border)", background: "var(--color-hover)" }}>
+                <Icon.MapPin />
+                <span style={{ fontSize: 13, color: "var(--color-ink)", fontWeight: 500, flex: 1 }}>
+                  Plotted on map
+                </span>
+                <span style={{ fontSize: 11, color: "var(--color-muted)", fontFamily: "monospace" }}>
+                  {form.lat}, {form.lng}
+                </span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 8, border: "1px dashed var(--color-border)", background: "var(--color-surface)", color: "var(--color-muted)", fontSize: 13 }}>
+                <Icon.Crosshair />
+                <span>No location set — use "Pick on Map" above.</span>
+              </div>
+            )}
+          </div>
+
+          {/* Notes */}
           <div style={{ marginBottom: 14 }}>
             <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               Notes
@@ -1542,20 +1553,34 @@ function YellowFlagModal({ token, barangays, draft, onPickLocation, onClose, onS
             />
           </div>
 
+          {/* Barangay — locked when plotted from map, editable otherwise */}
           <div style={{ marginBottom: 4 }}>
             <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               Barangay *
             </label>
-            <select
-              style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-input-bg)", cursor: "pointer" }}
-              value={form.barangayID}
-              onChange={e => set("barangayID", e.target.value)}
-            >
-              <option value="">Select barangay…</option>
-              {barangays.map(b => (
-                <option key={b.barangayID} value={b.barangayID}>{b.barangayName}</option>
-              ))}
-            </select>
+            {form.lat && form.lng ? (
+              // Locked — auto-filled from map plot
+              <div>
+                <div style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-muted)", background: "var(--color-hover)", cursor: "not-allowed", boxSizing: "border-box" }}>
+                  {barangays.find(b => String(b.barangayID) === String(form.barangayID))?.barangayName || "Unknown Barangay"}
+                </div>
+                <p style={{ margin: "5px 0 0", fontSize: 11, color: "var(--color-muted)" }}>
+                  Auto-filled from map. Re-plot to change.
+                </p>
+              </div>
+            ) : (
+              // Editable — no map location set yet
+              <select
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-input-bg)", cursor: "pointer" }}
+                value={form.barangayID}
+                onChange={e => set("barangayID", e.target.value)}
+              >
+                <option value="">Select barangay…</option>
+                {barangays.map(b => (
+                  <option key={b.barangayID} value={b.barangayID}>{b.barangayName}</option>
+                ))}
+              </select>
+            )}
           </div>
         </div>
 
