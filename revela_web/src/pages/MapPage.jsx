@@ -2161,7 +2161,34 @@ export default function MapPage() {
   };
 
   const handleMapClick = useCallback((e) => {
-    if (isPickingYellowLocation) {
+    if (!isPickingYellowLocation) return;
+
+    const lat = e.latLng.lat();
+    const lng = e.latLng.lng();
+
+    // Attempt to find the closest barangay by centroid distance as a fallback
+    // (handleDataClick handles the precise polygon-hit case; this covers base-map
+    // clicks where the GeoJSON layer is still loading or the click lands on a gap).
+    let matchedId = "";
+    let bestDist = Infinity;
+    for (const b of barangays) {
+      const nameKey = b.barangayName.toLowerCase()
+        .replace(/barangay/g, "").replace(/brgy\.?/g, "")
+        .replace(/district/g, "").replace(/\(pob\.\)/g, "")
+        .trim();
+      const centroid = BARANGAY_CENTROIDS[nameKey] ||
+        Object.entries(BARANGAY_CENTROIDS).find(([k]) => k.includes(nameKey) || nameKey.includes(k))?.[1];
+      if (!centroid) continue;
+      const dist = Math.hypot(lat - centroid.lat, lng - centroid.lng);
+      if (dist < bestDist) {
+        bestDist = dist;
+        matchedId = String(b.barangayID);
+      }
+    }
+
+    // Only accept the match if the click is reasonably close to the municipality
+    // (~0.15° ≈ ~15 km — generous enough to cover Mataasnakahoy).
+    if (bestDist > 0.15) {
       Swal.fire({
         icon: 'error',
         title: 'Out of Bounds',
@@ -2170,7 +2197,16 @@ export default function MapPage() {
       });
       return;
     }
-  }, [isPickingYellowLocation]);
+
+    setYellowDraft(prev => ({
+      ...prev,
+      lat: lat.toFixed(6),
+      lng: lng.toFixed(6),
+      barangayID: matchedId
+    }));
+    setIsPickingYellowLocation(false);
+    setShowYellowModal(true);
+  }, [isPickingYellowLocation, barangays]);
 
   const handleDataClick = useCallback((e) => {
     if (isPickingYellowLocation) {
