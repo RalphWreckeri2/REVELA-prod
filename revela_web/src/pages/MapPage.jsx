@@ -2183,15 +2183,76 @@ export default function MapPage() {
       await fetchFlags();
       await fetchDetectionQuota();
       setClusters([]);
-      // Show result summary briefly
-      if (result?.new_flags !== undefined) {
-        const quotaNote = result?.quota?.remaining_this_month === 0
-          ? ` (Notice: Final monthly scan used. Next scan on ${result.quota.resets_on})`
-          : "";
-        setActionError(`Detection complete — ${result.new_flags} new Red Flag${result.new_flags !== 1 ? "s" : ""} found.${quotaNote}`);
-        setTimeout(() => setActionError(""), 7000);
+
+      // Stop loader so map is fully visible behind dialog
+      setRunDetectionLoading(false);
+      setCancellingDetection(false);
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      setDetectionProgress(null);
+
+      if (result) {
+        const count = Number(result.new_flags ?? 0);
+        const totalChecked = Number(result.total_checked ?? 0);
+        const remainingScans = result.quota?.remaining_this_month ?? 0;
+        const resetsOn = result.quota?.resets_on || "the 1st of next month";
+
+        const alertRes = await Swal.fire({
+          icon: count > 0 ? "success" : "info",
+          title: count > 0 ? "Detection Scan Complete!" : "Scan Complete — No New Gaps",
+          html: `
+            <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+              <div style="background: ${count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
+                <div style="font-size: 20px; font-weight: 800; color: ${count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
+                  ${count} Unregistered Business${count !== 1 ? "es" : ""} Detected
+                </div>
+                <div style="font-size: 12.5px; color: ${count > 0 ? "#7f1d1d" : "#065f46"};">
+                  ${count > 0 
+                    ? "New Red Flags have been plotted on the municipal map and queued for field verification." 
+                    : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+                <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
+                  <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Places Scanned</div>
+                  <div style="font-size: 16px; font-weight: 800; color: var(--color-ink, #0f172a); margin-top: 2px;">
+                    ${totalChecked} locations
+                  </div>
+                </div>
+                <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
+                  <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Monthly Scans Left</div>
+                  <div style="font-size: 16px; font-weight: 800; color: #6366f1; margin-top: 2px;">
+                    ${remainingScans} of 2
+                  </div>
+                </div>
+              </div>
+
+              ${remainingScans === 0 ? `
+                <div style="font-size: 12px; color: #b45309; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px;">
+                  <strong>Notice:</strong> Monthly quota reached. Next scan unlocks on <strong>${resetsOn}</strong>.
+                </div>
+              ` : ""}
+            </div>
+          `,
+          confirmButtonColor: "#6366f1",
+          confirmButtonText: count > 0 ? "View Detected on Map" : "Understood"
+        });
+
+        if (alertRes.isConfirmed && count > 0) {
+          setFilterColor("Red");
+        }
       }
     } catch (err) {
+      console.error("Detection scan error:", err);
+      Swal.fire({
+        icon: "error",
+        title: "Detection Scan Failed",
+        text: err.message || "An error occurred during the geospatial scan.",
+        confirmButtonColor: "#ef4444"
+      });
       setActionError(err.message || "Detection failed.");
     } finally {
       setRunDetectionLoading(false);
