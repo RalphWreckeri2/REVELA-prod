@@ -313,7 +313,7 @@ export default function SettingsPage() {
   const [show2FAModal, setShow2FAModal] = useState(false);
   const [showTermsDoc, setShowTermsDoc] = useState(false);
   const [showPrivacyDoc, setShowPrivacyDoc] = useState(false);
-  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 40, w2_sector: 40, w3_distance: 20, bplo_lat: 13.9667, bplo_lng: 121.1167 });
+  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 });
   const [sectors, setSectors] = useState([]);
 
   const SECTOR_OPTIONS = ["Food Service", "Retail", "Manufacturing", "Healthcare", "Education", "Real Estate", "Logistics", "Other"];
@@ -440,6 +440,7 @@ export default function SettingsPage() {
   };
 
   const applyPreset = (preset) => {
+    if (preset === "ahp") setWlcConfig({ ...wlcConfig, w1_risk: 68, w2_sector: 7, w3_distance: 25 });
     if (preset === "health") setWlcConfig({ ...wlcConfig, w1_risk: 20, w2_sector: 70, w3_distance: 10 });
     if (preset === "renewal") setWlcConfig({ ...wlcConfig, w1_risk: 70, w2_sector: 20, w3_distance: 10 });
   };
@@ -619,6 +620,9 @@ export default function SettingsPage() {
             {/* Scenario Presets */}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>Apply Preset:</span>
+              <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: "var(--color-primary, #10b981)" }} onClick={() => applyPreset("ahp")}>
+                AHP Client Baseline (68/7/25)
+              </button>
               <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => applyPreset("health")}>
                 Health Crisis Mode
               </button>

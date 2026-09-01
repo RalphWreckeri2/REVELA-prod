@@ -820,7 +820,7 @@ export default function AnalyticsPage() {
     }
     return () => observer.disconnect();
   }, []);
-  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 40, w2_sector: 25, w3_distance: 15 });
+  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
   const [savingWlc, setSavingWlc] = useState(false);
   const [expandedDispatch, setExpandedDispatch] = useState({});
@@ -863,7 +863,7 @@ export default function AnalyticsPage() {
     try {
       const res = await getWlcConfigRequest(token);
       if (res) {
-        setWlcConfig({ w1_risk: res.w1_risk ?? 40, w2_sector: res.w2_sector ?? 25, w3_distance: res.w3_distance ?? 15 });
+        setWlcConfig({ w1_risk: res.w1_risk ?? 68, w2_sector: res.w2_sector ?? 7, w3_distance: res.w3_distance ?? 25 });
       }
     } catch (e) {
       console.error(e);
