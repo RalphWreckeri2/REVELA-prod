@@ -333,6 +333,13 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
             window.dispatchEvent(
               new CustomEvent("revela:user-update", { detail: data }),
             );
+          } else if (data.type === "new_year_rollover") {
+            window.dispatchEvent(
+              new CustomEvent("revela:registry-update", { detail: data }),
+            );
+            window.dispatchEvent(
+              new CustomEvent("revela:new-year-rollover", { detail: data }),
+            );
           }
         };
 

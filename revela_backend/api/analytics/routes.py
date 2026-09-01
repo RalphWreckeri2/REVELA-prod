@@ -87,7 +87,7 @@ def get_all_analytics():
         rollover_info = None
         if notif:
             body = notif["body"]
-            m = re.search(r"Welcome to (\d+)!.*marked (\d+) active", body)
+            m = re.search(r"Welcome to (\d+)!.*?marked (\d+) active", body, re.DOTALL)
             year = int(m.group(1)) if m else __import__('datetime').date.today().year
             count = int(m.group(2)) if m else 0
             rollover_info = {
