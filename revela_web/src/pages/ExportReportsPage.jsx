@@ -35,7 +35,7 @@ const SECTOR_COLORS = [
 const OPERATIONAL_REPORTS = [
   {
     id: "unregistered",
-    title: "Top Unregistered Business Establishments",
+    title: "List of Unregistered Businesses",
     tag: "Field Enforcement",
     tagColor: "#dc2626",
     tagBg: "#fee2e2",
@@ -578,10 +578,9 @@ export default function ExportReportsPage() {
     }
 
     const dateStr = new Date().toISOString().slice(0, 10);
-    const filename = `Unregistered_Establishments_${dateStr}`;
+    const filename = `Unregistered_Businesses_${dateStr}`;
 
     const formattedData = flags.map((f) => ({
-      LogID: f.logID,
       Name: f.detectedName || "Unknown",
       Barangay: f.barangayName || "Unknown",
       Address: f.resolvedAddress || f.nearestLandmark || "",
@@ -590,12 +589,12 @@ export default function ExportReportsPage() {
     }));
 
     if (format === "csv") {
-      const csv = Papa.unparse(formattedData.length > 0 ? formattedData : [{ Note: "No active red or yellow flagged unregistered establishments detected" }]);
+      const csv = Papa.unparse(formattedData.length > 0 ? formattedData : [{ Note: "No active red or yellow flagged unregistered businesses detected" }]);
       saveAs(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `${filename}.csv`);
     } else {
       setPrintReport({
         type: "unregistered",
-        title: "Top Suspected Unregistered Establishments",
+        title: "List of Unregistered Businesses",
         subtitle: "Field inspection target list of commercial locations operating without active permits",
         date: new Date().toLocaleString(),
         preparedBy: user?.fullName || "BPLO Staff",
@@ -2554,7 +2553,7 @@ export default function ExportReportsPage() {
               </div>
             )}
 
-            {/* ── CASE 3: Top Unregistered Business Establishments ── */}
+            {/* ── CASE 3: List of Unregistered Businesses ── */}
             {printReport.type === "unregistered" && (
               <div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginBottom: "16px" }}>
@@ -2587,25 +2586,23 @@ export default function ExportReportsPage() {
                 <table className="print-table">
                   <thead>
                     <tr>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "48px" }}>Log ID</th>
                       <th style={{ background: "#ef4444", color: "#fff" }}>Establishment Name</th>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "120px" }}>Barangay</th>
+                      <th style={{ background: "#ef4444", color: "#fff", width: "130px" }}>Barangay</th>
                       <th style={{ background: "#ef4444", color: "#fff" }}>Resolved Address / Nearest Landmark</th>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "90px" }}>Flag Status</th>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "85px" }}>Date Detected</th>
+                      <th style={{ background: "#ef4444", color: "#fff", width: "100px" }}>Flag Status</th>
+                      <th style={{ background: "#ef4444", color: "#fff", width: "95px" }}>Date Detected</th>
                     </tr>
                   </thead>
                   <tbody>
                     {printReport.data.flags.length === 0 ? (
                       <tr>
-                        <td colSpan={6} style={{ textAlign: "center", padding: "16px", color: "#64748b", fontStyle: "italic", background: "#f8fafc" }}>
-                          No active suspected unregistered establishments detected in the municipality.
+                        <td colSpan={5} style={{ textAlign: "center", padding: "16px", color: "#64748b", fontStyle: "italic", background: "#f8fafc" }}>
+                          No active suspected unregistered businesses detected in the municipality.
                         </td>
                       </tr>
                     ) : (
                       printReport.data.flags.map((f, idx) => (
                         <tr key={idx}>
-                          <td style={{ fontFamily: "monospace" }}>{f.LogID}</td>
                           <td style={{ fontWeight: "600", color: "#111827" }}>{f.Name}</td>
                           <td>{f.Barangay}</td>
                           <td style={{ fontSize: "10.5px" }}>{f.Address}</td>
