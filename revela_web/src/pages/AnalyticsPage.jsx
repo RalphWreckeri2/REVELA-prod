@@ -397,7 +397,7 @@ const renderMarkdown = (text) => {
   const elements = [];
   let listItems = [];
   let listType = null;
-  
+
   let inTable = false;
   let tableHeader = null;
   let tableRows = [];
@@ -427,25 +427,25 @@ const renderMarkdown = (text) => {
 
   const flushTable = () => {
     if (inTable) {
-       elements.push(
-         <div key={`table-${elements.length}`} style={{ overflowX: "auto", margin: "10px 0", borderRadius: 8, border: "1px solid var(--color-border)" }}>
-           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
-             {tableHeader && <thead><tr style={{ background: "color-mix(in srgb, var(--color-ink) 5%, transparent)" }}>
-               {tableHeader.map((h, i) => <th key={i} style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)", fontWeight: 600 }}>{formatInline(h)}</th>)}
-             </tr></thead>}
-             <tbody>
-               {tableRows.map((row, i) => (
-                 <tr key={i} style={{ borderBottom: i === tableRows.length - 1 ? "none" : "1px solid var(--color-border)" }}>
-                   {row.map((cell, j) => <td key={j} style={{ padding: "8px 12px" }}>{formatInline(cell)}</td>)}
-                 </tr>
-               ))}
-             </tbody>
-           </table>
-         </div>
-       );
-       inTable = false;
-       tableHeader = null;
-       tableRows = [];
+      elements.push(
+        <div key={`table-${elements.length}`} style={{ overflowX: "auto", margin: "10px 0", borderRadius: 8, border: "1px solid var(--color-border)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
+            {tableHeader && <thead><tr style={{ background: "color-mix(in srgb, var(--color-ink) 5%, transparent)" }}>
+              {tableHeader.map((h, i) => <th key={i} style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)", fontWeight: 600 }}>{formatInline(h)}</th>)}
+            </tr></thead>}
+            <tbody>
+              {tableRows.map((row, i) => (
+                <tr key={i} style={{ borderBottom: i === tableRows.length - 1 ? "none" : "1px solid var(--color-border)" }}>
+                  {row.map((cell, j) => <td key={j} style={{ padding: "8px 12px" }}>{formatInline(cell)}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+      inTable = false;
+      tableHeader = null;
+      tableRows = [];
     }
   };
 
@@ -464,9 +464,9 @@ const renderMarkdown = (text) => {
         tableHeader = cells;
       } else {
         if (cells.every(c => c.replace(/[:\- ]/g, '') === '')) {
-           // skip separator
+          // skip separator
         } else {
-           tableRows.push(cells);
+          tableRows.push(cells);
         }
       }
     } else if (headingMatch) {
@@ -645,10 +645,10 @@ const GlobalAIAssistant = memo(({ globalData }) => {
                 </div>
               </div>
             </div>
-            <button 
-              onClick={() => setIsExpanded(false)} 
-              style={{ 
-                background: "transparent", border: "none", cursor: "pointer", 
+            <button
+              onClick={() => setIsExpanded(false)}
+              style={{
+                background: "transparent", border: "none", cursor: "pointer",
                 color: "var(--color-muted)", padding: 4, borderRadius: "50%",
                 display: "flex", alignItems: "center", justifyContent: "center"
               }}
@@ -2510,15 +2510,15 @@ export default function AnalyticsPage() {
                   ) : (
                     <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(226,232,240,0.4)" />
-                        <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                        <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--color-ink)", fontWeight: 500 }} width={120} axisLine={false} tickLine={false} tickFormatter={(val) => typeof val === 'string' && val.length > 18 ? val.substring(0, 18) + '…' : val} />
-                        <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)" }} />
-                        <Bar dataKey="count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Flagged">
-                          <LabelList dataKey="count" position="right" fill="var(--color-ink)" fontSize={11} fontWeight={600} />
-                        </Bar>
-                      </BarChart>
+                        <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(226,232,240,0.4)" />
+                          <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
+                          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--color-ink)", fontWeight: 500 }} width={120} axisLine={false} tickLine={false} tickFormatter={(val) => typeof val === 'string' && val.length > 18 ? val.substring(0, 18) + '…' : val} />
+                          <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)" }} />
+                          <Bar dataKey="count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Flagged">
+                            <LabelList dataKey="count" position="right" fill="var(--color-ink)" fontSize={11} fontWeight={600} />
+                          </Bar>
+                        </BarChart>
                       </ResponsiveContainer>
                     </div>
                   )}
@@ -2628,93 +2628,93 @@ export default function AnalyticsPage() {
 
                           return (
                             <>
-                            <div style={{ height: 220, width: "100%", marginTop: 16 }}>
-                              <ResponsiveContainer width="100%" height="100%">
-                                <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
-                                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
-                                  <XAxis type="number" dataKey="lng" name="Longitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Longitude", position: "insideBottom", offset: -12, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
-                                  <YAxis type="number" dataKey="lat" name="Latitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Latitude", angle: -90, position: "insideLeft", offset: 10, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
-                                  <ZAxis type="category" dataKey="barangay" name="Barangay" />
-                                  <Tooltip
-                                    cursor={{ strokeDasharray: '3 3' }}
-                                    contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
-                                    content={({ active, payload }) => {
-                                      if (!active || !payload?.length) return null;
-                                      const d = payload[0]?.payload;
-                                      if (!d) return null;
-                                      const typeLabel = d.renderType === 'noise'
-                                        ? "Isolated (no cluster)"
-                                        : d.renderType === 'centroid'
-                                          ? `Cluster #${d.cluster} center`
-                                          : `Cluster #${d.cluster} member`;
-                                      return (
-                                        <div style={{ background: "#111827", border: "1px solid #374151", color: "#ffffff", borderRadius: 8, padding: "8px 12px", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontSize: 12, lineHeight: 1.6 }}>
-                                          <div style={{ fontWeight: 700, color: "#ffffff", marginBottom: 2 }}>{d.barangay || "Unknown area"}</div>
-                                          <div style={{ color: "#e5e7eb" }}>{typeLabel}{d.is_primary ? " · Primary hotspot" : ""}</div>
-                                          <div style={{ color: "#e5e7eb", fontSize: 11, marginTop: 2 }}>{d.lat?.toFixed(4)}°N, {d.lng?.toFixed(4)}°E</div>
-                                        </div>
-                                      );
-                                    }}
-                                  />
-                                  <Scatter
-                                    name="Clusters"
-                                    data={displayClusters}
-                                    shape={(props) => {
-                                      const { cx, cy, payload } = props;
-                                      const isPrimary = payload.is_primary;
-                                      const baseColor = isPrimary ? "#6366f1" : COLOR.orange;
-
-                                      if (payload.renderType === 'noise') {
-                                        return <circle cx={cx} cy={cy} r={3} fill={COLOR.slate} opacity={0.3} />;
-                                      }
-
-                                      if (payload.renderType === 'centroid') {
-                                        const radius = isPrimary ? 14 : 10;
+                              <div style={{ height: 220, width: "100%", marginTop: 16 }}>
+                                <ResponsiveContainer width="100%" height="100%">
+                                  <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
+                                    <XAxis type="number" dataKey="lng" name="Longitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Longitude", position: "insideBottom", offset: -12, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
+                                    <YAxis type="number" dataKey="lat" name="Latitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Latitude", angle: -90, position: "insideLeft", offset: 10, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
+                                    <ZAxis type="category" dataKey="barangay" name="Barangay" />
+                                    <Tooltip
+                                      cursor={{ strokeDasharray: '3 3' }}
+                                      contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
+                                      content={({ active, payload }) => {
+                                        if (!active || !payload?.length) return null;
+                                        const d = payload[0]?.payload;
+                                        if (!d) return null;
+                                        const typeLabel = d.renderType === 'noise'
+                                          ? "Isolated (no cluster)"
+                                          : d.renderType === 'centroid'
+                                            ? `Cluster #${d.cluster} center`
+                                            : `Cluster #${d.cluster} member`;
                                         return (
-                                          <circle
-                                            cx={cx} cy={cy} r={radius}
-                                            fill={baseColor} fillOpacity={0.1}
-                                            stroke={baseColor} strokeWidth={2} strokeOpacity={1}
-                                          />
+                                          <div style={{ background: "#111827", border: "1px solid #374151", color: "#ffffff", borderRadius: 8, padding: "8px 12px", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontSize: 12, lineHeight: 1.6 }}>
+                                            <div style={{ fontWeight: 700, color: "#ffffff", marginBottom: 2 }}>{d.barangay || "Unknown area"}</div>
+                                            <div style={{ color: "#e5e7eb" }}>{typeLabel}{d.is_primary ? " · Primary hotspot" : ""}</div>
+                                            <div style={{ color: "#e5e7eb", fontSize: 11, marginTop: 2 }}>{d.lat?.toFixed(4)}°N, {d.lng?.toFixed(4)}°E</div>
+                                          </div>
                                         );
-                                      }
+                                      }}
+                                    />
+                                    <Scatter
+                                      name="Clusters"
+                                      data={displayClusters}
+                                      shape={(props) => {
+                                        const { cx, cy, payload } = props;
+                                        const isPrimary = payload.is_primary;
+                                        const baseColor = isPrimary ? "#6366f1" : COLOR.orange;
 
-                                      // Jittered point
-                                      return <circle cx={cx} cy={cy} r={3} fill={baseColor} opacity={0.7} />;
-                                    }}
-                                  />
-                                </ScatterChart>
-                              </ResponsiveContainer>
-                            </div>
+                                        if (payload.renderType === 'noise') {
+                                          return <circle cx={cx} cy={cy} r={3} fill={COLOR.slate} opacity={0.3} />;
+                                        }
 
-                            {/* ── DBSCAN Legend ─────────────────────── */}
-                            <div style={{
-                              display: "flex", flexWrap: "wrap", gap: "12px 20px",
-                              marginTop: 10, padding: "8px 12px",
-                              background: "rgba(255,255,255,0.05)", border: "1px solid rgba(229,231,235,0.16)", borderRadius: 8,
-                              fontSize: 11, color: "#e5e7eb", lineHeight: 1.4
-                            }}>
-                              {/* Primary hotspot */}
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="2"/></svg>
-                                <span><b style={{ color: "#6366f1" }}>Top Problem Area</b> — biggest group of risky businesses</span>
-                              </span>
-                              {/* Secondary cluster */}
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill={COLOR.orange} fillOpacity="0.15" stroke={COLOR.orange} strokeWidth="2"/></svg>
-                                <span><b style={{ color: COLOR.orange }}>Other Problem Areas</b> — smaller groups nearby</span>
-                              </span>
-                              {/* Flagged businesses */}
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" fill="#6366f1" opacity="0.7"/><circle cx="13" cy="12" r="2.5" fill={COLOR.orange} opacity="0.7"/></svg>
-                                <span>Individual flagged businesses in a group</span>
-                              </span>
-                              {/* Isolated / noise */}
-                              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill={COLOR.slate} opacity="0.3"/></svg>
-                                <span>Standalone businesses — not part of any group</span>
-                              </span>
-                            </div>
+                                        if (payload.renderType === 'centroid') {
+                                          const radius = isPrimary ? 14 : 10;
+                                          return (
+                                            <circle
+                                              cx={cx} cy={cy} r={radius}
+                                              fill={baseColor} fillOpacity={0.1}
+                                              stroke={baseColor} strokeWidth={2} strokeOpacity={1}
+                                            />
+                                          );
+                                        }
+
+                                        // Jittered point
+                                        return <circle cx={cx} cy={cy} r={3} fill={baseColor} opacity={0.7} />;
+                                      }}
+                                    />
+                                  </ScatterChart>
+                                </ResponsiveContainer>
+                              </div>
+
+                              {/* ── DBSCAN Legend ─────────────────────── */}
+                              <div style={{
+                                display: "flex", flexWrap: "wrap", gap: "12px 20px",
+                                marginTop: 10, padding: "8px 12px",
+                                background: "rgba(255,255,255,0.05)", border: "1px solid rgba(229,231,235,0.16)", borderRadius: 8,
+                                fontSize: 11, color: "#e5e7eb", lineHeight: 1.4
+                              }}>
+                                {/* Primary hotspot */}
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="2" /></svg>
+                                  <span><b style={{ color: "#6366f1" }}>Top Problem Area</b> — biggest group of risky businesses</span>
+                                </span>
+                                {/* Secondary cluster */}
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill={COLOR.orange} fillOpacity="0.15" stroke={COLOR.orange} strokeWidth="2" /></svg>
+                                  <span><b style={{ color: COLOR.orange }}>Other Problem Areas</b> — smaller groups nearby</span>
+                                </span>
+                                {/* Flagged businesses */}
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" fill="#6366f1" opacity="0.7" /><circle cx="13" cy="12" r="2.5" fill={COLOR.orange} opacity="0.7" /></svg>
+                                  <span>Individual flagged businesses in a group</span>
+                                </span>
+                                {/* Isolated / noise */}
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill={COLOR.slate} opacity="0.3" /></svg>
+                                  <span>Standalone businesses — not part of any group</span>
+                                </span>
+                              </div>
                             </>
                           );
                         })()
@@ -2933,7 +2933,7 @@ export default function AnalyticsPage() {
                           title="Reset sliders to default weights (68% Risk, 7% Sector, 25% Distance)"
                           disabled={savingWlc}
                         >
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                           Use Default
                         </button>
                         <span style={{ fontSize: 12, fontWeight: 700, color: (wlcConfig.w1_risk + wlcConfig.w2_sector + wlcConfig.w3_distance === 100) ? "var(--color-primary)" : "var(--color-danger)" }}>
@@ -2982,7 +2982,7 @@ export default function AnalyticsPage() {
                         disabled={savingWlc}
                         title="Revert back to default weights: 68% Risk, 7% Sector, 25% Distance"
                       >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                         Use Default (68/7/25)
                       </button>
                       <div style={{ display: "flex", gap: 8 }}>

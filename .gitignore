@@ -9,9 +9,6 @@ revela_backend/instance/
 node_modules/
 dist/
 
-#mobile
-/revela_mobile/
-
 
 # General
 .DS_Store

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "415570447553",
+    "project_id": "revela-dev",
+    "storage_bucket": "revela-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:415570447553:android:fe249b28cc16916a25d840",
+        "android_client_info": {
+          "package_name": "ph.gov.mataasnakahoy.revela"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD2Eb9YWS2HMZq_MDXnQISOXmZNbeznG1Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
