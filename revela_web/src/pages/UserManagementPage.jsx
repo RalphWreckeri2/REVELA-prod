@@ -695,14 +695,14 @@ export default function UserManagementPage() {
                   <td>
                     <div className="um-user-cell">
                       <UserAvatar name={u.fullName} />
-                      <div>
+                      <div style={{ minWidth: 0 }}>
                         <div className="um-user-name">
-                          {u.fullName}
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.fullName}</span>
                           {u.userID === user.userID && (
                             <span className="um-you-badge">You</span>
                           )}
                         </div>
-                        <div className="um-user-email">{u.email}</div>
+                        <div className="um-user-email" title={u.email}>{u.email}</div>
                       </div>
                     </div>
                   </td>

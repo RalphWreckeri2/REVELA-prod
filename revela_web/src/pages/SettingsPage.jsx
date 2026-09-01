@@ -644,10 +644,10 @@ export default function SettingsPage() {
                 { key: "w2_sector", label: "Sector Impact (W2)" },
                 { key: "w3_distance", label: "Travel Distance (W3)" }
               ].map(w => (
-                <div key={w.key} style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <span style={{ width: 140, fontSize: 12, fontWeight: 600, color: "var(--color-muted)" }}>{w.label}</span>
-                  <input type="range" min="0" max="100" value={wlcConfig[w.key]} onChange={e => handleWeightChange(w.key, e.target.value)} style={{ flex: 1, accentColor: "var(--color-primary)" }} />
-                  <div style={{ width: 30, textAlign: "right", fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>{wlcConfig[w.key]}%</div>
+                <div key={w.key} style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                  <span style={{ minWidth: 140, fontSize: 12, fontWeight: 600, color: "var(--color-muted)" }}>{w.label}</span>
+                  <input type="range" min="0" max="100" value={wlcConfig[w.key]} onChange={e => handleWeightChange(w.key, e.target.value)} style={{ flex: 1, minWidth: 120, accentColor: "var(--color-primary)" }} />
+                  <div style={{ width: 40, textAlign: "right", fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>{wlcConfig[w.key]}%</div>
                 </div>
               ))}
             </div>
@@ -661,15 +661,15 @@ export default function SettingsPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {sectors.length === 0 && <p style={{ fontSize: 12, color: "var(--color-muted)" }}>No sector policies defined. Click "Add Sector" to set custom severities.</p>}
                 {sectors.map((sec, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, background: "var(--color-input-bg)", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--color-border)" }}>
-                    <select value={sec.name} onChange={e => updateSector(i, "name", e.target.value)} style={{ padding: "6px", borderRadius: 6, border: "1px solid var(--color-border)", fontSize: 13, width: 160, background: "var(--color-modal-bg)" }}>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "var(--color-input-bg)", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--color-border)" }}>
+                    <select value={sec.name} onChange={e => updateSector(i, "name", e.target.value)} style={{ padding: "6px", borderRadius: 6, border: "1px solid var(--color-border)", fontSize: 13, minWidth: 140, flex: "1 1 140px", background: "var(--color-modal-bg)" }}>
                       <option value="">Select Sector ▾</option>
                       {SECTOR_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                     </select>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)" }}>Severity:</span>
-                    <input type="range" min="0" max="100" value={sec.score} onChange={e => updateSector(i, "score", e.target.value)} style={{ flex: 1, accentColor: "var(--color-primary)" }} />
+                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)", whiteSpace: "nowrap" }}>Severity:</span>
+                    <input type="range" min="0" max="100" value={sec.score} onChange={e => updateSector(i, "score", e.target.value)} style={{ flex: "1 1 120px", minWidth: 100, accentColor: "var(--color-primary)" }} />
                     <span style={{ width: 36, fontSize: 12, fontWeight: 700, color: "var(--color-ink)", textAlign: "right" }}>{(sec.score / 100).toFixed(1)}</span>
-                    <button type="button" onClick={() => removeSector(i)} style={{ background: "none", border: "none", color: "var(--color-danger)", cursor: "pointer", padding: 4, fontSize: 14, marginLeft: 8 }} title="Remove Sector">✕</button>
+                    <button type="button" onClick={() => removeSector(i)} style={{ background: "none", border: "none", color: "var(--color-danger)", cursor: "pointer", padding: 4, fontSize: 14, marginLeft: "auto" }} title="Remove Sector">✕</button>
                   </div>
                 ))}
               </div>
@@ -717,14 +717,14 @@ export default function SettingsPage() {
             <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Manage sign-in protection and admin access controls. Changes here are applied immediately.</p>
           </div>
           <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Change password</div>
                 <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Update your account password with a strong passphrase.</div>
               </div>
               <button className="ghost-btn" type="button" style={{ padding: "8px 12px" }} onClick={() => setShowPasswordModal(true)}>Update</button>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Two-factor auth</div>
                 <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Protect your account with one-time codes.</div>
@@ -748,14 +748,14 @@ export default function SettingsPage() {
             <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Review the platform's terms of service and privacy policy.</p>
           </div>
           <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Terms & Conditions</div>
                 <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Read the terms of service for using the REVELA platform.</div>
               </div>
               <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => setShowTermsDoc(true)}>View</button>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Privacy Policy</div>
                 <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Understand how your data is collected, used, and protected.</div>

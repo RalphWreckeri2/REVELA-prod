@@ -12,14 +12,16 @@
 /* ── KPI Grid ── */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
 }
 
 .kpi-card {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
+  padding: 18px 20px;
+  min-width: 0;
   transition: transform var(--duration-normal) var(--ease-in-out);
 }
 .kpi-card:hover {
@@ -28,37 +30,44 @@
 }
 
 .kpi-icon {
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
-.kpi-icon svg { width: 28px; height: 28px; }
+.kpi-icon svg { width: 24px; height: 24px; }
 
 .kpi-icon--gold  { background: var(--color-gold-light);    color: var(--color-gold-dark); }
 .kpi-icon--red   { background: var(--color-danger-light);  color: var(--color-danger); }
 .kpi-icon--green { background: var(--color-primary-light); color: var(--color-primary); }
 
+.kpi-info {
+  min-width: 0;
+}
+
 .kpi-info h3 {
-  font-size: 28px;
+  font-size: clamp(20px, 2vw, 28px);
   font-weight: 800;
   color: var(--color-ink);
   line-height: 1;
   margin-bottom: 6px;
+  white-space: nowrap;
 }
 .kpi-info p {
-  font-size: 13px;
+  font-size: clamp(11px, 0.9vw, 13px);
   color: var(--color-muted);
   font-weight: 500;
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 /* ── Widget Grid ── */
 .widget-grid {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 24px;
 }
 
@@ -155,7 +164,9 @@
 .hero-status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: 100%;
   background: rgba(255, 255, 255, 0.75);
   border: 1px solid rgba(86, 171, 47, 0.25);
   backdrop-filter: blur(8px);
@@ -284,9 +295,8 @@
 .hero-cards {
   flex: 1;
   display: grid;
-  /* minmax(0, …): tracks may compress below their content's intrinsic width */
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -295,10 +305,10 @@
   border: 1px solid rgba(86, 171, 47, 0.18);
   backdrop-filter: blur(10px);
   border-radius: 16px;
-  padding: 18px;
+  padding: 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   /* Size container: lets .hero-clock / .hero-temp scale with the card itself */
   container-type: inline-size;
@@ -308,8 +318,8 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 8px;
-  /* children must be allowed to shrink or long labels overflow the card */
+  gap: 6px;
+  flex-wrap: wrap;
   min-width: 0;
 }
 
@@ -318,23 +328,23 @@
 .hero-card-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
+  gap: 6px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-ink);
-  line-height: 1.3;
+  line-height: 1.2;
 }
 
 .hero-card-badge {
   background: var(--color-primary-light);
   color: var(--color-primary-dark);
   border: 1px solid rgba(86, 171, 47, 0.3);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: 6px;
   text-align: center;
-  line-height: 1.3;
+  line-height: 1.2;
   white-space: nowrap;
   flex-shrink: 0; /* keep the badge intact; let the title/loc shrink instead */
 }
@@ -351,9 +361,9 @@
 
 .hero-clock {
   /* Fallback for browsers without container queries… */
-  font-size: clamp(20px, 3vw, 30px);
-  /* …then fluid sizing driven by the card's own width (~11% of card, 20–30px) */
-  font-size: clamp(20px, 11cqi, 30px);
+  font-size: clamp(18px, 3vw, 26px);
+  /* …then fluid sizing driven by the card's own width (~11% of card, 18–26px) */
+  font-size: clamp(18px, 10cqi, 26px);
   font-weight: 800;
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums;
@@ -362,27 +372,37 @@
 }
 
 .hero-clock-ampm {
-  font-size: clamp(11px, 5.5cqi, 15px);
+  font-size: clamp(10px, 5cqi, 13px);
   font-weight: 700;
   color: var(--color-muted);
 }
 
 .hero-card-date {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-muted);
   margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .hero-card-foot {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid rgba(86, 171, 47, 0.15);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  font-size: 11.5px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 11px;
   color: var(--color-muted);
+}
+
+.hero-card-foot > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .hero-foot-value {
@@ -497,7 +517,6 @@
 /* ── Responsive overrides ── */
 @media (max-width: 1100px) {
   .hero-banner { grid-template-columns: 1fr; }
-  .hero-cards  { grid-template-columns: 1fr; }
   .widget-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {

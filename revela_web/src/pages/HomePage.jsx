@@ -290,8 +290,8 @@ function HighPriorityAlertsWidget({ opsRankings, navigate, loading }) {
               style={{ background: "var(--color-surface)", border: "1px solid var(--color-border-soft)", padding: "10px 12px", borderRadius: "10px", cursor: "pointer" }}
               onClick={() => navigate('/analytics')}
             >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3, gap: 8, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 6, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   <span style={{
                     width: 18, height: 18, borderRadius: "50%",
                     background: "var(--color-primary)", color: "#fff",
@@ -300,13 +300,16 @@ function HighPriorityAlertsWidget({ opsRankings, navigate, loading }) {
                   }}>
                     {b.rank}
                   </span>
-                  {shortBarangay(b.barangayName)}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {shortBarangay(b.barangayName)}
+                  </span>
                 </div>
                 <span style={{
                   fontSize: 10, fontWeight: 700,
                   padding: "2px 8px", borderRadius: 6,
                   background: riskStyle.bg, color: riskStyle.text,
                   border: `1px solid ${riskStyle.border}`,
+                  flexShrink: 0
                 }}>
                   {b.risk_level}
                 </span>
@@ -1005,7 +1008,7 @@ export default function HomePage() {
           </div>
 
           {/* Map */}
-          <div style={{ height: "400px" }}>
+          <div style={{ minHeight: 380, height: "auto", marginBottom: 24 }}>
             <MiniMapWidget
               flags={allFlags}
               isDark={isDark}
@@ -1029,7 +1032,7 @@ export default function HomePage() {
       </div>
 
       {/* Footer */}
-      <footer className="saas-footer frosted-glass">
+      <footer className="saas-footer frosted-glass" style={{ marginTop: 32, width: "100%", boxSizing: "border-box" }}>
         <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
         <p className="footer-links">
           <span>BPLO Portal</span> &bull; <span>System Settings</span>
