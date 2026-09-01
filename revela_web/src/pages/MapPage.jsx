@@ -356,6 +356,19 @@ function pointInGeoJsonGeometry(lat, lng, geometry) {
   return false;
 }
 
+/**
+ * Normalize a barangay name for matching between GeoJSON ADM4_EN values
+ * and DB barangayName values. Only strips (Pob.) and normalises whitespace
+ * so that 'District I' stays 'district i' and doesn't collapse to 'i'.
+ */
+function normalizeBrgyName(name) {
+  return String(name).toLowerCase()
+    .replace(/\(pob\.\)/gi, "")
+    .replace(/brgy\.?\s*/gi, "barangay ") // brgy. → barangay
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ── Normalise flag from API → UI shape ────────────────────────────────────────
 function normalizeFlag(flag) {
   const color = canonicalFlagColor(flag.flagColor);
@@ -2292,21 +2305,19 @@ export default function MapPage() {
     }
 
     // Match the GeoJSON feature name to a DB barangay ID
-    const geoName = (
+    const geoNorm = normalizeBrgyName(
       matchedFeature.properties?.ADM4_EN ||
       matchedFeature.properties?.NAME_4 || ""
-    ).toLowerCase()
-      .replace(/barangay/g, "").replace(/brgy\.?/g, "")
-      .replace(/district/g, "").replace(/\(pob\.\)/g, "")
-      .replace(/\s+/g, "");
+    );
+    // Strip leading 'barangay ' for a secondary comparison (handles
+    // GeoJSON 'Barangay II-A' vs DB 'District II-A' edge cases).
+    const geoStripped = geoNorm.replace(/^barangay\s+/, "");
 
     let matchedId = "";
     const matched = barangays.find(b => {
-      const dbName = b.barangayName.toLowerCase()
-        .replace(/barangay/g, "").replace(/brgy\.?/g, "")
-        .replace(/district/g, "").replace(/\(pob\.\)/g, "")
-        .replace(/\s+/g, "");
-      return dbName === geoName || dbName.includes(geoName) || geoName.includes(dbName);
+      const dbNorm = normalizeBrgyName(b.barangayName);
+      const dbStripped = dbNorm.replace(/^barangay\s+/, "");
+      return dbNorm === geoNorm || dbStripped === geoStripped;
     });
     if (matched) matchedId = String(matched.barangayID);
 
@@ -2326,26 +2337,17 @@ export default function MapPage() {
       const lat = e.latLng.lat();
       const lng = e.latLng.lng();
 
-      let geoName = (
+      const geoNorm = normalizeBrgyName(
         e.feature.getProperty('ADM4_EN') ||
         e.feature.getProperty('NAME_4') || ""
-      ).toLowerCase()
-        .replace(/barangay/g, "")
-        .replace(/brgy\.?/g, "")
-        .replace(/district/g, "")
-        .replace(/\(pob\.\)/g, "")
-        .replace(/\s+/g, ""); // strip all spaces! e.g., "lumanglipa"
+      );
+      const geoStripped = geoNorm.replace(/^barangay\s+/, "");
 
       let matchedId = "";
       const matched = barangays.find(b => {
-        let dbName = b.barangayName.toLowerCase()
-          .replace(/barangay/g, "")
-          .replace(/brgy\.?/g, "")
-          .replace(/district/g, "")
-          .replace(/\(pob\.\)/g, "")
-          .replace(/\s+/g, ""); // strip all spaces
-
-        return dbName === geoName || dbName.includes(geoName) || geoName.includes(dbName);
+        const dbNorm = normalizeBrgyName(b.barangayName);
+        const dbStripped = dbNorm.replace(/^barangay\s+/, "");
+        return dbNorm === geoNorm || dbStripped === geoStripped;
       });
 
       if (matched) {
