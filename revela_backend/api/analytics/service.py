@@ -4,11 +4,11 @@ import json
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "wlc_config.json")
 
 DEFAULT_CONFIG = {
-    "w1_risk": 40,
-    "w2_sector": 40,
-    "w3_distance": 20,
-    "bplo_lat": 13.9667,
-    "bplo_lng": 121.1167,
+    "w1_risk": 68,
+    "w2_sector": 7,
+    "w3_distance": 25,
+    "bplo_lat": 13.960413,
+    "bplo_lng": 121.114547,
     "sectors": {}
 }
 

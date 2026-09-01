@@ -2183,15 +2183,76 @@ export default function MapPage() {
       await fetchFlags();
       await fetchDetectionQuota();
       setClusters([]);
-      // Show result summary briefly
-      if (result?.new_flags !== undefined) {
-        const quotaNote = result?.quota?.remaining_this_month === 0
-          ? ` (Notice: Final monthly scan used. Next scan on ${result.quota.resets_on})`
-          : "";
-        setActionError(`Detection complete — ${result.new_flags} new Red Flag${result.new_flags !== 1 ? "s" : ""} found.${quotaNote}`);
-        setTimeout(() => setActionError(""), 7000);
+
+      // Stop loader so map is fully visible behind dialog
+      setRunDetectionLoading(false);
+      setCancellingDetection(false);
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      setDetectionProgress(null);
+
+      if (result) {
+        const count = Number(result.new_flags ?? 0);
+        const totalChecked = Number(result.total_checked ?? 0);
+        const remainingScans = result.quota?.remaining_this_month ?? 0;
+        const resetsOn = result.quota?.resets_on || "the 1st of next month";
+
+        const alertRes = await Swal.fire({
+          icon: count > 0 ? "success" : "info",
+          title: count > 0 ? "Detection Scan Complete!" : "Scan Complete — No New Gaps",
+          html: `
+            <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+              <div style="background: ${count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
+                <div style="font-size: 20px; font-weight: 800; color: ${count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
+                  ${count} Unregistered Business${count !== 1 ? "es" : ""} Detected
+                </div>
+                <div style="font-size: 12.5px; color: ${count > 0 ? "#7f1d1d" : "#065f46"};">
+                  ${count > 0 
+                    ? "New Red Flags have been plotted on the municipal map and queued for field verification." 
+                    : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+                <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
+                  <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Places Scanned</div>
+                  <div style="font-size: 16px; font-weight: 800; color: var(--color-ink, #0f172a); margin-top: 2px;">
+                    ${totalChecked} locations
+                  </div>
+                </div>
+                <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
+                  <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Monthly Scans Left</div>
+                  <div style="font-size: 16px; font-weight: 800; color: #6366f1; margin-top: 2px;">
+                    ${remainingScans} of 2
+                  </div>
+                </div>
+              </div>
+
+              ${remainingScans === 0 ? `
+                <div style="font-size: 12px; color: #b45309; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px;">
+                  <strong>Notice:</strong> Monthly quota reached. Next scan unlocks on <strong>${resetsOn}</strong>.
+                </div>
+              ` : ""}
+            </div>
+          `,
+          confirmButtonColor: "#6366f1",
+          confirmButtonText: count > 0 ? "View Detected on Map" : "Understood"
+        });
+
+        if (alertRes.isConfirmed && count > 0) {
+          setFilterColor("Red");
+        }
       }
     } catch (err) {
+      console.error("Detection scan error:", err);
+      Swal.fire({
+        icon: "error",
+        title: "Detection Scan Failed",
+        text: err.message || "An error occurred during the geospatial scan.",
+        confirmButtonColor: "#ef4444"
+      });
       setActionError(err.message || "Detection failed.");
     } finally {
       setRunDetectionLoading(false);
@@ -2452,7 +2513,7 @@ export default function MapPage() {
             </p>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
           <button
             className="quick-refresh-btn"
             type="button"
@@ -2685,8 +2746,16 @@ export default function MapPage() {
               { label: "Critical Violations", value: counts.Black, color: "var(--color-ink)" },
             ].map(s => (
               <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}>
-                <span style={{ fontSize: 22, fontWeight: 800, color: s.color }}>{s.value}</span>
-                <span style={{ fontSize: 11, color: "var(--color-muted)", fontWeight: 500 }}>{s.label}</span>
+                <span style={{ fontSize: "clamp(15px, 1.4vw, 22px)", fontWeight: 800, color: s.color, lineHeight: 1, textAlign: "left" }}>{s.value}</span>
+                <span style={{
+                  fontSize: "clamp(9.5px, 0.85vw, 11.5px)",
+                  color: "var(--color-muted)",
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                  textAlign: "left",
+                  wordBreak: "break-word",
+                  overflowWrap: "anywhere",
+                }}>{s.label}</span>
               </div>
             ))}
           </div>
@@ -2835,14 +2904,22 @@ export default function MapPage() {
           )}
 
           {/* Action Buttons at Bottom */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: "auto" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
             {isAdmin && (
               <button
                 className="primary-btn"
-                style={{ width: "100%", justifyContent: "center", padding: "12px", borderRadius: 12, fontSize: 14 }}
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  boxSizing: "border-box",
+                }}
                 onClick={() => setIsInspectorModalOpen(true)}
               >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 8 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, flexShrink: 0 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
                 View Inspector Backlog
               </button>
             )}
@@ -2920,13 +2997,13 @@ const styles = {
   livePill: { display: "inline-flex", alignItems: "center", gap: 6, background: "#fee2e2", color: "#b91c1c", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 },
   liveDot: { width: 7, height: 7, borderRadius: "50%", background: "#ef4444" },
 
-  mapLayout: { display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "start" },
-  mapColumn: { display: "flex", flexDirection: "column", gap: 14 },
+  mapLayout: { display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "stretch" },
+  mapColumn: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 },
 
   layerBar: { display: "flex", alignItems: "center", gap: 16, padding: "12px 18px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
   layerToggle: { padding: "6px 12px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s" },
 
-  mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", height: 480 },
+  mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: 1, minHeight: 480 },
   mapCanvas: { width: "100%", height: "100%", position: "relative", background: "#e8f5e2" },
   mapFallback: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "var(--color-ink)", fontSize: 14, textAlign: "center", padding: 24 },
 
@@ -2936,10 +3013,10 @@ const styles = {
   overlayCard: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: "#fff", background: "rgba(15,23,42,0.8)", borderRadius: 16, padding: "16px 24px", fontSize: 14 },
   pickingBanner: { position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", background: "var(--color-primary)", color: "#fff", padding: "12px 24px", borderRadius: 30, zIndex: 100, display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, boxShadow: "0 10px 25px rgba(0,0,0,0.2)" },
 
-  statsStrip: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 10 },
-  statCard: { display: "flex", flexDirection: "column", gap: 2, padding: "14px 12px", borderRadius: "var(--radius-lg)", minWidth: 0 },
+  statsStrip: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 },
+  statCard: { display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "center", textAlign: "left", gap: 4, padding: "12px 10px", borderRadius: "var(--radius-lg)", minWidth: 0, overflow: "hidden" },
 
-  sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", maxHeight: 680, position: "sticky", top: 20 },
+  sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", position: "sticky", top: 20, minWidth: 0 },
   flagList: { overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, flex: 1, paddingRight: 2 },
   flagCard: { border: "1px solid", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer", transition: "all 0.12s" },
   flagName: { fontSize: 13, fontWeight: 700, color: "var(--color-ink)", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },

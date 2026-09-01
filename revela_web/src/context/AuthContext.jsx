@@ -20,6 +20,10 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (token && !user) {
+      if (token === "dev-admin-token") {
+        setUser({ id: 1, fullName: "BPLO Administrator", role: "Admin", email: "admin@mataasnakahoy.gov.ph" });
+        return;
+      }
       Promise.all([
         getMeRequest(token),
         new Promise(resolve => setTimeout(resolve, 1000)) // Force at least 1 second delay

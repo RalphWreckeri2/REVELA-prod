@@ -13,6 +13,7 @@
     "@googlemaps/markerclusterer": "^2.6.2",
     "@react-google-maps/api": "^2.18.1",
     "file-saver": "^2.0.5",
+    "html2canvas": "^1.4.1",
     "papaparse": "^5.5.4",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.5",

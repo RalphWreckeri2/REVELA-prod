@@ -125,11 +125,11 @@ def _get_all_analytics_inner(F=None):
 
     # ── WLC config ────────────────────────────────────────────────────────────
     config = get_wlc_config()
-    w1 = config.get("w1_risk", 40) / 100
-    w2 = config.get("w2_sector", 40) / 100
-    w3 = config.get("w3_distance", 20) / 100
-    bplo_lat = config.get("bplo_lat", 13.9667)
-    bplo_lng = config.get("bplo_lng", 121.1167)
+    w1 = config.get("w1_risk", 68) / 100
+    w2 = config.get("w2_sector", 7) / 100
+    w3 = config.get("w3_distance", 25) / 100
+    bplo_lat = config.get("bplo_lat", 13.960413)
+    bplo_lng = config.get("bplo_lng", 121.114547)
     sector_scores = config.get("sectors", {})
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -881,11 +881,11 @@ def get_ops_rankings_only():
         cur = mysql.connection.cursor()
 
         config = get_wlc_config()
-        w1 = config.get("w1_risk", 40) / 100
-        w2 = config.get("w2_sector", 40) / 100
-        w3 = config.get("w3_distance", 20) / 100
-        bplo_lat = config.get("bplo_lat", 13.9667)
-        bplo_lng = config.get("bplo_lng", 121.1167)
+        w1 = config.get("w1_risk", 68) / 100
+        w2 = config.get("w2_sector", 7) / 100
+        w3 = config.get("w3_distance", 25) / 100
+        bplo_lat = config.get("bplo_lat", 13.960413)
+        bplo_lng = config.get("bplo_lng", 121.114547)
         sector_scores = config.get("sectors", {})
 
         # Same exclusion rule as the main analytics endpoint: only Red/Yellow/

@@ -820,7 +820,7 @@ export default function AnalyticsPage() {
     }
     return () => observer.disconnect();
   }, []);
-  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 40, w2_sector: 25, w3_distance: 15 });
+  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
   const [savingWlc, setSavingWlc] = useState(false);
   const [expandedDispatch, setExpandedDispatch] = useState({});
@@ -863,7 +863,7 @@ export default function AnalyticsPage() {
     try {
       const res = await getWlcConfigRequest(token);
       if (res) {
-        setWlcConfig({ w1_risk: res.w1_risk ?? 40, w2_sector: res.w2_sector ?? 25, w3_distance: res.w3_distance ?? 15 });
+        setWlcConfig({ w1_risk: res.w1_risk ?? 68, w2_sector: res.w2_sector ?? 7, w3_distance: res.w3_distance ?? 25 });
       }
     } catch (e) {
       console.error(e);
@@ -1558,8 +1558,8 @@ export default function AnalyticsPage() {
         }
       `}</style>
 
-      {/* PAGE WRAPPER WITH ADDED LEFT PADDING */}
-      <div style={{ paddingLeft: 24 }}>
+      {/* PAGE WRAPPER */}
+      <div style={{ width: "100%", minWidth: 0 }}>
 
         {/* PAGE HEADER */}
         <div style={{ marginBottom: 32, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
@@ -2122,13 +2122,13 @@ export default function AnalyticsPage() {
               </div>
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census</h4>
-              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 16, marginBottom: 24 }}>
-                <KpiCard iconVariant="gold" value={kpis?.total_businesses ?? "—"} label="Total Registered" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="green" value={kpis?.active_count ?? "—"} label="Active" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="red" value={kpis?.expired_count ?? "—"} label="Expired" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="gold" value={kpis?.pending_count ?? "—"} label="Pending" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="red" value={kpis?.closed_count ?? "—"} label="Closed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="red" value={kpis?.revoked_count ?? "—"} label="Revoked" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><line x1="18" y1="9" x2="12" y2="15"></line><line x1="12" y1="9" x2="18" y2="15"></line></svg>} style={{ padding: "16px" }} />
+              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(0, 1fr))", gap: 10, marginBottom: 24 }}>
+                <KpiCard iconVariant="gold" value={kpis?.total_businesses ?? "—"} label="Total Registered" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="green" value={kpis?.active_count ?? "—"} label="Active" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={kpis?.expired_count ?? "—"} label="Expired" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="gold" value={kpis?.pending_count ?? "—"} label="Pending" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={kpis?.closed_count ?? "—"} label="Closed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={kpis?.revoked_count ?? "—"} label="Revoked" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><line x1="18" y1="9" x2="12" y2="15"></line><line x1="12" y1="9" x2="18" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
               {/* Business Demographic Profile */}
@@ -2145,32 +2145,32 @@ export default function AnalyticsPage() {
                 {/* Executive FAQs */}
                 <div style={{ marginBottom: 32 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(max(240px, calc(50% - 16px)), 1fr))", gap: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
 
-                    <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Legal Structure</p>
-                      <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                    <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
+                      <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Legal Structure</p>
+                      <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {typeData?.[0] ? `${typeData[0].name} (${Math.round((typeData[0].value / typeData.reduce((a, b) => a + b.value, 0)) * 100)}%)` : "N/A"}
                       </p>
                     </div>
 
-                    <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-green)", minWidth: 0 }}>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Dominant Economic Sector</p>
-                      <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                    <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-green)", minWidth: 0 }}>
+                      <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Dominant Economic Sector</p>
+                      <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {sectoralData?.[0] ? sectoralData[0].name : "N/A"}
                       </p>
                     </div>
 
-                    <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-red)", minWidth: 0 }}>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Highest Compliance Risk</p>
-                      <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                    <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-red)", minWidth: 0 }}>
+                      <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Highest Compliance Risk</p>
+                      <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {worstComplianceSize ? `${worstComplianceSize.name} Enterprises (${worstComplianceSize.pct}% non-compliant)` : "None (100% Compliant)"}
                       </p>
                     </div>
 
-                    <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Overall Compliance Rate</p>
-                      <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                    <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
+                      <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Overall Compliance Rate</p>
+                      <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {kpis?.compliance_rate != null ? `${kpis.compliance_rate}% of registered businesses` : "N/A"}
                       </p>
                     </div>
@@ -2401,43 +2401,43 @@ export default function AnalyticsPage() {
               </div>
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Field & Inspection KPIs</h4>
-              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))", gap: 16, marginBottom: 24 }}>
-                <KpiCard iconVariant="red" value={(flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black) ?? "—"} label="Total Non-Compliant" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="orange" value={dispatchedCount ?? "—"} label="Dispatched" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="gold" value={inspectedCount ?? "—"} label="Total Inspected" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="green" value={clearedCount ?? "—"} label="Compliant (Cleared)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "16px" }} />
-                <KpiCard iconVariant="gold" value={`${inspectedCount > 0 ? Math.round((clearedCount / inspectedCount) * 100) : 0}%`} label="Clearance Rate" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} style={{ padding: "16px" }} />
+              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginBottom: 24 }}>
+                <KpiCard iconVariant="red" value={(flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black) ?? "—"} label="Total Non-Compliant" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="orange" value={dispatchedCount ?? "—"} label="Dispatched" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="gold" value={inspectedCount ?? "—"} label="Total Inspected" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="green" value={clearedCount ?? "—"} label="Compliant (Cleared)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="gold" value={`${inspectedCount > 0 ? Math.round((clearedCount / inspectedCount) * 100) : 0}%`} label="Clearance Rate" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
               {/* Field Inspections FAQs */}
               <div style={{ marginBottom: 32 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(max(240px, calc(50% - 16px)), 1fr))", gap: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
 
-                  <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
-                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Inspection Outcome</p>
-                    <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
+                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Inspection Outcome</p>
+                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {auditData.length > 0 ? `${[...auditData].sort((a, b) => b.value - a.value)[0].name} (${Math.round(([...auditData].sort((a, b) => b.value - a.value)[0].value / inspectedCount) * 100)}%)` : "N/A"}
                     </p>
                   </div>
 
-                  <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-red)", minWidth: 0 }}>
-                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Lowest Compliance Barangay</p>
-                    <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-red)", minWidth: 0 }}>
+                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Lowest Compliance Barangay</p>
+                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {leaderboardData.length > 0 ? `${[...leaderboardData].sort((a, b) => a.rate - b.rate)[0].shortName} (${[...leaderboardData].sort((a, b) => a.rate - b.rate)[0].rate}% compliant)` : "N/A"}
                     </p>
                   </div>
 
-                  <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
-                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>End-to-End Clearance Rate</p>
-                    <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
+                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>End-to-End Clearance Rate</p>
+                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {funnelData[0]?.value > 0 ? `${Math.round((clearedCount / funnelData[0].value) * 100)}% of total detected` : "N/A"}
                     </p>
                   </div>
 
-                  <div className="saas-card frosted-glass" style={{ padding: 16, borderRadius: 12, borderLeft: "4px solid var(--color-green)", minWidth: 0 }}>
-                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Highest Compliance Barangay</p>
-                    <p style={{ fontSize: 15, color: "var(--color-ink)", margin: 0, fontWeight: 700 }}>
+                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-green)", minWidth: 0 }}>
+                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Highest Compliance Barangay</p>
+                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {leaderboardData.length > 0 ? (() => {
                         const best = [...leaderboardData].sort((a, b) => {
                           if (a.rate !== b.rate) return b.rate - a.rate;
@@ -2451,7 +2451,7 @@ export default function AnalyticsPage() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 24, marginBottom: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24, marginBottom: 24 }}>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Barangay Compliance Leaderboard</h3>
                   <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Ranked compliance rates based on registered vs flagged entities.</p>
@@ -2516,7 +2516,7 @@ export default function AnalyticsPage() {
               </div>
 
               {/* Audit Summary Section */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Inspection Result Breakdown</h3>
                   <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Distribution of audit outcomes for verified businesses.</p>
@@ -2579,7 +2579,7 @@ export default function AnalyticsPage() {
             <div style={{ marginBottom: 40 }}>
               <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D1. Risk Intelligence Narratives</h3>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 24 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
                     <div style={{ color: "#8b5cf6" }}>
@@ -2754,7 +2754,7 @@ export default function AnalyticsPage() {
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
               {/* D2. TREND ANALYSIS */}
               <div>
                 <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D2. Trend Analysis</h3>
