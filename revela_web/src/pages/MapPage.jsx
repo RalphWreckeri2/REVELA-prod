@@ -357,16 +357,69 @@ function pointInGeoJsonGeometry(lat, lng, geometry) {
 }
 
 /**
- * Normalize a barangay name for matching between GeoJSON ADM4_EN values
- * and DB barangayName values. Only strips (Pob.) and normalises whitespace
- * so that 'District I' stays 'district i' and doesn't collapse to 'i'.
+ * Explicit GeoJSON ADM4_EN → DB barangayName mapping.
+ * Mirrors the same table in revela_backend/api/flags/service.py.
+ * Keys are lowercased ADM4_EN values from mataasnakahoy.json.
+ */
+const GEOJSON_TO_DB_BRGY = {
+  "district i (pob.)":     "Barangay I",
+  "district ii (pob.)":    "Barangay II",
+  "barangay ii-a (pob.)":  "Barangay II-A",
+  "district iii (pob.)":   "Barangay III",
+  "district iv (pob.)":    "Barangay IV",
+  "lumang lipa":           "Barangay Lumanglipa",
+  // Straight matches (GeoJSON name == DB name after "Barangay " prefix)
+  "bayorbor":     "Barangay Bayorbor",
+  "bubuyan":      "Barangay Bubuyan",
+  "calingatan":   "Barangay Calingatan",
+  "loob":         "Barangay Loob",
+  "kinalaglagan": "Barangay Kinalaglagan",
+  "manggahan":    "Barangay Manggahan",
+  "nangkaan":     "Barangay Nangkaan",
+  "san sebastian":"Barangay San Sebastian",
+  "santol":       "Barangay Santol",
+  "upa":          "Barangay Upa",
+};
+
+/**
+ * Given a raw GeoJSON ADM4_EN string, return the DB barangayName it maps to,
+ * or null if unknown.
+ */
+function resolveGeoJsonToDbName(geoAdm4En) {
+  const key = String(geoAdm4En).toLowerCase().trim();
+  return GEOJSON_TO_DB_BRGY[key] ?? null;
+}
+
+/**
+ * Normalize a barangay name for fuzzy fallback matching.
+ * Only strips (Pob.) and normalises whitespace.
  */
 function normalizeBrgyName(name) {
   return String(name).toLowerCase()
     .replace(/\(pob\.\)/gi, "")
-    .replace(/brgy\.?\s*/gi, "barangay ") // brgy. → barangay
+    .replace(/brgy\.?\s*/gi, "barangay ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Find the DB barangay entry that corresponds to a GeoJSON ADM4_EN value.
+ * Uses the explicit lookup table first, then falls back to normalized comparison.
+ */
+function matchBrgyFromGeoName(geoAdm4En, barangays) {
+  const resolved = resolveGeoJsonToDbName(geoAdm4En);
+  if (resolved) {
+    const exact = barangays.find(b => b.barangayName === resolved);
+    if (exact) return exact;
+  }
+  // Fallback: normalized comparison without substring matching
+  const geoNorm = normalizeBrgyName(geoAdm4En);
+  const geoStripped = geoNorm.replace(/^barangay\s+/, "");
+  return barangays.find(b => {
+    const dbNorm = normalizeBrgyName(b.barangayName);
+    const dbStripped = dbNorm.replace(/^barangay\s+/, "");
+    return dbNorm === geoNorm || dbStripped === geoStripped;
+  }) ?? null;
 }
 
 // ── Normalise flag from API → UI shape ────────────────────────────────────────
@@ -2304,22 +2357,12 @@ export default function MapPage() {
       return;
     }
 
-    // Match the GeoJSON feature name to a DB barangay ID
-    const geoNorm = normalizeBrgyName(
+    // Resolve GeoJSON feature name → DB barangay ID
+    const geoAdm4En =
       matchedFeature.properties?.ADM4_EN ||
-      matchedFeature.properties?.NAME_4 || ""
-    );
-    // Strip leading 'barangay ' for a secondary comparison (handles
-    // GeoJSON 'Barangay II-A' vs DB 'District II-A' edge cases).
-    const geoStripped = geoNorm.replace(/^barangay\s+/, "");
-
-    let matchedId = "";
-    const matched = barangays.find(b => {
-      const dbNorm = normalizeBrgyName(b.barangayName);
-      const dbStripped = dbNorm.replace(/^barangay\s+/, "");
-      return dbNorm === geoNorm || dbStripped === geoStripped;
-    });
-    if (matched) matchedId = String(matched.barangayID);
+      matchedFeature.properties?.NAME_4 || "";
+    const matched = matchBrgyFromGeoName(geoAdm4En, barangays);
+    const matchedId = matched ? String(matched.barangayID) : "";
 
     setYellowDraft(prev => ({
       ...prev,
@@ -2337,22 +2380,11 @@ export default function MapPage() {
       const lat = e.latLng.lat();
       const lng = e.latLng.lng();
 
-      const geoNorm = normalizeBrgyName(
+      const geoAdm4En =
         e.feature.getProperty('ADM4_EN') ||
-        e.feature.getProperty('NAME_4') || ""
-      );
-      const geoStripped = geoNorm.replace(/^barangay\s+/, "");
-
-      let matchedId = "";
-      const matched = barangays.find(b => {
-        const dbNorm = normalizeBrgyName(b.barangayName);
-        const dbStripped = dbNorm.replace(/^barangay\s+/, "");
-        return dbNorm === geoNorm || dbStripped === geoStripped;
-      });
-
-      if (matched) {
-        matchedId = String(matched.barangayID);
-      }
+        e.feature.getProperty('NAME_4') || "";
+      const matched = matchBrgyFromGeoName(geoAdm4En, barangays);
+      const matchedId = matched ? String(matched.barangayID) : "";
 
       setYellowDraft(prev => ({
         ...prev,
