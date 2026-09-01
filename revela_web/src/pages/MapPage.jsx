@@ -316,6 +316,46 @@ export function getBarangayCentroid(barangayName) {
   return DEFAULT_MAP_CENTER;
 }
 
+// ── Point-in-polygon helpers (ray-casting) ────────────────────────────────────
+// GeoJSON coords are [lng, lat]; we receive (lat, lng) from Google Maps.
+function pointInRing(lat, lng, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i]; // xi=lng, yi=lat
+    const [xj, yj] = ring[j];
+    const intersect =
+      (yi > lat) !== (yj > lat) &&
+      lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** Returns true if (lat, lng) is inside a GeoJSON Polygon or MultiPolygon geometry. */
+function pointInGeoJsonGeometry(lat, lng, geometry) {
+  if (!geometry) return false;
+  const polys =
+    geometry.type === "MultiPolygon"
+      ? geometry.coordinates          // [ [ [ring], ...], ... ]
+      : geometry.type === "Polygon"
+        ? [geometry.coordinates]      // [ [ [ring], ... ] ]
+        : [];
+
+  for (const poly of polys) {
+    // poly[0] = outer ring; poly[1..] = holes
+    if (poly.length === 0) continue;
+    if (pointInRing(lat, lng, poly[0])) {
+      // Check holes — if inside a hole the point is outside the polygon
+      let inHole = false;
+      for (let h = 1; h < poly.length; h++) {
+        if (pointInRing(lat, lng, poly[h])) { inHole = true; break; }
+      }
+      if (!inHole) return true;
+    }
+  }
+  return false;
+}
+
 // ── Normalise flag from API → UI shape ────────────────────────────────────────
 function normalizeFlag(flag) {
   const color = canonicalFlagColor(flag.flagColor);
@@ -1770,6 +1810,7 @@ export default function MapPage() {
   const [barangays, setBarangays] = useState([]);
   const [clusters, setClusters] = useState([]);
   const [clustersLoading, setClustersLoading] = useState(false);
+  const geoJsonFeaturesRef = useRef(null); // cached GeoJSON features for PiP checks
 
   const [adjustingFlagId, setAdjustingFlagId] = useState(null);
   const [adjustingLatLng, setAdjustingLatLng] = useState(null);
@@ -1866,6 +1907,17 @@ export default function MapPage() {
       })
       .catch(err => console.error("Failed to load barangays", err));
   }, [token, isAdmin]);
+
+  // Pre-fetch GeoJSON once so handleMapClick can do real point-in-polygon checks
+  useEffect(() => {
+    if (geoJsonFeaturesRef.current) return; // already loaded
+    fetch("/data/mataasnakahoy.json")
+      .then(r => r.json())
+      .then(json => {
+        geoJsonFeaturesRef.current = Array.isArray(json.features) ? json.features : [];
+      })
+      .catch(err => console.warn("Could not pre-load GeoJSON for PiP checks", err));
+  }, []);
 
   const [inspectors, setInspectors] = useState([]);
   useEffect(() => {
@@ -2191,29 +2243,45 @@ export default function MapPage() {
     const lat = e.latLng.lat();
     const lng = e.latLng.lng();
 
-    // Attempt to find the closest barangay by centroid distance as a fallback
-    // (handleDataClick handles the precise polygon-hit case; this covers base-map
-    // clicks where the GeoJSON layer is still loading or the click lands on a gap).
-    let matchedId = "";
-    let bestDist = Infinity;
-    for (const b of barangays) {
-      const nameKey = b.barangayName.toLowerCase()
-        .replace(/barangay/g, "").replace(/brgy\.?/g, "")
-        .replace(/district/g, "").replace(/\(pob\.\)/g, "")
-        .trim();
-      const centroid = BARANGAY_CENTROIDS[nameKey] ||
-        Object.entries(BARANGAY_CENTROIDS).find(([k]) => k.includes(nameKey) || nameKey.includes(k))?.[1];
-      if (!centroid) continue;
-      const dist = Math.hypot(lat - centroid.lat, lng - centroid.lng);
-      if (dist < bestDist) {
-        bestDist = dist;
-        matchedId = String(b.barangayID);
+    const features = geoJsonFeaturesRef.current;
+
+    // If GeoJSON isn't loaded yet, fall back to a tight centroid-distance check
+    // (handles the rare race where the fetch hasn't resolved).
+    if (!features || features.length === 0) {
+      let matchedId = "";
+      let bestDist = Infinity;
+      for (const b of barangays) {
+        const nameKey = b.barangayName.toLowerCase()
+          .replace(/barangay/g, "").replace(/brgy\.?/g, "")
+          .replace(/district/g, "").replace(/\(pob\.\)/g, "")
+          .trim();
+        const centroid = BARANGAY_CENTROIDS[nameKey] ||
+          Object.entries(BARANGAY_CENTROIDS).find(([k]) => k.includes(nameKey) || nameKey.includes(k))?.[1];
+        if (!centroid) continue;
+        const dist = Math.hypot(lat - centroid.lat, lng - centroid.lng);
+        if (dist < bestDist) { bestDist = dist; matchedId = String(b.barangayID); }
+      }
+      // 0.04° ≈ ~4 km — tight enough to reject clearly out-of-bounds clicks
+      if (bestDist > 0.04) {
+        Swal.fire({ icon: 'error', title: 'Out of Bounds', text: 'You can only plot flags within the boundaries of Mataasnakahoy.', confirmButtonColor: 'var(--color-primary)' });
+        return;
+      }
+      setYellowDraft(prev => ({ ...prev, lat: lat.toFixed(6), lng: lng.toFixed(6), barangayID: matchedId }));
+      setIsPickingYellowLocation(false);
+      setShowYellowModal(true);
+      return;
+    }
+
+    // ── Real point-in-polygon check against the GeoJSON boundaries ────────────
+    let matchedFeature = null;
+    for (const feature of features) {
+      if (pointInGeoJsonGeometry(lat, lng, feature.geometry)) {
+        matchedFeature = feature;
+        break;
       }
     }
 
-    // Only accept the match if the click is reasonably close to the municipality
-    // (~0.15° ≈ ~15 km — generous enough to cover Mataasnakahoy).
-    if (bestDist > 0.15) {
+    if (!matchedFeature) {
       Swal.fire({
         icon: 'error',
         title: 'Out of Bounds',
@@ -2222,6 +2290,25 @@ export default function MapPage() {
       });
       return;
     }
+
+    // Match the GeoJSON feature name to a DB barangay ID
+    const geoName = (
+      matchedFeature.properties?.ADM4_EN ||
+      matchedFeature.properties?.NAME_4 || ""
+    ).toLowerCase()
+      .replace(/barangay/g, "").replace(/brgy\.?/g, "")
+      .replace(/district/g, "").replace(/\(pob\.\)/g, "")
+      .replace(/\s+/g, "");
+
+    let matchedId = "";
+    const matched = barangays.find(b => {
+      const dbName = b.barangayName.toLowerCase()
+        .replace(/barangay/g, "").replace(/brgy\.?/g, "")
+        .replace(/district/g, "").replace(/\(pob\.\)/g, "")
+        .replace(/\s+/g, "");
+      return dbName === geoName || dbName.includes(geoName) || geoName.includes(dbName);
+    });
+    if (matched) matchedId = String(matched.barangayID);
 
     setYellowDraft(prev => ({
       ...prev,
