@@ -194,31 +194,58 @@ def _status_to_flag_color(status: str) -> str:
         "Revoked": "Black",
         "Closed": "Purple"
     }
-    # Unknown statuses default to Yellow (needs verification) — NEVER Green,
-    # which would falsely label an unverified business as compliant/active.
     return mapping.get(status, "Yellow")
 
 
-def _sync_flag_color(cursor, barangay_id, business_name: str, status: str):
+def _parse_renewal_date(raw) -> str | None:
+    """
+    Safely parse a renewal date from raw input (string, datetime, int/float year).
+    Avoids pandas interpreting integer year values (e.g. 2026) as epoch nanoseconds (1970).
+    """
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    try:
+        if isinstance(raw, (int, float)) and 1900 <= int(raw) <= 2100:
+            return f"{int(raw):04d}-01-01 00:00:00"
+        raw_str = str(raw).strip()
+        if raw_str.isdigit() and len(raw_str) == 4:
+            return f"{int(raw_str):04d}-01-01 00:00:00"
+        return pd.to_datetime(raw).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None):
     """
     Propagate a registry permit-status change to the business's map pin
     (its most recent geospatial_logs entry, matched case-insensitively on
     name + barangay — the same linkage the Registry page uses).
+    If no map pin exists yet and coordinates are provided, auto-seed a new pin.
     """
+    flag_color = _status_to_flag_color(status)
     cursor.execute(
         """
         UPDATE geospatial_logs g
         JOIN (
             SELECT logID
             FROM geospatial_logs
-            WHERE barangayID = %s AND LOWER(detectedName) = LOWER(%s)
+            WHERE barangayID = %s AND LOWER(TRIM(detectedName)) = LOWER(TRIM(%s))
             ORDER BY detectedDate DESC
             LIMIT 1
         ) latest ON g.logID = latest.logID
         SET g.flagColor = %s
         """,
-        (barangay_id, str(business_name).strip(), _status_to_flag_color(status)),
+        (barangay_id, str(business_name).strip(), flag_color),
     )
+    if cursor.rowcount == 0 and lat is not None and lng is not None:
+        cursor.execute(
+            """
+            INSERT INTO geospatial_logs
+                (barangayID, detectedName, latitude, longitude, flagColor, nearestLandmark)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (barangay_id, str(business_name).strip(), lat, lng, flag_color, address)
+        )
 
 
 # ── Service functions ─────────────────────────────────────────────────────────
@@ -305,14 +332,7 @@ def upload_registry(file, ext: str):
             status = _normalise_status(status_raw)
 
             # Renewal date
-            renewal_raw = row.get("lastRenewalDate")
-            renewal_date = None
-            if renewal_raw:
-                try:
-                    renewal_date = pd.to_datetime(
-                        renewal_raw).strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    renewal_date = None
+            renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
             # Insert — skip duplicates (same name + barangayID)
             cursor.execute(
@@ -364,6 +384,19 @@ def upload_registry(file, ext: str):
 
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            hub.publish_to_admins({
+                "type": "registry_progress",
+                "processed": total_rows,
+                "total": total_rows,
+                "status": "Import complete!"
+            })
+            hub.publish_to_admins({
+                "type": "registry_updated"
+            })
+        except Exception:
+            pass
 
         return {
             "total_rows":       total_rows,
@@ -457,14 +490,7 @@ def sync_registry(file, ext: str):
             )
             status = _normalise_status(status_raw)
 
-            renewal_raw = row.get("lastRenewalDate")
-            renewal_date = None
-            if renewal_raw:
-                try:
-                    renewal_date = pd.to_datetime(
-                        renewal_raw).strftime("%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    renewal_date = None
+            renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
             name_key = str(business_name).strip()
             btype = str(row.get("businessType") or "").strip() or None
@@ -474,8 +500,8 @@ def sync_registry(file, ext: str):
 
             cursor.execute(
                 """
-                SELECT businessID FROM official_registry
-                WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
+                SELECT businessID, latitude, longitude FROM official_registry
+                WHERE LOWER(TRIM(businessName)) = LOWER(TRIM(%s)) AND barangayID = %s
                 LIMIT 1
                 """,
                 (name_key, barangay_id),
@@ -483,6 +509,10 @@ def sync_registry(file, ext: str):
             existing = cursor.fetchone()
 
             if existing:
+                # Preserve existing coordinates if new geocoding returned None
+                final_lat = lat if lat is not None else existing.get("latitude")
+                final_lng = lng if lng is not None else existing.get("longitude")
+
                 cursor.execute(
                     """
                     UPDATE official_registry SET
@@ -500,8 +530,8 @@ def sync_registry(file, ext: str):
                         btype,
                         lob,
                         addr,
-                        lat,
-                        lng,
+                        final_lat,
+                        final_lng,
                         status,
                         renewal_date,
                         bsize,
@@ -509,8 +539,8 @@ def sync_registry(file, ext: str):
                     ),
                 )
                 updated += 1
-                # Propagate status → flag color on the map pin
-                _sync_flag_color(cursor, barangay_id, name_key, status)
+                # Propagate status → flag color on the map pin (auto-seed if missing)
+                _sync_flag_color(cursor, barangay_id, name_key, status, final_lat, final_lng, addr)
             else:
                 cursor.execute(
                     """
@@ -547,6 +577,19 @@ def sync_registry(file, ext: str):
 
         mysql.connection.commit()
         cursor.close()
+
+        try:
+            hub.publish_to_admins({
+                "type": "registry_progress",
+                "processed": total_rows,
+                "total": total_rows,
+                "status": "Import complete!"
+            })
+            hub.publish_to_admins({
+                "type": "registry_updated"
+            })
+        except Exception:
+            pass
 
         return {
             "total_rows":       total_rows,
@@ -912,7 +955,7 @@ def check_and_expire_old_permits():
             cursor.execute(
                 """
                 UPDATE geospatial_logs g
-                JOIN official_registry r ON LOWER(g.detectedName) = LOWER(r.businessName) AND g.barangayID = r.barangayID
+                JOIN official_registry r ON LOWER(TRIM(g.detectedName)) = LOWER(TRIM(r.businessName)) AND g.barangayID = r.barangayID
                 SET g.flagColor = 'Red'
                 WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'
                 """
@@ -932,6 +975,7 @@ def check_and_expire_old_permits():
                 """
                 SELECT userID FROM users
                 WHERE userRole IN ('Admin', 'SUPER_ADMIN', 'System Administrator')
+                  AND isActive = 1
                 """
             )
             admins = cursor.fetchall() or []

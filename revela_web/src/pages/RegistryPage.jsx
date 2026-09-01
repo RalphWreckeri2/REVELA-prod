@@ -258,7 +258,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
 
   return (
     <div className={"modal-backdrop" + (isClosing ? " closing" : "")} style={styles.modalBackdrop} onClick={onClose}>
-      <div className={"modal-panel" + (isClosing ? " closing" : "")} style={{ ...styles.modalCard, width: 560 }} onClick={e => e.stopPropagation()}>
+      <div className={"modal-panel" + (isClosing ? " closing" : "")} style={{ ...styles.modalCard, width: 560, maxWidth: "calc(100vw - 32px)" }} onClick={e => e.stopPropagation()}>
         <div style={styles.modalHeader}>
           <h3 style={styles.modalTitle}>Business Details</h3>
           <button style={styles.closeBtn} onClick={onClose}><Icon.X /></button>
@@ -573,12 +573,12 @@ export default function RegistryPage() {
     <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
 
       {/* Page Header */}
-      <div className="page-header">
+      <div className="page-header" style={{ flexWrap: "wrap", gap: 16, alignItems: "flex-start", marginBottom: 20 }}>
         <div>
           <h1 className="page-title">Business Registry</h1>
           <p className="page-subtitle">Official BPLO-registered establishments in Mataasnakahoy.</p>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%" }}>
           <button
             className="quick-refresh-btn"
             type="button"
@@ -648,7 +648,7 @@ export default function RegistryPage() {
 
       {/* Filters Bar */}
       <div className="frosted-glass saas-card" style={styles.filtersBar}>
-        <div className="search-bar" style={{ width: 280 }}>
+        <div className="search-bar" style={{ width: 280, maxWidth: "100%", minWidth: 200, flex: "1 1 auto" }}>
           <Icon.Search />
           <input
             type="text"
@@ -658,11 +658,11 @@ export default function RegistryPage() {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 10, marginLeft: "auto", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", marginLeft: "auto" }}>
           <Icon.Filter />
 
           <select
-            style={styles.select}
+            style={{ ...styles.select, maxWidth: "100%" }}
             value={barangay}
             onChange={e => setBarangay(e.target.value)}
           >
@@ -675,7 +675,7 @@ export default function RegistryPage() {
           </select>
 
           <select
-            style={styles.select}
+            style={{ ...styles.select, maxWidth: "100%" }}
             value={status}
             onChange={e => setStatus(e.target.value)}
           >
@@ -685,7 +685,7 @@ export default function RegistryPage() {
           <label style={styles.pageSizeLabel}>
             Rows
             <select
-              style={{ ...styles.select, width: 120 }}
+              style={{ ...styles.select, width: 120, maxWidth: "100%" }}
               value={pageSize}
               onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }}
             >
@@ -741,18 +741,20 @@ export default function RegistryPage() {
                     key={b.businessID}
                     style={{ ...styles.tr, background: i % 2 === 0 ? "var(--color-input-bg)" : "transparent" }}
                   >
-                    <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 12, color: "var(--color-muted)" }}>
+                    <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#475569" }}>
                       #{b.businessID}
                     </td>
-                    <td style={{ ...styles.td, fontWeight: 600, color: "var(--color-ink)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <td style={{ ...styles.td, fontWeight: 700, color: "var(--color-ink)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }} title={b.businessName}>
                       {b.businessName}
                     </td>
-                    <td style={styles.td}>{b.businessType || "—"}</td>
-                    <td style={{ ...styles.td, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <td style={{ ...styles.td, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }} title={b.businessType || "—"}>
+                      {b.businessType || "—"}
+                    </td>
+                    <td style={{ ...styles.td, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }} title={b.lineOfBusiness || "—"}>
                       {b.lineOfBusiness || "—"}
                     </td>
                     <td style={styles.td}>{b.barangayName || "—"}</td>
-                    <td style={{ ...styles.td, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <td style={{ ...styles.td, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }} title={b.businessAddress || "—"}>
                       {b.businessAddress || "—"}
                     </td>
                     <td style={styles.td}>{b.businessSize || "—"}</td>
@@ -791,7 +793,7 @@ export default function RegistryPage() {
             <span style={styles.pageInfo}>
               Page {page} of {totalPages} &nbsp;·&nbsp; {total} total entries
             </span>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               <button
                 style={styles.pageBtn}
                 disabled={page === 1}
@@ -875,11 +877,11 @@ export default function RegistryPage() {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
-  summaryStrip: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 },
-  summaryCard: { display: "flex", flexDirection: "column", gap: 4, padding: "18px 24px", borderRadius: "var(--radius-lg)" },
+  summaryStrip: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 },
+  summaryCard: { display: "flex", flexDirection: "column", gap: 4, padding: "18px 24px", borderRadius: "var(--radius-lg)", minWidth: 0 },
   summaryValue: { fontSize: 28, fontWeight: 800, lineHeight: 1 },
   summaryLabel: { fontSize: 12, color: "var(--color-muted)", fontWeight: 500 },
-  filtersBar: { display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderRadius: "var(--radius-lg)" },
+  filtersBar: { display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
   select: {
     background: "var(--color-hover)", border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: 13,
@@ -897,7 +899,7 @@ const styles = {
   emptyCell: { padding: "48px 16px", textAlign: "center", color: "var(--color-muted)", fontSize: 14 },
   emptyContent: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
   viewBtn: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12 },
-  pagination: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid var(--color-border-soft)" },
+  pagination: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid var(--color-border-soft)", flexWrap: "wrap", gap: 12 },
   pageInfo: { fontSize: 12, color: "var(--color-muted)" },
   pageBtn: {
     minWidth: 32, height: 32, padding: "0 10px", borderRadius: "var(--radius-sm)", border: "1px solid var(--color-border)",
@@ -909,11 +911,11 @@ const styles = {
   pageSizeLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--color-muted)", cursor: "default" },
 
   // Modal styles
-  modalBackdrop: { position: "fixed", inset: 0, zIndex: 100, background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 },
-  modalCard: { background: "var(--color-modal-bg)", borderRadius: "var(--radius-xl)", padding: 32, boxShadow: "0 24px 60px rgba(15,23,42,0.18)", position: "relative", maxHeight: "90vh", overflowY: "auto" },
+  modalBackdrop: { position: "fixed", inset: 0, zIndex: 100, background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 },
+  modalCard: { background: "var(--color-modal-bg)", borderRadius: "var(--radius-xl)", padding: 32, boxShadow: "0 24px 60px rgba(15,23,42,0.18)", position: "relative", maxHeight: "90vh", overflowY: "auto", maxWidth: "calc(100vw - 32px)", boxSizing: "border-box" },
   modalHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 },
   modalTitle: { fontSize: 18, fontWeight: 700, color: "var(--color-ink)", margin: 0 },
   closeBtn: { background: "transparent", border: "none", cursor: "pointer", color: "var(--color-muted)", display: "flex", alignItems: "center", justifyContent: "center", padding: 4 },
-  modalFooter: { display: "flex", justifyContent: "flex-end", gap: 10 },
-  editInput: { flex: 1, padding: "8px 12px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", fontSize: 13, color: "var(--color-ink)", fontFamily: "var(--font-base)", outline: "none", boxSizing: "border-box" },
+  modalFooter: { display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" },
+  editInput: { flex: 1, padding: "8px 12px", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", fontSize: 13, color: "var(--color-ink)", fontFamily: "var(--font-base)", outline: "none", boxSizing: "border-box", minWidth: 0 },
 };

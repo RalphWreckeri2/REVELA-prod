@@ -403,7 +403,7 @@ function InspectionDetailModal({ report, isAdmin, onAssign, onVerify, onClose, i
 
   return createPortal(
     <div className={"modal-backdrop" + (isClosing ? " closing" : "")} style={s.backdrop} onClick={onClose}>
-      <div className={"modal-panel" + (isClosing ? " closing" : "")} style={{ ...s.modal, width: 520 }} onClick={e => e.stopPropagation()}>
+      <div className={"modal-panel" + (isClosing ? " closing" : "")} style={{ ...s.modal, width: 520, maxWidth: "calc(100vw - 32px)" }} onClick={e => e.stopPropagation()}>
         <div style={s.modalHeader}>
           <h3 style={s.modalTitle}>Inspection Details</h3>
           <button style={s.closeBtn} onClick={onClose}><Icon.X /></button>
@@ -604,7 +604,7 @@ function ColumnFocusModal({ status, reports, isAdmin, onAssign, onVerify, onView
 
   return createPortal(
     <div className="modal-backdrop" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="modal-panel modal-content saas-card" onClick={e => e.stopPropagation()} style={{ width: 1040, maxWidth: "95vw", height: "85vh", display: "flex", flexDirection: "column", padding: 32, borderRadius: 24, background: "var(--color-modal-bg)", boxShadow: "0 24px 48px rgba(0,0,0,0.2)" }}>
+      <div className="modal-panel modal-content saas-card" onClick={e => e.stopPropagation()} style={{ width: 1040, maxWidth: "calc(100vw - 32px)", height: "85vh", display: "flex", flexDirection: "column", padding: "clamp(16px, 3vw, 32px)", borderRadius: 24, background: "var(--color-modal-bg)", boxShadow: "0 24px 48px rgba(0,0,0,0.2)" }}>
         
         {/* Header */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
@@ -667,7 +667,7 @@ function ColumnFocusModal({ status, reports, isAdmin, onAssign, onVerify, onView
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", paddingRight: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 16 }}>
             {filteredReports.map(f => {
               const fc = FLAG_COLOR[f.flagColor] || FLAG_COLOR.Green;
               return (
@@ -748,22 +748,22 @@ function InspectionCard({ report, isAdmin, onAssign, onVerify, onViewDetail, isC
     <div style={cardStyle} onClick={() => onViewDetail(report)}>
       {/* Header row */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ ...s.flagPill, background: flagMeta.bg, color: flagMeta.text }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+          <span style={{ ...s.flagPill, background: flagMeta.bg, color: flagMeta.text, flexShrink: 0 }}>
             <Icon.Flag /> {getFriendlyFlagLabel(report.flagColor)}
           </span>
           {report.noticeLevel > 0 && (
             <>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-muted)" strokeWidth="2.5">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--color-muted)" strokeWidth="2.5" style={{ flexShrink: 0 }}>
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-              <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 6px", borderRadius: 4, background: report.noticeLevel === 4 ? "var(--color-ink)" : "#ea580c", color: report.noticeLevel === 4 ? "var(--color-modal-bg)" : "#fff" }}>
+              <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 6px", borderRadius: 4, background: report.noticeLevel === 4 ? "var(--color-ink)" : "#ea580c", color: report.noticeLevel === 4 ? "var(--color-modal-bg)" : "#fff", flexShrink: 0 }}>
                 {report.noticeLevel === 1 ? "1st Notice" : report.noticeLevel === 2 ? "2nd Notice" : report.noticeLevel === 3 ? "3rd Notice" : "Escalated"}
               </span>
             </>
           )}
           {report.wasReassigned === 1 && (
-            <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, background: "#fefce8", color: "#ca8a04", display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid rgba(202,138,4,0.2)" }}>
+            <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 8px", borderRadius: 4, background: "#fefce8", color: "#ca8a04", display: "inline-flex", alignItems: "center", gap: 4, border: "1px solid rgba(202,138,4,0.2)", flexShrink: 0 }}>
               <Icon.RefreshCw /> Reassigned
             </span>
           )}
@@ -771,12 +771,12 @@ function InspectionCard({ report, isAdmin, onAssign, onVerify, onViewDetail, isC
       </div>
 
       {/* Business name, Address & View Button Row */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-        <div style={{ paddingRight: 12 }}>
-          <p style={{ fontSize: 15, fontWeight: 800, color: "var(--color-ink)", marginBottom: 6, lineHeight: 1.3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 8 }}>
+        <div style={{ minWidth: 0, flex: 1, paddingRight: 4 }}>
+          <p style={{ fontSize: 15, fontWeight: 800, color: "var(--color-ink)", marginBottom: 6, lineHeight: 1.3, wordBreak: "break-word", overflowWrap: "anywhere" }}>
             {report.detectedName}
           </p>
-          <p style={{ fontSize: 12, color: "var(--color-muted)", display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+          <p style={{ fontSize: 12, color: "var(--color-muted)", display: "flex", alignItems: "center", gap: 6, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             <Icon.MapPin /> {report.barangayName ?? "Unknown barangay"}
           </p>
         </div>
@@ -1007,7 +1007,7 @@ export default function InspectionPage() {
     <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
 
       {/* Page header */}
-      <div className="page-header">
+      <div className="page-header" style={{ flexWrap: "wrap", gap: 16, alignItems: "flex-start", marginBottom: 20 }}>
         <div>
           <h1 className="page-title">Inspection Dispatch</h1>
           <p className="page-subtitle">
@@ -1016,7 +1016,7 @@ export default function InspectionPage() {
               : "Your active inspection assignments."}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", maxWidth: "100%" }}>
           {/* Quick manual refresh button */}
           <button
             className="quick-refresh-btn"
@@ -1075,7 +1075,7 @@ export default function InspectionPage() {
           )}
 
           {/* Live Search Bar */}
-          <div className="search-bar" style={{ width: 240 }}>
+          <div className="search-bar" style={{ width: 240, maxWidth: "100%", minWidth: 180, flex: "1 1 auto" }}>
             <Icon.Search />
             <input
               type="text"
@@ -1084,10 +1084,6 @@ export default function InspectionPage() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-
-          <button className="ghost-btn" onClick={fetchReports} style={{ fontSize: 13 }}>
-            <Icon.RefreshCw /> Refresh
-          </button>
         </div>
       </div>
 
@@ -1103,22 +1099,35 @@ export default function InspectionPage() {
       {loading ? (
         <div style={s.loadingState}>Loading inspections…</div>
       ) : (
-        <div style={{ ...s.board, gridTemplateColumns: `repeat(${visibleCols.length}, 1fr)` }}>
-          {visibleCols.map(status => (
-            <KanbanColumn
-              key={status}
-              status={status}
-              reports={byStatus(status)}
-              isAdmin={isAdmin}
-              onAssign={r => setAssignTarget(r)}
-              onVerify={r => setVerifyTarget(r)}
-              onViewDetail={r => setDetailTarget(r)}
-              isCompact={isCompact}
-              isCollapsed={collapsedCols.has(status)}
-              onToggleCollapse={() => toggleCollapse(status)}
-              onFocusColumn={setFocusColumn}
-            />
-          ))}
+        <div style={{ width: "100%", overflowX: "auto", paddingBottom: 12 }}>
+          <div
+            style={{
+              ...s.board,
+              gridTemplateColumns: visibleCols
+                .map((status) => (collapsedCols.has(status) ? "60px" : "minmax(260px, 1fr)"))
+                .join(" "),
+              minWidth: visibleCols.reduce(
+                (acc, status) => acc + (collapsedCols.has(status) ? 60 : 260),
+                (visibleCols.length - 1) * 20
+              ),
+            }}
+          >
+            {visibleCols.map((status) => (
+              <KanbanColumn
+                key={status}
+                status={status}
+                reports={byStatus(status)}
+                isAdmin={isAdmin}
+                onAssign={(r) => setAssignTarget(r)}
+                onVerify={(r) => setVerifyTarget(r)}
+                onViewDetail={(r) => setDetailTarget(r)}
+                isCompact={isCompact}
+                isCollapsed={collapsedCols.has(status)}
+                onToggleCollapse={() => toggleCollapse(status)}
+                onFocusColumn={setFocusColumn}
+              />
+            ))}
+          </div>
         </div>
       )}
 
@@ -1297,7 +1306,7 @@ const s = {
   },
   modal: {
     background: "var(--color-modal-bg)", borderRadius: "var(--radius-xl)",
-    padding: 32, width: 440,
+    padding: 32, width: 440, maxWidth: "calc(100vw - 32px)", boxSizing: "border-box",
     boxShadow: "0 25px 50px rgba(0,0,0,0.15)",
     maxHeight: "85vh",
     overflowY: "auto",
