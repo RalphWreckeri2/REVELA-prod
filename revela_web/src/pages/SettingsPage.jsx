@@ -439,10 +439,14 @@ export default function SettingsPage() {
     setWlcConfig(newWlc);
   };
 
+  const DEFAULT_WLC = { w1_risk: 68, w2_sector: 7, w3_distance: 25 };
+
   const applyPreset = (preset) => {
-    if (preset === "ahp") setWlcConfig({ ...wlcConfig, w1_risk: 68, w2_sector: 7, w3_distance: 25 });
-    if (preset === "health") setWlcConfig({ ...wlcConfig, w1_risk: 20, w2_sector: 70, w3_distance: 10 });
-    if (preset === "renewal") setWlcConfig({ ...wlcConfig, w1_risk: 70, w2_sector: 20, w3_distance: 10 });
+    if (preset === "ahp" || preset === "default") {
+      setWlcConfig(prev => ({ ...prev, ...DEFAULT_WLC }));
+    }
+    if (preset === "health") setWlcConfig(prev => ({ ...prev, w1_risk: 20, w2_sector: 70, w3_distance: 10 }));
+    if (preset === "renewal") setWlcConfig(prev => ({ ...prev, w1_risk: 70, w2_sector: 20, w3_distance: 10 }));
   };
 
   const addSector = () => setSectors([...sectors, { name: "", score: 50 }]);
@@ -620,8 +624,24 @@ export default function SettingsPage() {
             {/* Scenario Presets */}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
               <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>Apply Preset:</span>
-              <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12, fontWeight: 600, color: "var(--color-primary, #10b981)" }} onClick={() => applyPreset("ahp")}>
-                AHP Client Baseline (68/7/25)
+              <button
+                type="button"
+                className="ghost-btn"
+                style={{
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: "var(--color-primary, #10b981)",
+                  border: "1px solid var(--color-primary, #10b981)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6
+                }}
+                onClick={() => applyPreset("default")}
+                title="Reset to system default: 68% Risk, 7% Sector, 25% Distance"
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                Use Default (68/7/25)
               </button>
               <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => applyPreset("health")}>
                 Health Crisis Mode
@@ -634,7 +654,28 @@ export default function SettingsPage() {
             {/* Linked Sliders */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "16px 0", borderTop: "1px solid var(--color-border-soft)", borderBottom: "1px solid var(--color-border-soft)", margin: "8px 0" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <label style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>Linked Priority Weights</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <label style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>Linked Priority Weights</label>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    style={{
+                      padding: "3px 8px",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--color-primary, #10b981)",
+                      border: "1px solid var(--color-border)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4
+                    }}
+                    onClick={() => applyPreset("default")}
+                    title="Reset to default weights (68% / 7% / 25%)"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    Use Default
+                  </button>
+                </div>
                 <span style={{ fontSize: 13, fontWeight: 700, color: "var(--color-primary)" }}>
                   Total: {wlcConfig.w1_risk + wlcConfig.w2_sector + wlcConfig.w3_distance}%
                 </span>

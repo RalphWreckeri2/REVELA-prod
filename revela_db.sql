@@ -307,11 +307,11 @@ DROP TABLE IF EXISTS `wlc_config`;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `wlc_config` (
   `id` int NOT NULL DEFAULT '1',
-  `w1_risk` decimal(5,2) DEFAULT '40.00',
-  `w2_sector` decimal(5,2) DEFAULT '40.00',
-  `w3_distance` decimal(5,2) DEFAULT '20.00',
-  `bplo_lat` decimal(10,8) DEFAULT '13.96670000',
-  `bplo_lng` decimal(11,8) DEFAULT '121.11670000',
+  `w1_risk` decimal(5,2) DEFAULT '68.00',
+  `w2_sector` decimal(5,2) DEFAULT '7.00',
+  `w3_distance` decimal(5,2) DEFAULT '25.00',
+  `bplo_lat` decimal(10,8) DEFAULT '13.96041300',
+  `bplo_lng` decimal(11,8) DEFAULT '121.11454700',
   `sector_scores` json DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
@@ -324,7 +324,7 @@ CREATE TABLE `wlc_config` (
 
 LOCK TABLES `wlc_config` WRITE;
 /*!40000 ALTER TABLE `wlc_config` DISABLE KEYS */;
-INSERT INTO `wlc_config` VALUES (1,40.00,40.00,20.00,13.96670000,121.11670000,'{}','2026-05-10 08:54:24');
+INSERT INTO `wlc_config` VALUES (1,68.00,7.00,25.00,13.96041300,121.11454700,'{}','2026-05-10 08:54:24');
 /*!40000 ALTER TABLE `wlc_config` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

@@ -798,6 +798,22 @@ export async function updateWlcConfigRequest(payload, token) {
   }
 }
 
+export async function resetWlcConfigRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/wlc-config/reset`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+
 /**
  * Normalize (token, filters?) vs (filters, token) — same ambiguity as getFlagsRequest(params, token).
  * JWT heuristic: long dotted string (typical access_token shape).

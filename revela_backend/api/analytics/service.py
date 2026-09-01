@@ -34,3 +34,15 @@ def update_wlc_config(new_config):
         return current, None
     except Exception as e:
         return None, str(e)
+
+
+def reset_wlc_config():
+    """Reset WLC configuration to system defaults."""
+    default = DEFAULT_CONFIG.copy()
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(default, f, indent=4)
+        return default, None
+    except Exception as e:
+        return None, str(e)
+

@@ -45,7 +45,7 @@ def _get_candidate_gemini_models(client, force_refresh=False):
 
 from flask import Blueprint, jsonify, request
 from api.middleware.decorators import jwt_required, admin_required
-from api.analytics.service import get_wlc_config, update_wlc_config
+from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
 from api.analytics.filters import (
     parse_analytics_filters,
     registry_sql,
@@ -970,6 +970,16 @@ def update_config():
     if error:
         return jsonify({"error": error}), 500
     return jsonify({"message": "WLC configuration updated successfully.", "data": updated_config}), 200
+
+
+@analytics_bp.route("/wlc-config/reset", methods=["POST"])
+@admin_required()
+def reset_config_endpoint():
+    updated_config, error = reset_wlc_config()
+    if error:
+        return jsonify({"error": error}), 500
+    return jsonify({"message": "WLC configuration reset to default successfully.", "data": updated_config}), 200
+
 
 
 @analytics_bp.route("/chat", methods=["POST"])

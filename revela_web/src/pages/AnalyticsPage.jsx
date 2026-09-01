@@ -888,6 +888,16 @@ export default function AnalyticsPage() {
     setShowWlcConfig(false);
   };
 
+  const handleUseDefaultWlc = () => {
+    setWlcConfig(prev => ({
+      ...prev,
+      w1_risk: 68,
+      w2_sector: 7,
+      w3_distance: 25,
+    }));
+  };
+
+
   useEffect(() => {
     fetchAnalytics(false);
     fetchWlcConfig();
@@ -2903,34 +2913,86 @@ export default function AnalyticsPage() {
 
                 {showWlcConfig && (
                   <div style={{ background: "var(--color-hover)", marginBottom: 16, padding: "16px", borderRadius: 8, border: "1px solid var(--color-border)" }}>
-                    <h4 style={{ margin: "0 0 16px 0", fontSize: 13, color: "var(--color-ink)" }}>WLC Weight Configuration</h4>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                      <h4 style={{ margin: 0, fontSize: 13, color: "var(--color-ink)" }}>WLC Weight Configuration</h4>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          style={{
+                            padding: "3px 8px",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            color: "var(--color-primary, #10b981)",
+                            border: "1px solid var(--color-border)",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4
+                          }}
+                          onClick={handleUseDefaultWlc}
+                          title="Reset sliders to default weights (68% Risk, 7% Sector, 25% Distance)"
+                          disabled={savingWlc}
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                          Use Default
+                        </button>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: (wlcConfig.w1_risk + wlcConfig.w2_sector + wlcConfig.w3_distance === 100) ? "var(--color-primary)" : "var(--color-danger)" }}>
+                          Total: {wlcConfig.w1_risk + wlcConfig.w2_sector + wlcConfig.w3_distance}%
+                        </span>
+                      </div>
+                    </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
-                          Risk Severity (W1): <span style={{ color: "var(--color-primary)" }}>{wlcConfig.w1_risk}%</span>
+                        <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
+                          <span>Risk Severity (W1):</span>
+                          <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w1_risk}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w1_risk} onChange={e => setWlcConfig({ ...wlcConfig, w1_risk: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
-                          Sector Impact (W2): <span style={{ color: "var(--color-primary)" }}>{wlcConfig.w2_sector}%</span>
+                        <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
+                          <span>Sector Impact (W2):</span>
+                          <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w2_sector}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w2_sector} onChange={e => setWlcConfig({ ...wlcConfig, w2_sector: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
                       </div>
                       <div>
-                        <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
-                          Travel Distance (W3): <span style={{ color: "var(--color-primary)" }}>{wlcConfig.w3_distance}%</span>
+                        <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
+                          <span>Travel Distance (W3):</span>
+                          <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w3_distance}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w3_distance} onChange={e => setWlcConfig({ ...wlcConfig, w3_distance: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
                       </div>
                     </div>
-                    <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                      <button className="ghost-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleCancelWlc} disabled={savingWlc}>
-                        Cancel
+                    <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        style={{
+                          padding: "6px 12px",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: "var(--color-primary, #10b981)",
+                          border: "1px solid var(--color-primary, #10b981)",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5
+                        }}
+                        onClick={handleUseDefaultWlc}
+                        disabled={savingWlc}
+                        title="Revert back to default weights: 68% Risk, 7% Sector, 25% Distance"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                        Use Default (68/7/25)
                       </button>
-                      <button className="primary-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleSaveWlc} disabled={savingWlc}>
-                        {savingWlc ? "Applying..." : "Apply"}
-                      </button>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button className="ghost-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleCancelWlc} disabled={savingWlc}>
+                          Cancel
+                        </button>
+                        <button className="primary-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleSaveWlc} disabled={savingWlc}>
+                          {savingWlc ? "Applying..." : "Apply"}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
