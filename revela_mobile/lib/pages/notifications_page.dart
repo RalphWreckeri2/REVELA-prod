@@ -164,7 +164,8 @@ class _NotificationsPageState extends State<NotificationsPage>
     final nearingTasks = _activeTasks.where((task) {
       if (task.deadline == null || task.deadline!.isEmpty) return false;
       try {
-        final deadline = DateTime.parse(task.deadline!);
+        final deadline = AppDateUtils.parseToLocal(task.deadline!);
+        if (deadline == null || deadline.isBefore(DateTime.now())) return false;
         final diff = deadline.difference(DateTime.now());
         return diff.inHours <= 24;
       } catch (_) {

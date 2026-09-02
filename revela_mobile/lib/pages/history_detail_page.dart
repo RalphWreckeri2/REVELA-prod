@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../service/inspection_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_utils.dart';
 
 class HistoryDetailPage extends StatelessWidget {
   final InspectionTask? task;
@@ -156,7 +157,7 @@ class HistoryDetailPage extends StatelessWidget {
                   _DetailRow(
                     icon: Icons.calendar_today_outlined,
                     label: 'Inspection Date',
-                    value: resolvedTask.irTimestamp,
+                    value: AppDateUtils.formatTimestamp(resolvedTask.irTimestamp),
                   ),
                   SizedBox(height: 12),
 

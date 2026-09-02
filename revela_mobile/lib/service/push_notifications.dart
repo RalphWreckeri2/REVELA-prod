@@ -11,6 +11,7 @@ import '../pages/notifications_page.dart';
 import 'auth_service.dart';
 import 'in_app_notifications_service.dart';
 import 'inspection_service.dart';
+import '../utils/date_utils.dart';
 
 final _channel = AndroidNotificationChannel(
   'revela_inspection_alerts',
@@ -299,7 +300,8 @@ class PushNotifications {
       if (task.deadline == null || task.deadline!.isEmpty) continue;
 
       try {
-        final deadline = DateTime.parse(task.deadline!);
+        final deadline = AppDateUtils.parseToLocal(task.deadline!);
+        if (deadline == null) continue;
         final diff = deadline.difference(now);
 
         // Only alert for future deadlines within 24 hours (not already overdue)

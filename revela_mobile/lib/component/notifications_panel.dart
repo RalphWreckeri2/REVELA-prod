@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../service/in_app_notifications_service.dart';
 import '../service/inspection_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/date_utils.dart';
 
 class NotificationsPanel extends StatefulWidget {
   final List<InspectionTask> activeTasks;
@@ -240,7 +241,7 @@ class _NotificationsPanelState extends State<NotificationsPanel> {
                                   if (n.createdAt.isNotEmpty) ...[
                                     const SizedBox(height: 6),
                                     Text(
-                                      n.createdAt,
+                                      AppDateUtils.formatRelative(n.createdAt),
                                       style: TextStyle(
                                         fontSize: 11,
                                         color: Colors.grey[500],

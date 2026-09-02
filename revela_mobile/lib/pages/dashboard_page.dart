@@ -17,6 +17,7 @@ import 'package:showcaseview/showcaseview.dart';
 import 'inspection_page.dart';
 import 'profile_page.dart';
 import 'main_layout.dart';
+import '../utils/date_utils.dart';
 
 class DashboardPage extends StatefulWidget {
   final ValueChanged<bool>? onDrawerToggled;
@@ -57,7 +58,7 @@ class _DashboardPageState extends State<DashboardPage>
   List<InspectionTask> _getTasksForDay(DateTime day) {
     return _activeTasks.where((task) {
       if (task.deadline == null) return false;
-      final deadline = DateTime.tryParse(task.deadline!);
+      final deadline = AppDateUtils.parseToLocal(task.deadline!);
       if (deadline == null) return false;
       return isSameDay(deadline, day);
     }).toList();
@@ -1339,12 +1340,11 @@ class _DashboardPageState extends State<DashboardPage>
                                                       bool hasLateEvent = false;
                                                       final tasks =
                                                           _getTasksForDay(day);
-                                                      for (final task
-                                                          in tasks) {
+                                                      for (final task in tasks) {
                                                         if (task.deadline !=
                                                             null) {
                                                           final deadline =
-                                                              DateTime.tryParse(
+                                                              AppDateUtils.parseToLocal(
                                                                 task.deadline!,
                                                               );
                                                           if (deadline !=

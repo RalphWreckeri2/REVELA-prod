@@ -1,6 +1,7 @@
 import 'package:revela_mobile/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import '../service/inspection_service.dart';
+import '../utils/date_utils.dart';
 import '../widgets/scale_tap.dart';
 
 class InspectionCard extends StatelessWidget {
@@ -78,33 +79,7 @@ class InspectionCard extends StatelessWidget {
   }
 
   String _formatDate(String timestamp) {
-    try {
-      final dt = DateTime.parse(timestamp);
-      final months = [
-        'Jan',
-        'Feb',
-        'Mar',
-        'Apr',
-        'May',
-        'Jun',
-        'Jul',
-        'Aug',
-        'Sep',
-        'Oct',
-        'Nov',
-        'Dec',
-      ];
-      final hour = dt.hour > 12
-          ? dt.hour - 12
-          : dt.hour == 0
-          ? 12
-          : dt.hour;
-      final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-      final min = dt.minute.toString().padLeft(2, '0');
-      return '${months[dt.month - 1]} ${dt.day} · $hour:$min $ampm';
-    } catch (_) {
-      return timestamp.length > 10 ? timestamp.substring(0, 10) : timestamp;
-    }
+    return AppDateUtils.formatTimestamp(timestamp);
   }
 
   @override

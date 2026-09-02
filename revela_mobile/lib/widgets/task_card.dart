@@ -45,13 +45,15 @@ class TaskCard extends StatelessWidget {
 
     if (task.deadline != null && task.deadline!.isNotEmpty) {
       try {
-        final deadline = DateTime.parse(task.deadline!);
-        if (deadline.isBefore(DateTime.now())) {
-          actualIsMissing = true;
-        } else {
-          final diff = deadline.difference(DateTime.now());
-          if (diff.inHours <= 24) {
-            isNearing = true;
+        final deadline = AppDateUtils.parseToLocal(task.deadline!);
+        if (deadline != null) {
+          if (deadline.isBefore(DateTime.now())) {
+            actualIsMissing = true;
+          } else {
+            final diff = deadline.difference(DateTime.now());
+            if (diff.inHours <= 24 && !diff.isNegative) {
+              isNearing = true;
+            }
           }
         }
       } catch (_) {}

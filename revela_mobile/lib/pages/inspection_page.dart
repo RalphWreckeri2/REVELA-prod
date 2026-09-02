@@ -14,6 +14,7 @@ import '../widgets/modern_segmented_filter.dart';
 import '../widgets/custom_app_bar.dart';
 import 'history_detail_page.dart';
 import 'pdf_generator_page.dart';
+import '../utils/date_utils.dart';
 
 class InspectionPage extends StatefulWidget {
   final ValueChanged<bool>? onDrawerToggled;
@@ -142,10 +143,10 @@ class _InspectionPageState extends State<InspectionPage>
     if (!isHistory) {
       filtered.sort((a, b) {
         final dateA =
-            DateTime.tryParse(a.irTimestamp) ??
+            AppDateUtils.parseToLocal(a.irTimestamp) ??
             DateTime.fromMillisecondsSinceEpoch(0);
         final dateB =
-            DateTime.tryParse(b.irTimestamp) ??
+            AppDateUtils.parseToLocal(b.irTimestamp) ??
             DateTime.fromMillisecondsSinceEpoch(0);
         return _selectedSort == 'Oldest'
             ? dateA.compareTo(dateB)
@@ -287,7 +288,7 @@ class _InspectionPageState extends State<InspectionPage>
 
       for (var t in displayTasks) {
         if (t.deadline != null && t.deadline!.isNotEmpty) {
-          final dl = DateTime.tryParse(t.deadline!);
+          final dl = AppDateUtils.parseToLocal(t.deadline!);
           if (dl != null && dl.isBefore(now)) {
             missingList.add(t);
             continue;
