@@ -449,6 +449,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       final prefs =
                                           await SharedPreferences.getInstance();
                                       await prefs.remove(
+                                        'has_prompted_walkthrough_tour',
+                                      );
+                                      await prefs.remove(
                                         'has_seen_tour_dashboard',
                                       );
                                       await prefs.remove('has_seen_tour_map');

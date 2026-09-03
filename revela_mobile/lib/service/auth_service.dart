@@ -13,6 +13,7 @@ enum LoginResult {
   mustChangePassword,
   twoFactorRequired,
   notInspector,
+  accountRevoked,
   failed,
   networkError,
   canceled,
@@ -63,8 +64,7 @@ class AuthService extends ChangeNotifier {
               return handler.next(options);
             },
         onError: (DioException e, ErrorInterceptorHandler handler) async {
-          // Only force-logout on 401 for authenticated endpoints.
-          // Auth endpoints (login, logout, reset) handle 401 themselves.
+          // Force-logout & purge storage on 401/403 for authenticated endpoints.
           final path = e.requestOptions.path;
           final isAuthEndpoint =
               path.contains('/auth/login') ||
@@ -73,11 +73,16 @@ class AuthService extends ChangeNotifier {
               path.contains('/auth/request-otp') ||
               path.contains('/auth/reset-password');
 
-          if (e.response?.statusCode == 401 && !isAuthEndpoint) {
-            await logout();
+          final statusCode = e.response?.statusCode;
+          if ((statusCode == 401 || statusCode == 403) && !isAuthEndpoint) {
+            await purgeRevokedAccountState(
+              reason: 'Your inspector account access has been revoked by an administrator.',
+            );
             if (navigatorKey.currentState != null) {
               navigatorKey.currentState!.pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const LoginPage()),
+                MaterialPageRoute(
+                  builder: (_) => const LoginPage(accountRevokedNotice: true),
+                ),
                 (route) => false,
               );
             }
@@ -728,7 +733,17 @@ class AuthService extends ChangeNotifier {
         return restored ? LoginResult.success : LoginResult.networkError;
       }
 
-      // When online, prefer local restore if a cached biometric profile exists.
+      // When online, check server profile status to verify account is still active
+      final onlineProfile = await getProfile();
+      if (onlineProfile == null) {
+        // Account has been disabled or removed on backend
+        await purgeRevokedAccountState(
+          reason: 'Your inspector account has been removed or deactivated by an administrator.',
+        );
+        return LoginResult.accountRevoked;
+      }
+
+      // When online and active, prefer local restore if a cached biometric profile exists.
       final activeUserId = await _storage.read(key: 'active_biometric_user_id');
       if (activeUserId != null && activeUserId.isNotEmpty) {
         final hydrated = await hydrateLocalSessionForUserId(activeUserId);
@@ -931,26 +946,32 @@ class AuthService extends ChangeNotifier {
     notifyListeners(); // main.dart listener navigates to LoginPage
   }
 
+  /// Completely wipes all local secure storage, cached profiles, tokens, and credentials.
+  /// Used when an account is removed, revoked, or deactivated by an administrator.
+  Future<void> purgeRevokedAccountState({String? reason}) async {
+    try {
+      await _storage.deleteAll();
+    } catch (e) {
+      debugPrint('Error purging secure storage: $e');
+    }
+    await _fcmTokenRefreshSubscription?.cancel();
+    _fcmTokenRefreshSubscription = null;
+
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+
+    _currentUser = null;
+    _lastAuthError = reason ??
+        'Your inspector account has been removed or deactivated by an administrator.';
+    notifyListeners();
+  }
+
   Future<void> logout() async {
     try {
       await _dio.post('/api/auth/logout');
     } catch (_) {}
 
-    await _fcmTokenRefreshSubscription?.cancel();
-    _fcmTokenRefreshSubscription = null;
-
-    final email = await _storage.read(key: 'saved_email');
-    final password = await _storage.read(key: 'saved_password');
-    await _storage.deleteAll();
-    if (email != null) await _storage.write(key: 'saved_email', value: email);
-    if (password != null) {
-      await _storage.write(key: 'saved_password', value: password);
-    }
-
-    PaintingBinding.instance.imageCache.clear();
-    PaintingBinding.instance.imageCache.clearLiveImages();
-    _currentUser = null;
-    notifyListeners();
+    await purgeRevokedAccountState(reason: 'Logged out successfully');
 
     navigatorKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginPage()),

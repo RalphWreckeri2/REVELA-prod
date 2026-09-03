@@ -12,6 +12,8 @@ import 'auth_service.dart';
 import 'in_app_notifications_service.dart';
 import 'inspection_service.dart';
 import '../utils/date_utils.dart';
+import 'package:timezone/data/latest_all.dart' as tz;
+import 'package:timezone/timezone.dart' as tz;
 
 final _channel = AndroidNotificationChannel(
   'revela_inspection_alerts',
@@ -302,6 +304,18 @@ class PushNotifications {
       try {
         final deadline = AppDateUtils.parseToLocal(task.deadline!);
         if (deadline == null) continue;
+
+        // Schedule exact offline background alarm for 24h & due time
+        if (deadline.isAfter(now)) {
+          unawaited(
+            scheduleZonedDeadlineNotification(
+              reportId: task.reportID,
+              taskTitle: task.detectedName,
+              deadline: deadline,
+            ),
+          );
+        }
+
         final diff = deadline.difference(now);
 
         // Only alert for future deadlines within 24 hours (not already overdue)
@@ -338,9 +352,79 @@ class PushNotifications {
       }
     }
   }
+
+  /// Schedule offline exact notifications for task deadline:
+  /// - 24 hours prior
+  /// - Exact due date and time
+  static Future<void> scheduleZonedDeadlineNotification({
+    required int reportId,
+    required String taskTitle,
+    required DateTime deadline,
+  }) async {
+    if (!_initialized) return;
+    final now = DateTime.now();
+
+    // 1. 24-hour warning alert
+    final warningTime = deadline.subtract(const Duration(hours: 24));
+    if (warningTime.isAfter(now)) {
+      final warningId = ((reportId * 10 + 1) & 0x7FFFFFFF);
+      await _localNotifications.zonedSchedule(
+        warningId,
+        'Approaching Deadline (24 Hours Remaining)',
+        'Inspection task "$taskTitle" is due tomorrow.',
+        tz.TZDateTime.from(warningTime, tz.local),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _channel.id,
+            _channel.name,
+            channelDescription: _channel.description,
+            importance: Importance.max,
+            priority: Priority.high,
+            icon: '@mipmap/ic_launcher',
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        payload: reportId.toString(),
+      );
+    }
+
+    // 2. Exact Due Time alert
+    if (deadline.isAfter(now)) {
+      final dueId = ((reportId * 10 + 2) & 0x7FFFFFFF);
+      await _localNotifications.zonedSchedule(
+        dueId,
+        'Inspection Deadline Due Now!',
+        'Task "$taskTitle" is due now. Please complete and submit your report.',
+        tz.TZDateTime.from(deadline, tz.local),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            _channel.id,
+            _channel.name,
+            channelDescription: _channel.description,
+            importance: Importance.max,
+            priority: Priority.high,
+            icon: '@mipmap/ic_launcher',
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        payload: reportId.toString(),
+      );
+    }
+  }
 }
 
 Future<void> _initializeLocalNotifications() async {
+  tz.initializeTimeZones();
   const settings = InitializationSettings(
     android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     iOS: DarwinInitializationSettings(

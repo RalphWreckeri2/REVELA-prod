@@ -10,9 +10,11 @@ import '../service/connectivity_service.dart';
 import '../service/push_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'main_layout.dart';
+import 'mandatory_biometric_setup_page.dart';
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final bool accountRevokedNotice;
+  const LoginPage({super.key, this.accountRevokedNotice = false});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -39,8 +41,48 @@ class _LoginPageState extends State<LoginPage> {
     // Biometrics auto-login is deliberately checked afterward (see
     // _checkPrivacyPolicyAcceptance) so it can't pop up at the same time as
     // the privacy dialog.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _checkPrivacyPolicyAcceptance(),
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.accountRevokedNotice) {
+        _showAccountRevokedDialog();
+      } else {
+        _checkPrivacyPolicyAcceptance();
+      }
+    });
+  }
+
+  void _showAccountRevokedDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: const [
+            Icon(Icons.remove_circle_outline_rounded, color: Colors.redAccent, size: 28),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Account Access Revoked',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Your inspector account has been removed or deactivated by an administrator. All local access and cached offline data have been purged from this device.',
+          style: TextStyle(fontSize: 14, height: 1.4),
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.darkGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Understood'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -388,6 +430,11 @@ class _LoginPageState extends State<LoginPage> {
       setState(() => _isLoading = false);
 
       if (result == LoginResult.canceled) return;
+      if (result == LoginResult.accountRevoked) {
+        _showAccountRevokedDialog();
+        if (mounted) _checkBiometrics();
+        return;
+      }
       if (result == LoginResult.failed) {
         _showErrorDialog(
           'Biometric Login Failed',
@@ -579,6 +626,9 @@ class _LoginPageState extends State<LoginPage> {
           authError ??
               'Only registered field inspectors are authorized to use the mobile application. Administrators and other personnel must log in through the web dashboard.',
         );
+        break;
+      case LoginResult.accountRevoked:
+        _showAccountRevokedDialog();
         break;
       case LoginResult.failed:
         _showSnackBar(
@@ -1009,12 +1059,19 @@ class _LoginPageState extends State<LoginPage> {
                             );
                             if (res['success'] == true) {
                               if (!context.mounted || !ctx.mounted) return;
+                              final navigator = Navigator.of(context);
                               Navigator.pop(ctx);
                               await _authService.activateSavedUserSession(
                                 notify: false,
                               );
                               if (!mounted) return;
-                              _showWelcomeGreetingAndNavigate();
+                              navigator.pushReplacement(
+                                MaterialPageRoute(
+                                  builder: (_) => MandatoryBiometricSetupPage(
+                                    email: _emailController.text.trim(),
+                                  ),
+                                ),
+                              );
                             } else {
                               setDialogState(() {
                                 isSubmitting = false;

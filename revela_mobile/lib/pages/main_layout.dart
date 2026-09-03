@@ -252,13 +252,120 @@ class _MainLayoutState extends State<MainLayout> {
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _checkTabTour(_selectedIndex);
       if (widget.showWelcomeGreeting) _showWelcomeGreeting();
+      _promptWalkthroughOrCheckTour();
       if (PushNotifications.pendingReportId != null) {
         PushNotifications.pendingReportId = null;
         _onItemTapped(3);
       }
     });
+  }
+
+  Future<void> _promptWalkthroughOrCheckTour() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasPrompted = prefs.getBool('has_prompted_walkthrough_tour') ?? false;
+
+    if (!hasPrompted) {
+      if (!mounted) return;
+
+      if (widget.showWelcomeGreeting) {
+        await Future.delayed(const Duration(milliseconds: 1200));
+      }
+      if (!mounted) return;
+
+      final bool? startTour = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: context.adaptivePrimary.withValues(alpha: 0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.explore_rounded,
+                    color: context.adaptivePrimary,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'App Feature Tour',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Would you like to take a quick guided walkthrough tour of the app features?',
+                  style: TextStyle(fontSize: 14, height: 1.4),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'You can also replay this tour anytime from Settings > App Instructions.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.adaptiveTextMid,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ),
+            actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text(
+                  'No, Thanks',
+                  style: TextStyle(color: context.adaptiveTextMid),
+                ),
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                label: const Text('Start Walkthrough'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: context.adaptivePrimary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () => Navigator.pop(ctx, true),
+              ),
+            ],
+          );
+        },
+      );
+
+      await prefs.setBool('has_prompted_walkthrough_tour', true);
+
+      if (startTour == true) {
+        _checkTabTour(_selectedIndex, force: true);
+      } else {
+        await prefs.setBool('has_seen_tour_dashboard', true);
+        await prefs.setBool('has_seen_tour_map', true);
+        await prefs.setBool('has_seen_tour_tasks', true);
+        await prefs.setBool('has_seen_tour_notifications', true);
+        await prefs.setBool('has_seen_tour_settings', true);
+      }
+    } else {
+      _checkTabTour(_selectedIndex);
+    }
   }
 
   Widget _createPage(int index) {
@@ -317,7 +424,7 @@ class _MainLayoutState extends State<MainLayout> {
     });
   }
 
-  Future<void> _checkTabTour(int index) async {
+  Future<void> _checkTabTour(int index, {bool force = false}) async {
     final prefs = await SharedPreferences.getInstance();
 
     String prefKey;
@@ -369,7 +476,7 @@ class _MainLayoutState extends State<MainLayout> {
     }
 
     final hasSeenTour = prefs.getBool(prefKey) ?? false;
-    if (!hasSeenTour) {
+    if (!hasSeenTour || force) {
       // The dashboard tour can be read hands-free, while every manual tap
       // still completes the active step immediately. showcaseview cancels the
       // active timer during that transition and starts a fresh timer only for
