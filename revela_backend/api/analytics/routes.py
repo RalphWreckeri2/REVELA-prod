@@ -207,42 +207,40 @@ def _get_all_analytics_inner(F=None):
     cur.execute(f"""
         SELECT
             b.barangayName,
-            COALESCE(reg.active_count, 0) + COALESCE(geo.green_count, 0)   AS green_count,
-            COALESCE(geo.red_count, 0)                                     AS red_count,
-            COALESCE(geo.yellow_count, 0) + COALESCE(reg.pending_count, 0) AS yellow_count,
-            COALESCE(geo.black_count, 0) + COALESCE(reg.revoked_count, 0)  AS black_count,
-            COALESCE(geo.orange_count, 0) + COALESCE(reg.expired_count, 0) AS orange_count,
-            COALESCE(geo.purple_count, 0) + COALESCE(reg.closed_count, 0)  AS purple_count
+            COUNT(DISTINCT CASE WHEN combined.flagColor = 'Green'  THEN combined.id END) AS green_count,
+            COUNT(DISTINCT CASE WHEN combined.flagColor = 'Red'    THEN combined.id END) AS red_count,
+            COUNT(DISTINCT CASE WHEN combined.flagColor = 'Yellow' THEN combined.id END) AS yellow_count,
+            COUNT(DISTINCT CASE WHEN combined.flagColor = 'Black'  THEN combined.id END) AS black_count,
+            COUNT(DISTINCT CASE WHEN combined.flagColor = 'Orange' THEN combined.id END) AS orange_count,
+            COUNT(DISTINCT CASE WHEN combined.flagColor = 'Purple' THEN combined.id END) AS purple_count
         FROM barangays b
         LEFT JOIN (
-            SELECT 
+            SELECT
+                g.logID AS id,
                 g.barangayID,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Green'  THEN g.logID END) AS green_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Red'    THEN g.logID END) AS red_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Yellow' THEN g.logID END) AS yellow_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Black'  THEN g.logID END) AS black_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Orange' THEN g.logID END) AS orange_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Purple' THEN g.logID END) AS purple_count
+                g.flagColor
             FROM geospatial_logs g
             WHERE (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
-            GROUP BY g.barangayID
-        ) geo ON geo.barangayID = b.barangayID
-        LEFT JOIN (
-            SELECT 
+
+            UNION ALL
+
+            SELECT
+                r.businessID * -1 AS id,
                 r.barangayID,
-                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Active'  THEN r.businessID END) AS active_count,
-                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Pending' THEN r.businessID END) AS pending_count,
-                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Revoked' THEN r.businessID END) AS revoked_count,
-                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Expired' THEN r.businessID END) AS expired_count,
-                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Closed'  THEN r.businessID END) AS closed_count
+                CASE r.applicationStatus
+                    WHEN 'Active'  THEN 'Green'
+                    WHEN 'Expired' THEN 'Orange'
+                    WHEN 'Revoked' THEN 'Black'
+                    WHEN 'Closed'  THEN 'Purple'
+                    ELSE 'Yellow'
+                END AS flagColor
             FROM official_registry r
             WHERE NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
                 WHERE LOWER(TRIM(g2.detectedName)) = LOWER(TRIM(r.businessName))
                   AND g2.barangayID = r.barangayID
             ){reg_r}
-            GROUP BY r.barangayID
-        ) reg ON reg.barangayID = b.barangayID
+        ) AS combined ON combined.barangayID = b.barangayID
         WHERE 1=1 {brgy_b}
         GROUP BY b.barangayID, b.barangayName
         ORDER BY b.barangayName
