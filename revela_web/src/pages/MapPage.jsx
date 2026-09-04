@@ -554,8 +554,8 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             <h2 style={{ fontSize: 24, color: "var(--color-ink)", fontWeight: 800, margin: "0 0 12px 0", lineHeight: 1.2 }}>
               {flag.name}
             </h2>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, background: "rgba(239, 68, 68, 0.15)", border: "1px solid rgba(239, 68, 68, 0.1)", fontSize: 12, fontWeight: 600, color: "#ef4444" }}>
-              Detected unregistered
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, background: fc.bg, border: `1px solid ${fc.marker}33`, fontSize: 12, fontWeight: 600, color: fc.marker }}>
+              {fc.label}
             </div>
             {isInspectorReported && (
               <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, background: "rgba(234, 88, 12, 0.15)", border: "1px solid rgba(234, 88, 12, 0.1)", fontSize: 12, fontWeight: 600, color: "#ea580c", marginTop: 8 }}>
@@ -1924,7 +1924,7 @@ export default function MapPage() {
     }
     setFlagsError("");
     try {
-      const result = await getFlagsRequest({ limit: 1000 }, token);
+      const result = await getFlagsRequest({ limit: 5000 }, token);
       const rawList = Array.isArray(result) ? result : (result?.data ?? result?.flags ?? []);
       setFlags(rawList.map(normalizeFlag));
 

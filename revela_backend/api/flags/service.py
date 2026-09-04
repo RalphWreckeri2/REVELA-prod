@@ -622,8 +622,6 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
         # Filters that apply to the registry-only branch
         reg_conditions = [
-            "r.latitude IS NOT NULL",
-            "r.longitude IS NOT NULL",
             # Exclude registry rows that already have a geospatial_log (avoids duplicates)
             """
             NOT EXISTS (
@@ -746,7 +744,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                         WHEN 'Closed'  THEN 'Purple'
                         ELSE 'Yellow'
                     END                        AS flagColor,
-                    r.lastRenewalDate          AS detectedDate,
+                    COALESCE(r.lastRenewalDate, NOW()) AS detectedDate,
                     r.businessAddress          AS nearestLandmark,
                     NULL                       AS notes,
                     NULL                       AS placeID,
