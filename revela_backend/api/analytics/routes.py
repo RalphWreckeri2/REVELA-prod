@@ -117,6 +117,7 @@ def _get_all_analytics_inner(F=None):
     reg_no_status, reg_no_status_p = registry_sql(
         "official_registry", filters_without(Fx, "application_status"))
     reg_o, reg_o_p = registry_sql("o", Fx)
+    reg_r, reg_r_p = registry_sql("r", Fx)
     geo_g, geo_g_p = geo_sql("g", Fx)
     geo_g2, geo_g2_p = geo_sql("g2", Fx)
     geo_on_g, geo_on_g_p = geo_on_extra("g", Fx)
@@ -202,23 +203,50 @@ def _get_all_analytics_inner(F=None):
     compliance_rate = round(
         (active_count / total_businesses * 100), 1) if total_businesses else 0
 
-    # Enforcement progress
+    # Enforcement progress — unified across official_registry and geospatial_logs
     cur.execute(f"""
         SELECT
             b.barangayName,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Green'  THEN g.logID END) AS green_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Red'    THEN g.logID END) AS red_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Yellow' THEN g.logID END) AS yellow_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Black'  THEN g.logID END) AS black_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Orange' THEN g.logID END) AS orange_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Purple' THEN g.logID END) AS purple_count
+            COALESCE(reg.active_count, 0) + COALESCE(geo.green_count, 0)   AS green_count,
+            COALESCE(geo.red_count, 0)                                     AS red_count,
+            COALESCE(geo.yellow_count, 0) + COALESCE(reg.pending_count, 0) AS yellow_count,
+            COALESCE(geo.black_count, 0) + COALESCE(reg.revoked_count, 0)  AS black_count,
+            COALESCE(geo.orange_count, 0) + COALESCE(reg.expired_count, 0) AS orange_count,
+            COALESCE(geo.purple_count, 0) + COALESCE(reg.closed_count, 0)  AS purple_count
         FROM barangays b
-        LEFT JOIN geospatial_logs g ON g.barangayID = b.barangayID 
-            AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
+        LEFT JOIN (
+            SELECT 
+                g.barangayID,
+                COUNT(DISTINCT CASE WHEN g.flagColor = 'Green'  THEN g.logID END) AS green_count,
+                COUNT(DISTINCT CASE WHEN g.flagColor = 'Red'    THEN g.logID END) AS red_count,
+                COUNT(DISTINCT CASE WHEN g.flagColor = 'Yellow' THEN g.logID END) AS yellow_count,
+                COUNT(DISTINCT CASE WHEN g.flagColor = 'Black'  THEN g.logID END) AS black_count,
+                COUNT(DISTINCT CASE WHEN g.flagColor = 'Orange' THEN g.logID END) AS orange_count,
+                COUNT(DISTINCT CASE WHEN g.flagColor = 'Purple' THEN g.logID END) AS purple_count
+            FROM geospatial_logs g
+            WHERE (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
+            GROUP BY g.barangayID
+        ) geo ON geo.barangayID = b.barangayID
+        LEFT JOIN (
+            SELECT 
+                r.barangayID,
+                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Active'  THEN r.businessID END) AS active_count,
+                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Pending' THEN r.businessID END) AS pending_count,
+                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Revoked' THEN r.businessID END) AS revoked_count,
+                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Expired' THEN r.businessID END) AS expired_count,
+                COUNT(DISTINCT CASE WHEN r.applicationStatus = 'Closed'  THEN r.businessID END) AS closed_count
+            FROM official_registry r
+            WHERE NOT EXISTS (
+                SELECT 1 FROM geospatial_logs g2
+                WHERE LOWER(TRIM(g2.detectedName)) = LOWER(TRIM(r.businessName))
+                  AND g2.barangayID = r.barangayID
+            ){reg_r}
+            GROUP BY r.barangayID
+        ) reg ON reg.barangayID = b.barangayID
         WHERE 1=1 {brgy_b}
         GROUP BY b.barangayID, b.barangayName
         ORDER BY b.barangayName
-    """, geo_on_g_p + brgy_b_p)
+    """, geo_on_g_p + reg_r_p + brgy_b_p)
     enforcement_progress = [
         {
             "barangayName": row["barangayName"],

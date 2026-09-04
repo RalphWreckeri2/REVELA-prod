@@ -1079,7 +1079,6 @@ function MapCanvas({
             });
           } else {
             marker.addListener("gmp-click", () => onMarkerClick(flag.id));
-            marker.addListener("click", () => onMarkerClick(flag.id));
             markers.push(marker);
           }
         } catch (e) {
@@ -1880,15 +1879,37 @@ export default function MapPage() {
   const [selectedFlag, setSelectedFlag] = useState(null);   // logID of selected flag
   const [modalFlag, setModalFlag] = useState(null);   // flag object shown in detail modal
   const location = useLocation();
+  const handledUrlFlagRef = useRef(null);
+
+  const handleCloseDetailModal = useCallback(() => {
+    setModalFlag(null);
+    setSelectedFlag(null);
+    handledUrlFlagRef.current = null;
+    // Clear ?flag= from URL so background polling/sync does not reopen it
+    if (location.search && location.search.includes("flag=")) {
+      navigate(location.pathname, { replace: true });
+    }
+  }, [location.search, location.pathname, navigate]);
 
   useEffect(() => {
     if (!flags || flags.length === 0) return;
     const searchParams = new URLSearchParams(location.search);
     const flagId = searchParams.get("flag");
-    if (flagId) {
+    if (!flagId) {
+      handledUrlFlagRef.current = null;
+      return;
+    }
+    // Only automatically pop open once per distinct flag parameter
+    if (handledUrlFlagRef.current !== flagId) {
       const found = flags.find(f => String(f.logID || f.id) === flagId);
       if (found) {
+        handledUrlFlagRef.current = flagId;
+        setSelectedFlag(found.id);
         setModalFlag(found);
+        if (mapRef.current && found.latitude && found.longitude) {
+          mapRef.current.panTo({ lat: Number(found.latitude), lng: Number(found.longitude) });
+          mapRef.current.setZoom(18);
+        }
       }
     }
   }, [location.search, flags]);
@@ -2111,9 +2132,8 @@ export default function MapPage() {
     setActionError("");
     try {
       await escalateFlagToBlackRequest(logId, token);
+      handleCloseDetailModal();
       await fetchFlags();
-      setModalFlag(null);  // close modal after escalation
-      setSelectedFlag(null);
     } catch (err) {
       setActionError(err.message || "Failed to escalate.");
     } finally {
@@ -2126,9 +2146,8 @@ export default function MapPage() {
     setActionError("");
     try {
       await updateFlagColorRequest(logId, color, token);
+      handleCloseDetailModal();
       await fetchFlags();
-      setModalFlag(null); // close modal after color update
-      setSelectedFlag(null);
       Swal.fire({
         icon: "success",
         title: "Flag Updated",
@@ -2322,8 +2341,7 @@ export default function MapPage() {
 
   // â”€â”€ Drag & Drop Adjust Location â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleStartAdjustLocation = (flag) => {
-    setModalFlag(null);
-    setSelectedFlag(null);
+    handleCloseDetailModal();
     setAdjustingFlagId(flag.id);
     setAdjustingLatLng({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
   };
@@ -2349,7 +2367,7 @@ export default function MapPage() {
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtoncolor: "var(--color-muted)",
+      cancelButtonColor: "var(--color-muted)",
       confirmButtonText: 'Yes, delete it'
     });
 
@@ -2359,9 +2377,8 @@ export default function MapPage() {
       try {
         await deleteFlagRequest(logId, token);
         Swal.fire({ icon: 'success', title: 'Deleted', text: 'Flag deleted successfully.', timer: 1500, showConfirmButton: false });
+        handleCloseDetailModal();
         await fetchFlags();
-        setModalFlag(null);
-        setSelectedFlag(null);
       } catch (err) {
         setActionError(err.message || "Failed to delete flag.");
       } finally {
@@ -2375,6 +2392,10 @@ export default function MapPage() {
     const flag = flags.find(f => f.id === id);
     if (!flag) return;
 
+    if (location.search && location.search.includes("flag=")) {
+      navigate(location.pathname, { replace: true });
+    }
+
     setSelectedFlag(id);
     setModalFlag(flag);
 
@@ -2383,10 +2404,13 @@ export default function MapPage() {
       mapRef.current.panTo({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
       mapRef.current.setZoom(18);
     }
-  }, [flags]);
+  }, [flags, location.search, location.pathname, navigate]);
 
   // â”€â”€ When user clicks a flag in the side panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleSidePanelClick = (flag) => {
+    if (location.search && location.search.includes("flag=")) {
+      navigate(location.pathname, { replace: true });
+    }
     setSelectedFlag(flag.id);
     setModalFlag(flag);
     if (mapRef.current && flag.latitude && flag.longitude) {
@@ -2969,7 +2993,7 @@ export default function MapPage() {
       <AnimatePresence isVisible={!!modalFlag}>
         <FlagDetailModal
           flag={modalFlag}
-          onClose={() => { setModalFlag(null); setSelectedFlag(null); }}
+          onClose={handleCloseDetailModal}
           onEscalate={handleEscalate}
           onAdjustLocation={handleStartAdjustLocation}
           onDispatch={(flag) => setDispatchTarget(flag)}
@@ -2989,8 +3013,7 @@ export default function MapPage() {
           onClose={() => setDispatchTarget(null)}
           onSuccess={() => {
             setDispatchTarget(null);
-            setModalFlag(null);
-            setSelectedFlag(null);
+            handleCloseDetailModal();
             fetchFlags();
           }}
         />
