@@ -45,10 +45,10 @@ _MUNICIPALITY_BOUNDARY = shape(_BOUNDARY_GEOJSON)
 
 
 def _within_municipality(lat: float, lng: float) -> bool:
-    """Polygon test with 0.003° (~330m) buffer for border tolerance."""
+    """Polygon test with tight 0.0005° (~55m) buffer for border road tolerance without spilling into Lipa/Balete."""
     if lat is None or lng is None:
         return False
-    return _MUNICIPALITY_BOUNDARY.buffer(0.003).contains(Point(lng, lat))
+    return _MUNICIPALITY_BOUNDARY.buffer(0.0005).contains(Point(lng, lat))
 
 
 
@@ -85,11 +85,12 @@ def _name_similarity(name1: str, name2: str) -> float:
     return overlap / max(len(words1), len(words2))
 
 
-def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry):
+def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id=None):
     """
     Finds matching registry entry for a POI using smart combination of:
-    1. Geodesic distance (up to 100m)
-    2. Normalized business name similarity (e.g., Dali Everyday Grocery vs DALI EVERYDAY GROCERY INC.)
+    1. For registry entries with GPS: geodesic distance (up to 100m) + name similarity.
+    2. For registry entries with GPS: proximity match (within 25m) even if name differs.
+    3. For registry entries WITHOUT GPS: high name similarity (>= 0.65) + matching barangay.
     Returns (matched_entry, distance_meters, similarity_score)
     """
     best_match = None
@@ -97,26 +98,36 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry):
     best_score = 0.0
 
     for entry in registry:
+        sim = _name_similarity(poi_name, entry.get("businessName", ""))
         reg_lat = entry.get("latitude")
         reg_lng = entry.get("longitude")
-        if not reg_lat or not reg_lng:
-            continue
 
-        dist = geodesic((poi_lat, poi_lng), (float(reg_lat), float(reg_lng))).meters
-        sim = _name_similarity(poi_name, entry.get("businessName", ""))
+        # Case A: Registry entry has known GPS coordinates
+        if reg_lat and reg_lng:
+            dist = geodesic((poi_lat, poi_lng), (float(reg_lat), float(reg_lng))).meters
 
-        # High confidence name match (e.g. Dali, Gina's Store) within 100m
-        if sim >= 0.6 and dist <= 100:
-            if sim > best_score or (sim == best_score and dist < best_dist):
-                best_score = sim
-                best_dist = dist
-                best_match = entry
-        # Proximity match (within 25m) even if name differs
-        elif dist <= 25 and (best_score < 0.6 or dist < best_dist):
-            if best_score < 0.6:
-                best_score = 0.5
-                best_dist = dist
-                best_match = entry
+            # High confidence name match within 100m
+            if sim >= 0.6 and dist <= 100:
+                if sim > best_score or (sim == best_score and dist < best_dist):
+                    best_score = sim
+                    best_dist = dist
+                    best_match = entry
+            # Proximity match (within 25m) even if name differs
+            elif dist <= 25 and (best_score < 0.6 or dist < best_dist):
+                if best_score < 0.6:
+                    best_score = 0.5
+                    best_dist = dist
+                    best_match = entry
+
+        # Case B: Registry entry lacks GPS coordinates — match by name & barangay!
+        else:
+            if sim >= 0.65:
+                reg_b_id = entry.get("barangayID")
+                same_barangay = (reg_b_id is None) or (poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
+                if same_barangay and sim > best_score:
+                    best_score = sim
+                    best_dist = 0.0
+                    best_match = entry
 
     return best_match, best_dist, best_score
 
@@ -125,6 +136,7 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     """
     Updates or inserts the geospatial log for an existing registry business 
     with its official Google Maps Place ID and dynamic status-based flag color.
+    Also backfills discovered GPS coordinates into official_registry.
     """
     cursor = mysql.connection.cursor()
     cursor.execute("""
@@ -137,9 +149,11 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     if row:
         cursor.execute("""
             UPDATE geospatial_logs 
-            SET placeID = %s, flagColor = %s
+            SET placeID = %s, flagColor = %s,
+                latitude = COALESCE(latitude, %s),
+                longitude = COALESCE(longitude, %s)
             WHERE logID = %s
-        """, (place_id, target_color, row["logID"]))
+        """, (place_id, target_color, lat, lng, row["logID"]))
     elif lat and lng and barangay_id:
         cursor.execute("""
             INSERT INTO geospatial_logs
@@ -147,6 +161,15 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
                  flagColor, placeID, nearestLandmark)
             VALUES (%s, NULL, %s, %s, %s, %s, %s, NULL)
         """, (barangay_id, detected_name, lat, lng, target_color, place_id))
+
+    # Backfill discovered GPS coordinates into official_registry if it lacked them
+    if business_id and lat and lng:
+        cursor.execute("""
+            UPDATE official_registry
+            SET latitude = COALESCE(latitude, %s),
+                longitude = COALESCE(longitude, %s)
+            WHERE businessID = %s
+        """, (lat, lng, business_id))
 
     mysql.connection.commit()
     cursor.close()
@@ -247,8 +270,8 @@ def _fetch_all_places(progress_cb=None):
     while lat <= max_lat:
         lng = min_lng
         while lng <= max_lng:
-            # Buffer the municipality polygon to cover boundary streets
-            if _MUNICIPALITY_BOUNDARY.buffer(0.006).contains(Point(lng, lat)):
+            # Buffer the municipality polygon slightly (~110m) for search grid points
+            if _MUNICIPALITY_BOUNDARY.buffer(0.001).contains(Point(lng, lat)):
                 grid_points.append((lat, lng))
             lng += step
         lat += step
@@ -271,7 +294,7 @@ def _fetch_all_places(progress_cb=None):
 # ── Registry loader ───────────────────────────────────────────────────────────
 
 def _load_registry():
-    """Load all official registry entries that have coordinates or linked geospatial logs."""
+    """Load all official registry entries into memory for cross-referencing."""
     cursor = mysql.connection.cursor()
     cursor.execute("""
         SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
@@ -281,9 +304,8 @@ def _load_registry():
         LEFT JOIN (
             SELECT detectedName, barangayID, latitude, longitude
             FROM geospatial_logs
-            WHERE flagColor = 'Green'
-        ) g ON LOWER(r.businessName) = LOWER(g.detectedName) AND r.barangayID = g.barangayID
-        WHERE r.latitude IS NOT NULL OR g.latitude IS NOT NULL
+            WHERE flagColor = 'Green' AND latitude IS NOT NULL
+        ) g ON LOWER(TRIM(r.businessName)) = LOWER(TRIM(g.detectedName)) AND r.barangayID = g.barangayID
     """)
     rows = cursor.fetchall()
     cursor.close()
@@ -420,6 +442,54 @@ def _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address=None):
     return flag_id
 
 
+def _is_non_business_place(place):
+    """
+    Return True if this POI is non-commercial (religious, public school, government,
+    cemetery, park, infrastructure, residential, or permanently closed).
+    Such places must NEVER be flagged as unregistered commercial businesses.
+    """
+    # 1. Closed permanently
+    if place.get("business_status") == "CLOSED_PERMANENTLY":
+        return True
+
+    types = set(place.get("types") or [])
+
+    # Non-business Google types
+    disqualifying_types = {
+        # Religious
+        "place_of_worship", "church", "mosque", "hindu_temple", "synagogue",
+        # Education / Schools
+        "school", "primary_school", "secondary_school", "university",
+        # Government & Municipal infrastructure
+        "local_government_office", "city_hall", "courthouse", "embassy",
+        "fire_station", "police", "post_office", "library",
+        # Public parks, landmarks, cemetery
+        "cemetery", "park", "natural_feature",
+        # Transit
+        "transit_station", "bus_station", "subway_station", "train_station", "light_rail_station",
+        # Geographic / Boundaries / Residential
+        "political", "neighborhood", "sublocality", "sublocality_level_1", "route", "locality"
+    }
+
+    if types.intersection(disqualifying_types):
+        return True
+
+    # Name heuristics for local public/community facilities
+    name_lower = (place.get("name") or "").lower()
+    non_business_keywords = [
+        "barangay hall", "brgy hall", "covered court", "basketball court",
+        "elementary school", "national high school", "integrated school",
+        "parish church", "catholic church", "chapel", "kapilya", "iglesia ni cristo",
+        "health center", "rural health", "police station", "municipal hall",
+        "memorial park", "cemetery", "santo entiero", "waiting shed",
+        "purok outpost", "tanod outpost"
+    ]
+    if any(kw in name_lower for kw in non_business_keywords):
+        return True
+
+    return False
+
+
 from api.models.detection_runs import (
     get_monthly_detection_count,
     create_detection_run,
@@ -542,10 +612,17 @@ def run_detection(user_id=None):
                     "status": f"Analyzing geospatial location for “{place_name}” ({idx + 1}/{total_checked})..."
                 })
 
-            nearest, dist, sim_score = _match_poi_to_registry(place_name, lat, lng, registry)
+            barangay_id = _get_barangay_id_by_coords(lat, lng)
+
+            # Filter out non-commercial entities (churches, schools, barangay halls, courts, cemeteries, etc.)
+            if _is_non_business_place(place):
+                continue
+
+            nearest, dist, sim_score = _match_poi_to_registry(
+                place_name, lat, lng, registry, poi_barangay_id=barangay_id
+            )
 
             if nearest is None:
-                barangay_id = _get_barangay_id_by_coords(lat, lng)
                 flag_id = _insert_red_flag(place_id, place_name, lat,
                                  lng, barangay_id, address)
                 inserted_flag_ids.append(flag_id)
@@ -563,10 +640,10 @@ def run_detection(user_id=None):
                 else:
                     target_color = 'Yellow'
 
-                barangay_id = nearest.get('barangayID') or _get_barangay_id_by_coords(lat, lng)
+                target_barangay_id = nearest.get('barangayID') or barangay_id
                 _match_registry_to_google(
                     place_id, nearest['businessID'], nearest['businessName'],
-                    target_color=target_color, lat=lat, lng=lng, barangay_id=barangay_id
+                    target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id
                 )
 
         update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
