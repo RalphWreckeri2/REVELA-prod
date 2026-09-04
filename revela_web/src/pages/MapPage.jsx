@@ -2188,22 +2188,14 @@ export default function MapPage() {
       confirmButtonText: isFinalScan ? 'Proceed with Final Scan' : 'Start Detection Scan'
     });
 
-    if (!confirmRes.isConfirmed) {
-      return;
-    }
+    if (!confirmRes.isConfirmed) return;
 
     setRunDetectionLoading(true);
-    setDetectionProgress({
-      stage: "initializing",
-      percentage: 0,
-      status: "Initializing detection engine..."
-    });
+    setDetectionProgress({ stage: "initializing", percentage: 0, status: "Initializing detection engine..." });
     setElapsedTime(0);
     startTimeRef.current = Date.now();
 
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-    }
+    if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = setInterval(() => {
       setElapsedTime(Math.round((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
@@ -2224,57 +2216,55 @@ export default function MapPage() {
       }
       setDetectionProgress(null);
 
-      if (result) {
-        const count = Number(result.new_flags ?? 0);
-        const totalChecked = Number(result.total_checked ?? 0);
-        const remainingScans = result.quota?.remaining_this_month ?? 0;
-        const resetsOn = result.quota?.resets_on || "the 1st of next month";
+      // If the scan was cancelled the backend returns { message: "Detection cancelled by user." }
+      // with no new_flags — exit silently, the cancel handler already dismissed the overlay.
+      if (!result || result.message) {
+        return;
+      }
 
-        const alertRes = await Swal.fire({
-          icon: count > 0 ? "success" : "info",
-          title: count > 0 ? "Detection Scan Complete!" : "Scan Complete — No New Gaps",
-          html: `
-            <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
-              <div style="background: ${count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
-                <div style="font-size: 20px; font-weight: 800; color: ${count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
-                  ${count} Unregistered Business${count !== 1 ? "es" : ""} Detected
-                </div>
-                <div style="font-size: 12.5px; color: ${count > 0 ? "#7f1d1d" : "#065f46"};">
-                  ${count > 0 
-                    ? "New Red Flags have been plotted on the municipal map and queued for field verification." 
-                    : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
-                </div>
+      const count = Number(result.new_flags ?? 0);
+      const totalChecked = Number(result.total_checked ?? 0);
+      const remainingScans = result.quota?.remaining_this_month ?? 0;
+      const resetsOn = result.quota?.resets_on || "the 1st of next month";
+
+      const alertRes = await Swal.fire({
+        icon: count > 0 ? "success" : "info",
+        title: count > 0 ? "Detection Scan Complete!" : "Scan Complete — No New Gaps",
+        html: `
+          <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+            <div style="background: ${count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
+              <div style="font-size: 20px; font-weight: 800; color: ${count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
+                ${count} Unregistered Business${count !== 1 ? "es" : ""} Detected
               </div>
-
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
-                <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
-                  <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Places Scanned</div>
-                  <div style="font-size: 16px; font-weight: 800; color: var(--color-ink, #0f172a); margin-top: 2px;">
-                    ${totalChecked} locations
-                  </div>
-                </div>
-                <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
-                  <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Monthly Scans Left</div>
-                  <div style="font-size: 16px; font-weight: 800; color: #6366f1; margin-top: 2px;">
-                    ${remainingScans} of 2
-                  </div>
-                </div>
+              <div style="font-size: 12.5px; color: ${count > 0 ? "#7f1d1d" : "#065f46"};">
+                ${count > 0
+                  ? "New Red Flags have been plotted on the municipal map and queued for field verification."
+                  : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
               </div>
-
-              ${remainingScans === 0 ? `
-                <div style="font-size: 12px; color: #b45309; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px;">
-                  <strong>Notice:</strong> Monthly quota reached. Next scan unlocks on <strong>${resetsOn}</strong>.
-                </div>
-              ` : ""}
             </div>
-          `,
-          confirmButtonColor: "#6366f1",
-          confirmButtonText: count > 0 ? "View Detected on Map" : "Understood"
-        });
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+              <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Places Scanned</div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--color-ink, #0f172a); margin-top: 2px;">${totalChecked} locations</div>
+              </div>
+              <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
+                <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Monthly Scans Left</div>
+                <div style="font-size: 16px; font-weight: 800; color: #6366f1; margin-top: 2px;">${remainingScans} of 2</div>
+              </div>
+            </div>
+            ${remainingScans === 0 ? `
+              <div style="font-size: 12px; color: #b45309; background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px;">
+                <strong>Notice:</strong> Monthly quota reached. Next scan unlocks on <strong>${resetsOn}</strong>.
+              </div>
+            ` : ""}
+          </div>
+        `,
+        confirmButtonColor: "#6366f1",
+        confirmButtonText: count > 0 ? "View Detected on Map" : "Understood"
+      });
 
-        if (alertRes.isConfirmed && count > 0) {
-          setFilterColor("Red");
-        }
+      if (alertRes.isConfirmed && count > 0) {
+        setFilterColor("Red");
       }
     } catch (err) {
       console.error("Detection scan error:", err);
@@ -2296,6 +2286,7 @@ export default function MapPage() {
     }
   };
 
+
   const handleCancelDetection = async () => {
     const result = await Swal.fire({
       title: 'Are you sure?',
@@ -2303,18 +2294,27 @@ export default function MapPage() {
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtoncolor: "var(--color-muted)",
+      cancelButtonColor: "var(--color-muted)",
       confirmButtonText: 'Yes, cancel it'
     });
 
     if (result.isConfirmed) {
       setCancellingDetection(true);
+      // Immediately dismiss the overlay — don't wait for the slow
+      // run-detection HTTP response to eventually resolve.
+      setRunDetectionLoading(false);
+      setDetectionProgress(null);
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
       try {
         await cancelRunDetection(token);
-        // The background process handles rollback and sends a completion event
-        // to dismiss the overlay naturally.
+        // Refresh flags in the background so any partial results are rolled back
+        fetchFlags(true);
       } catch (err) {
         setActionError("Failed to cancel detection.");
+      } finally {
         setCancellingDetection(false);
       }
     }

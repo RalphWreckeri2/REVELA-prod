@@ -233,9 +233,13 @@ def _fetch_all_places(progress_cb=None):
     min_lat, max_lat = 13.9450, 14.0125
     min_lng, max_lng = 121.0120, 121.1260
 
-    # Dense 550m grid step (~0.005 degrees) and 650m radius ensure small local stores aren't squeezed out
-    step = 0.005
-    radius_m = 650
+    # 830m grid step (~0.0075 degrees) and 850m radius cover the municipality with ~65-80 query
+    # points — fast enough to complete in a reasonable time while the 850m radius and the
+    # municipality polygon filter ensure no POI slips through the gaps between circles.
+    # NOTE: Small local stores (e.g. DALI Everyday Grocery) are caught by the name-similarity
+    # matching logic in _match_poi_to_registry, not by grid density, so coarser steps are safe.
+    step = 0.0075
+    radius_m = 850
 
     # 1. Precalculate grid points to allow progress tracking
     grid_points = []
@@ -591,79 +595,178 @@ def run_detection(user_id=None):
 # ── Get all flags ─────────────────────────────────────────────────────────────
 
 def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_user_id=None):
-    """Return paginated geospatial_logs entries with optional filters."""
+    """
+    Return paginated flag entries with optional filters.
+
+    Results are a UNION of two sources:
+      1. geospatial_logs  — POIs detected via Google Places scan or reported by inspectors.
+      2. official_registry — Businesses with stored coordinates that have NO matching
+         geospatial_log yet.  These appear as "virtual" flags so that all 515+ registry
+         businesses with GPS coordinates are visible on the map regardless of whether a
+         detection scan has run.  Their flagColor is derived from applicationStatus:
+           Active  → Green
+           Expired → Orange
+           Revoked → Black
+           Closed  → Purple
+           Pending → Yellow  (anything else → Yellow)
+    """
     try:
         from api.registry.service import check_and_expire_old_permits
         check_and_expire_old_permits()
         cursor = mysql.connection.cursor()
 
-        conditions = []
-        params = []
+        # ── Build per-source WHERE fragments ────────────────────────────────────
+        # Filters that apply to the geospatial_logs branch
+        geo_conditions = []
+        geo_params = []
+
+        # Filters that apply to the registry-only branch
+        reg_conditions = [
+            "r.latitude IS NOT NULL",
+            "r.longitude IS NOT NULL",
+            # Exclude registry rows that already have a geospatial_log (avoids duplicates)
+            """
+            NOT EXISTS (
+                SELECT 1 FROM geospatial_logs g2
+                WHERE LOWER(TRIM(g2.detectedName)) = LOWER(TRIM(r.businessName))
+                  AND g2.barangayID = r.barangayID
+            )
+            """,
+        ]
+        reg_params = []
+
+        # reporter filter only applies to geospatial_logs (registry has no reporter)
+        if reported_by_user_id:
+            geo_conditions.append("g.reportedByUserID = %s")
+            geo_params.append(reported_by_user_id)
+            # When filtering by reporter, registry-only rows should be excluded
+            reg_conditions.append("FALSE")
 
         if color:
-            conditions.append("g.flagColor = %s")
-            params.append(color)
+            geo_conditions.append("g.flagColor = %s")
+            geo_params.append(color)
+            # Map the color filter back to the applicationStatus for the registry branch
+            _status_for_color = {
+                "Green":  "Active",
+                "Orange": "Expired",
+                "Black":  "Revoked",
+                "Purple": "Closed",
+                "Yellow": "Pending",
+            }
+            mapped_status = _status_for_color.get(color)
+            if mapped_status:
+                reg_conditions.append("r.applicationStatus = %s")
+                reg_params.append(mapped_status)
+            else:
+                # Color has no registry equivalent (e.g. Red) — exclude registry rows
+                reg_conditions.append("FALSE")
 
         if barangay_id:
-            conditions.append("g.barangayID = %s")
-            params.append(barangay_id)
+            geo_conditions.append("g.barangayID = %s")
+            geo_params.append(barangay_id)
+            reg_conditions.append("r.barangayID = %s")
+            reg_params.append(barangay_id)
 
-        if reported_by_user_id:
-            conditions.append("g.reportedByUserID = %s")
-            params.append(reported_by_user_id)
+        geo_where = ("WHERE " + " AND ".join(geo_conditions)) if geo_conditions else ""
+        reg_where = "WHERE " + " AND ".join(reg_conditions)  # always has at least 3 conditions
 
-        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         offset = (page - 1) * per_page
 
-        cursor.execute(
-            f"SELECT COUNT(*) AS total FROM geospatial_logs g {where}",
-            params
-        )
+        # ── Count across both branches ───────────────────────────────────────────
+        count_sql = f"""
+            SELECT COUNT(*) AS total FROM (
+                SELECT g.logID
+                FROM geospatial_logs g
+                {geo_where}
+
+                UNION ALL
+
+                SELECT r.businessID * -1 AS logID
+                FROM official_registry r
+                {reg_where}
+            ) AS combined
+        """
+        cursor.execute(count_sql, geo_params + reg_params)
         total = cursor.fetchone()["total"]
 
-        cursor.execute(
-            f"""
-            SELECT
-                g.logID,
-                g.detectedName,
-                COALESCE(g.latitude, r.latitude) AS latitude,
-                COALESCE(g.longitude, r.longitude) AS longitude,
-                g.flagColor,
-                g.detectedDate,
-                g.nearestLandmark,
-                g.notes,
-                g.placeID,
-                g.reportedByUserID,
-                g.noticeLevel,
-                b.barangayID,
-                b.barangayName,
-                r.businessSize,
-                COALESCE(g.nearestLandmark, r.businessAddress) AS resolvedAddress,
-                CASE
-                    WHEN g.reportedByUserID IS NOT NULL AND g.flagColor != 'Green' THEN 'inspector_reported'
-                    WHEN g.placeID IS NOT NULL AND r.businessID IS NOT NULL THEN 'registry_and_maps'
-                    WHEN g.placeID IS NULL AND r.businessID IS NOT NULL THEN 'registry_only'
-                    ELSE 'maps_only'
-                END AS flagSource,
-                (
-                    SELECT verificationStatus
-                    FROM inspection_reports
-                    WHERE targetID = g.logID
-                        AND targetType = 'geospatial_log'
-                    ORDER BY irTimestamp DESC
-                    LIMIT 1
-                ) AS verificationStatus
-            FROM geospatial_logs g
-            LEFT JOIN barangays b ON g.barangayID = b.barangayID
-            LEFT JOIN official_registry r
-                ON LOWER(r.businessName) = LOWER(g.detectedName)
-                AND r.barangayID = g.barangayID
-            {where}
-            ORDER BY g.detectedDate DESC
+        # ── Fetch combined rows ──────────────────────────────────────────────────
+        fetch_sql = f"""
+            SELECT * FROM (
+
+                -- Branch 1: existing geospatial_logs entries
+                SELECT
+                    g.logID,
+                    g.detectedName,
+                    COALESCE(g.latitude, r.latitude) AS latitude,
+                    COALESCE(g.longitude, r.longitude) AS longitude,
+                    g.flagColor,
+                    g.detectedDate,
+                    g.nearestLandmark,
+                    g.notes,
+                    g.placeID,
+                    g.reportedByUserID,
+                    g.noticeLevel,
+                    b.barangayID,
+                    b.barangayName,
+                    r.businessSize,
+                    COALESCE(g.nearestLandmark, r.businessAddress) AS resolvedAddress,
+                    CASE
+                        WHEN g.reportedByUserID IS NOT NULL AND g.flagColor != 'Green' THEN 'inspector_reported'
+                        WHEN g.placeID IS NOT NULL AND r.businessID IS NOT NULL THEN 'registry_and_maps'
+                        WHEN g.placeID IS NULL AND r.businessID IS NOT NULL THEN 'registry_only'
+                        ELSE 'maps_only'
+                    END AS flagSource,
+                    (
+                        SELECT verificationStatus
+                        FROM inspection_reports
+                        WHERE targetID = g.logID
+                          AND targetType = 'geospatial_log'
+                        ORDER BY irTimestamp DESC
+                        LIMIT 1
+                    ) AS verificationStatus
+                FROM geospatial_logs g
+                LEFT JOIN barangays b ON g.barangayID = b.barangayID
+                LEFT JOIN official_registry r
+                    ON LOWER(TRIM(r.businessName)) = LOWER(TRIM(g.detectedName))
+                    AND r.barangayID = g.barangayID
+                {geo_where}
+
+                UNION ALL
+
+                -- Branch 2: registry-only businesses (have coordinates, no geospatial_log yet)
+                SELECT
+                    r.businessID * -1          AS logID,
+                    r.businessName             AS detectedName,
+                    r.latitude                 AS latitude,
+                    r.longitude                AS longitude,
+                    CASE r.applicationStatus
+                        WHEN 'Active'  THEN 'Green'
+                        WHEN 'Expired' THEN 'Orange'
+                        WHEN 'Revoked' THEN 'Black'
+                        WHEN 'Closed'  THEN 'Purple'
+                        ELSE 'Yellow'
+                    END                        AS flagColor,
+                    r.lastRenewalDate          AS detectedDate,
+                    r.businessAddress          AS nearestLandmark,
+                    NULL                       AS notes,
+                    NULL                       AS placeID,
+                    NULL                       AS reportedByUserID,
+                    0                          AS noticeLevel,
+                    b.barangayID               AS barangayID,
+                    b.barangayName             AS barangayName,
+                    r.businessSize             AS businessSize,
+                    r.businessAddress          AS resolvedAddress,
+                    'registry_only'            AS flagSource,
+                    NULL                       AS verificationStatus
+                FROM official_registry r
+                LEFT JOIN barangays b ON r.barangayID = b.barangayID
+                {reg_where}
+
+            ) AS combined
+            ORDER BY detectedDate DESC
             LIMIT %s OFFSET %s
-            """,
-            params + [per_page, offset]
-        )
+        """
+        cursor.execute(fetch_sql, geo_params + reg_params + [per_page, offset])
         rows = cursor.fetchall()
         cursor.close()
 
