@@ -12,6 +12,7 @@ import '../theme/app_theme.dart';
 import '../widgets/app_background.dart';
 import '../service/in_app_notifications_service.dart';
 import '../service/push_notifications.dart';
+import '../service/auth_service.dart';
 import '../widgets/scale_tap.dart';
 import '../widgets/floating_mascot.dart';
 import 'dart:async';
@@ -207,6 +208,7 @@ class _WelcomeLoadingOverlay extends StatelessWidget {
 class _MainLayoutState extends State<MainLayout> {
   late int _selectedIndex;
   bool _isNavBarVisible = true;
+  final AuthService _authService = AuthService();
   // Keep an already visited tab alive, but do not construct expensive tabs
   // (notably the Google Map/location tab) during the first Dashboard frame.
   // Constructing every IndexedStack child after login can block Android long
@@ -247,8 +249,9 @@ class _MainLayoutState extends State<MainLayout> {
     _fetchUnreadCount();
     // Proactively refresh and sync FCM device token upon entering the workspace
     unawaited(PushNotifications.refreshFcmToken());
-    _pollingTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _pollingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _fetchUnreadCount();
+      _authService.getProfile();
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -517,6 +520,7 @@ class _MainLayoutState extends State<MainLayout> {
 
   void _onItemTapped(int index) {
     HapticFeedback.lightImpact();
+    _authService.getProfile();
     setState(() {
       _ensurePageLoaded(index);
       _selectedIndex = index;

@@ -10,7 +10,7 @@ class ApiConfig {
     defaultValue: 'https://api.revelasys.site',
   );
 
-  static const Duration _probeTimeout = Duration(seconds: 4);
+  static const Duration _probeTimeout = Duration(seconds: 2);
 
   static String? _resolvedBase;
 
@@ -24,12 +24,16 @@ class ApiConfig {
   }
 
   static Future<void> initialize() async {
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_prefKey);
-    if (saved != null && saved.isNotEmpty) {
-      _resolvedBase = _normalize(saved);
-    } else if (_compileTimeBase.trim().isNotEmpty) {
-      _resolvedBase = _normalize(_compileTimeBase);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_prefKey);
+      if (saved != null && saved.isNotEmpty) {
+        _resolvedBase = _normalize(saved);
+      } else if (_compileTimeBase.trim().isNotEmpty) {
+        _resolvedBase = _normalize(_compileTimeBase);
+      }
+    } catch (e) {
+      debugPrint('ApiConfig SharedPreferences read error: $e');
     }
 
     if (_resolvedBase != null && await _probe(_resolvedBase!)) {
@@ -39,6 +43,8 @@ class ApiConfig {
     final discovered = await discover();
     if (discovered != null) {
       _resolvedBase = discovered;
+    } else {
+      _resolvedBase = 'https://api.revelasys.site';
     }
   }
 
@@ -66,8 +72,12 @@ class ApiConfig {
   }
 
   static Future<void> _persist(String base) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefKey, base);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_prefKey, base);
+    } catch (e) {
+      debugPrint('ApiConfig _persist error: $e');
+    }
   }
 
   static Future<List<String>> _candidateUrls() async {
@@ -80,38 +90,30 @@ class ApiConfig {
     }
 
     // 1. Explicit --dart-define=API_BASE passed at build/run time
-    final hasCustomCompileTime = _compileTimeBase.trim().isNotEmpty &&
-        _compileTimeBase.trim() != 'https://api.revelasys.site';
-    if (hasCustomCompileTime) {
+    if (_compileTimeBase.trim().isNotEmpty) {
       add(_compileTimeBase);
     }
 
-    // 2. Previously verified working URL from SharedPreferences
-    final prefs = await SharedPreferences.getInstance();
-    final saved = prefs.getString(_prefKey);
-    if (saved != null && saved.isNotEmpty) {
-      add(saved);
-    }
-
-    // 3. Local Development endpoints (preferred during debugging/development)
-    if (kDebugMode || hasCustomCompileTime) {
-      // Android emulator → host machine loopback
-      add('http://10.0.2.2:5000');
-      // USB + `adb reverse tcp:5000 tcp:5000` / physical device loopback
-      add('http://127.0.0.1:5000');
-      // Local Wi-Fi subnet candidates
-      add('http://192.168.1.2:5000');
-      add('http://192.168.8.108:5000');
-    }
-
-    // 4. Live Production Server (fallback)
+    // 2. Production endpoint
     add('https://api.revelasys.site');
 
-    // Also include local endpoints as final fallback in release if production unreachable
-    if (!kDebugMode && !hasCustomCompileTime) {
+    // 3. Previously verified working URL from SharedPreferences
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_prefKey);
+      if (saved != null && saved.isNotEmpty) {
+        add(saved);
+      }
+    } catch (e) {
+      debugPrint('ApiConfig _candidateUrls prefs error: $e');
+    }
+
+    // 4. Local Development endpoints (debug mode or fallback)
+    if (kDebugMode) {
       add('http://10.0.2.2:5000');
       add('http://127.0.0.1:5000');
       add('http://192.168.1.2:5000');
+      add('http://192.168.8.108:5000');
     }
 
     return ordered;

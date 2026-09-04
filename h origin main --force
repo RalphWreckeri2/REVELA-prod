@@ -1,0 +1,15 @@
+[33mcommit 40b5d4b60b23f0aec9ed04690415f904f3f76a5f[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: Ruffa Anoya <ruffaanoya@example.com>
+Date:   Fri Sep 4 00:32:10 2026 +0800
+
+    push ko muna to
+
+ revela_mobile/lib/pages/login_page.dart            |  65 [32m++++++[m[31m-[m
+ revela_mobile/lib/pages/main_layout.dart           | 113 [32m+++++++++++[m[31m-[m
+ .../lib/pages/mandatory_biometric_setup_page.dart  | 203 [32m+++++++++++++++++++++[m
+ revela_mobile/lib/pages/settings_screen.dart       |   3 [32m+[m
+ revela_mobile/lib/service/auth_service.dart        |  57 [32m++++[m[31m--[m
+ revela_mobile/lib/service/push_notifications.dart  |  84 [32m+++++++++[m
+ revela_mobile/pubspec.lock                         |   2 [32m+[m[31m-[m
+ revela_mobile/pubspec.yaml                         |   3 [32m+[m[31m-[m
+ 8 files changed, 503 insertions(+), 27 deletions(-)

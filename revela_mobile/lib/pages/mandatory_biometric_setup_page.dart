@@ -53,26 +53,33 @@ class _MandatoryBiometricSetupPageState
 
       if (didAuthenticate) {
         if (widget.accessToken != null) {
-          await _secureStorage.write(
-            key: 'jwt_token',
-            value: widget.accessToken,
-          );
-          await _secureStorage.write(
-            key: 'offline_jwt_token',
-            value: widget.accessToken,
-          );
+          try {
+            await _secureStorage.write(
+              key: 'jwt_token',
+              value: widget.accessToken,
+            );
+            await _secureStorage.write(
+              key: 'offline_jwt_token',
+              value: widget.accessToken,
+            );
+          } catch (e) {
+            debugPrint('mandatory_biometric_setup token write error: $e');
+          }
         }
         if (widget.email != null) {
-          await _secureStorage.write(
-            key: 'saved_email',
-            value: widget.email,
-          );
+          try {
+            await _secureStorage.write(
+              key: 'saved_email',
+              value: widget.email,
+            );
+          } catch (e) {
+            debugPrint('mandatory_biometric_setup email write error: $e');
+          }
         }
 
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('biometric_enabled', true);
         await prefs.setBool('onboarding_completed', true);
-        await prefs.setBool('show_tour_on_launch', true);
 
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(

@@ -42,6 +42,23 @@ class _DashboardPageState extends State<DashboardPage>
   final InspectionService _inspectionService = InspectionService();
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
+  Future<String?> _safeRead(String key) async {
+    try {
+      return await _storage.read(key: key);
+    } catch (e) {
+      debugPrint('DashboardPage _safeRead error for $key: $e');
+      return null;
+    }
+  }
+
+  Future<void> _safeWrite(String key, String value) async {
+    try {
+      await _storage.write(key: key, value: value);
+    } catch (e) {
+      debugPrint('DashboardPage _safeWrite error for $key: $e');
+    }
+  }
+
   String _inspectorName = 'Inspector';
   String _inspectorRole = 'BPLO Field Inspector';
   bool _isLoading = true;
@@ -95,12 +112,12 @@ class _DashboardPageState extends State<DashboardPage>
       final auth = AuthService();
       String? userId = await auth.getAuthenticatedUserId();
       userId ??=
-          await _storage.read(key: 'authenticated_user_id') ??
-          await _storage.read(key: 'last_logged_in_user_id');
+          await _safeRead('authenticated_user_id') ??
+          await _safeRead('last_logged_in_user_id');
       final fullName =
-          await _storage.read(key: 'user_fullName') ?? 'Field Inspector';
+          await _safeRead('user_fullName') ?? 'Field Inspector';
       final role =
-          await _storage.read(key: 'user_role') ?? 'BPLO Field Inspector';
+          await _safeRead('user_role') ?? 'BPLO Field Inspector';
 
       if (userId == null || userId.isEmpty) {
         if (mounted) {
@@ -239,9 +256,9 @@ class _DashboardPageState extends State<DashboardPage>
     }
     try {
       final name =
-          await _storage.read(key: 'user_fullName') ?? 'Field Inspector';
+          await _safeRead('user_fullName') ?? 'Field Inspector';
       final role =
-          await _storage.read(key: 'user_role') ?? 'BPLO Field Inspector';
+          await _safeRead('user_role') ?? 'BPLO Field Inspector';
 
       // Before probing backend reachability, attempt to load any locally cached
       // tasks so the UI can show existing assignments immediately while the
@@ -251,8 +268,8 @@ class _DashboardPageState extends State<DashboardPage>
         String? userId = await auth.getAuthenticatedUserId();
         if (userId == null || userId.isEmpty) {
           userId =
-              await _storage.read(key: 'authenticated_user_id') ??
-              await _storage.read(key: 'last_logged_in_user_id');
+              await _safeRead('authenticated_user_id') ??
+              await _safeRead('last_logged_in_user_id');
         }
 
         Map<String, dynamic>? cachedProfile;
@@ -314,10 +331,10 @@ class _DashboardPageState extends State<DashboardPage>
       // When online, record last sync timestamp so offline badge can show it later
       if (!_isOffline) {
         final now = DateTime.now().toIso8601String();
-        await _storage.write(key: 'last_sync', value: now);
+        await _safeWrite('last_sync', now);
         _lastSync = now;
       } else {
-        _lastSync = await _storage.read(key: 'last_sync');
+        _lastSync = await _safeRead('last_sync');
       }
 
       if (mounted) {

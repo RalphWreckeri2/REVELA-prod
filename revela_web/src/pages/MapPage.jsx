@@ -331,8 +331,37 @@ function pointInRing(lat, lng, ring) {
   return inside;
 }
 
-/** Returns true if (lat, lng) is inside a GeoJSON Polygon or MultiPolygon geometry. */
-function pointInGeoJsonGeometry(lat, lng, geometry) {
+function distToSegmentSq(px, py, ax, ay, bx, by) {
+  const l2 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+  if (l2 === 0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
+  let t = ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  const projX = ax + t * (bx - ax);
+  const projY = ay + t * (by - ay);
+  return (px - projX) * (px - projX) + (py - projY) * (py - projY);
+}
+
+function distanceToRingInMeters(lat, lng, ring) {
+  if (!ring || ring.length === 0) return Infinity;
+  let minSq = Infinity;
+  const latToMeters = 110540.0;
+  const lngToMeters = 111320.0 * Math.cos((lat * Math.PI) / 180.0);
+  const px = lng * lngToMeters;
+  const py = lat * latToMeters;
+
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const ax = ring[j][0] * lngToMeters;
+    const ay = ring[j][1] * latToMeters;
+    const bx = ring[i][0] * lngToMeters;
+    const by = ring[i][1] * latToMeters;
+    const dSq = distToSegmentSq(px, py, ax, ay, bx, by);
+    if (dSq < minSq) minSq = dSq;
+  }
+  return Math.sqrt(minSq);
+}
+
+/** Returns true if (lat, lng) is inside a GeoJSON Polygon or MultiPolygon geometry or within bufferMeters distance. */
+function pointInGeoJsonGeometry(lat, lng, geometry, bufferMeters = 100) {
   if (!geometry) return false;
   const polys =
     geometry.type === "MultiPolygon"
@@ -351,6 +380,8 @@ function pointInGeoJsonGeometry(lat, lng, geometry) {
         if (pointInRing(lat, lng, poly[h])) { inHole = true; break; }
       }
       if (!inHole) return true;
+    } else if (distanceToRingInMeters(lat, lng, poly[0]) <= bufferMeters) {
+      return true;
     }
   }
   return false;

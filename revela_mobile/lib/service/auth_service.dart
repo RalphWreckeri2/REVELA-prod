@@ -5,6 +5,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../pages/login_page.dart';
 import 'api_config.dart';
 
@@ -57,9 +58,13 @@ class AuthService extends ChangeNotifier {
         onRequest:
             (RequestOptions options, RequestInterceptorHandler handler) async {
               options.baseUrl = ApiConfig.apiBase;
-              final token = await _storage.read(key: 'jwt_token');
-              if (token != null) {
-                options.headers['Authorization'] = 'Bearer $token';
+              try {
+                final token = await _storage.read(key: 'jwt_token');
+                if (token != null) {
+                  options.headers['Authorization'] = 'Bearer $token';
+                }
+              } catch (e) {
+                debugPrint('AuthService interceptor token read error: $e');
               }
               return handler.next(options);
             },
@@ -74,7 +79,7 @@ class AuthService extends ChangeNotifier {
               path.contains('/auth/reset-password');
 
           final statusCode = e.response?.statusCode;
-          if ((statusCode == 401 || statusCode == 403) && !isAuthEndpoint) {
+          if ((statusCode == 401 || statusCode == 403 || statusCode == 404) && !isAuthEndpoint) {
             await purgeRevokedAccountState(
               reason: 'Your inspector account access has been revoked by an administrator.',
             );
@@ -420,6 +425,15 @@ class AuthService extends ChangeNotifier {
       return null;
     } catch (e) {
       debugPrint('Error getting profile: $e');
+      if (e is DioException) {
+        final code = e.response?.statusCode;
+        if (code == 401 || code == 403 || code == 404) {
+          await purgeRevokedAccountState(
+            reason: 'You cannot access the application. The administrator has already removed or deactivated your account.',
+          );
+          return null;
+        }
+      }
       final fullName = await _storage.read(key: 'user_fullName');
       final email = await _storage.read(key: 'saved_email');
       final phone = await _storage.read(key: 'user_phone');
@@ -951,6 +965,10 @@ class AuthService extends ChangeNotifier {
   Future<void> purgeRevokedAccountState({String? reason}) async {
     try {
       await _storage.deleteAll();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('biometric_enabled');
+      await prefs.remove('onboarding_completed');
+      await prefs.remove('cached_in_app_notifications_list');
     } catch (e) {
       debugPrint('Error purging secure storage: $e');
     }
@@ -962,7 +980,7 @@ class AuthService extends ChangeNotifier {
 
     _currentUser = null;
     _lastAuthError = reason ??
-        'Your inspector account has been removed or deactivated by an administrator.';
+        'You cannot access the application. The administrator has already removed or deactivated your account.';
     notifyListeners();
   }
 
@@ -971,10 +989,30 @@ class AuthService extends ChangeNotifier {
       await _dio.post('/api/auth/logout');
     } catch (_) {}
 
-    await purgeRevokedAccountState(reason: 'Logged out successfully');
+    _lastAuthError = null;
+
+    try {
+      await _storage.delete(key: 'jwt_token');
+      await _storage.delete(key: 'temp_2fa_token');
+      await _storage.delete(key: 'must_change_password');
+      await _storage.delete(key: 'authenticated_user_id');
+    } catch (e) {
+      debugPrint('Error clearing session tokens during logout: $e');
+    }
+
+    await _fcmTokenRefreshSubscription?.cancel();
+    _fcmTokenRefreshSubscription = null;
+
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+
+    _currentUser = null;
+    notifyListeners();
 
     navigatorKey.currentState?.pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginPage()),
+      MaterialPageRoute(
+        builder: (_) => const LoginPage(accountRevokedNotice: false),
+      ),
       (route) => false,
     );
   }

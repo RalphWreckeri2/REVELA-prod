@@ -165,8 +165,12 @@ class PushNotifications {
         return false;
       }
 
-      final jwtToken =
-          await const FlutterSecureStorage().read(key: 'jwt_token');
+      String? jwtToken;
+      try {
+        jwtToken = await const FlutterSecureStorage().read(key: 'jwt_token');
+      } catch (e) {
+        debugPrint('[FCM] Error reading jwt_token from storage: $e');
+      }
       final isAuthenticated =
           AuthService().isAuthenticated ||
           (jwtToken != null && jwtToken.isNotEmpty);

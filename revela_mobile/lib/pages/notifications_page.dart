@@ -33,6 +33,7 @@ class _NotificationsPageState extends State<NotificationsPage>
   List<InspectionTask> _activeTasks = [];
   bool _loading = true;
   String? _error;
+  bool _isOfflineMode = false;
   bool _isDrawerOpen = false;
   Timer? _pollingTimer;
   bool _loadInFlight = false;
@@ -99,6 +100,7 @@ class _NotificationsPageState extends State<NotificationsPage>
           _items = list;
           _activeTasks = tasks;
           _loading = false;
+          _isOfflineMode = false;
           _error = null;
         });
 
@@ -124,11 +126,25 @@ class _NotificationsPageState extends State<NotificationsPage>
       }
     } catch (e) {
       if (mounted) {
-        setState(() {
-          // A background/resume timeout must not hide already loaded alerts.
-          _error = hasCachedContent ? null : 'Could not load notifications.';
-          _loading = false;
-        });
+        try {
+          final tasks = await InspectionService().getMyTasks();
+          final cachedList =
+              await InAppNotificationsService().loadCachedNotifications();
+          setState(() {
+            _items = cachedList;
+            _activeTasks = tasks;
+            _loading = false;
+            _isOfflineMode = true;
+            _error = (cachedList.isEmpty && tasks.isEmpty)
+                ? 'No notifications available offline.'
+                : null;
+          });
+        } catch (_) {
+          setState(() {
+            _error = hasCachedContent ? null : 'Could not load notifications.';
+            _loading = false;
+          });
+        }
       }
     } finally {
       _loadInFlight = false;
@@ -280,6 +296,8 @@ class _NotificationsPageState extends State<NotificationsPage>
                 ),
               ),
 
+            if (_isOfflineMode) _buildOfflineBanner(),
+
             // ── Filter Tabs ──
             Showcase(
               key: MainLayout.notificationsTourKey,
@@ -373,6 +391,35 @@ class _NotificationsPageState extends State<NotificationsPage>
     );
   }
 
+  Widget _buildOfflineBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.amber.shade300),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wifi_off_rounded, size: 18, color: Colors.amber.shade900),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Offline Mode — Displaying cached notifications & assignments',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Colors.amber.shade900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildShimmer(BuildContext context) {
     return ListView.builder(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
@@ -398,6 +445,21 @@ class _NotificationsPageState extends State<NotificationsPage>
 
   Widget _buildAssignmentsTab() {
     if (_items.isEmpty) {
+      if (_activeTasks.isNotEmpty) {
+        return ListView.separated(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
+          itemCount: _activeTasks.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (_, i) {
+            final task = _activeTasks[i];
+            return TaskCard(
+              task: task,
+              isCurrent: true,
+              onTap: () => _onTaskTap(task),
+            );
+          },
+        );
+      }
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -410,7 +472,9 @@ class _NotificationsPageState extends State<NotificationsPage>
               ),
               const SizedBox(height: 16),
               Text(
-                'No notifications yet.',
+                _isOfflineMode
+                    ? 'No cached notifications available.'
+                    : 'No notifications yet.',
                 style: TextStyle(
                   color: AppColors.textLight,
                   fontSize: 15,
@@ -419,7 +483,9 @@ class _NotificationsPageState extends State<NotificationsPage>
               ),
               const SizedBox(height: 6),
               Text(
-                'New assignments from admin will appear here.',
+                _isOfflineMode
+                    ? 'Connect to the internet to fetch fresh notifications.'
+                    : 'New assignments from admin will appear here.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: AppColors.textLight, fontSize: 13),
               ),

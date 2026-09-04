@@ -23,6 +23,16 @@ def get_detection_quota_route():
     quota = get_detection_quota_info()
     return jsonify(quota), 200
 
+# ── POST /api/flags/reset-quota ───────────────────────────────────────────────
+@flags_bp.route("/reset-quota", methods=["POST"])
+@admin_required()
+def reset_detection_quota_route():
+    """Reset detection scan quota for testing purposes."""
+    from api.models.detection_runs import reset_detection_quota
+    reset_detection_quota()
+    updated_quota = get_detection_quota_info()
+    return jsonify({"message": "Monthly detection limit reset successfully.", "quota": updated_quota}), 200
+
 # ── POST /api/flags/cancel-detection ──────────────────────────────────────────
 @flags_bp.route("/cancel-detection", methods=["POST"])
 @admin_required()

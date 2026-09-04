@@ -50,6 +50,23 @@ def get_monthly_detection_count():
     return 0
 
 
+def reset_detection_quota():
+    """
+    Resets the monthly detection quota counter for testing and admin operations.
+    Sets completed detection runs status to 'reset' so new runs can be executed.
+    """
+    ensure_detection_runs_table()
+    cur = mysql.connection.cursor()
+    cur.execute("""
+        UPDATE detection_runs
+        SET status = 'reset'
+        WHERE status = 'completed'
+    """)
+    mysql.connection.commit()
+    cur.close()
+    return True
+
+
 def create_detection_run(user_id=None):
     """
     Record the start of a detection run. Returns the generated runID.

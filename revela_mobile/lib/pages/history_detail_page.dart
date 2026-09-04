@@ -142,7 +142,13 @@ class HistoryDetailPage extends StatelessWidget {
 
                   // Row: Inspector
                   FutureBuilder<String?>(
-                    future: const FlutterSecureStorage().read(key: 'user_fullName'),
+                    future: () async {
+                      try {
+                        return await const FlutterSecureStorage().read(key: 'user_fullName');
+                      } catch (_) {
+                        return null;
+                      }
+                    }(),
                     builder: (context, snapshot) {
                       return _DetailRow(
                         icon: Icons.person_outline_rounded,

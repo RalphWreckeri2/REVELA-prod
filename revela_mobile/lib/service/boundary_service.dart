@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'flag_service.dart';
@@ -7,6 +8,9 @@ class BoundaryService {
   static final BoundaryService _instance = BoundaryService._internal();
   factory BoundaryService() => _instance;
   BoundaryService._internal();
+
+  /// Default spatial tolerance buffer in meters (accommodates GPS drift and GeoJSON offsets).
+  static const double defaultBufferMeters = 100.0;
 
   // Map of Barangay Name (normalized) -> List of Polygons.
   // Each Polygon is a List of points [lng, lat].
@@ -86,12 +90,13 @@ class BoundaryService {
     return polygons;
   }
 
-  /// Returns true if (lat, lng) falls inside ANY Mataasnakahoy barangay polygon.
-  bool isPointInMataasnakahoy(double lat, double lng) {
+  /// Returns true if (lat, lng) falls inside ANY Mataasnakahoy barangay polygon,
+  /// or within [bufferMeters] distance of any polygon boundary.
+  bool isPointInMataasnakahoy(double lat, double lng, {double bufferMeters = defaultBufferMeters}) {
     if (!_isLoaded || _barangayPolygons.isEmpty) return false;
     for (var polygons in _barangayPolygons.values) {
       for (var polygon in polygons) {
-        if (_isPointInPolygon(lat, lng, polygon)) {
+        if (_isPointInPolygonWithBuffer(lat, lng, polygon, bufferMeters: bufferMeters)) {
           return true;
         }
       }
@@ -99,7 +104,9 @@ class BoundaryService {
     return false;
   }
 
-  bool isPointInBarangay(double lat, double lng, String barangayName) {
+  /// Returns true if (lat, lng) falls inside the polygon for [barangayName],
+  /// or within [bufferMeters] distance of its boundary.
+  bool isPointInBarangay(double lat, double lng, String barangayName, {double bufferMeters = defaultBufferMeters}) {
     if (!_isLoaded || _barangayPolygons.isEmpty) return true; // Fail open if boundaries aren't loaded
 
     final polygons = getPolygons(barangayName);
@@ -109,9 +116,9 @@ class BoundaryService {
       return true; // Could not match barangay name, fail open
     }
 
-    // Check if the point is inside any of the polygons for this barangay
+    // Check if the point is inside or within buffer of any polygon for this barangay
     for (var polygon in polygons) {
-      if (_isPointInPolygon(lat, lng, polygon)) {
+      if (_isPointInPolygonWithBuffer(lat, lng, polygon, bufferMeters: bufferMeters)) {
         return true;
       }
     }
@@ -119,11 +126,11 @@ class BoundaryService {
     return false;
   }
 
-  /// Find which [Barangay] object from a list of barangays contains the given [lat], [lng] point.
-  Barangay? findBarangayForPoint(double lat, double lng, List<Barangay> barangays) {
+  /// Find which [Barangay] object from a list of barangays contains (or is closest within buffer to) the given [lat], [lng] point.
+  Barangay? findBarangayForPoint(double lat, double lng, List<Barangay> barangays, {double bufferMeters = defaultBufferMeters}) {
     if (!_isLoaded || _barangayPolygons.isEmpty) return null;
 
-    // Find polygon key containing point
+    // 1. First pass: exact point-in-polygon containment
     String? matchedKey;
     for (var entry in _barangayPolygons.entries) {
       for (var polygon in entry.value) {
@@ -133,6 +140,20 @@ class BoundaryService {
         }
       }
       if (matchedKey != null) break;
+    }
+
+    // 2. Second pass: if exact match fails, check within buffer tolerance
+    if (matchedKey == null) {
+      double minBufferDist = double.infinity;
+      for (var entry in _barangayPolygons.entries) {
+        for (var polygon in entry.value) {
+          final dist = _distanceToPolygonInMeters(lat, lng, polygon);
+          if (dist <= bufferMeters && dist < minBufferDist) {
+            minBufferDist = dist;
+            matchedKey = entry.key;
+          }
+        }
+      }
     }
 
     if (matchedKey == null) return null;
@@ -163,6 +184,51 @@ class BoundaryService {
     return null;
   }
 
+  bool _isPointInPolygonWithBuffer(double lat, double lng, List<List<double>> polygon, {double bufferMeters = defaultBufferMeters}) {
+    if (_isPointInPolygon(lat, lng, polygon)) {
+      return true;
+    }
+    final dist = _distanceToPolygonInMeters(lat, lng, polygon);
+    return dist <= bufferMeters;
+  }
+
+  /// Calculates shortest distance in meters from (lat, lng) to any boundary segment of [polygon].
+  double _distanceToPolygonInMeters(double lat, double lng, List<List<double>> polygon) {
+    if (polygon.isEmpty) return double.infinity;
+
+    double minDistanceSq = double.infinity;
+    const double latToMeters = 110540.0;
+    final double lngToMeters = 111320.0 * cos(lat * pi / 180.0);
+
+    final double px = lng * lngToMeters;
+    final double py = lat * latToMeters;
+
+    for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      final double ax = polygon[j][0] * lngToMeters;
+      final double ay = polygon[j][1] * latToMeters;
+      final double bx = polygon[i][0] * lngToMeters;
+      final double by = polygon[i][1] * latToMeters;
+
+      final double distSq = _distToSegmentSq(px, py, ax, ay, bx, by);
+      if (distSq < minDistanceSq) {
+        minDistanceSq = distSq;
+      }
+    }
+
+    return sqrt(minDistanceSq);
+  }
+
+  /// Shortest distance squared from point (px, py) to segment (ax, ay)-(bx, by).
+  double _distToSegmentSq(double px, double py, double ax, double ay, double bx, double by) {
+    final double l2 = (bx - ax) * (bx - ax) + (by - ay) * (by - ay);
+    if (l2 == 0) return (px - ax) * (px - ax) + (py - ay) * (py - ay);
+    double t = ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / l2;
+    t = t.clamp(0.0, 1.0);
+    final double projX = ax + t * (bx - ax);
+    final double projY = ay + t * (by - ay);
+    return (px - projX) * (px - projX) + (py - projY) * (py - projY);
+  }
+
   bool _isPointInPolygon(double lat, double lng, List<List<double>> polygon) {
     bool isInside = false;
     for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
@@ -178,3 +244,4 @@ class BoundaryService {
     return isInside;
   }
 }
+

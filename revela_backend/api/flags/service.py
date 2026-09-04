@@ -45,27 +45,109 @@ _MUNICIPALITY_BOUNDARY = shape(_BOUNDARY_GEOJSON)
 
 
 def _within_municipality(lat: float, lng: float) -> bool:
-    """Polygon test + hard coordinate caps to exclude Lipa border overlap."""
-    if lng > 121.120:    # east cap — cuts off Lipa airbase corridor
+    """Polygon test with 0.003° (~330m) buffer for border tolerance."""
+    if lat is None or lng is None:
         return False
-    if lat < 13.951:     # south cap — Mataasnakahoy's southern boundary
-        return False
-    return _MUNICIPALITY_BOUNDARY.contains(Point(lng, lat))
+    return _MUNICIPALITY_BOUNDARY.buffer(0.003).contains(Point(lng, lat))
 
 
-def _match_registry_to_google(place_id, business_id, detected_name):
+
+import re
+
+def _normalize_business_name(name: str) -> str:
+    if not name:
+        return ""
+    s = name.lower()
+    noise = [
+        r'\binc\.?\b', r'\bcorp\.?\b', r'\bcorporation\b', r'\bco\.?\b', r'\bltd\.?\b',
+        r'\bsari[- ]sari\b', r'\bstore\b', r'\bgrocery\b', r'\bshop\b', r'\benterprises?\b',
+        r'\btradings?\b', r'\bphilippines?\b', r'\bph\b', r'\bbranch\b', r'\boutlet\b'
+    ]
+    for n in noise:
+        s = re.sub(n, '', s)
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
+    return re.sub(r'\s+', ' ', s).strip()
+
+
+def _name_similarity(name1: str, name2: str) -> float:
+    n1 = _normalize_business_name(name1)
+    n2 = _normalize_business_name(name2)
+    if not n1 or not n2:
+        return 0.0
+    if n1 == n2 or n1 in n2 or n2 in n1:
+        return 1.0
+    
+    words1 = set(n1.split())
+    words2 = set(n2.split())
+    if not words1 or not words2:
+        return 0.0
+    overlap = len(words1.intersection(words2))
+    return overlap / max(len(words1), len(words2))
+
+
+def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry):
     """
-    Updates the geospatial log for an existing registry business 
-    with its official Google Maps Place ID.
+    Finds matching registry entry for a POI using smart combination of:
+    1. Geodesic distance (up to 100m)
+    2. Normalized business name similarity (e.g., Dali Everyday Grocery vs DALI EVERYDAY GROCERY INC.)
+    Returns (matched_entry, distance_meters, similarity_score)
+    """
+    best_match = None
+    best_dist = float("inf")
+    best_score = 0.0
+
+    for entry in registry:
+        reg_lat = entry.get("latitude")
+        reg_lng = entry.get("longitude")
+        if not reg_lat or not reg_lng:
+            continue
+
+        dist = geodesic((poi_lat, poi_lng), (float(reg_lat), float(reg_lng))).meters
+        sim = _name_similarity(poi_name, entry.get("businessName", ""))
+
+        # High confidence name match (e.g. Dali, Gina's Store) within 100m
+        if sim >= 0.6 and dist <= 100:
+            if sim > best_score or (sim == best_score and dist < best_dist):
+                best_score = sim
+                best_dist = dist
+                best_match = entry
+        # Proximity match (within 25m) even if name differs
+        elif dist <= 25 and (best_score < 0.6 or dist < best_dist):
+            if best_score < 0.6:
+                best_score = 0.5
+                best_dist = dist
+                best_match = entry
+
+    return best_match, best_dist, best_score
+
+
+def _match_registry_to_google(place_id, business_id, detected_name, target_color='Green', lat=None, lng=None, barangay_id=None):
+    """
+    Updates or inserts the geospatial log for an existing registry business 
+    with its official Google Maps Place ID and dynamic status-based flag color.
     """
     cursor = mysql.connection.cursor()
-    # Find the 'Green' flag record for this business and update it
     cursor.execute("""
-        UPDATE geospatial_logs 
-        SET placeID = %s 
-        WHERE detectedName = %s 
-        AND flagColor = 'Green'
-    """, (place_id, detected_name))
+        SELECT logID FROM geospatial_logs
+        WHERE LOWER(TRIM(detectedName)) = LOWER(TRIM(%s))
+        LIMIT 1
+    """, (detected_name,))
+    row = cursor.fetchone()
+
+    if row:
+        cursor.execute("""
+            UPDATE geospatial_logs 
+            SET placeID = %s, flagColor = %s
+            WHERE logID = %s
+        """, (place_id, target_color, row["logID"]))
+    elif lat and lng and barangay_id:
+        cursor.execute("""
+            INSERT INTO geospatial_logs
+                (barangayID, reportID, detectedName, latitude, longitude,
+                 flagColor, placeID, nearestLandmark)
+            VALUES (%s, NULL, %s, %s, %s, %s, %s, NULL)
+        """, (barangay_id, detected_name, lat, lng, target_color, place_id))
+
     mysql.connection.commit()
     cursor.close()
 
@@ -83,10 +165,10 @@ def _fetch_places_for_point(lat, lng, radius_m, places_dict):
         return 0
 
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
+    # Omit restrictive type="establishment" so ALL local stores, groceries, convenience stores, and service shops are returned
     params = {
         "location": f"{lat},{lng}",
         "radius":   radius_m,
-        "type":     "establishment",
         "key":      api_key,
     }
 
@@ -141,19 +223,19 @@ def _fetch_places_for_point(lat, lng, radius_m, places_dict):
 
 def _fetch_all_places(progress_cb=None):
     """
-    Uses a grid-based search to bypass Google Places API's hard limit of 60 results
-    per query. Returns a flat list of place dicts — filtered to municipality bounds.
+    Uses a dense grid-based search to bypass Google Places API's 60-result limit per circle.
+    Returns a flat list of place dicts — filtered to municipality bounds.
     """
     places_dict = {}
     total_outside = 0
 
-    # Bounding Box roughly covering Mataasnakahoy derived from GeoJSON
-    min_lat, max_lat = 13.9490, 14.0115
-    min_lng, max_lng = 121.0129, 121.1251
+    # Bounding Box covering Mataasnakahoy
+    min_lat, max_lat = 13.9450, 14.0125
+    min_lng, max_lng = 121.0120, 121.1260
 
-    # 2km step (approx 0.018 degrees). Search radius of 2000m ensures overlapping circles.
-    step = 0.018
-    radius_m = 2000
+    # Dense 550m grid step (~0.005 degrees) and 650m radius ensure small local stores aren't squeezed out
+    step = 0.005
+    radius_m = 650
 
     # 1. Precalculate grid points to allow progress tracking
     grid_points = []
@@ -161,8 +243,8 @@ def _fetch_all_places(progress_cb=None):
     while lat <= max_lat:
         lng = min_lng
         while lng <= max_lng:
-            # Buffer the municipality polygon by ~2km to save API calls on far corners
-            if _MUNICIPALITY_BOUNDARY.buffer(0.02).contains(Point(lng, lat)):
+            # Buffer the municipality polygon to cover boundary streets
+            if _MUNICIPALITY_BOUNDARY.buffer(0.006).contains(Point(lng, lat)):
                 grid_points.append((lat, lng))
             lng += step
         lat += step
@@ -188,7 +270,7 @@ def _load_registry():
     """Load all official registry entries that have coordinates or linked geospatial logs."""
     cursor = mysql.connection.cursor()
     cursor.execute("""
-        SELECT r.businessID, r.barangayID, r.businessName,
+        SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
                COALESCE(r.latitude, g.latitude) AS latitude,
                COALESCE(r.longitude, g.longitude) AS longitude
         FROM official_registry r
@@ -202,6 +284,7 @@ def _load_registry():
     rows = cursor.fetchall()
     cursor.close()
     return rows
+
 
 
 # ── 20-meter threshold check ──────────────────────────────────────────────────
@@ -242,6 +325,12 @@ def _get_barangay_id_by_coords(lat, lng):
         if poly.contains(pt):
             matched_geojson_name = name
             break
+            
+    if not matched_geojson_name:
+        for name, poly in _BARANGAY_POLYGONS.items():
+            if poly.buffer(0.001).contains(pt):
+                matched_geojson_name = name
+                break
             
     cursor = mysql.connection.cursor()
     
@@ -436,11 +525,6 @@ def run_detection(user_id=None):
             if not _within_municipality(lat, lng):
                 continue
 
-            # Only reject if the specific street address explicitly belongs to an adjacent town
-            addr_lower = (address or "").lower()
-            if any(t in addr_lower for t in ["lipa city", "cuenca,", "balete,", "san jose,"]):
-                continue
-
             if _already_flagged(place_id):
                 continue
 
@@ -454,17 +538,32 @@ def run_detection(user_id=None):
                     "status": f"Analyzing geospatial location for “{place_name}” ({idx + 1}/{total_checked})..."
                 })
 
-            nearest, dist = _find_nearest(lat, lng, registry)
+            nearest, dist, sim_score = _match_poi_to_registry(place_name, lat, lng, registry)
 
-            if nearest is None or dist > THRESHOLD_M:
+            if nearest is None:
                 barangay_id = _get_barangay_id_by_coords(lat, lng)
                 flag_id = _insert_red_flag(place_id, place_name, lat,
                                  lng, barangay_id, address)
                 inserted_flag_ids.append(flag_id)
                 new_flags += 1
             else:
+                app_status = (nearest.get('applicationStatus') or 'Active').strip()
+                if app_status == 'Active':
+                    target_color = 'Green'
+                elif app_status == 'Expired':
+                    target_color = 'Orange'
+                elif app_status == 'Revoked':
+                    target_color = 'Black'
+                elif app_status == 'Closed':
+                    target_color = 'Purple'
+                else:
+                    target_color = 'Yellow'
+
+                barangay_id = nearest.get('barangayID') or _get_barangay_id_by_coords(lat, lng)
                 _match_registry_to_google(
-                    place_id, nearest['businessID'], nearest['businessName'])
+                    place_id, nearest['businessID'], nearest['businessName'],
+                    target_color=target_color, lat=lat, lng=lng, barangay_id=barangay_id
+                )
 
         update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
 

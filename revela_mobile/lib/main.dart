@@ -103,8 +103,17 @@ class _MyAppState extends State<MyApp> {
         (route) => false,
       );
     } else {
+      final err = _authService.lastAuthError?.toLowerCase() ?? '';
+      final isRevoked = err.contains('revoked') ||
+          err.contains('deactivated') ||
+          err.contains('administrator') ||
+          err.contains('removed') ||
+          err.contains('cannot access');
+
       navigator.pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginPage()),
+        MaterialPageRoute(
+          builder: (_) => LoginPage(accountRevokedNotice: isRevoked),
+        ),
         (route) => false,
       );
     }

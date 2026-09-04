@@ -182,7 +182,16 @@ def _get_all_analytics_inner(F=None):
         + reg_all,
         reg_all_p,
     )
-    current_year_count = cur.fetchone()["n"]
+    current_year_registered_count = cur.fetchone()["n"]
+
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM official_registry WHERE ((YEAR(lastRenewalDate) = YEAR(CURDATE()) AND applicationStatus = 'Active') OR YEAR(lastRenewalDate) = YEAR(CURDATE()) + 1)"
+        + reg_all,
+        reg_all_p,
+    )
+    upcoming_year_renewal_count = cur.fetchone()["n"]
+
+    current_year_count = current_year_registered_count
 
     cur.execute(
         "SELECT COUNT(*) AS n FROM geospatial_logs g WHERE g.flagColor != 'Green' AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))" + geo_g,
@@ -750,16 +759,18 @@ def _get_all_analytics_inner(F=None):
         "new_year_rollover": rollover_info,
         "descriptive": {
             "kpis": {
-                "total_businesses":    total_businesses,
-                "active_count":        active_count,
-                "expired_count":       expired_count,
-                "closed_count":        closed_count,
-                "pending_count":       pending_count,
-                "revoked_count":       revoked_count,
-                "current_year_count":  current_year_count,
-                "total_flagged":       total_flagged,
-                "compliance_rate":     compliance_rate,
-                "high_risk_barangays": high_risk_barangays,
+                "total_businesses":              total_businesses,
+                "active_count":                  active_count,
+                "expired_count":                 expired_count,
+                "closed_count":                  closed_count,
+                "pending_count":                 pending_count,
+                "revoked_count":                 revoked_count,
+                "current_year_count":            current_year_registered_count,
+                "current_year_registered_count": current_year_registered_count,
+                "upcoming_year_renewal_count":   upcoming_year_renewal_count,
+                "total_flagged":                 total_flagged,
+                "compliance_rate":               compliance_rate,
+                "high_risk_barangays":           high_risk_barangays,
             },
             "enforcement_progress":  enforcement_progress,
             "nature_per_barangay":   nature_per_barangay,

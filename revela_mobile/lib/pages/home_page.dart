@@ -1259,6 +1259,9 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
   bool _isOutsideBoundary = false;
   String? _errorMsg;
 
+  // True when Barangay is auto-populated from current GPS location, locking the dropdown.
+  bool _isGpsLocked = false;
+
   // True once the user has interacted with location in any way (pressed
   // "Use Current Location" or changed barangay). Guards against the slow,
   // silent GPS fetch kicked off in initState resolving *after* the user
@@ -1279,7 +1282,8 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
     _lngCtrl.text = widget.defaultLng?.toStringAsFixed(6) ?? '';
     _boundaryService.loadBoundaries();
     _loadBarangays();
-    _autoFillGps(silent: true);
+    // Do NOT auto-fetch GPS on open. GPS auto-fill and dropdown locking
+    // must only occur when the user explicitly clicks "Use Current Location".
   }
 
   Future<void> _applyCoordinates(double lat, double lng, {bool silent = false, bool isMock = false}) async {
@@ -1293,6 +1297,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
         _latCtrl.text = lat.toStringAsFixed(6);
         _lngCtrl.text = lng.toStringAsFixed(6);
         _selectedBarangay = null; // Clear/Reset Barangay dropdown
+        _isGpsLocked = false;
         _locationTouched = true;
         _isOutsideBoundary = true;
         _errorMsg = 'Location is outside the Municipality of Mataasnakahoy.';
@@ -1321,6 +1326,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
       _latCtrl.text = lat.toStringAsFixed(6);
       _lngCtrl.text = lng.toStringAsFixed(6);
       _selectedBarangay = matched; // Auto-populate matched barangay
+      _isGpsLocked = matched != null; // Lock dropdown when GPS location is applied
       _locationTouched = true;
       _isOutsideBoundary = false;
       _errorMsg = null;
@@ -1402,7 +1408,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
         setState(() {
           _barangays = list;
           _loadingBarangays = false;
-          if (_selectedBarangay == null && matched != null) {
+          if (_selectedBarangay == null && matched != null && widget.defaultLat != null) {
             _selectedBarangay = matched;
             _isOutsideBoundary = false;
           }
@@ -1619,8 +1625,11 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                   // Barangay dropdown
                   DropdownButtonFormField<Barangay>(
                     decoration: InputDecoration(
-                      labelText: 'Barangay *',
-                      prefixIcon: const Icon(Icons.location_city_outlined),
+                      labelText: _isGpsLocked ? 'Barangay (Auto-detected) *' : 'Barangay *',
+                      prefixIcon: Icon(
+                        _isGpsLocked ? Icons.lock_outline_rounded : Icons.location_city_outlined,
+                        color: _isGpsLocked ? AppColors.darkGreen : null,
+                      ),
                       filled: context.isDarkMode,
                       fillColor: context.isDarkMode ? Colors.black : null,
                       border: OutlineInputBorder(
@@ -1628,7 +1637,9 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: context.isDarkMode ? Colors.white : Colors.grey),
+                        borderSide: BorderSide(
+                          color: _isGpsLocked ? AppColors.darkGreen : (context.isDarkMode ? Colors.white : Colors.grey),
+                        ),
                       ),
                     ),
                     dropdownColor: context.adaptiveSurface,
@@ -1644,7 +1655,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                         child: Text(b.name, overflow: TextOverflow.ellipsis),
                       );
                     }).toList(),
-                    onChanged: _loadingBarangays
+                    onChanged: (_loadingBarangays || _isGpsLocked)
                         ? null
                         : (val) => setState(() {
                             _selectedBarangay = val;
@@ -1658,6 +1669,51 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                           }),
                     validator: (v) => v == null ? 'Required' : null,
                   ),
+                  if (_isGpsLocked) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.verified_rounded,
+                          size: 14,
+                          color: AppColors.darkGreen,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            'Barangay locked to GPS location.',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.darkGreen,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              _isGpsLocked = false;
+                              _latCtrl.clear();
+                              _lngCtrl.clear();
+                              _errorMsg = null;
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                            child: Text(
+                              'Select Manually',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).primaryColor,
+                                decoration: TextDecoration.underline,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 14),
 
                   // Location section

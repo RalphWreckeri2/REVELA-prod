@@ -62,14 +62,14 @@ class _LoginPageState extends State<LoginPage> {
             SizedBox(width: 8),
             Expanded(
               child: Text(
-                'Account Access Revoked',
+                'Access Revoked',
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
           ],
         ),
         content: const Text(
-          'Your inspector account has been removed or deactivated by an administrator. All local access and cached offline data have been purged from this device.',
+          'You cannot access the application. The administrator has already removed or deactivated your account.',
           style: TextStyle(fontSize: 14, height: 1.4),
         ),
         actions: [
