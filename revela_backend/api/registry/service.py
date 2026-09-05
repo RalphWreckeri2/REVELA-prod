@@ -190,7 +190,7 @@ def _status_to_flag_color(status: str) -> str:
     mapping = {
         "Active": "Green",
         "Pending": "Yellow",
-        "Expired": "Orange",
+        "Expired": "Red",
         "Revoked": "Black",
         "Closed": "Purple"
     }
