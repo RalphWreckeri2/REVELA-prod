@@ -5,7 +5,15 @@ import { AuthContext } from "../context/AuthContext";
 import { changePasswordRequest, setup2faRequest, verify2faSetupRequest } from "../services/authService";
 import Swal from "sweetalert2";
 import { QRCodeSVG } from "qrcode.react";
-import { getWlcConfigRequest, updateWlcConfigRequest, updateMePreferencesRequest, API_ORIGIN } from "../services/api";
+import {
+  getWlcConfigRequest,
+  updateWlcConfigRequest,
+  updateMePreferencesRequest,
+  getEvidenceStorageStatsRequest,
+  downloadEvidenceArchiveRequest,
+  cleanupEvidenceStorageRequest,
+  API_ORIGIN
+} from "../services/api";
 import { useLoadScript, GoogleMap, Marker } from "@react-google-maps/api";
 import { darkMapStyle, REVELA_MAP_ID } from "../utils/mapStyles";
 import TermsPage from "../components/TermsPage";
@@ -318,7 +326,28 @@ export default function SettingsPage() {
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 });
   const [sectors, setSectors] = useState([]);
 
+  // Evidence Storage & Archival states
+  const [storageStats, setStorageStats] = useState(null);
+  const [storageLoading, setStorageLoading] = useState(false);
+  const [selectedFilter, setSelectedFilter] = useState("older_180d");
+  const [downloadingArchive, setDownloadingArchive] = useState(false);
+  const [cleaningStorage, setCleaningStorage] = useState(false);
+
   const SECTOR_OPTIONS = ["Food Service", "Retail", "Manufacturing", "Healthcare", "Education", "Real Estate", "Logistics", "Other"];
+
+  const fetchStorageStats = () => {
+    if (token) {
+      setStorageLoading(true);
+      getEvidenceStorageStatsRequest(token)
+        .then(data => {
+          if (data) setStorageStats(data);
+        })
+        .catch(err => {
+          console.error("Failed to load evidence storage stats:", err);
+        })
+        .finally(() => setStorageLoading(false));
+    }
+  };
 
   // Load initial settings on mount
   useEffect(() => {
@@ -340,11 +369,109 @@ export default function SettingsPage() {
       }
     }).catch(console.error);
 
+    fetchStorageStats();
+
     return () => {
       // Clear preview theme on unmount so it reverts if unsaved
       setPreviewTheme(null);
     };
   }, [token, user, setPreviewTheme]);
+
+  const handleExecuteCleanup = async (filterToClean) => {
+    setCleaningStorage(true);
+    try {
+      const res = await cleanupEvidenceStorageRequest(filterToClean, token);
+      await Swal.fire({
+        icon: "success",
+        title: "Storage Cleared",
+        text: res.message || `Deleted ${res.deletedFiles} photo(s), freeing ${res.freedMB} MB of server storage.`,
+        confirmButtonColor: "#56ab2f",
+      });
+      fetchStorageStats();
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "Cleanup Failed",
+        text: err.message || "Could not clear storage.",
+      });
+    } finally {
+      setCleaningStorage(false);
+    }
+  };
+
+  const handleDownloadArchive = async () => {
+    setDownloadingArchive(true);
+    try {
+      const { filename } = await downloadEvidenceArchiveRequest(selectedFilter, token);
+
+      const result = await Swal.fire({
+        icon: "success",
+        title: "Archive Downloaded!",
+        html: `
+          <div style="text-align: left; font-size: 14px; line-height: 1.5;">
+            <p>The archive <strong>${filename}</strong> has been saved to your computer.</p>
+            <p style="margin-top: 12px; color: var(--color-ink);">
+              Would you like to <strong>delete these photos from the server</strong> now to free up Railway storage?
+            </p>
+            <div style="background: rgba(86,171,47,0.1); border-left: 3px solid #56ab2f; padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-top: 8px;">
+              ✓ All inspection report notes, inspector details, and audit timestamps will remain safely in REVELA.
+            </div>
+          </div>
+        `,
+        showCancelButton: true,
+        confirmButtonText: "Yes, Clear Server Storage",
+        cancelButtonText: "Keep on Server for Now",
+        confirmButtonColor: "#d33",
+        cancelButtonColor: "#6c757d",
+      });
+
+      if (result.isConfirmed) {
+        await handleExecuteCleanup(selectedFilter);
+      }
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "Archive Download Failed",
+        text: err.message || "Failed to generate archive zip.",
+      });
+    } finally {
+      setDownloadingArchive(false);
+    }
+  };
+
+  const handleDirectCleanup = async () => {
+    const selectedCat = storageStats?.categories?.[selectedFilter];
+    const count = selectedCat?.photoCount || 0;
+    if (count === 0) {
+      Swal.fire({
+        icon: "info",
+        title: "Nothing to Clean",
+        text: "No active verified photos match this filter.",
+      });
+      return;
+    }
+
+    const result = await Swal.fire({
+      icon: "warning",
+      title: "Delete Server Photos?",
+      html: `
+        <div style="text-align: left; font-size: 14px; line-height: 1.5;">
+          <p>You are about to permanently delete <strong>${count} photo(s)</strong> matching <em>${selectedCat?.label}</em> from Railway server disk.</p>
+          <p style="color: #e53e3e; font-weight: 600;">
+            Ensure you have already downloaded the ZIP backup to your municipal computer!
+          </p>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: "I have backup, Clear Storage",
+      cancelButtonText: "Cancel",
+      confirmButtonColor: "#d33",
+    });
+
+    if (result.isConfirmed) {
+      await handleExecuteCleanup(selectedFilter);
+    }
+  };
 
   const handleSavePreferences = async () => {
     setSavingPreferences(true);
@@ -780,6 +907,198 @@ export default function SettingsPage() {
               >
                 {user?.is_2fa_enabled ? "Disable" : "Enable"}
               </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Evidence Storage & Archival */}
+        <section className="saas-card frosted-glass">
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>📦</span> Inspection Evidence Storage &amp; Archival
+                </h3>
+                <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>
+                  Manage server storage on Railway. Download verified inspection photos and audit manifests to municipal PC backup, then safely clear server disk space.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={fetchStorageStats}
+                disabled={storageLoading}
+                style={{ fontSize: 12, padding: "6px 12px", display: "inline-flex", alignItems: "center", gap: 6 }}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: storageLoading ? "rotate(180deg)" : "none", transition: "transform 0.5s ease" }}>
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" />
+                </svg>
+                {storageLoading ? "Refreshing..." : "Refresh Usage"}
+              </button>
+            </div>
+          </div>
+
+          {/* Storage Gauge / Stats Overview */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 12,
+            marginBottom: 20,
+          }}>
+            <div style={{
+              padding: "14px 16px",
+              borderRadius: 12,
+              background: "var(--color-hover)",
+              border: "1px solid var(--color-border-soft)",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 4, textTransform: "uppercase" }}>
+                Current Server Storage
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-ink)" }}>
+                {storageStats ? `${storageStats.totalDiskMB} MB` : "—"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 2 }}>
+                {storageStats ? `${storageStats.totalFilesOnDisk} evidence file(s) on disk` : "Scanning disk..."}
+              </div>
+            </div>
+
+            <div style={{
+              padding: "14px 16px",
+              borderRadius: 12,
+              background: "var(--color-hover)",
+              border: "1px solid var(--color-border-soft)",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 4, textTransform: "uppercase" }}>
+                Selected Filter Eligible
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-primary, #10b981)" }}>
+                {storageStats?.categories?.[selectedFilter] ? `${storageStats.categories[selectedFilter].photoCount} photos` : "—"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 2 }}>
+                {storageStats?.categories?.[selectedFilter] ? `~${storageStats.categories[selectedFilter].estimatedMB} MB across ${storageStats.categories[selectedFilter].reportCount} report(s)` : "Calculating..."}
+              </div>
+            </div>
+
+            <div style={{
+              padding: "14px 16px",
+              borderRadius: 12,
+              background: "var(--color-hover)",
+              border: "1px solid var(--color-border-soft)",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 4, textTransform: "uppercase" }}>
+                Retention Architecture
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)", marginTop: 4 }}>
+                Local Municipal Archival
+              </div>
+              <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2, lineHeight: 1.4 }}>
+                Saves photos locally with manifest.csv. Preserves REVELA audit rows and badges.
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Selector & Archival Action */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>
+              Select Inspection Photo Age Cutoff:
+            </label>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gap: 10,
+            }}>
+              {[
+                { key: "older_180d", label: "Older than 6 months", sub: ">180 days ago (Recommended)" },
+                { key: "older_365d", label: "Older than 1 year", sub: ">365 days ago" },
+                { key: "older_90d",  label: "Older than 3 months", sub: ">90 days ago" },
+                { key: "older_30d",  label: "Older than 30 days", sub: ">30 days ago" },
+                { key: "all_verified", label: "All Verified Reports", sub: "All verified inspection files" },
+              ].map(opt => {
+                const isSelected = selectedFilter === opt.key;
+                const cat = storageStats?.categories?.[opt.key];
+                return (
+                  <div
+                    key={opt.key}
+                    onClick={() => setSelectedFilter(opt.key)}
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: 10,
+                      border: isSelected ? "2px solid var(--color-primary, #10b981)" : "1px solid var(--color-border)",
+                      background: isSelected ? "rgba(86, 171, 47, 0.08)" : "var(--color-hover)",
+                      cursor: "pointer",
+                      transition: "all 0.2s ease",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? "var(--color-primary, #10b981)" : "var(--color-ink)" }}>
+                        {opt.label}
+                      </span>
+                      {cat && (
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 6px", borderRadius: 4, background: isSelected ? "var(--color-primary, #10b981)" : "var(--color-border)", color: isSelected ? "#fff" : "var(--color-ink)" }}>
+                          {cat.photoCount} files
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--color-muted)" }}>
+                      {opt.sub}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Action Row */}
+            <div style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 12,
+              marginTop: 8,
+              paddingTop: 16,
+              borderTop: "1px solid var(--color-border-soft)",
+            }}>
+              <div style={{ fontSize: 12, color: "var(--color-muted)", maxWidth: 480 }}>
+                💡 Step 1: Click <strong>Download ZIP Archive</strong>. Step 2: Confirm deletion to safely free server space. Audit records remain preserved.
+              </div>
+
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  style={{
+                    padding: "10px 16px",
+                    fontSize: 13,
+                    color: "var(--color-danger, #ef4444)",
+                    borderColor: "var(--color-border)",
+                  }}
+                  onClick={handleDirectCleanup}
+                  disabled={cleaningStorage || downloadingArchive || (storageStats?.categories?.[selectedFilter]?.photoCount === 0)}
+                >
+                  {cleaningStorage ? "Clearing..." : "Clear Server Storage"}
+                </button>
+
+                <button
+                  type="button"
+                  className="primary-btn"
+                  style={{
+                    padding: "10px 20px",
+                    fontSize: 13,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                  onClick={handleDownloadArchive}
+                  disabled={downloadingArchive || cleaningStorage || (storageStats?.categories?.[selectedFilter]?.photoCount === 0)}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  {downloadingArchive ? "Generating ZIP Archive..." : "Download ZIP Archive to PC"}
+                </button>
+              </div>
             </div>
           </div>
         </section>

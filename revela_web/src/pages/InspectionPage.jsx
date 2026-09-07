@@ -16,6 +16,7 @@ import {
   verifyInspectionRequest,
   getInspectorsRequest,
   inspectionEvidenceUrls,
+  parseInspectionEvidence,
 } from "../services/api";
 import Swal from "sweetalert2";
 import AnimatePresence from "../components/AnimatePresence";
@@ -336,29 +337,60 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing }) {
           </div>
         )}
 
-        {inspectionEvidenceUrls(report.photoPath).length > 0 && (
-          <div style={{ marginBottom: 14 }}>
-            <p style={{ fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 8, textTransform: "uppercase" }}>
-              Evidence photo{inspectionEvidenceUrls(report.photoPath).length > 1 ? "s" : ""}
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
-              {inspectionEvidenceUrls(report.photoPath).map((url, i) => (
-                <img
-                  key={i}
-                  src={url}
-                  alt={`Inspection evidence ${i + 1}`}
-                  style={{
-                    width: "100%",
-                    height: 120,
-                    objectFit: "cover",
-                    borderRadius: "var(--radius-md)",
-                    border: "1px solid var(--color-border)",
-                  }}
-                />
-              ))}
+        {(() => {
+          const evList = parseInspectionEvidence(report.photoPath);
+          if (!evList || evList.length === 0) return null;
+          const live = evList.filter(e => !e.isArchived && e.url);
+          const arch = evList.filter(e => e.isArchived);
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <p style={{ fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 8, textTransform: "uppercase" }}>
+                Evidence photo{evList.length > 1 ? "s" : ""}
+              </p>
+              {live.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
+                  {live.map((item, i) => (
+                    <img
+                      key={i}
+                      src={item.url}
+                      alt={`Inspection evidence ${i + 1}`}
+                      style={{
+                        width: "100%",
+                        height: 120,
+                        objectFit: "cover",
+                        borderRadius: "var(--radius-md)",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+              {arch.length > 0 && (
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 12px",
+                  background: "var(--color-hover)",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px dashed var(--color-border)",
+                  fontSize: 12,
+                  color: "var(--color-muted)",
+                }}>
+                  <span style={{ fontSize: 15 }}>📦</span>
+                  <div>
+                    <span style={{ fontWeight: 600, color: "var(--color-ink)" }}>
+                      {arch.length} photo{arch.length > 1 ? "s" : ""} archived to Municipal PC
+                    </span>
+                    <span style={{ display: "block", fontSize: 11, opacity: 0.8 }}>
+                      Audit records &amp; notes preserved on server
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {report.deadline && (
           <p style={{ fontSize: 12, color: "var(--color-danger)", marginBottom: report.resolutionTime ? 4 : 16, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
@@ -495,31 +527,62 @@ function InspectionDetailModal({ report, isAdmin, onAssign, onVerify, onClose, i
           </div>
         )}
 
-        {inspectionEvidenceUrls(report.photoPath).length > 0 && (
-          <div style={{ marginBottom: 8 }}>
-            <h4 style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8, marginTop: 0 }}>
-              Evidence Photo{inspectionEvidenceUrls(report.photoPath).length > 1 ? "s" : ""}
-            </h4>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
-              {inspectionEvidenceUrls(report.photoPath).map((url, i) => (
-                <img
-                  key={i}
-                  src={url}
-                  alt={`Evidence ${i + 1}`}
-                  onClick={() => setEnlargedImage(url)}
-                  style={{
-                    width: "100%",
-                    height: 120,
-                    objectFit: "cover",
-                    borderRadius: 8,
-                    border: "1px solid var(--color-border)",
-                    cursor: "zoom-in"
-                  }}
-                />
-              ))}
+        {(() => {
+          const evList = parseInspectionEvidence(report.photoPath);
+          if (!evList || evList.length === 0) return null;
+          const live = evList.filter(e => !e.isArchived && e.url);
+          const arch = evList.filter(e => e.isArchived);
+          return (
+            <div style={{ marginBottom: 16 }}>
+              <h4 style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8, marginTop: 0 }}>
+                Evidence Photo{evList.length > 1 ? "s" : ""}
+              </h4>
+              {live.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
+                  {live.map((item, i) => (
+                    <img
+                      key={i}
+                      src={item.url}
+                      alt={`Evidence ${i + 1}`}
+                      onClick={() => setEnlargedImage(item.url)}
+                      style={{
+                        width: "100%",
+                        height: 120,
+                        objectFit: "cover",
+                        borderRadius: 8,
+                        border: "1px solid var(--color-border)",
+                        cursor: "zoom-in"
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+              {arch.length > 0 && (
+                <div style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "10px 14px",
+                  background: "var(--color-hover)",
+                  borderRadius: 8,
+                  border: "1px dashed var(--color-border)",
+                  fontSize: 12,
+                  color: "var(--color-muted)",
+                }}>
+                  <span style={{ fontSize: 18 }}>📦</span>
+                  <div>
+                    <div style={{ fontWeight: 600, color: "var(--color-ink)" }}>
+                      Photo evidence archived to Municipal PC backup
+                    </div>
+                    <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>
+                      File reference: {arch.map(a => a.filename).join(", ")}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {isAdmin && (
           <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>

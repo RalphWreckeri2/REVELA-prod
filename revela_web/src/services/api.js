@@ -9,26 +9,41 @@ export function inspectionEvidenceUrl(photoPath) {
   return urls.length > 0 ? urls[0] : null;
 }
 
-export function inspectionEvidenceUrls(photoPath) {
+export function parseInspectionEvidence(photoPath) {
   if (!photoPath) return [];
-  let paths = [];
+  let rawPaths = [];
   try {
     const parsed = JSON.parse(photoPath);
     if (Array.isArray(parsed)) {
-      paths = parsed;
+      rawPaths = parsed;
     } else {
-      paths = [photoPath];
+      rawPaths = [photoPath];
     }
   } catch (e) {
-    paths = [photoPath]; // legacy single string
+    rawPaths = [photoPath]; // legacy single string
   }
 
   const base = API_ORIGIN.replace(/\/$/, "");
-  return paths.map(p => {
-    if (p.startsWith("http")) return p;
-    return p.startsWith("/") ? `${base}${p}` : `${base}/${p}`;
-  });
+  return rawPaths.map(p => {
+    if (!p) return null;
+    const isArchived = typeof p === "string" && p.startsWith("archived://");
+    const filename = isArchived ? p.replace("archived://", "") : p.split("/").pop();
+    const url = isArchived ? null : (p.startsWith("http") ? p : (p.startsWith("/") ? `${base}${p}` : `${base}/${p}`));
+    return {
+      raw: p,
+      isArchived,
+      filename,
+      url,
+    };
+  }).filter(Boolean);
 }
+
+export function inspectionEvidenceUrls(photoPath) {
+  return parseInspectionEvidence(photoPath)
+    .filter(item => !item.isArchived && item.url)
+    .map(item => item.url);
+}
+
 
 async function handleResponse(res) {
   try {
@@ -965,3 +980,79 @@ export async function sendAnalyticsChatRequest(payload, token) {
     connectionGuard(err);
   }
 }
+
+export async function getEvidenceStorageStatsRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/inspections/evidence-storage-stats`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function downloadEvidenceArchiveRequest(filter, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/inspections/archive-evidence/download`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ filter }),
+    });
+
+    if (!res.ok) {
+      let errMsg = `Download failed with status ${res.status}`;
+      try {
+        const errData = await res.json();
+        if (errData.error) errMsg = errData.error;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+
+    let filename = `REVELA_Evidence_Archive_${filter}.zip`;
+    const disposition = res.headers.get("Content-Disposition");
+    if (disposition && disposition.includes("filename=")) {
+      const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      if (match && match[1]) {
+        filename = match[1].replace(/['"]/g, "");
+      }
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(downloadUrl);
+
+    return { filename };
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function cleanupEvidenceStorageRequest(filter, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/inspections/archive-evidence/cleanup`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ filter, confirm: true }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+

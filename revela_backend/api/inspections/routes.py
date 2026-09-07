@@ -2,7 +2,7 @@ import os
 import uuid
 import threading
 
-from flask import Blueprint, request, jsonify, send_from_directory, current_app
+from flask import Blueprint, request, jsonify, send_from_directory, send_file, after_this_request, current_app
 from flask_jwt_extended import get_jwt_identity
 from werkzeug.utils import secure_filename
 
@@ -14,6 +14,9 @@ from api.inspections.service import (
     reassign_submitted_report,
     verify_inspection,
     get_all_inspections,
+    get_evidence_storage_stats,
+    generate_evidence_archive_zip,
+    cleanup_archived_evidence,
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.notifications.service import (
@@ -262,3 +265,76 @@ def get_inspections():
     if error:
         return jsonify({"error": error}), 500
     return jsonify(result), 200
+
+
+# ── GET /api/inspections/evidence-storage-stats ──────────────────────────────
+@inspections_bp.route("/evidence-storage-stats", methods=["GET", "OPTIONS"])
+@admin_required()
+def evidence_storage_stats():
+    if request.method == "OPTIONS":
+        return "", 204
+    """Admin: get disk usage statistics and age breakdowns for inspection photos."""
+    folder = _ensure_evidence_dir()
+    result, error = get_evidence_storage_stats(folder)
+    if error:
+        return jsonify({"error": error}), 500
+    return jsonify(result), 200
+
+
+# ── POST /api/inspections/archive-evidence/download ──────────────────────────
+@inspections_bp.route("/archive-evidence/download", methods=["POST", "OPTIONS"])
+@admin_required()
+def download_evidence_archive():
+    if request.method == "OPTIONS":
+        return "", 204
+    """Admin: stream a .zip archive containing photos and manifest.csv for a given age filter."""
+    data = request.get_json(silent=True) or {}
+    filter_type = data.get("filter") or data.get("filter_type") or "older_180d"
+
+    folder = _ensure_evidence_dir()
+    res, error = generate_evidence_archive_zip(folder, filter_type)
+    if error:
+        return jsonify({"error": error}), 400
+
+    temp_zip_path, download_filename, stats = res
+
+    response = send_file(
+        temp_zip_path,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=download_filename,
+    )
+    response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+
+    @response.call_on_close
+    def remove_temp_file():
+        try:
+            if os.path.exists(temp_zip_path):
+                os.remove(temp_zip_path)
+        except Exception as e:
+            current_app.logger.warning(f"Could not remove temp zip {temp_zip_path}: {e}")
+
+    return response
+
+
+# ── POST /api/inspections/archive-evidence/cleanup ───────────────────────────
+@inspections_bp.route("/archive-evidence/cleanup", methods=["POST", "OPTIONS"])
+@admin_required()
+def cleanup_archived_photos():
+    if request.method == "OPTIONS":
+        return "", 204
+    """Admin: delete server files for archived verified inspections and update DB references."""
+    data = request.get_json(silent=True) or {}
+    filter_type = data.get("filter") or data.get("filter_type") or "older_180d"
+    confirm = data.get("confirm", False)
+
+    if not confirm:
+        return jsonify({"error": "Confirmation is required to delete photos from server storage."}), 400
+
+    folder = _ensure_evidence_dir()
+    result, error = cleanup_archived_evidence(folder, filter_type)
+    if error:
+        return jsonify({"error": error}), 500
+
+    return jsonify(result), 200
+
