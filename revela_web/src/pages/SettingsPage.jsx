@@ -410,6 +410,9 @@ export default function SettingsPage() {
         html: `
           <div style="text-align: left; font-size: 14px; line-height: 1.5;">
             <p>The archive <strong>${filename}</strong> has been saved to your computer.</p>
+            <p style="margin-top: 8px; color: var(--color-ink); font-size: 13px;">
+              📁 Inside: <strong>inspection_dossier.html</strong> (offline visual viewer with embedded photos &amp; print-to-PDF), <strong>manifest.csv</strong> (Excel data), and evidence photos.
+            </p>
             <p style="margin-top: 12px; color: var(--color-ink);">
               Would you like to <strong>delete these photos from the server</strong> now to free up Railway storage?
             </p>
@@ -441,23 +444,24 @@ export default function SettingsPage() {
 
   const handleDirectCleanup = async () => {
     const selectedCat = storageStats?.categories?.[selectedFilter];
-    const count = selectedCat?.photoCount || 0;
-    if (count === 0) {
+    const repCount = selectedCat?.reportCount || 0;
+    const photoCount = selectedCat?.photoCount || 0;
+    if (repCount === 0) {
       Swal.fire({
         icon: "info",
         title: "Nothing to Clean",
-        text: "No active verified photos match this filter.",
+        text: "No verified reports match this filter.",
       });
       return;
     }
 
     const result = await Swal.fire({
       icon: "warning",
-      title: "Delete Server Photos?",
+      title: "Archive & Clear Server Photos?",
       html: `
         <div style="text-align: left; font-size: 14px; line-height: 1.5;">
-          <p>You are about to permanently delete <strong>${count} photo(s)</strong> matching <em>${selectedCat?.label}</em> from Railway server disk.</p>
-          <p style="color: #e53e3e; font-weight: 600;">
+          <p>You are about to archive <strong>${repCount} verified report(s)</strong> (${photoCount} photo file(s)) matching <em>${selectedCat?.label}</em>.</p>
+          <p style="color: #e53e3e; font-weight: 600; margin-top: 8px;">
             Ensure you have already downloaded the ZIP backup to your municipal computer!
           </p>
         </div>
@@ -971,11 +975,13 @@ export default function SettingsPage() {
               <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 4, textTransform: "uppercase" }}>
                 Selected Filter Eligible
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-primary, #10b981)" }}>
-                {storageStats?.categories?.[selectedFilter] ? `${storageStats.categories[selectedFilter].photoCount} photos` : "—"}
+              <div style={{ fontSize: 20, fontWeight: 800, color: "var(--color-primary, #10b981)" }}>
+                {storageStats?.categories?.[selectedFilter]
+                  ? `${storageStats.categories[selectedFilter].reportCount} report(s) (${storageStats.categories[selectedFilter].photoCount} photos)`
+                  : "—"}
               </div>
               <div style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 2 }}>
-                {storageStats?.categories?.[selectedFilter] ? `~${storageStats.categories[selectedFilter].estimatedMB} MB across ${storageStats.categories[selectedFilter].reportCount} report(s)` : "Calculating..."}
+                {storageStats?.categories?.[selectedFilter] ? `~${storageStats.categories[selectedFilter].estimatedMB} MB server storage` : "Calculating..."}
               </div>
             </div>
 
@@ -992,7 +998,7 @@ export default function SettingsPage() {
                 Local Municipal Archival
               </div>
               <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2, lineHeight: 1.4 }}>
-                Saves photos locally with manifest.csv. Preserves REVELA audit rows and badges.
+                Saves offline HTML Dossier &amp; photos locally with manifest.csv. Preserves REVELA audit rows and badges.
               </div>
             </div>
           </div>
@@ -1035,7 +1041,7 @@ export default function SettingsPage() {
                       </span>
                       {cat && (
                         <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 6px", borderRadius: 4, background: isSelected ? "var(--color-primary, #10b981)" : "var(--color-border)", color: isSelected ? "#fff" : "var(--color-ink)" }}>
-                          {cat.photoCount} files
+                          {cat.reportCount} reports ({cat.photoCount} photos)
                         </span>
                       )}
                     </div>
@@ -1073,7 +1079,7 @@ export default function SettingsPage() {
                     borderColor: "var(--color-border)",
                   }}
                   onClick={handleDirectCleanup}
-                  disabled={cleaningStorage || downloadingArchive || (storageStats?.categories?.[selectedFilter]?.photoCount === 0)}
+                  disabled={cleaningStorage || downloadingArchive || (storageStats?.categories?.[selectedFilter]?.reportCount === 0)}
                 >
                   {cleaningStorage ? "Clearing..." : "Clear Server Storage"}
                 </button>
@@ -1089,7 +1095,7 @@ export default function SettingsPage() {
                     gap: 8,
                   }}
                   onClick={handleDownloadArchive}
-                  disabled={downloadingArchive || cleaningStorage || (storageStats?.categories?.[selectedFilter]?.photoCount === 0)}
+                  disabled={downloadingArchive || cleaningStorage || (storageStats?.categories?.[selectedFilter]?.reportCount === 0)}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

@@ -28,6 +28,7 @@ export function parseInspectionEvidence(photoPath) {
     if (!p) return null;
     const isArchived = typeof p === "string" && p.startsWith("archived://");
     const filename = isArchived ? p.replace("archived://", "") : p.split("/").pop();
+    if (filename === "none" || filename === "no-photo") return null;
     const url = isArchived ? null : (p.startsWith("http") ? p : (p.startsWith("/") ? `${base}${p}` : `${base}/${p}`));
     return {
       raw: p,

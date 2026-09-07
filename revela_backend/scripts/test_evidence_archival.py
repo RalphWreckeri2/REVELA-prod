@@ -96,6 +96,18 @@ def test_generate_zip_and_cleanup():
                 "barangayName": "San Sebastian",
                 "inspectorName": "Maria Santos",
             },
+            {
+                "reportID": 103,
+                "targetID": 503,
+                "inspectionResult": "Yellow",
+                "verificationStatus": "Verified",
+                "remarks": "Minor display issue, no photo required",
+                "photoPath": None,  # No photo attached
+                "irTimestamp": (datetime.now() - timedelta(days=210)).strftime("%Y-%m-%d %H:%M:%S"),
+                "detectedName": "Mercadal Building",
+                "barangayName": "Poblacion",
+                "inspectorName": "Juan Dela Cruz",
+            },
         ]
 
         # 1. Test get_evidence_storage_stats
@@ -103,7 +115,7 @@ def test_generate_zip_and_cleanup():
         stats, err = service.get_evidence_storage_stats(temp_evidence_dir)
         assert err is None
         assert stats["totalFilesOnDisk"] == 2
-        assert stats["categories"]["older_180d"]["reportCount"] == 2
+        assert stats["categories"]["older_180d"]["reportCount"] == 3
         assert stats["categories"]["older_180d"]["photoCount"] == 2
         print(f"[OK] get_evidence_storage_stats returned: {stats['totalDiskBytes']} bytes, {stats['totalFilesOnDisk']} files")
 
@@ -115,28 +127,39 @@ def test_generate_zip_and_cleanup():
         assert os.path.exists(zip_path)
         assert zip_filename.startswith("REVELA_Evidence_Archive_older_180d_")
         assert zip_stats["archivedPhotos"] == 2
-        assert zip_stats["archivedReports"] == 2
+        assert zip_stats["archivedReports"] == 3
 
-        # Verify zip archive contents and manifest
+        # Verify zip archive contents, html dossier, and manifest
         with zipfile.ZipFile(zip_path, "r") as zf:
             namelist = zf.namelist()
             assert "manifest.csv" in namelist
             assert "README_ARCHIVE.txt" in namelist
+            assert "inspection_dossier.html" in namelist
+
             manifest_content = zf.read("manifest.csv").decode("utf-8-sig")
             reader = list(csv.reader(io.StringIO(manifest_content)))
             header = reader[0]
             assert header[0] == "Report ID"
             assert header[2] == "Business Name"
-            assert len(reader) == 3 # Header + 2 rows
+            assert len(reader) == 4 # Header + 3 report rows!
             assert reader[1][0] == "101"
             assert reader[1][2] == "Lomi King Store"
             assert reader[2][0] == "102"
             assert reader[2][2] == "Mataas Cafe"
+            assert reader[3][0] == "103"
+            assert reader[3][2] == "Mercadal Building"
+            assert reader[3][16] == "No Photo Attached"
 
-            # Check that evidence files are inside
+            dossier_content = zf.read("inspection_dossier.html").decode("utf-8")
+            assert "Mataas Cafe" in dossier_content
+            assert "Mercadal Building" in dossier_content
+            assert "No Photo Attached" in dossier_content
+            assert "Print / Save as PDF" in dossier_content
+
+            # Check that physical evidence files are inside
             evidence_files = [n for n in namelist if n.startswith("evidence/")]
             assert len(evidence_files) == 2
-            print(f"[OK] Zip verified successfully! Namelist: {namelist}")
+            print(f"[OK] Zip verified successfully with 3 reports (including report without photo) and HTML dossier! Namelist: {namelist}")
 
         os.remove(zip_path)
 
@@ -152,6 +175,11 @@ def test_generate_zip_and_cleanup():
                 "photoPath": json.dumps(["/api/inspections/public-evidence/photo_two.jpg"]),
                 "irTimestamp": (datetime.now() - timedelta(days=250)).strftime("%Y-%m-%d %H:%M:%S"),
             },
+            {
+                "reportID": 103,
+                "photoPath": None,
+                "irTimestamp": (datetime.now() - timedelta(days=210)).strftime("%Y-%m-%d %H:%M:%S"),
+            },
         ]
         mock_cursor.fetchall.return_value = cleanup_reports
 
@@ -161,17 +189,18 @@ def test_generate_zip_and_cleanup():
         clean_res, clean_err = service.cleanup_archived_evidence(temp_evidence_dir, "older_180d")
         assert clean_err is None
         assert clean_res["deletedFiles"] == 2
-        assert clean_res["updatedReports"] == 2
+        assert clean_res["updatedReports"] == 3
 
         # Verify physical files were deleted
         assert not os.path.isfile(file1)
         assert not os.path.isfile(file2)
 
-        # Verify SQL UPDATE was executed with archived:// URLs
+        # Verify SQL UPDATE was executed
         update_calls = [call for call in mock_cursor.execute.call_args_list if "UPDATE inspection_reports" in str(call)]
-        assert len(update_calls) == 2
+        assert len(update_calls) == 3
         assert "archived://photo_one.jpg" in str(update_calls[0])
         assert "archived://photo_two.jpg" in str(update_calls[1])
+        assert "archived://none" in str(update_calls[2])
 
         print(f"[OK] cleanup_archived_evidence successfully cleared disk and updated database records: {clean_res}")
 
