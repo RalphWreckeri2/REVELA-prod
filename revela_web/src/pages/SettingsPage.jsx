@@ -10,6 +10,7 @@ import { useLoadScript, GoogleMap, Marker } from "@react-google-maps/api";
 import { darkMapStyle, REVELA_MAP_ID } from "../utils/mapStyles";
 import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
+import AboutCreditsModal from "../components/AboutCreditsModal";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 
@@ -313,6 +314,7 @@ export default function SettingsPage() {
   const [show2FAModal, setShow2FAModal] = useState(false);
   const [showTermsDoc, setShowTermsDoc] = useState(false);
   const [showPrivacyDoc, setShowPrivacyDoc] = useState(false);
+  const [showAboutDoc, setShowAboutDoc] = useState(false);
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 });
   const [sectors, setSectors] = useState([]);
 
@@ -803,6 +805,13 @@ export default function SettingsPage() {
               </div>
               <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => setShowPrivacyDoc(true)}>View</button>
             </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>About &amp; Credits</div>
+                <div style={{ color: "var(--color-muted)", fontSize: 12 }}>View system specifications, municipal details, and the core development team.</div>
+              </div>
+              <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => setShowAboutDoc(true)}>View</button>
+            </div>
           </div>
         </section>
       </div>
@@ -822,6 +831,9 @@ export default function SettingsPage() {
         <LegalDocModal title="Privacy Policy" onClose={() => setShowPrivacyDoc(false)}>
           <PrivacyPage />
         </LegalDocModal>
+      </AnimatePresence>
+      <AnimatePresence isVisible={showAboutDoc}>
+        <AboutCreditsModal onClose={() => setShowAboutDoc(false)} />
       </AnimatePresence>
 
       {/* Map Picker Modal */}
@@ -852,7 +864,23 @@ export default function SettingsPage() {
       {/* Footer */}
       <footer className="saas-footer frosted-glass">
         <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
-        <p className="footer-links"><span>BPLO Portal</span> &bull; <span>System Settings</span></p>
+        <p className="footer-links">
+          <span>BPLO Portal</span> &bull; <span>System Settings</span> &bull;{" "}
+          <button
+            type="button"
+            onClick={() => setShowAboutDoc(true)}
+            style={{
+              background: "none",
+              border: "none",
+              padding: 0,
+              font: "inherit",
+              color: "inherit",
+              cursor: "pointer",
+            }}
+          >
+            About &amp; Credits
+          </button>
+        </p>
       </footer>
     </DashboardLayout>
   );

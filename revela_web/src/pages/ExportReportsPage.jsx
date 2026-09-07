@@ -2076,7 +2076,14 @@ export default function ExportReportsPage() {
           <footer className="saas-footer frosted-glass" style={{ marginTop: 40 }}>
             <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
             <p className="footer-links">
-              <span>BPLO Portal</span> &bull; <span>Compliance Analytics</span>
+              <span>BPLO Portal</span> &bull; <span>Compliance Analytics</span> &bull;{" "}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("revela:open-about"))}
+                style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
+              >
+                About &amp; Credits
+              </button>
             </p>
           </footer>
         </DashboardLayout>

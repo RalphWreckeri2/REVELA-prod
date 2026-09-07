@@ -8,6 +8,7 @@ import Swal from "sweetalert2";
 import sealImg from "../assets/seal.png";
 import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
+import AboutCreditsModal from "../components/AboutCreditsModal";
 import AnimatePresence from "../components/AnimatePresence";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ export default function LoginPage() {
   // ── Legal docs state ──
   const [showTermsDoc, setShowTermsDoc] = useState(false);
   const [showPrivacyDoc, setShowPrivacyDoc] = useState(false);
+  const [showAboutDoc, setShowAboutDoc] = useState(false);
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -664,6 +666,18 @@ export default function LoginPage() {
               Privacy Policy
             </button>.
           </p>
+
+          <p style={{ marginTop: 10, marginBottom: 0, fontSize: 11, color: "#94a3b8", textAlign: "center" }}>
+            REVELA Platform &bull;{" "}
+            <button
+              type="button"
+              className="text-accent"
+              onClick={() => setShowAboutDoc(true)}
+              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
+            >
+              About &amp; Credits
+            </button>
+          </p>
         </div>
       </div>
 
@@ -678,6 +692,10 @@ export default function LoginPage() {
         <LegalDocModal title="Privacy Policy" onClose={() => setShowPrivacyDoc(false)}>
           <PrivacyPage />
         </LegalDocModal>
+      </AnimatePresence>
+
+      <AnimatePresence isVisible={showAboutDoc}>
+        <AboutCreditsModal onClose={() => setShowAboutDoc(false)} />
       </AnimatePresence>
     </div>
   );

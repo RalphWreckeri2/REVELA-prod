@@ -28,6 +28,7 @@ import "../styles/global.css";
 import Swal from "sweetalert2";
 import myLogo from "../assets/logo.png";
 import ProfileModal from "../pages/ProfileModal";
+import AboutCreditsModal from "./AboutCreditsModal";
 
 // ── Nav config — add new pages here, never touch the layout ──
 const NAV_ITEMS = [
@@ -148,7 +149,7 @@ function NavBadge({ variant = "red", count }) {
   return <span className={`badge badge--${variant}`}>{count}</span>;
 }
 
-function Sidebar({ onLogout }) {
+function Sidebar({ onLogout, onOpenAbout }) {
   const location = useLocation();
 
   return (
@@ -192,7 +193,7 @@ function Sidebar({ onLogout }) {
         ))}
       </div>
 
-      {/* Logout */}
+      {/* Logout & System Info */}
       <div className="sidebar-footer">
         <button className="logout-btn" onClick={onLogout}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -202,6 +203,27 @@ function Sidebar({ onLogout }) {
           </svg>
           Logout
         </button>
+        <div style={{ marginTop: 8, textAlign: "center" }}>
+          <button
+            type="button"
+            onClick={onOpenAbout}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--color-muted)",
+              fontSize: "11px",
+              fontWeight: 500,
+              cursor: "pointer",
+              padding: "4px 8px",
+              borderRadius: "4px",
+              transition: "color var(--duration-fast)",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "var(--color-ink)")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--color-muted)")}
+          >
+            REVELA v1.0 &bull; Credits
+          </button>
+        </div>
       </div>
     </aside>
   );
@@ -751,8 +773,15 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
 export default function DashboardLayout({ children, onLogout }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
   const navigate = useNavigate();
   const { user: authUser, logout } = useAuth();
+
+  useEffect(() => {
+    const handleOpenAbout = () => setShowAboutModal(true);
+    window.addEventListener("revela:open-about", handleOpenAbout);
+    return () => window.removeEventListener("revela:open-about", handleOpenAbout);
+  }, []);
 
   const handleLogout = () => {
     Swal.fire({
@@ -793,7 +822,7 @@ export default function DashboardLayout({ children, onLogout }) {
         {isMobileMenuOpen ? "✕" : "☰"}
       
       </button>
-      <Sidebar onLogout={handleLogout} />
+      <Sidebar onLogout={handleLogout} onOpenAbout={() => setShowAboutModal(true)} />
 
       <div className="saas-main">
         <div className="ambient-bg-mesh" />
@@ -806,6 +835,7 @@ export default function DashboardLayout({ children, onLogout }) {
       </div>
 
       {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}
+      {showAboutModal && <AboutCreditsModal onClose={() => setShowAboutModal(false)} />}
     </div>
   );
 }

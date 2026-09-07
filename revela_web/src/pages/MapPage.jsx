@@ -2986,7 +2986,16 @@ export default function MapPage() {
       {/* Footer */}
       <footer className="saas-footer frosted-glass">
         <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
-        <p className="footer-links"><span>BPLO Portal</span> &bull; <span>System Settings</span></p>
+        <p className="footer-links">
+          <span>BPLO Portal</span> &bull; <span>System Settings</span> &bull;{" "}
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new CustomEvent("revela:open-about"))}
+            style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
+          >
+            About &amp; Credits
+          </button>
+        </p>
       </footer>
 
       {/* Flag detail modal â€” opens on marker or side panel click */}
