@@ -2,8 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import '../service/inspection_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/image_compressor.dart';
 
 class InspectionModal extends StatefulWidget {
   final InspectionTask task;
@@ -145,13 +147,23 @@ class _InspectionModalState extends State<InspectionModal> {
     try {
       final picker = ImagePicker();
       if (source == ImageSource.gallery) {
-        final pickedImages = await picker.pickMultiImage(imageQuality: 85);
+        final pickedImages = await picker.pickMultiImage(
+          maxWidth: 1280,
+          maxHeight: 1280,
+          imageQuality: 70,
+        );
         if (pickedImages.isNotEmpty && mounted) {
-          final loadedBytes = await Future.wait(
-            pickedImages.map((e) => e.readAsBytes()),
-          );
+          final processedFiles = <XFile>[];
+          final loadedBytes = <Uint8List>[];
+
+          for (final rawXFile in pickedImages) {
+            final compressedFile = await compressImageFile(File(rawXFile.path));
+            processedFiles.add(XFile(compressedFile.path));
+            loadedBytes.add(await compressedFile.readAsBytes());
+          }
+
           setState(() {
-            _evidenceFiles.addAll(pickedImages);
+            _evidenceFiles.addAll(processedFiles);
             _evidencePreviewBytes.addAll(loadedBytes);
             _uploadedPhotoUrls.clear();
           });
@@ -159,12 +171,16 @@ class _InspectionModalState extends State<InspectionModal> {
       } else {
         final pickedImage = await picker.pickImage(
           source: source,
-          imageQuality: 85,
+          maxWidth: 1280,
+          maxHeight: 1280,
+          imageQuality: 70,
         );
         if (pickedImage != null && mounted) {
-          final bytes = await pickedImage.readAsBytes();
+          final compressedFile = await compressImageFile(File(pickedImage.path));
+          final processedFile = XFile(compressedFile.path);
+          final bytes = await compressedFile.readAsBytes();
           setState(() {
-            _evidenceFiles.add(pickedImage);
+            _evidenceFiles.add(processedFile);
             _evidencePreviewBytes.add(bytes);
             _uploadedPhotoUrls.clear();
           });

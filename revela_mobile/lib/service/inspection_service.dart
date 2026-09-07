@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'api_config.dart';
 import 'auth_service.dart';
 import 'offline_inspection_storage.dart';
+import '../utils/image_compressor.dart';
 
 class InspectionTask {
   final int reportID;
@@ -331,23 +332,28 @@ class InspectionService {
   }
 
   /// Returns a relative `photoURL` for [submitInspection], or null on failure.
-  /// Accepts either a local file path `String` or `XFile`.
+  /// Accepts either a local file path `String`, `File`, or `XFile`.
   Future<String?> uploadEvidence(dynamic fileInput) async {
     String localPath;
     if (fileInput is XFile) {
       localPath = fileInput.path;
     } else if (fileInput is String) {
       localPath = fileInput;
+    } else if (fileInput is File) {
+      localPath = fileInput.path;
     } else {
       return null;
     }
 
-    final file = File(localPath);
-    if (!await file.exists()) return null;
+    final rawFile = File(localPath);
+    if (!await rawFile.exists()) return null;
 
-    final name = localPath.split(Platform.pathSeparator).last;
+    final compressedFile = await compressImageFile(rawFile);
+    final uploadPath = compressedFile.path;
+
+    final name = uploadPath.split(Platform.pathSeparator).last;
     final form = FormData.fromMap({
-      'file': await MultipartFile.fromFile(localPath, filename: name),
+      'file': await MultipartFile.fromFile(uploadPath, filename: name),
     });
 
     final response = await _auth.dio.post(
