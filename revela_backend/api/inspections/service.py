@@ -865,53 +865,57 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
 
         cards_html.append(f"""
             <article class="dossier-card" data-search="{html.escape(search_corpus)}">
-                <div class="card-header">
-                    <div class="header-left">
-                        <div class="report-tag">REPORT #{rep_id} &bull; TARGET #{log_id}</div>
-                        <h2 class="biz-name">{b_name}</h2>
-                        <div class="location-badge">📍 {barangay}</div>
+                <div class="card-left">
+                    <div class="card-header">
+                        <div class="header-left">
+                            <div class="report-tag">REPORT #{rep_id} &bull; TARGET #{log_id}</div>
+                            <h2 class="biz-name">{b_name}</h2>
+                            <div class="location-badge">📍 {barangay}</div>
+                        </div>
+                        <div class="header-right">
+                            <span class="result-badge" style="color: {badge_text_col}; background: {badge_bg_col}; border: 1.5px solid {badge_border_col};">
+                                ● {badge_label}
+                            </span>
+                        </div>
                     </div>
-                    <div class="header-right">
-                        <span class="result-badge" style="color: {badge_text_col}; background: {badge_bg_col}; border: 1.5px solid {badge_border_col};">
-                            ● {badge_label}
-                        </span>
+
+                    <div class="meta-grid">
+                        <div class="meta-item">
+                            <span class="lbl">Inspected By</span>
+                            <span class="val">👤 {inspector}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="lbl">Inspection Date</span>
+                            <span class="val">📅 {ir_ts}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="lbl">Notice Level</span>
+                            <span class="val">Level {notice_lvl}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="lbl">Resolution Time</span>
+                            <span class="val">⏱️ {res_str}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="lbl">GPS Coordinates</span>
+                            <span class="val">🌐 {coords_str}{map_link}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="lbl">Nearest Landmark</span>
+                            <span class="val">🏛️ {landmark}</span>
+                        </div>
                     </div>
+
+                    {remarks_block}
                 </div>
 
-                <div class="meta-grid">
-                    <div class="meta-item">
-                        <span class="lbl">Inspected By</span>
-                        <span class="val">👤 {inspector}</span>
+                <div class="card-right">
+                    <div class="evidence-section">
+                        <div class="evidence-header">
+                            <span class="evidence-title">PHOTO EVIDENCE</span>
+                        </div>
+                        {''.join(photos_html)}
                     </div>
-                    <div class="meta-item">
-                        <span class="lbl">Inspection Date</span>
-                        <span class="val">📅 {ir_ts}</span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="lbl">Notice Level</span>
-                        <span class="val">Level {notice_lvl}</span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="lbl">Resolution Time</span>
-                        <span class="val">⏱️ {res_str}</span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="lbl">GPS Coordinates</span>
-                        <span class="val">🌐 {coords_str}{map_link}</span>
-                    </div>
-                    <div class="meta-item">
-                        <span class="lbl">Nearest Landmark</span>
-                        <span class="val">🏛️ {landmark}</span>
-                    </div>
-                </div>
-
-                {remarks_block}
-
-                <div class="evidence-section">
-                    <div class="evidence-header">
-                        <span class="evidence-title">PHOTO EVIDENCE &amp; VISUAL RECORDS</span>
-                    </div>
-                    {''.join(photos_html)}
                 </div>
             </article>
         """)
@@ -1057,11 +1061,48 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius-lg);
-            padding: 24px;
+            padding: 20px 24px;
             margin-bottom: 20px;
             box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: row;
+            gap: 20px;
+            align-items: stretch;
             page-break-inside: avoid;
             break-inside: avoid;
+        }}
+        .card-left {{
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }}
+        .card-right {{
+            width: 220px;
+            min-width: 220px;
+            max-width: 220px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: stretch;
+            border-left: 1px solid var(--border-soft);
+            padding-left: 18px;
+        }}
+        @media (max-width: 768px) {{
+            .dossier-card {{
+                flex-direction: column;
+            }}
+            .card-right {{
+                width: 100%;
+                min-width: 100%;
+                max-width: 100%;
+                border-left: none;
+                border-top: 1px solid var(--border-soft);
+                padding-left: 0;
+                padding-top: 16px;
+                margin-top: 10px;
+            }}
         }}
         .card-header {{
             display: flex;
@@ -1069,7 +1110,7 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
             align-items: flex-start;
             flex-wrap: wrap;
             gap: 12px;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }}
         .report-tag {{
             font-size: 11px;
@@ -1098,13 +1139,13 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
         }}
         .meta-grid {{
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 12px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px 14px;
             background: var(--bg-page);
             border: 1px solid var(--border);
             border-radius: var(--radius-md);
-            padding: 14px 16px;
-            margin-bottom: 16px;
+            padding: 12px 14px;
+            margin-bottom: 12px;
         }}
         .meta-item {{
             display: flex;
@@ -1133,9 +1174,9 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
         .remarks-box {{
             border-left: 3.5px solid var(--primary);
             background: #f0fdf4;
-            padding: 12px 16px;
+            padding: 10px 14px;
             border-radius: 0 var(--radius-md) var(--radius-md) 0;
-            margin-bottom: 18px;
+            margin-bottom: 0;
         }}
         .remarks-box.empty {{
             border-left-color: var(--border);
@@ -1153,19 +1194,26 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
             margin-top: 4px;
         }}
         .evidence-section {{
-            margin-top: 14px;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            justify-content: center;
         }}
         .evidence-header {{
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.7px;
             color: var(--text-muted);
-            margin-bottom: 10px;
+            margin-bottom: 8px;
+            text-align: center;
+            text-transform: uppercase;
         }}
         .photos-grid {{
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-            gap: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+            justify-content: center;
         }}
         .photo-thumb-wrap {{
             background: #000;
@@ -1173,10 +1221,12 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
             overflow: hidden;
             border: 1px solid var(--border);
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            width: 100%;
+            max-width: 190px;
         }}
         .photo-thumb-wrap img {{
             width: 100%;
-            height: 180px;
+            height: 140px;
             object-fit: cover;
             display: block;
             transition: transform 0.2s ease;
@@ -1186,55 +1236,65 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
         }}
         .photo-caption {{
             background: #ffffff;
-            font-size: 11px;
+            font-size: 10px;
             color: var(--text-muted);
-            padding: 6px 10px;
+            padding: 4px 8px;
             text-overflow: ellipsis;
             white-space: nowrap;
             overflow: hidden;
             border-top: 1px solid var(--border);
+            text-align: center;
         }}
         .missing-photo-placeholder {{
-            padding: 24px 16px;
+            padding: 14px 10px;
             background: #fffbeb;
             color: #92400e;
-            font-size: 12px;
+            font-size: 11px;
             text-align: center;
+            border-radius: var(--radius-md);
+            border: 1px dashed #f59e0b;
         }}
         .missing-photo-placeholder span {{
             display: block;
             font-weight: 700;
-            font-size: 13px;
-            margin-bottom: 4px;
+            font-size: 12px;
+            margin-bottom: 3px;
         }}
         .missing-photo-placeholder small {{
             display: block;
-            opacity: 0.8;
-            margin-bottom: 8px;
+            opacity: 0.85;
+            margin-bottom: 5px;
+            word-break: break-all;
+            font-size: 10px;
         }}
         .missing-photo-placeholder p {{
-            font-size: 11px;
-            line-height: 1.4;
+            font-size: 10px;
+            line-height: 1.3;
         }}
         .evidence-box.no-photo {{
             display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 12px;
+            justify-content: center;
+            text-align: center;
+            gap: 6px;
             background: var(--bg-page);
             border: 1px dashed var(--border);
             border-radius: var(--radius-md);
-            padding: 12px 16px;
+            padding: 14px 10px;
             color: var(--text-muted);
+            height: 100%;
+            min-height: 100px;
         }}
         .evidence-box.no-photo .icon {{
-            font-size: 20px;
+            font-size: 24px;
         }}
         .evidence-box.no-photo strong {{
             color: var(--text-main);
-            font-size: 13px;
+            font-size: 12px;
         }}
         .evidence-box.no-photo p {{
-            font-size: 12px;
+            font-size: 11px;
             margin-top: 2px;
         }}
         .dossier-footer {{
@@ -1257,8 +1317,8 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
                 background: #ffffff !important;
                 color: #000000 !important;
                 padding: 0 !important;
-                font-size: 8.5pt !important;
-                line-height: 1.25 !important;
+                font-size: 8pt !important;
+                line-height: 1.2 !important;
             }}
             .no-print, .actions-group, .search-container, .municipal-header, .dossier-footer {{
                 display: none !important;
@@ -1268,8 +1328,8 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
                 justify-content: space-between !important;
                 align-items: center !important;
                 border-bottom: 1.5px solid #0f172a !important;
-                padding: 0 0 4px 0 !important;
-                margin-bottom: 8px !important;
+                padding: 0 0 3px 0 !important;
+                margin-bottom: 6px !important;
             }}
             .container {{
                 max-width: 100% !important;
@@ -1277,121 +1337,194 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
                 padding: 0 !important;
             }}
             .dossier-card {{
+                display: flex !important;
+                flex-direction: row !important;
+                gap: 10px !important;
+                align-items: stretch !important;
                 box-shadow: none !important;
-                border: 1px solid #64748b !important;
+                border: 1px solid #94a3b8 !important;
                 border-radius: 6px !important;
-                padding: 8px 12px !important;
-                margin-bottom: 10px !important;
+                padding: 6px 10px !important;
+                margin-bottom: 8px !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
                 background: #ffffff !important;
+                min-height: 105px !important;
+            }}
+            .card-left {{
+                flex: 1 !important;
+                min-width: 0 !important;
+                display: flex !important;
+                flex-direction: column !important;
+                justify-content: space-between !important;
+            }}
+            .card-right {{
+                width: 140px !important;
+                min-width: 140px !important;
+                max-width: 140px !important;
+                border-left: 1px solid #e2e8f0 !important;
+                padding-left: 8px !important;
+                margin: 0 !important;
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
             }}
             .card-header {{
                 display: flex !important;
                 justify-content: space-between !important;
                 align-items: center !important;
-                margin-bottom: 4px !important;
+                margin-bottom: 3px !important;
             }}
             .report-tag {{
-                font-size: 7.5pt !important;
+                font-size: 7pt !important;
                 color: #64748b !important;
                 display: inline-block !important;
                 margin-right: 6px !important;
             }}
             .biz-name {{
-                font-size: 12pt !important;
+                font-size: 11pt !important;
                 font-weight: 800 !important;
                 display: inline-block !important;
                 margin: 0 !important;
+                color: #0f172a !important;
             }}
             .location-badge {{
-                font-size: 8pt !important;
+                font-size: 7.5pt !important;
                 display: inline-block !important;
                 margin-left: 6px !important;
+                color: #475569 !important;
             }}
             .result-badge {{
-                font-size: 7.5pt !important;
-                padding: 2px 7px !important;
+                font-size: 7pt !important;
+                padding: 1.5px 6px !important;
+                font-weight: 700 !important;
             }}
             .meta-grid {{
                 display: grid !important;
                 grid-template-columns: repeat(3, 1fr) !important;
-                gap: 3px 8px !important;
-                padding: 4px 8px !important;
-                margin-bottom: 4px !important;
+                gap: 2px 6px !important;
+                padding: 3px 6px !important;
+                margin-bottom: 3px !important;
                 background: #f8fafc !important;
                 border: 1px solid #e2e8f0 !important;
                 border-radius: 4px !important;
             }}
             .meta-item .lbl {{
-                font-size: 6.5pt !important;
+                font-size: 6pt !important;
                 color: #64748b !important;
                 text-transform: uppercase !important;
             }}
             .meta-item .val {{
-                font-size: 8pt !important;
+                font-size: 7.5pt !important;
                 font-weight: 600 !important;
                 color: #0f172a !important;
             }}
             .remarks-box {{
-                padding: 4px 8px !important;
-                margin-bottom: 4px !important;
+                padding: 3px 6px !important;
+                margin-bottom: 0 !important;
                 border-left-width: 2.5px !important;
+                border-radius: 3px !important;
             }}
             .remarks-label {{
-                font-size: 6.5pt !important;
+                font-size: 6pt !important;
             }}
             .remarks-box p {{
-                font-size: 8pt !important;
-                line-height: 1.2 !important;
+                font-size: 7.5pt !important;
+                line-height: 1.15 !important;
                 margin-top: 1px !important;
             }}
             .evidence-section {{
-                margin-top: 4px !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                width: 100% !important;
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
             }}
             .evidence-header {{
-                font-size: 7pt !important;
-                margin-bottom: 3px !important;
+                font-size: 6pt !important;
+                margin-bottom: 2px !important;
+                text-align: center !important;
             }}
             .photos-grid {{
                 display: flex !important;
                 flex-wrap: wrap !important;
-                gap: 6px !important;
+                gap: 4px !important;
+                justify-content: center !important;
+                align-items: center !important;
+                width: 100% !important;
             }}
             .photo-thumb-wrap {{
                 border-radius: 4px !important;
-                max-width: 140px !important;
+                max-width: 130px !important;
+                width: 100% !important;
             }}
             .photo-thumb-wrap img {{
                 height: 80px !important;
-                max-width: 140px !important;
+                max-height: 80px !important;
+                width: 100% !important;
                 object-fit: cover !important;
+                display: block !important;
             }}
             .photo-caption {{
-                font-size: 6.5pt !important;
-                padding: 2px 4px !important;
+                font-size: 5.5pt !important;
+                padding: 1px 3px !important;
+                text-align: center !important;
             }}
             .evidence-box.no-photo {{
-                padding: 4px 8px !important;
-                gap: 6px !important;
+                padding: 6px 4px !important;
+                gap: 2px !important;
                 border-radius: 4px !important;
+                width: 100% !important;
+                text-align: center !important;
+                border: 1px dashed #cbd5e1 !important;
+                background: #f8fafc !important;
+                min-height: 80px !important;
+                justify-content: center !important;
             }}
             .evidence-box.no-photo .icon {{
-                font-size: 13px !important;
+                font-size: 14px !important;
             }}
             .evidence-box.no-photo strong {{
-                font-size: 8pt !important;
+                font-size: 7pt !important;
+                display: block !important;
             }}
             .evidence-box.no-photo p {{
-                font-size: 7pt !important;
+                font-size: 6pt !important;
                 margin: 0 !important;
+                line-height: 1.1 !important;
             }}
             .missing-photo-placeholder {{
-                padding: 6px 10px !important;
-                font-size: 7.5pt !important;
+                padding: 4px 6px !important;
+                font-size: 6.5pt !important;
+                border-radius: 4px !important;
+                border: 1px dashed #f59e0b !important;
+                background: #fffbeb !important;
+                color: #92400e !important;
+                text-align: center !important;
+                width: 100% !important;
+                line-height: 1.15 !important;
             }}
-            /* Strict 2-reports-per-page rule: break page after every 2nd card */
-            .dossier-card:nth-of-type(2n) {{
+            .missing-photo-placeholder span {{
+                font-size: 7pt !important;
+                font-weight: 700 !important;
+                display: block !important;
+                margin-bottom: 1px !important;
+            }}
+            .missing-photo-placeholder small {{
+                font-size: 5.5pt !important;
+                display: block !important;
+                margin-bottom: 2px !important;
+                word-break: break-all !important;
+            }}
+            .missing-photo-placeholder p {{
+                font-size: 5.5pt !important;
+                margin: 0 !important;
+            }}
+            /* Maximize space: Up to 4 reports per page cleanly */
+            .dossier-card:nth-of-type(4n) {{
                 page-break-after: always !important;
                 break-after: page !important;
                 margin-bottom: 0 !important;
