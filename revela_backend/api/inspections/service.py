@@ -1245,87 +1245,176 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
             padding: 16px 0;
             border-top: 1px solid var(--border);
         }}
+        .print-header {{
+            display: none;
+        }}
         @media print {{
             @page {{
                 size: A4 portrait;
-                margin: 12mm 10mm;
+                margin: 8mm 10mm;
             }}
             body {{
                 background: #ffffff !important;
                 color: #000000 !important;
                 padding: 0 !important;
-                font-size: 9.5pt !important;
+                font-size: 8.5pt !important;
+                line-height: 1.25 !important;
             }}
-            .no-print, .actions-group, .search-container {{
+            .no-print, .actions-group, .search-container, .municipal-header, .dossier-footer {{
                 display: none !important;
+            }}
+            .print-header {{
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+                border-bottom: 1.5px solid #0f172a !important;
+                padding: 0 0 4px 0 !important;
+                margin-bottom: 8px !important;
             }}
             .container {{
                 max-width: 100% !important;
                 margin: 0 !important;
-            }}
-            .municipal-header {{
-                border: none !important;
-                box-shadow: none !important;
-                padding: 0 0 10px 0 !important;
-                margin-bottom: 12px !important;
-                border-bottom: 2px solid #000 !important;
-            }}
-            .stats-banner {{
-                margin-top: 8px !important;
-                gap: 8px !important;
-            }}
-            .stat-pill {{
-                padding: 6px 10px !important;
-            }}
-            .stat-num {{
-                font-size: 16px !important;
-            }}
-            .stat-lbl {{
-                font-size: 9px !important;
+                padding: 0 !important;
             }}
             .dossier-card {{
                 box-shadow: none !important;
-                border: 1px solid #94a3b8 !important;
+                border: 1px solid #64748b !important;
                 border-radius: 6px !important;
-                padding: 12px 16px !important;
-                margin-bottom: 14px !important;
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
-            }}
-            .biz-name {{
-                font-size: 15px !important;
-            }}
-            .meta-grid {{
-                padding: 8px 10px !important;
-                gap: 6px 12px !important;
-                margin-bottom: 10px !important;
-            }}
-            .meta-item .lbl {{
-                font-size: 9px !important;
-            }}
-            .meta-item .val {{
-                font-size: 11px !important;
-            }}
-            .remarks-box {{
                 padding: 8px 12px !important;
                 margin-bottom: 10px !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+                background: #ffffff !important;
+            }}
+            .card-header {{
+                display: flex !important;
+                justify-content: space-between !important;
+                align-items: center !important;
+                margin-bottom: 4px !important;
+            }}
+            .report-tag {{
+                font-size: 7.5pt !important;
+                color: #64748b !important;
+                display: inline-block !important;
+                margin-right: 6px !important;
+            }}
+            .biz-name {{
+                font-size: 12pt !important;
+                font-weight: 800 !important;
+                display: inline-block !important;
+                margin: 0 !important;
+            }}
+            .location-badge {{
+                font-size: 8pt !important;
+                display: inline-block !important;
+                margin-left: 6px !important;
+            }}
+            .result-badge {{
+                font-size: 7.5pt !important;
+                padding: 2px 7px !important;
+            }}
+            .meta-grid {{
+                display: grid !important;
+                grid-template-columns: repeat(3, 1fr) !important;
+                gap: 3px 8px !important;
+                padding: 4px 8px !important;
+                margin-bottom: 4px !important;
+                background: #f8fafc !important;
+                border: 1px solid #e2e8f0 !important;
+                border-radius: 4px !important;
+            }}
+            .meta-item .lbl {{
+                font-size: 6.5pt !important;
+                color: #64748b !important;
+                text-transform: uppercase !important;
+            }}
+            .meta-item .val {{
+                font-size: 8pt !important;
+                font-weight: 600 !important;
+                color: #0f172a !important;
+            }}
+            .remarks-box {{
+                padding: 4px 8px !important;
+                margin-bottom: 4px !important;
+                border-left-width: 2.5px !important;
+            }}
+            .remarks-label {{
+                font-size: 6.5pt !important;
             }}
             .remarks-box p {{
-                font-size: 11px !important;
+                font-size: 8pt !important;
+                line-height: 1.2 !important;
+                margin-top: 1px !important;
+            }}
+            .evidence-section {{
+                margin-top: 4px !important;
+            }}
+            .evidence-header {{
+                font-size: 7pt !important;
+                margin-bottom: 3px !important;
+            }}
+            .photos-grid {{
+                display: flex !important;
+                flex-wrap: wrap !important;
+                gap: 6px !important;
+            }}
+            .photo-thumb-wrap {{
+                border-radius: 4px !important;
+                max-width: 140px !important;
             }}
             .photo-thumb-wrap img {{
-                height: 110px !important;
+                height: 80px !important;
+                max-width: 140px !important;
+                object-fit: cover !important;
             }}
+            .photo-caption {{
+                font-size: 6.5pt !important;
+                padding: 2px 4px !important;
+            }}
+            .evidence-box.no-photo {{
+                padding: 4px 8px !important;
+                gap: 6px !important;
+                border-radius: 4px !important;
+            }}
+            .evidence-box.no-photo .icon {{
+                font-size: 13px !important;
+            }}
+            .evidence-box.no-photo strong {{
+                font-size: 8pt !important;
+            }}
+            .evidence-box.no-photo p {{
+                font-size: 7pt !important;
+                margin: 0 !important;
+            }}
+            .missing-photo-placeholder {{
+                padding: 6px 10px !important;
+                font-size: 7.5pt !important;
+            }}
+            /* Strict 2-reports-per-page rule: break page after every 2nd card */
             .dossier-card:nth-of-type(2n) {{
-                page-break-after: always;
-                break-after: page;
+                page-break-after: always !important;
+                break-after: page !important;
+                margin-bottom: 0 !important;
             }}
         }}
     </style>
 </head>
 <body>
     <div class="container">
-        <header class="municipal-header">
+        <!-- Compact Header for Print Mode Only -->
+        <div class="print-header">
+            <div>
+                <strong style="font-size: 10pt; text-transform: uppercase;">MUNICIPALITY OF MATAASNAKAHOY &bull; BPLO</strong>
+                <div style="font-size: 7.5pt; color: #475569;">REVELA Inspection Compliance Dossier &bull; {html.escape(filter_title)}</div>
+            </div>
+            <div style="text-align: right; font-size: 7.5pt; color: #475569;">
+                <div>Archived: {date_formatted}</div>
+                <div>Total Reports: <strong>{total_reports}</strong></div>
+            </div>
+        </div>
+
+        <!-- Full Municipal Header for Screen Mode Only -->
+        <header class="municipal-header no-print">
             <div class="header-top">
                 <div>
                     <div class="republic-text">Republic of the Philippines &bull; Province of Batangas</div>
