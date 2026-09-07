@@ -121,6 +121,7 @@ def test_generate_zip_and_cleanup():
         with zipfile.ZipFile(zip_path, "r") as zf:
             namelist = zf.namelist()
             assert "manifest.csv" in namelist
+            assert "README_ARCHIVE.txt" in namelist
             manifest_content = zf.read("manifest.csv").decode("utf-8-sig")
             reader = list(csv.reader(io.StringIO(manifest_content)))
             header = reader[0]

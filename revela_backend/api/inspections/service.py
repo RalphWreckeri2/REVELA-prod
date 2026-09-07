@@ -770,11 +770,17 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                 ir.reportID,
                 ir.targetID AS logID,
                 ir.inspectionResult,
+                ir.noticeLevel,
                 ir.verificationStatus,
                 ir.remarks,
                 ir.photoPath,
                 ir.irTimestamp,
+                ir.deadline,
+                ir.resolutionTime,
+                ir.nearestLandmark,
                 g.detectedName,
+                g.latitude,
+                g.longitude,
                 b.barangayName,
                 u.fullName AS inspectorName
             FROM inspection_reports ir
@@ -815,12 +821,19 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
             "Log ID",
             "Business Name",
             "Barangay",
-            "Inspector",
-            "Result",
+            "Inspector Name",
+            "Inspection Result",
+            "Notice Level",
             "Inspection Date",
+            "Deadline",
+            "Resolution Time (mins)",
+            "Latitude",
+            "Longitude",
+            "Nearest Landmark",
+            "Inspector Remarks",
             "Original Filename",
             "Archive Filename",
-            "Notes"
+            "Photo Status",
         ])
 
         archived_photos_count = 0
@@ -836,8 +849,14 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                 barangay = rep.get("barangayName") or "Mataasnakahoy"
                 inspector = rep.get("inspectorName") or "Inspector"
                 result_color = rep.get("inspectionResult") or "Verified"
+                notice_lvl = rep.get("noticeLevel") if rep.get("noticeLevel") is not None else 0
                 remarks = rep.get("remarks") or ""
                 ir_ts = str(rep.get("irTimestamp") or "")
+                deadline_val = str(rep.get("deadline") or "")
+                res_time = rep.get("resolutionTime") if rep.get("resolutionTime") is not None else ""
+                lat_val = str(rep.get("latitude") or "")
+                lng_val = str(rep.get("longitude") or "")
+                landmark = rep.get("nearestLandmark") or ""
                 date_str = ir_ts[:10].replace("-", "") or "unknown_date"
 
                 photos = _extract_photo_filenames(rep.get("photoPath"))
@@ -868,10 +887,17 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                             barangay,
                             inspector,
                             result_color,
+                            notice_lvl,
                             ir_ts,
+                            deadline_val,
+                            res_time,
+                            lat_val,
+                            lng_val,
+                            landmark,
+                            remarks,
                             orig_filename,
                             archive_arcname,
-                            remarks
+                            "Archived in ZIP",
                         ])
                     else:
                         csv_writer.writerow([
@@ -881,25 +907,58 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                             barangay,
                             inspector,
                             result_color,
+                            notice_lvl,
                             ir_ts,
+                            deadline_val,
+                            res_time,
+                            lat_val,
+                            lng_val,
+                            landmark,
+                            remarks,
                             orig_filename,
                             "[FILE NOT ON DISK]",
-                            remarks
+                            "Missing on Server Disk (Container Restarted)",
                         ])
 
                 if rep_had_photo:
                     archived_reports_count += 1
 
-            zip_file.writestr("manifest.csv", manifest_stream.getvalue().encode("utf-8-sig"))
+            # Summary text file included in every archive
+            readme_text = f"""========================================================================
+MUNICIPALITY OF MATAASNAKAHOY - BUSINESS PERMIT & LICENSING OFFICE (BPLO)
+REVELA INSPECTION ARCHIVE & AUDIT PACKAGE
+========================================================================
+Archive Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Filter Type: {filter_type}
+Verified Reports Matched: {len(reports)}
+Physical Photos Archived in Package: {archived_photos_count}
 
-        if archived_photos_count == 0:
-            if os.path.exists(temp_zip_path):
-                os.remove(temp_zip_path)
-            return None, "Matching reports exist, but no physical photo files were found on disk."
+PACKAGE CONTENTS:
+1. manifest.csv:
+   Complete audit manifest spreadsheet containing:
+   - Report ID & Log ID
+   - Business Name & Barangay
+   - Inspector Name (who conducted the inspection)
+   - Inspection Result (Color flag) & Notice Level
+   - Inspection Timestamps, Deadlines & Resolution Times
+   - GPS Latitude & Longitude & Landmarks
+   - Inspector Notes & Findings
+   (Can be opened directly with Microsoft Excel or Google Sheets).
+
+2. evidence/ (if photos exist on server disk):
+   Folder containing high-resolution field photos taken by inspectors,
+   organized and renamed by Report ID, Business Name, and Inspection Date.
+
+REVELA Intelligent Monitoring System
+Municipality of Mataasnakahoy
+"""
+            zip_file.writestr("README_ARCHIVE.txt", readme_text.encode("utf-8"))
+            zip_file.writestr("manifest.csv", manifest_stream.getvalue().encode("utf-8-sig"))
 
         stats = {
             "archivedPhotos": archived_photos_count,
             "archivedReports": archived_reports_count,
+            "totalReportsMatched": len(reports),
             "uncompressedBytes": total_uncompressed_bytes,
             "uncompressedMB": round(total_uncompressed_bytes / (1024 * 1024), 2),
         }
