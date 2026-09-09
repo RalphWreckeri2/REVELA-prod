@@ -773,7 +773,7 @@ export default function SettingsPage() {
                 onClick={() => applyPreset("default")}
                 title="Reset to system default: 68% Risk, 7% Sector, 25% Distance"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                 Use Default (68/7/25)
               </button>
               <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => applyPreset("health")}>
@@ -805,7 +805,7 @@ export default function SettingsPage() {
                     onClick={() => applyPreset("default")}
                     title="Reset to default weights (68% / 7% / 25%)"
                   >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                     Use Default
                   </button>
                 </div>
@@ -921,7 +921,7 @@ export default function SettingsPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span>📦</span> Inspection Evidence Storage &amp; Archival
+                  <span></span> Inspection Evidence Storage &amp; Archival
                 </h3>
                 <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>
                   Manage server storage on Railway. Download verified inspection photos and audit manifests to municipal PC backup, then safely clear server disk space.
@@ -1016,8 +1016,8 @@ export default function SettingsPage() {
               {[
                 { key: "older_180d", label: "Older than 6 months", sub: ">180 days ago (Recommended)" },
                 { key: "older_365d", label: "Older than 1 year", sub: ">365 days ago" },
-                { key: "older_90d",  label: "Older than 3 months", sub: ">90 days ago" },
-                { key: "older_30d",  label: "Older than 30 days", sub: ">30 days ago" },
+                { key: "older_90d", label: "Older than 3 months", sub: ">90 days ago" },
+                { key: "older_30d", label: "Older than 30 days", sub: ">30 days ago" },
                 { key: "all_verified", label: "All Verified Reports", sub: "All verified inspection files" },
               ].map(opt => {
                 const isSelected = selectedFilter === opt.key;
