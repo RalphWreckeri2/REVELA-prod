@@ -921,7 +921,7 @@ export default function SettingsPage() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
-                  <span></span> Inspection Evidence Storage &amp; Archival
+                  Inspection Evidence Storage &amp; Archival
                 </h3>
                 <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>
                   Manage server storage on Railway. Download verified inspection photos and audit manifests to municipal PC backup, then safely clear server disk space.
