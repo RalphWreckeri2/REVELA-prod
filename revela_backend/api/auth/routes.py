@@ -196,10 +196,21 @@ def request_otp_route():
     if not data or not data.get("identifier"):
         return jsonify({"error": "Email or phone number is required"}), 400
 
-    request_otp(data["identifier"])
+    success, error, meta = request_otp(data["identifier"])
 
-    # Always return success — never reveal if user exists
-    return jsonify({"message": "If an account exists, an OTP has been sent"}), 200
+    if not success:
+        # Daily OTP limit exhausted → 429 Too Many Requests
+        if error and ("limit" in error.lower() or "attempt" in error.lower()):
+            return jsonify({"error": error}), 429
+        # Any other failure (send failure, account not found, role not allowed, etc.)
+        # Return a generic 400; we deliberately do NOT reveal whether the account exists.
+        return jsonify({"error": error or "Failed to send OTP. Please try again later."}), 400
+
+    response_data = {"message": "If an account exists, an OTP has been sent"}
+    if meta:
+        # Forward useful metadata to the frontend (remainingAttempts, notice, etc.)
+        response_data.update(meta)
+    return jsonify(response_data), 200
 
 # ── POST /api/auth/request-manual-reset ───────────────────────────────────────
 @auth_bp.route("/request-manual-reset", methods=["POST"])
