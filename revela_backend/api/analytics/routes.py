@@ -1280,7 +1280,7 @@ def analytics_chat():
                     config=types.GenerateContentConfig(
                         system_instruction=system_message,
                         temperature=0.4,
-                        max_output_tokens=1024,
+                        max_output_tokens=2048,
                     )
                 )
                 if response and response.text:
@@ -1304,7 +1304,7 @@ def analytics_chat():
                         config=types.GenerateContentConfig(
                             system_instruction=system_message,
                             temperature=0.4,
-                            max_output_tokens=1024,
+                            max_output_tokens=2048,
                         )
                     )
                     if response and response.text:
