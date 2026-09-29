@@ -132,41 +132,65 @@ DISTRICT_ALIASES = {
 }
 
 
-def _get_barangay_id(barangay_name: str) -> int | None:
+def _load_barangay_lookup() -> dict[str, int]:
+    """
+    Load all barangays into a dict keyed by lowercased, stripped name.
+    Used during bulk imports to avoid one DB cursor per row.
+    Returns {lower_name: barangayID, ...}
+    """
+    cursor = mysql.connection.cursor()
+    cursor.execute("SELECT barangayID, barangayName FROM barangays")
+    rows = cursor.fetchall()
+    cursor.close()
+    lookup = {}
+    for row in rows:
+        name = row["barangayName"].strip()
+        lookup[name.lower()] = row["barangayID"]
+        # Also index without spaces for fuzzy matching
+        lookup[name.lower().replace(" ", "")] = row["barangayID"]
+    return lookup
+
+
+def _resolve_barangay_id(barangay_name: str, lookup: dict[str, int]) -> int | None:
+    """
+    Resolve a raw barangay name to a barangayID using a preloaded lookup dict.
+    Falls back to partial matching when an exact match isn't found.
+    """
     if not barangay_name or not barangay_name.strip():
         return None
 
-    # Resolve district alias first
     cleaned = barangay_name.strip()
     alias = DISTRICT_ALIASES.get(cleaned.lower())
     if alias:
         cleaned = alias
 
-    cursor = mysql.connection.cursor()
+    # Exact match (case-insensitive via lowercasing)
+    result = lookup.get(cleaned.lower())
+    if result:
+        return result
 
-    # 1. Exact match (case-insensitive)
-    cursor.execute(
-        "SELECT barangayID FROM barangays WHERE LOWER(barangayName) = LOWER(%s)",
-        (cleaned,),
-    )
-    row = cursor.fetchone()
-    if row:
-        cursor.close()
-        return row["barangayID"]
+    # Partial match — strip spaces and try substring
+    cleaned_nospace = cleaned.lower().replace(" ", "")
+    result = lookup.get(cleaned_nospace)
+    if result:
+        return result
 
-    # 2. Partial match — also try removing spaces
-    cleaned_nospace = cleaned.replace(" ", "")
-    cursor.execute(
-        """
-        SELECT barangayID FROM barangays 
-        WHERE LOWER(REPLACE(barangayName, ' ', '')) LIKE LOWER(%s)
-        OR LOWER(barangayName) LIKE LOWER(%s)
-        """,
-        (f"%{cleaned_nospace}%", f"%{cleaned}%"),
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    return row["barangayID"] if row else None
+    # Substring fallback
+    for key, bid in lookup.items():
+        if cleaned.lower() in key or key in cleaned.lower():
+            return bid
+
+    return None
+
+
+def _get_barangay_id(barangay_name: str) -> int | None:
+    """
+    Single-use lookup for callers outside of bulk import loops.
+    Uses a fresh DB query — prefer _resolve_barangay_id + _load_barangay_lookup
+    when processing many rows at once.
+    """
+    lookup = _load_barangay_lookup()
+    return _resolve_barangay_id(barangay_name, lookup)
 
 
 def _normalise_status(raw: str) -> str:
@@ -229,7 +253,7 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
         JOIN (
             SELECT logID
             FROM geospatial_logs
-            WHERE barangayID = %s AND LOWER(TRIM(detectedName)) = LOWER(TRIM(%s))
+            WHERE barangayID = %s AND detectedName = %s
             ORDER BY detectedDate DESC
             LIMIT 1
         ) latest ON g.logID = latest.logID
@@ -273,6 +297,9 @@ def upload_registry(file, ext: str):
         errors = []
 
         from api.notifications import hub
+
+        # Load all barangays once upfront instead of one DB cursor per row.
+        barangay_lookup = _load_barangay_lookup()
         cursor = mysql.connection.cursor()
 
         for idx, row in df.iterrows():
@@ -282,7 +309,7 @@ def upload_registry(file, ext: str):
                     "processed": idx,
                     "total": total_rows
                 })
-                
+
             if is_cancelled("registry_import"):
                 mysql.connection.rollback()
                 cursor.close()
@@ -296,11 +323,9 @@ def upload_registry(file, ext: str):
                 errors.append(f"Row {idx + 2}: missing businessName — skipped")
                 continue
 
-            # Resolve barangay
+            # Resolve barangay using the preloaded dict (no per-row DB call)
             barangay_raw = row.get("barangay") or ""
-            print(f"Row {idx + 2} barangay: '{barangay_raw}'")
-            barangay_id = _get_barangay_id(
-                barangay_raw) if barangay_raw else None
+            barangay_id = _resolve_barangay_id(barangay_raw, barangay_lookup) if barangay_raw else None
 
             # If barangay not found, skip row — barangayID is NOT NULL
             if barangay_id is None:
@@ -334,7 +359,11 @@ def upload_registry(file, ext: str):
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
-            # Insert — skip duplicates (same name + barangayID)
+            name_key = str(business_name).strip()
+
+            # Insert — skip duplicates (same name + barangayID).
+            # Collation utf8mb4_unicode_ci is case-insensitive so LOWER() is
+            # redundant on both sides and prevents index use — removed.
             cursor.execute(
                 """
                 INSERT INTO official_registry
@@ -345,13 +374,13 @@ def upload_registry(file, ext: str):
                 FROM DUAL
                 WHERE NOT EXISTS (
                     SELECT 1 FROM official_registry
-                    WHERE LOWER(businessName) = LOWER(%s)
+                    WHERE businessName = %s
                     AND barangayID = %s
                 )
                 """,
                 (
                     barangay_id,
-                    str(business_name).strip(),
+                    name_key,
                     str(row.get("businessType") or "").strip() or None,
                     str(row.get("lineOfBusiness") or "").strip() or None,
                     str(address_raw).strip() or None,
@@ -359,10 +388,9 @@ def upload_registry(file, ext: str):
                     lng,
                     status,
                     renewal_date,
-                    str(row.get("businessSize") or "").strip(
-                    ) or None,  # Added this line
+                    str(row.get("businessSize") or "").strip() or None,
                     # WHERE NOT EXISTS params
-                    str(business_name).strip(),
+                    name_key,
                     barangay_id,
                 ),
             )
@@ -373,7 +401,7 @@ def upload_registry(file, ext: str):
                 # Auto-seed Flag baseline into GEOSPATIAL_LOGS
                 insert_green_flag(
                     barangay_id,
-                    str(business_name).strip(),
+                    name_key,
                     lat,
                     lng,
                     str(address_raw).strip() or None,
@@ -414,7 +442,7 @@ def upload_registry(file, ext: str):
 
 def sync_registry(file, ext: str):
     """Parse CSV/Excel → geocode → upsert OFFICIAL_REGISTRY.
-    Existing rows match on LOWER(businessName) + barangayID and are overwritten
+    Existing rows match on businessName + barangayID and are overwritten
     with file values; new rows are inserted (same rules as upload).
     Returns (summary_dict, error_string)."""
     set_cancel("registry_import", False)
@@ -439,6 +467,9 @@ def sync_registry(file, ext: str):
         errors = []
 
         from api.notifications import hub
+
+        # Load all barangays once upfront instead of one DB cursor per row.
+        barangay_lookup = _load_barangay_lookup()
         cursor = mysql.connection.cursor()
 
         for idx, row in df.iterrows():
@@ -448,7 +479,7 @@ def sync_registry(file, ext: str):
                     "processed": idx,
                     "total": total_rows
                 })
-                
+
             if is_cancelled("registry_import"):
                 mysql.connection.rollback()
                 cursor.close()
@@ -462,8 +493,7 @@ def sync_registry(file, ext: str):
                 continue
 
             barangay_raw = row.get("barangay") or ""
-            barangay_id = _get_barangay_id(
-                barangay_raw) if barangay_raw else None
+            barangay_id = _resolve_barangay_id(barangay_raw, barangay_lookup) if barangay_raw else None
 
             if barangay_id is None:
                 skipped += 1
@@ -498,10 +528,13 @@ def sync_registry(file, ext: str):
             addr = str(address_raw).strip() or None
             bsize = str(row.get("businessSize") or "").strip() or None
 
+            # Collation utf8mb4_unicode_ci is case-insensitive — LOWER(TRIM())
+            # wrapping on the column side prevents index use and is redundant.
+            # Strip is applied to the parameter value in Python instead.
             cursor.execute(
                 """
                 SELECT businessID, latitude, longitude FROM official_registry
-                WHERE LOWER(TRIM(businessName)) = LOWER(TRIM(%s)) AND barangayID = %s
+                WHERE businessName = %s AND barangayID = %s
                 LIMIT 1
                 """,
                 (name_key, barangay_id),
@@ -740,7 +773,8 @@ def delete_business(business_id: int):
 def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_page=10):
     """Return paginated list of businesses with optional filters."""
     try:
-        check_and_expire_old_permits()
+        # check_and_expire_old_permits is now handled by the APScheduler
+        # background job in app.py — no longer called inline on read requests.
         cursor = mysql.connection.cursor()
 
         conditions = []
@@ -770,7 +804,11 @@ def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_p
         )
         total = cursor.fetchone()["total"]
 
-        # Paginated rows
+        # Paginated rows — LATERAL join replaces two correlated scalar subqueries
+        # that previously hit geospatial_logs once per row each (N*2 extra queries).
+        # A single LATERAL query fetches the most-recent log in one pass per row.
+        # LOWER() is dropped from the JOIN condition: utf8mb4_unicode_ci handles
+        # case-insensitive equality without a function wrapper.
         offset = (page - 1) * per_page
         cursor.execute(
             f"""
@@ -787,27 +825,22 @@ def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_p
                 r.lastRenewalDate,
                 b.barangayID,
                 b.barangayName,
-                (
-                    SELECT CASE 
-                        WHEN g.placeID IS NOT NULL THEN 'registry_and_maps' 
-                        ELSE 'registry_only' 
-                    END
-                    FROM geospatial_logs g
-                    WHERE LOWER(g.detectedName) = LOWER(r.businessName)
-                    AND g.barangayID = r.barangayID
-                    ORDER BY g.detectedDate DESC
-                    LIMIT 1
-                ) AS flagSource,
-                (
-                    SELECT g.flagColor
-                    FROM geospatial_logs g
-                    WHERE LOWER(g.detectedName) = LOWER(r.businessName)
-                    AND g.barangayID = r.barangayID
-                    ORDER BY g.detectedDate DESC
-                    LIMIT 1
-                ) AS flagColor
+                CASE
+                    WHEN g.logID IS NULL THEN NULL
+                    WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
+                    ELSE 'registry_only'
+                END AS flagSource,
+                g.flagColor
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
+            LEFT JOIN LATERAL (
+                SELECT logID, placeID, flagColor
+                FROM geospatial_logs
+                WHERE barangayID = r.barangayID
+                  AND detectedName = r.businessName
+                ORDER BY detectedDate DESC
+                LIMIT 1
+            ) g ON TRUE
             {where}
             ORDER BY r.businessName ASC
             LIMIT %s OFFSET %s
@@ -840,10 +873,12 @@ def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_p
 def get_business_by_id(business_id: int):
     """Return a single business record with flagColor and inspection history."""
     try:
-        check_and_expire_old_permits()
+        # check_and_expire_old_permits is now handled by the APScheduler
+        # background job in app.py — no longer called inline on read requests.
         cursor = mysql.connection.cursor()
 
-        # Main record + latest flagColor
+        # Main record + latest flagColor via LATERAL join (replaces two
+        # correlated scalar subqueries that previously ran one-per-row).
         cursor.execute(
             """
             SELECT
@@ -859,27 +894,22 @@ def get_business_by_id(business_id: int):
                 r.lastRenewalDate,
                 b.barangayID,
                 b.barangayName,
-                (
-                    SELECT CASE 
-                        WHEN g.placeID IS NOT NULL THEN 'registry_and_maps' 
-                        ELSE 'registry_only' 
-                    END
-                    FROM geospatial_logs g
-                    WHERE LOWER(g.detectedName) = LOWER(r.businessName)
-                    AND g.barangayID = r.barangayID
-                    ORDER BY g.detectedDate DESC
-                    LIMIT 1
-                ) AS flagSource,
-                (
-                    SELECT g.flagColor
-                    FROM geospatial_logs g
-                    WHERE LOWER(g.detectedName) = LOWER(r.businessName)
-                      AND g.barangayID = r.barangayID
-                    ORDER BY g.detectedDate DESC
-                    LIMIT 1
-                ) AS flagColor
+                CASE
+                    WHEN g.logID IS NULL THEN NULL
+                    WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
+                    ELSE 'registry_only'
+                END AS flagSource,
+                g.flagColor
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
+            LEFT JOIN LATERAL (
+                SELECT logID, placeID, flagColor
+                FROM geospatial_logs
+                WHERE barangayID = r.barangayID
+                  AND detectedName = r.businessName
+                ORDER BY detectedDate DESC
+                LIMIT 1
+            ) g ON TRUE
             WHERE r.businessID = %s
             """,
             (business_id,),
@@ -952,10 +982,12 @@ def check_and_expire_old_permits():
             current_year = __import__('datetime').date.today().year
 
             # 2. Update map flag colors in geospatial_logs to Red (Expired)
+            # utf8mb4_unicode_ci handles case-insensitive matching — LOWER(TRIM())
+            # wrapping on column sides prevents the new indexes from being used.
             cursor.execute(
                 """
                 UPDATE geospatial_logs g
-                JOIN official_registry r ON LOWER(TRIM(g.detectedName)) = LOWER(TRIM(r.businessName)) AND g.barangayID = r.barangayID
+                JOIN official_registry r ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
                 SET g.flagColor = 'Red'
                 WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'
                 """

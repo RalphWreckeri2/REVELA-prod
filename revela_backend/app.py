@@ -83,7 +83,57 @@ def create_app():
         app.logger.exception("Unhandled application exception", exc_info=e)
         return jsonify({"error": "Internal Server Error"}), 500
 
+    # ── Background scheduler ──────────────────────────────────────────────────
+    # check_and_expire_old_permits is a write operation (expires stale permits,
+    # updates map flags, sends admin notifications).  Running it inside every
+    # read request added latency to every registry list and analytics page load.
+    # Instead, schedule it to run:
+    #   1. Once at startup (with a short delay to let DB connections settle).
+    #   2. Daily at midnight so year-rollover is caught automatically.
+    _start_permit_expiry_scheduler(app)
+
     return app
+
+
+def _start_permit_expiry_scheduler(app):
+    """Configure and start the APScheduler background job for permit expiry."""
+    import atexit
+    from datetime import datetime, timedelta
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
+    def _run_expiry_check():
+        """Execute permit expiry check inside a Flask application context."""
+        with app.app_context():
+            try:
+                from api.registry.service import check_and_expire_old_permits
+                check_and_expire_old_permits()
+            except Exception as exc:
+                app.logger.warning(f"[Scheduler] Permit expiry check failed: {exc}")
+
+    scheduler = BackgroundScheduler(daemon=True)
+
+    # Daily midnight run — catches year-rollover automatically
+    scheduler.add_job(
+        _run_expiry_check,
+        CronTrigger(hour=0, minute=0),
+        id="permit_expiry_daily",
+        replace_existing=True,
+    )
+
+    # One-time startup run — fires 10 s after the server is ready so DB
+    # connections are fully initialised before the first query runs.
+    scheduler.add_job(
+        _run_expiry_check,
+        "date",
+        run_date=datetime.now() + timedelta(seconds=10),
+        id="permit_expiry_startup",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    # Ensure the scheduler stops cleanly when the process exits.
+    atexit.register(lambda: scheduler.shutdown(wait=False))
 
 
 if __name__ == "__main__":

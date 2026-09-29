@@ -517,9 +517,12 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         offset = (page - 1) * per_page
 
+        # Fetch both counts in a single round-trip using UNION ALL,
+        # then pull the data rows in a second query.
+        # Previously this was 3 separate queries; now it is 2.
         cursor.execute(
             f"""
-            SELECT COUNT(*) AS total
+            SELECT 'collapsed' AS cnt_type, COUNT(*) AS cnt
             FROM inspection_reports ir
             JOIN (
                 SELECT targetID, MAX(reportID) AS maxReportID
@@ -528,10 +531,19 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
             ) latest_ir ON ir.reportID = latest_ir.maxReportID
             JOIN geospatial_logs g ON ir.targetID = g.logID
             {where}
+
+            UNION ALL
+
+            SELECT 'all_rows' AS cnt_type, COUNT(*) AS cnt
+            FROM inspection_reports ir
+            JOIN geospatial_logs g ON ir.targetID = g.logID
+            {where}
             """,
-            params,
+            params + params,  # params appear twice — once per UNION branch
         )
-        total = cursor.fetchone()["total"]
+        counts = {r["cnt_type"]: r["cnt"] for r in cursor.fetchall()}
+        total      = counts.get("collapsed", 0)
+        total_rows = counts.get("all_rows", 0)
 
         cursor.execute(
             f"""
@@ -571,19 +583,6 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
             params + [per_page, offset],
         )
         rows = cursor.fetchall()
-
-        # Count ALL report rows (no latest-per-target collapse) so the UI can
-        # disclose how many older revisions are grouped under newer reports.
-        cursor.execute(
-            f"""
-            SELECT COUNT(*) AS total
-            FROM inspection_reports ir
-            JOIN geospatial_logs g ON ir.targetID = g.logID
-            {where}
-            """,
-            params,
-        )
-        total_rows = cursor.fetchone()["total"]
 
         cursor.close()
 

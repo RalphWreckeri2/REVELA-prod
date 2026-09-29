@@ -1,10 +1,29 @@
 import json
 import math
+import re
 import traceback
 import os
 import time
+import hashlib
+import numpy as np
+from collections import Counter
+from sklearn.cluster import DBSCAN
+from flask import Blueprint, jsonify, request
+from flask_jwt_extended import get_jwt_identity
 from google import genai
 from google.genai import types
+from app import mysql
+from api.middleware.decorators import jwt_required, admin_required
+from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
+from api.analytics.filters import (
+    parse_analytics_filters,
+    registry_sql,
+    geo_sql,
+    geo_on_extra,
+    barangay_b_sql,
+    inspection_sql,
+    filters_without,
+)
 
 # ── Gemini Model Discovery Cache (30-day TTL) ───────────────────────────────
 _CACHED_GEMINI_MODEL = "gemini-3.6-flash"
@@ -43,20 +62,29 @@ def _get_candidate_gemini_models(client, force_refresh=False):
     candidates = discovered + [_CACHED_GEMINI_MODEL, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     return list(dict.fromkeys(candidates))
 
-from flask import Blueprint, jsonify, request
-from api.middleware.decorators import jwt_required, admin_required
-from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
-from api.analytics.filters import (
-    parse_analytics_filters,
-    registry_sql,
-    geo_sql,
-    geo_on_extra,
-    barangay_b_sql,
-    inspection_sql,
-    filters_without,
-)
+
+# ── Analytics Response Cache (60-second TTL) ─────────────────────────────────
+# Caches the full _get_all_analytics_inner result keyed by filter hash.
+# 60 s is short enough to reflect near-real-time updates while eliminating
+# redundant multi-query bursts from concurrent dashboard loads.
+_analytics_cache: dict = {}
+_ANALYTICS_CACHE_TTL = 60  # seconds
+
+
+def _analytics_cache_key(F: dict) -> str:
+    """Stable MD5 key derived from the analytics filter dict."""
+    return hashlib.md5(
+        json.dumps(F, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def invalidate_analytics_cache():
+    """Clear the full analytics cache (call after data-mutating operations)."""
+    _analytics_cache.clear()
+
 
 analytics_bp = Blueprint("analytics", __name__)
+
 
 
 @analytics_bp.route("/all", methods=["GET"])
@@ -64,13 +92,24 @@ analytics_bp = Blueprint("analytics", __name__)
 def get_all_analytics():
     try:
         F = parse_analytics_filters(request.args)
-        res_response, status_code = _get_all_analytics_inner(F)
-        data = res_response.get_json()
-        
-        from flask_jwt_extended import get_jwt_identity
+        cache_key = _analytics_cache_key(F)
+
+        cached = _analytics_cache.get(cache_key)
+        if cached and (time.time() - cached["ts"]) < _ANALYTICS_CACHE_TTL:
+            data = dict(cached["data"])  # shallow copy so we can append per-user rollover
+            status_code = cached["status_code"]
+        else:
+            data, status_code = _get_all_analytics_inner(F)
+            if status_code == 200:
+                _analytics_cache[cache_key] = {
+                    "data": dict(data),  # store a clean copy so the local mutation below is safe
+                    "ts": time.time(),
+                    "status_code": status_code,
+                }
+
+        # Rollover notification is user-specific (unread flag) so it lives
+        # outside the shared cache and is fetched per-request.
         uid = int(get_jwt_identity())
-        
-        from app import mysql
         cursor = mysql.connection.cursor()
         cursor.execute(
             """
@@ -82,13 +121,12 @@ def get_all_analytics():
         )
         notif = cursor.fetchone()
         cursor.close()
-        
-        import re
+
         rollover_info = None
         if notif:
             body = notif["body"]
             m = re.search(r"Welcome to (\d+)!.*?marked (\d+) active", body, re.DOTALL)
-            year = int(m.group(1)) if m else __import__('datetime').date.today().year
+            year  = int(m.group(1)) if m else __import__('datetime').date.today().year
             count = int(m.group(2)) if m else 0
             rollover_info = {
                 "detected": True,
@@ -96,7 +134,7 @@ def get_all_analytics():
                 "year": year,
                 "notification_id": notif["id"]
             }
-            
+
         data["new_year_rollover"] = rollover_info
         return jsonify(data), status_code
     except Exception as e:
@@ -104,12 +142,16 @@ def get_all_analytics():
 
 
 def _get_all_analytics_inner(F=None):
+    """
+    Run all analytics queries and return (data_dict, status_code).
+    Returns a plain dict so the result can be cached and mutated by the
+    caller before serialisation — avoids the earlier pattern of calling
+    jsonify() here and then get_json() in the route to re-inflate it.
+    """
     if F is None:
         F = {}
-    from app import mysql
-    from api.registry.service import check_and_expire_old_permits
-    rollover_info = check_and_expire_old_permits()
-
+    # check_and_expire_old_permits is now handled by APScheduler (app.py).
+    # It is no longer called inline so reads don't pay write-operation cost.
     cur = mysql.connection.cursor()
 
     Fx = F or {}
@@ -237,7 +279,7 @@ def _get_all_analytics_inner(F=None):
             FROM official_registry r
             WHERE NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
-                WHERE LOWER(TRIM(g2.detectedName)) = LOWER(TRIM(r.businessName))
+                WHERE g2.detectedName = r.businessName
                   AND g2.barangayID = r.barangayID
             ){reg_r}
         ) AS combined ON combined.barangayID = b.barangayID
@@ -431,9 +473,9 @@ def _get_all_analytics_inner(F=None):
     cur.execute(f"""
         SELECT
             COALESCE(o.lineOfBusiness, 'Unclassified') AS category,
-            COUNT(DISTINCT CONCAT(LOWER(TRIM(g.detectedName)), '|', g.barangayID)) AS flagged_count
+            COUNT(DISTINCT CONCAT(g.detectedName, '|', g.barangayID)) AS flagged_count
         FROM geospatial_logs g
-        LEFT JOIN official_registry o ON LOWER(TRIM(g.detectedName)) = LOWER(TRIM(o.businessName))
+        LEFT JOIN official_registry o ON g.detectedName = o.businessName
             AND g.barangayID = o.barangayID{reg_o}
         WHERE 1=1 AND g.flagColor != 'Green' 
           AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
@@ -780,9 +822,11 @@ def _get_all_analytics_inner(F=None):
 
     cur.close()
 
-    return jsonify({
+    return {
         "applied_filters": Fx,
-        "new_year_rollover": rollover_info,
+        # new_year_rollover is intentionally omitted here — it is user-specific
+        # (unread flag) and is appended by the get_all_analytics route after
+        # checking revela_notifications for the requesting user.
         "descriptive": {
             "kpis": {
                 "total_businesses":              total_businesses,
@@ -829,7 +873,7 @@ def _get_all_analytics_inner(F=None):
             "status_breakdown": status_breakdown,
             "inspection_timeline": inspection_timeline,
         },
-    }), 200
+    }, 200
 
 
 @analytics_bp.route("/filter-metadata", methods=["GET"])

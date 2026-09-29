@@ -141,7 +141,7 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     cursor = mysql.connection.cursor()
     cursor.execute("""
         SELECT logID FROM geospatial_logs
-        WHERE LOWER(TRIM(detectedName)) = LOWER(TRIM(%s))
+        WHERE detectedName = %s
         LIMIT 1
     """, (detected_name,))
     row = cursor.fetchone()
@@ -305,7 +305,7 @@ def _load_registry():
             SELECT detectedName, barangayID, latitude, longitude
             FROM geospatial_logs
             WHERE flagColor = 'Green' AND latitude IS NOT NULL
-        ) g ON LOWER(TRIM(r.businessName)) = LOWER(TRIM(g.detectedName)) AND r.barangayID = g.barangayID
+        ) g ON r.businessName = g.detectedName AND r.barangayID = g.barangayID
     """)
     rows = cursor.fetchall()
     cursor.close()
@@ -517,8 +517,6 @@ def run_detection(user_id=None):
 
     run_id = create_detection_run(user_id)
     try:
-        from api.registry.service import check_and_expire_old_permits
-        check_and_expire_old_permits()
         from api.notifications import hub
 
         def progress_callback(idx, total_steps, lat, lng):
@@ -688,8 +686,6 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
            Pending → Yellow  (anything else → Yellow)
     """
     try:
-        from api.registry.service import check_and_expire_old_permits
-        check_and_expire_old_permits()
         cursor = mysql.connection.cursor()
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
@@ -703,7 +699,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             """
             NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
-                WHERE LOWER(TRIM(g2.detectedName)) = LOWER(TRIM(r.businessName))
+                WHERE g2.detectedName = r.businessName
                   AND g2.barangayID = r.barangayID
             )
             """,
@@ -802,7 +798,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 FROM geospatial_logs g
                 LEFT JOIN barangays b ON g.barangayID = b.barangayID
                 LEFT JOIN official_registry r
-                    ON LOWER(TRIM(r.businessName)) = LOWER(TRIM(g.detectedName))
+                    ON r.businessName = g.detectedName
                     AND r.barangayID = g.barangayID
                 {geo_where}
 

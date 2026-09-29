@@ -307,11 +307,11 @@ DROP TABLE IF EXISTS `wlc_config`;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `wlc_config` (
   `id` int NOT NULL DEFAULT '1',
-  `w1_risk` decimal(5,2) DEFAULT '68.00',
-  `w2_sector` decimal(5,2) DEFAULT '7.00',
-  `w3_distance` decimal(5,2) DEFAULT '25.00',
-  `bplo_lat` decimal(10,8) DEFAULT '13.96041300',
-  `bplo_lng` decimal(11,8) DEFAULT '121.11454700',
+  `w1_risk` decimal(5,2) DEFAULT '40.00',
+  `w2_sector` decimal(5,2) DEFAULT '40.00',
+  `w3_distance` decimal(5,2) DEFAULT '20.00',
+  `bplo_lat` decimal(10,8) DEFAULT '13.96670000',
+  `bplo_lng` decimal(11,8) DEFAULT '121.11670000',
   `sector_scores` json DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
@@ -324,7 +324,7 @@ CREATE TABLE `wlc_config` (
 
 LOCK TABLES `wlc_config` WRITE;
 /*!40000 ALTER TABLE `wlc_config` DISABLE KEYS */;
-INSERT INTO `wlc_config` VALUES (1,68.00,7.00,25.00,13.96041300,121.11454700,'{}','2026-05-10 08:54:24');
+INSERT INTO `wlc_config` VALUES (1,40.00,40.00,20.00,13.96670000,121.11670000,'{}','2026-05-10 08:54:24');
 /*!40000 ALTER TABLE `wlc_config` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -338,3 +338,64 @@ UNLOCK TABLES;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
 -- Dump completed on 2026-08-28 21:05:25
+
+ALTER TABLE users ADD COLUMN fcm_token TEXT NULL;
+
+-- ============================================================
+-- REVELA: Clean Slate Database Reset Script
+-- Empties Geospatial Logs, Official Registry, and Inspections
+-- ============================================================
+
+-- 1. Temporarily disable foreign key constraints
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- 2. Empty the requested tables & reset AUTO_INCREMENT counters
+TRUNCATE TABLE `geospatial_logs`;
+TRUNCATE TABLE `official_registry`;
+TRUNCATE TABLE `inspection_reports`;
+
+-- 3. (Optional but recommended) Reset detection scan runs & quota
+TRUNCATE TABLE `detection_runs`;
+
+-- 4. Re-enable foreign key constraints
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ============================================================
+-- Verification: Check that all tables are now 0
+-- ============================================================
+
+
+SELECT  * FROM geospatial_logs;
+
+-- ============================================================
+-- REVELA Performance Indexes Migration
+-- Run once against the revela_db database.
+-- Safe to re-run: uses IF NOT EXISTS guards.
+-- ============================================================
+
+-- official_registry: heavily filtered on status, date, and business name
+ALTER TABLE official_registry
+    ADD INDEX idx_reg_status         (applicationStatus),
+    ADD INDEX idx_reg_renewal        (lastRenewalDate),
+    ADD INDEX idx_reg_barangay_stat  (barangayID, applicationStatus),
+    ADD INDEX idx_reg_barangay_name  (barangayID, businessName(100));
+
+-- geospatial_logs: filtered on flagColor, barangayID, detectedDate, and reporter
+ALTER TABLE geospatial_logs
+    ADD INDEX idx_geo_flagcolor      (flagColor),
+    ADD INDEX idx_geo_brgy_flag      (barangayID, flagColor),
+    ADD INDEX idx_geo_detecteddate   (detectedDate),
+    ADD INDEX idx_geo_reporter       (reportedByUserID),
+    ADD INDEX idx_geo_barangay_name  (barangayID, detectedName(100));
+
+-- inspection_reports: joined by targetID, filtered by verificationStatus
+ALTER TABLE inspection_reports
+    ADD INDEX idx_ir_target_type     (targetID, targetType),
+    ADD INDEX idx_ir_status          (verificationStatus),
+    ADD INDEX idx_ir_target_report   (targetID, reportID);
+
+-- revela_notifications: queried by recipient + type + readAt on analytics load
+ALTER TABLE revela_notifications
+    ADD INDEX idx_notif_recipient_type (recipientUserId, type, readAt);
+
+
