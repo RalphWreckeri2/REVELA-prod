@@ -294,6 +294,143 @@ def reconcile_existing_flags(force: bool = False):
     return converted_count
 
 
+def _text_search_google_place(business_name: str, barangay_name: str):
+    """
+    Uses the Google Places Text Search API to find the exact Google Maps
+    location of a registered business by name.
+    Returns (place_id, lat, lng) or (None, None, None) on failure.
+
+    This uses Text Search (not Nearby Search), so it does NOT count against
+    the monthly Places Nearby Search quota used by run_detection.
+    """
+    api_key = (
+        os.getenv("GOOGLE_MAPS_API_KEY")
+        or os.getenv("GOOGLE_PLACES_API_KEY")
+        or os.getenv("VITE_GOOGLE_MAPS_API_KEY")
+    )
+    if not api_key:
+        return None, None, None
+
+    query = f"{business_name}, {barangay_name}, Mataasnakahoy, Batangas, Philippines"
+    try:
+        resp = http.get(
+            "https://maps.googleapis.com/maps/api/place/textsearch/json",
+            params={"query": query, "key": api_key},
+            timeout=8,
+        )
+        data = resp.json()
+        if data.get("status") != "OK":
+            return None, None, None
+
+        results = data.get("results", [])
+        for result in results:
+            loc = result.get("geometry", {}).get("location", {})
+            p_lat = loc.get("lat")
+            p_lng = loc.get("lng")
+            place_id = result.get("place_id")
+            name = result.get("name", "")
+
+            # Verify it's within Mataasnakahoy and name is plausible
+            if p_lat and p_lng and _within_municipality(p_lat, p_lng):
+                sim = _name_similarity(business_name, name)
+                if sim >= 0.5:
+                    return place_id, p_lat, p_lng
+
+    except Exception as e:
+        print(f"[Snap Registry] Text search error for '{business_name}': {e}")
+
+    return None, None, None
+
+
+def snap_registry_to_google_maps(progress_cb=None):
+    """
+    For every registered business that still lacks a real Google Places pin
+    (i.e., no placeID in geospatial_logs or coordinates are a barangay centroid),
+    performs a Google Places Text Search to find their exact map location
+    and snaps the green pin there.
+
+    This is SEPARATE from run_detection — it uses Text Search (individual lookups)
+    rather than Nearby Search, so it does not consume the monthly scan quota.
+
+    Returns dict: {snapped, skipped, errors, total}
+    """
+    # Load registry entries that don't have a linked placeID yet
+    cursor = mysql.connection.cursor()
+    cursor.execute("""
+        SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
+               r.businessAddress,
+               b.barangayName,
+               g.logID AS logID,
+               g.placeID AS placeID,
+               g.latitude AS g_lat,
+               g.longitude AS g_lng
+        FROM official_registry r
+        LEFT JOIN barangays b ON r.barangayID = b.barangayID
+        LEFT JOIN geospatial_logs g
+            ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
+        WHERE g.placeID IS NULL
+           OR g.logID IS NULL
+    """)
+    rows = cursor.fetchall()
+    cursor.close()
+
+    # Deduplicate — one entry per businessID
+    seen = set()
+    entries = []
+    for row in rows:
+        bid = row.get("businessID")
+        if bid not in seen:
+            seen.add(bid)
+            entries.append(row)
+
+    total = len(entries)
+    snapped = 0
+    skipped = 0
+    errors = 0
+
+    for idx, entry in enumerate(entries):
+        if progress_cb:
+            progress_cb(idx, total, entry.get("businessName", ""))
+
+        biz_id = entry.get("businessID")
+        biz_name = entry.get("businessName") or ""
+        barangay_name = entry.get("barangayName") or ""
+        barangay_id = entry.get("barangayID")
+        app_status = (entry.get("applicationStatus") or "Active").strip()
+
+        place_id, p_lat, p_lng = _text_search_google_place(biz_name, barangay_name)
+
+        if not place_id or not p_lat or not p_lng:
+            skipped += 1
+            continue
+
+        target_color = 'Green' if app_status == 'Active' else (
+            'Orange' if app_status == 'Expired' else (
+                'Black' if app_status == 'Revoked' else (
+                    'Purple' if app_status == 'Closed' else 'Yellow'
+                )
+            )
+        )
+
+        try:
+            _match_registry_to_google(
+                place_id, biz_id, biz_name,
+                target_color=target_color,
+                lat=p_lat, lng=p_lng,
+                barangay_id=barangay_id
+            )
+            snapped += 1
+        except Exception as e:
+            print(f"[Snap Registry] Error snapping '{biz_name}': {e}")
+            errors += 1
+
+        # Small delay to avoid hitting rate limits on Text Search
+        time.sleep(0.05)
+
+    return {"snapped": snapped, "skipped": skipped, "errors": errors, "total": total}
+
+
+
 # ── Google Places fetch ───────────────────────────────────────────────────────
 
 def _fetch_places_for_point(lat, lng, radius_m, places_dict):

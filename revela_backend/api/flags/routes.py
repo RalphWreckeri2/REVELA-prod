@@ -7,6 +7,8 @@ from api.flags.service import (
     update_flag_color,
     escalate_to_black,
     delete_flag,
+    reconcile_existing_flags,
+    snap_registry_to_google_maps,
 )
 from api.middleware.decorators import jwt_required, admin_required
 
@@ -60,6 +62,37 @@ def run_detection_route():
             return jsonify({"error": error}), 429
         return jsonify({"error": error}), 500
     return jsonify(result), 200
+
+
+# ── POST /api/flags/reconcile ─────────────────────────────────────────────────
+@flags_bp.route("/reconcile", methods=["POST"])
+@admin_required()
+def reconcile_flags_route():
+    """Re-evaluate all existing Red flags against the official registry.
+    Any Red flag whose name/location matches a registered business is
+    converted to the appropriate permit-status color (Green, Orange, etc.)
+    and its pin is snapped to the real coordinates."""
+    try:
+        converted = reconcile_existing_flags(force=True)
+        return jsonify({"message": f"{converted} flag(s) reconciled.", "converted": converted}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── POST /api/flags/snap-registry ─────────────────────────────────────────────
+@flags_bp.route("/snap-registry", methods=["POST"])
+@admin_required()
+def snap_registry_route():
+    """For every registered business without a linked Google Maps Place ID,
+    perform a Text Search lookup to find and snap its pin to the exact
+    Google Maps location. Returns counts of snapped, skipped, and errors.
+    Note: uses Places Text Search (not Nearby Search) — does not consume
+    the monthly detection scan quota."""
+    try:
+        result = snap_registry_to_google_maps()
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ── GET /api/flags ────────────────────────────────────────────────────────────
