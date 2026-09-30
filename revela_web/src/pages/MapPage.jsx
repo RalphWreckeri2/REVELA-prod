@@ -31,6 +31,8 @@ import {
   updateFlagColorRequest,
   cancelRunDetection,
   getDetectionQuotaRequest,
+  reconcileFlagsRequest,
+  snapRegistryRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -2305,6 +2307,52 @@ export default function MapPage() {
     }
   };
 
+  const handleReconcile = async () => {
+    const confirm = await Swal.fire({
+      title: 'Reconcile Flags?',
+      html: `<p style="font-size:14px;">This will re-check all existing <strong>Red flags</strong> against the official business registry and convert any matches to the correct color (Green, Orange, etc.).</p>`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#6366f1',
+      confirmButtonText: 'Run Reconcile'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+      Swal.fire({ title: 'Reconciling...', text: 'Comparing existing flags against the registry...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+      const res = await reconcileFlagsRequest(token);
+      await fetchFlags();
+      Swal.fire({ icon: 'success', title: 'Reconcile Complete', text: res?.message || 'Done.', confirmButtonColor: '#6366f1' });
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Reconcile Failed', text: err.message, confirmButtonColor: '#ef4444' });
+    }
+  };
+
+  const handleSnapRegistry = async () => {
+    const confirm = await Swal.fire({
+      title: 'Snap Pins to Google Maps?',
+      html: `<p style="font-size:14px;">For every registered business without a Google Maps pin, this will look up its exact location using <strong>Places Text Search</strong> and snap its green flag there.</p>
+             <p style="font-size:12px; color:#94a3b8; margin-top:8px;">This does <strong>not</strong> consume your monthly detection scan quota.</p>`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#10b981',
+      confirmButtonText: 'Snap Pins'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+      Swal.fire({ title: 'Snapping Pins...', text: 'Looking up businesses on Google Maps. This may take a few minutes...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+      const res = await snapRegistryRequest(token);
+      await fetchFlags();
+      Swal.fire({
+        icon: 'success',
+        title: 'Snap Complete',
+        html: `<div style="text-align:left;font-size:13px;"><b>✅ Snapped:</b> ${res?.snapped ?? 0}<br/><b>⏭ Not found on Maps:</b> ${res?.skipped ?? 0}<br/><b>❌ Errors:</b> ${res?.errors ?? 0}<br/><b>Total processed:</b> ${res?.total ?? 0}</div>`,
+        confirmButtonColor: '#10b981'
+      });
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
+    }
+  };
+
 
   const handleCancelDetection = async () => {
     const result = await Swal.fire({
@@ -2638,6 +2686,26 @@ export default function MapPage() {
                     {detectionQuota.remaining_this_month}/2
                   </span>
                 )}
+              </button>
+              <button
+                className="ghost-btn"
+                type="button"
+                onClick={handleReconcile}
+                disabled={runDetectionLoading}
+                title="Re-check Red flags against the registry and fix mis-colored pins"
+                style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+              >
+                🔄 Reconcile
+              </button>
+              <button
+                className="ghost-btn"
+                type="button"
+                onClick={handleSnapRegistry}
+                disabled={runDetectionLoading}
+                title="Find registered businesses on Google Maps and snap their pins to exact locations"
+                style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#10b981" }}
+              >
+                📍 Snap to Maps
               </button>
             </>
           )}
