@@ -395,23 +395,23 @@ function pointInGeoJsonGeometry(lat, lng, geometry, bufferMeters = 100) {
  * Keys are lowercased ADM4_EN values from mataasnakahoy.json.
  */
 const GEOJSON_TO_DB_BRGY = {
-  "district i (pob.)":     "Barangay I",
-  "district ii (pob.)":    "Barangay II",
-  "barangay ii-a (pob.)":  "Barangay II-A",
-  "district iii (pob.)":   "Barangay III",
-  "district iv (pob.)":    "Barangay IV",
-  "lumang lipa":           "Barangay Lumanglipa",
+  "district i (pob.)": "Barangay I",
+  "district ii (pob.)": "Barangay II",
+  "barangay ii-a (pob.)": "Barangay II-A",
+  "district iii (pob.)": "Barangay III",
+  "district iv (pob.)": "Barangay IV",
+  "lumang lipa": "Barangay Lumanglipa",
   // Straight matches (GeoJSON name == DB name after "Barangay " prefix)
-  "bayorbor":     "Barangay Bayorbor",
-  "bubuyan":      "Barangay Bubuyan",
-  "calingatan":   "Barangay Calingatan",
-  "loob":         "Barangay Loob",
+  "bayorbor": "Barangay Bayorbor",
+  "bubuyan": "Barangay Bubuyan",
+  "calingatan": "Barangay Calingatan",
+  "loob": "Barangay Loob",
   "kinalaglagan": "Barangay Kinalaglagan",
-  "manggahan":    "Barangay Manggahan",
-  "nangkaan":     "Barangay Nangkaan",
-  "san sebastian":"Barangay San Sebastian",
-  "santol":       "Barangay Santol",
-  "upa":          "Barangay Upa",
+  "manggahan": "Barangay Manggahan",
+  "nangkaan": "Barangay Nangkaan",
+  "san sebastian": "Barangay San Sebastian",
+  "santol": "Barangay Santol",
+  "upa": "Barangay Upa",
 };
 
 /**
@@ -1523,6 +1523,84 @@ function MapCanvas({
           </div>
         );
       })()}
+
+      {/* Snap-to-Maps progress overlay */}
+      {snapProgress && snapProgress.stage !== 'completed' && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", zIndex: 200 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: "linear-gradient(135deg, rgba(16, 30, 20, 0.95), rgba(5, 46, 22, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: "1px solid rgba(16, 185, 129, 0.25)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
+              <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.3)", flexShrink: 0 }}>
+                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #10b981", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Snapping Pins to Google Maps</span>
+                <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Places Text Search</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: 11, color: "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Looking up businesses</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.percentage ?? 0}%</span>
+              </div>
+              <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(16,185,129,0.15)" }}>
+                <div style={{ width: `${snapProgress?.percentage ?? 0}%`, height: "100%", background: "linear-gradient(90deg, #059669, #10b981, #34d399, #10b981)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: "progress-shimmer 2.5s linear infinite" }} />
+              </div>
+              <div style={{ fontSize: 12, color: "#d1fae5", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Searching..."}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 4 }}>
+                {[["Snapped", snapProgress?.snapped ?? 0, "#10b981"], ["Skipped", snapProgress?.skipped ?? 0, "#94a3b8"], ["Errors", snapProgress?.errors ?? 0, "#ef4444"]].map(([label, val, color]) => (
+                  <div key={label} style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
+                    <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>{label}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, color }}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#6ee7b7", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 }}>
+              {snapProgress?.total > 0 ? `${Math.max(snapProgress.snapped + snapProgress.skipped + snapProgress.errors, 0)} of ${snapProgress.total} processed` : "Counting businesses..."}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reconcile progress overlay */}
+      {reconcileProgress && reconcileProgress.stage !== 'completed' && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", zIndex: 200 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: "linear-gradient(135deg, rgba(30, 27, 75, 0.95), rgba(15, 23, 42, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: "1px solid rgba(99,102,241,0.25)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
+              <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", flexShrink: 0 }}>
+                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #6366f1", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Reconciling Flags</span>
+                <span style={{ fontSize: 10, color: "#a5b4fc", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Registry Cross-Reference</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: 11, color: "#a5b4fc", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Checking Red flags</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>{reconcileProgress?.percentage ?? 0}%</span>
+              </div>
+              <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(99,102,241,0.15)" }}>
+                <div style={{ width: `${reconcileProgress?.percentage ?? 0}%`, height: "100%", background: "linear-gradient(90deg, #4f46e5, #6366f1, #818cf8, #6366f1)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: "progress-shimmer 2.5s linear infinite" }} />
+              </div>
+              <div style={{ fontSize: 12, color: "#c7d2fe", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{reconcileProgress?.status || "Checking flags..."}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 4 }}>
+                <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Converted</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#10b981" }}>{reconcileProgress?.converted ?? 0}</div>
+                </div>
+                <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Total Flags</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#f1f5f9" }}>{reconcileProgress?.total ?? 0}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1871,6 +1949,8 @@ export default function MapPage() {
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
+  const [snapProgress, setSnapProgress] = useState(null);
+  const [reconcileProgress, setReconcileProgress] = useState(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
@@ -2075,6 +2155,30 @@ export default function MapPage() {
     };
   }, [fetchFlags, fetchDetectionQuota]);
 
+  useEffect(() => {
+    const handleSnap = (e) => {
+      const d = e.detail;
+      setSnapProgress(d);
+      if (d?.stage === "completed") {
+        fetchFlags(true);
+      }
+    };
+    window.addEventListener("revela:snap-progress", handleSnap);
+    return () => window.removeEventListener("revela:snap-progress", handleSnap);
+  }, [fetchFlags]);
+
+  useEffect(() => {
+    const handleRec = (e) => {
+      const d = e.detail;
+      setReconcileProgress(d);
+      if (d?.stage === "completed") {
+        fetchFlags(true);
+      }
+    };
+    window.addEventListener("revela:reconcile-progress", handleRec);
+    return () => window.removeEventListener("revela:reconcile-progress", handleRec);
+  }, [fetchFlags]);
+
   // Real-time flag and inspection event listeners + 20s background polling
   useEffect(() => {
     const handleSync = () => { fetchFlags(true); };
@@ -2259,8 +2363,8 @@ export default function MapPage() {
               </div>
               <div style="font-size: 12.5px; color: ${count > 0 ? "#7f1d1d" : "#065f46"};">
                 ${count > 0
-                  ? "New Red Flags have been plotted on the municipal map and queued for field verification."
-                  : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
+            ? "New Red Flags have been plotted on the municipal map and queued for field verification."
+            : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
               </div>
             </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
@@ -2318,11 +2422,17 @@ export default function MapPage() {
     });
     if (!confirm.isConfirmed) return;
     try {
-      Swal.fire({ title: 'Reconciling...', text: 'Comparing existing flags against the registry...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+      setReconcileProgress({ stage: 'running', percentage: 0, status: 'Starting reconciliation...', converted: 0, total: 0 });
       const res = await reconcileFlagsRequest(token);
-      await fetchFlags();
+      // SSE will fire completed event; on HTTP return show final result if SSE didn't
+      if (reconcileProgress?.stage !== 'completed') {
+        setReconcileProgress(p => ({ ...p, stage: 'completed', percentage: 100 }));
+        await fetchFlags();
+      }
+      setTimeout(() => setReconcileProgress(null), 3000);
       Swal.fire({ icon: 'success', title: 'Reconcile Complete', text: res?.message || 'Done.', confirmButtonColor: '#6366f1' });
     } catch (err) {
+      setReconcileProgress(null);
       Swal.fire({ icon: 'error', title: 'Reconcile Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
   };
@@ -2339,16 +2449,22 @@ export default function MapPage() {
     });
     if (!confirm.isConfirmed) return;
     try {
-      Swal.fire({ title: 'Snapping Pins...', text: 'Looking up businesses on Google Maps. This may take a few minutes...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+      setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting...', snapped: 0, skipped: 0, errors: 0, total: 0 });
       const res = await snapRegistryRequest(token);
-      await fetchFlags();
+      // SSE drives the overlay; on HTTP return clean up if SSE didn't fire completed yet
+      if (snapProgress?.stage !== 'completed') {
+        setSnapProgress(p => ({ ...p, stage: 'completed', percentage: 100 }));
+        await fetchFlags();
+      }
+      setTimeout(() => setSnapProgress(null), 3000);
       Swal.fire({
         icon: 'success',
         title: 'Snap Complete',
-        html: `<div style="text-align:left;font-size:13px;"><b>✅ Snapped:</b> ${res?.snapped ?? 0}<br/><b>⏭ Not found on Maps:</b> ${res?.skipped ?? 0}<br/><b>❌ Errors:</b> ${res?.errors ?? 0}<br/><b>Total processed:</b> ${res?.total ?? 0}</div>`,
+        html: `<div style="text-align:left;font-size:13px;">Snapped: <b>${res?.snapped ?? 0}</b><br/>Not found on Maps: <b>${res?.skipped ?? 0}</b><br/>Errors: <b>${res?.errors ?? 0}</b><br/>Total processed: <b>${res?.total ?? 0}</b></div>`,
         confirmButtonColor: '#10b981'
       });
     } catch (err) {
+      setSnapProgress(null);
       Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
   };
@@ -2695,7 +2811,7 @@ export default function MapPage() {
                 title="Re-check Red flags against the registry and fix mis-colored pins"
                 style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
               >
-                🔄 Reconcile
+                Reconcile
               </button>
               <button
                 className="ghost-btn"
@@ -2705,7 +2821,7 @@ export default function MapPage() {
                 title="Find registered businesses on Google Maps and snap their pins to exact locations"
                 style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#10b981" }}
               >
-                📍 Snap to Maps
+                Snap to Maps
               </button>
             </>
           )}

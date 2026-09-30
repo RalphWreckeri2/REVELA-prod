@@ -8,6 +8,7 @@ from geopy.distance import geodesic
 from app import mysql
 from shapely.geometry import shape, Point
 from api.utils.cancellation import is_cancelled, set_cancel
+from api.notifications import hub
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -262,12 +263,16 @@ def reconcile_existing_flags(force: bool = False):
     cursor.close()
 
     if not red_flags:
+        hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
         return 0
 
     registry = _load_registry()
     converted_count = 0
+    total = len(red_flags)
 
-    for flag in red_flags:
+    hub.publish_to_admins({"type": "reconcile_progress", "percentage": 0, "status": f"Checking {total} Red flag(s) against the registry...", "converted": 0, "total": total, "stage": "running"})
+
+    for idx, flag in enumerate(red_flags):
         name = flag.get("detectedName") or ""
         lat = flag.get("latitude")
         lng = flag.get("longitude")
@@ -291,6 +296,25 @@ def reconcile_existing_flags(force: bool = False):
             )
             converted_count += 1
 
+        if idx % 5 == 0 or idx == total - 1:
+            pct = min(99, int(((idx + 1) / total) * 100))
+            hub.publish_to_admins({
+                "type": "reconcile_progress",
+                "percentage": pct,
+                "status": f"Checking '{name}'... ({idx + 1}/{total})",
+                "converted": converted_count,
+                "total": total,
+                "stage": "running"
+            })
+
+    hub.publish_to_admins({
+        "type": "reconcile_progress",
+        "percentage": 100,
+        "status": f"Done. Converted {converted_count} of {total} flag(s).",
+        "converted": converted_count,
+        "total": total,
+        "stage": "completed"
+    })
     return converted_count
 
 
@@ -388,10 +412,15 @@ def snap_registry_to_google_maps(progress_cb=None):
     skipped = 0
     errors = 0
 
-    for idx, entry in enumerate(entries):
-        if progress_cb:
-            progress_cb(idx, total, entry.get("businessName", ""))
+    hub.publish_to_admins({
+        "type": "snap_progress",
+        "percentage": 0,
+        "status": f"Starting snap for {total} unlinked business(es)...",
+        "snapped": 0, "skipped": 0, "errors": 0, "total": total,
+        "stage": "running"
+    })
 
+    for idx, entry in enumerate(entries):
         biz_id = entry.get("businessID")
         biz_name = entry.get("businessName") or ""
         barangay_name = entry.get("barangayName") or ""
@@ -402,30 +431,46 @@ def snap_registry_to_google_maps(progress_cb=None):
 
         if not place_id or not p_lat or not p_lng:
             skipped += 1
-            continue
-
-        target_color = 'Green' if app_status == 'Active' else (
-            'Orange' if app_status == 'Expired' else (
-                'Black' if app_status == 'Revoked' else (
-                    'Purple' if app_status == 'Closed' else 'Yellow'
+        else:
+            target_color = 'Green' if app_status == 'Active' else (
+                'Orange' if app_status == 'Expired' else (
+                    'Black' if app_status == 'Revoked' else (
+                        'Purple' if app_status == 'Closed' else 'Yellow'
+                    )
                 )
             )
-        )
+            try:
+                _match_registry_to_google(
+                    place_id, biz_id, biz_name,
+                    target_color=target_color,
+                    lat=p_lat, lng=p_lng,
+                    barangay_id=barangay_id
+                )
+                snapped += 1
+            except Exception as e:
+                print(f"[Snap Registry] Error snapping '{biz_name}': {e}")
+                errors += 1
 
-        try:
-            _match_registry_to_google(
-                place_id, biz_id, biz_name,
-                target_color=target_color,
-                lat=p_lat, lng=p_lng,
-                barangay_id=barangay_id
-            )
-            snapped += 1
-        except Exception as e:
-            print(f"[Snap Registry] Error snapping '{biz_name}': {e}")
-            errors += 1
+        if idx % 3 == 0 or idx == total - 1:
+            pct = min(99, int(((idx + 1) / total) * 100))
+            hub.publish_to_admins({
+                "type": "snap_progress",
+                "percentage": pct,
+                "status": f"Looking up '{biz_name}'... ({idx + 1}/{total})",
+                "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
+                "stage": "running"
+            })
 
         # Small delay to avoid hitting rate limits on Text Search
         time.sleep(0.05)
+
+    hub.publish_to_admins({
+        "type": "snap_progress",
+        "percentage": 100,
+        "status": f"Done. Snapped {snapped}, not found on Maps: {skipped}, errors: {errors}.",
+        "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
+        "stage": "completed"
+    })
 
     return {"snapped": snapped, "skipped": skipped, "errors": errors, "total": total}
 
