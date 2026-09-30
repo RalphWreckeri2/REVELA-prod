@@ -295,6 +295,7 @@ def upload_registry(file, ext: str):
         geocoded_failed = 0
         skipped = 0
         errors = []
+        inserted_ids = []  # track newly inserted businessIDs for scoped auto-snap
 
         from api.notifications import hub
 
@@ -397,6 +398,9 @@ def upload_registry(file, ext: str):
 
             if cursor.rowcount > 0:
                 inserted += 1
+                new_id = cursor.lastrowid
+                if new_id:
+                    inserted_ids.append(new_id)
                 flag_color = _status_to_flag_color(status)
                 # Auto-seed Flag baseline into GEOSPATIAL_LOGS
                 insert_green_flag(
@@ -429,6 +433,7 @@ def upload_registry(file, ext: str):
         return {
             "total_rows":       total_rows,
             "inserted":         inserted,
+            "inserted_ids":     inserted_ids,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,
             "skipped":          skipped,
@@ -465,6 +470,7 @@ def sync_registry(file, ext: str):
         geocoded_failed = 0
         skipped = 0
         errors = []
+        inserted_ids = []  # track newly inserted businessIDs for scoped auto-snap
 
         from api.notifications import hub
 
@@ -598,6 +604,9 @@ def sync_registry(file, ext: str):
                 )
                 if cursor.rowcount > 0:
                     inserted += 1
+                    new_id = cursor.lastrowid
+                    if new_id:
+                        inserted_ids.append(new_id)
                     flag_color = _status_to_flag_color(status)
                     insert_green_flag(
                         barangay_id,
@@ -627,6 +636,7 @@ def sync_registry(file, ext: str):
         return {
             "total_rows":       total_rows,
             "inserted":         inserted,
+            "inserted_ids":     inserted_ids,
             "updated":          updated,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,

@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import os
 import time
+import threading
 import requests as http
 import json
 from geopy.distance import geodesic
@@ -257,9 +258,11 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
 
 _last_reconcile_time = 0.0  # module-level throttle
 _RECONCILE_INTERVAL_S = 300   # run at most once every 5 minutes
+_reconcile_lock = threading.Lock()
+_snap_lock = threading.Lock()
 
 
-def reconcile_existing_flags(force: bool = False):
+def reconcile_existing_flags(force: bool = False, silent: bool = False):
     """
     Reconciles existing Red flags in geospatial_logs against official_registry.
     If a Red flag was erroneously created for a registered business, converts it
@@ -267,76 +270,91 @@ def reconcile_existing_flags(force: bool = False):
     and removes any duplicate unpositioned baseline logs.
 
     Throttled to run at most once every 5 minutes unless force=True.
+    silent=True suppresses all SSE progress events (use when called from run_detection
+    to avoid the reconcile overlay flashing mid-scan on the frontend).
     """
     global _last_reconcile_time
     now = time.time()
     if not force and (now - _last_reconcile_time) < _RECONCILE_INTERVAL_S:
         return 0   # too soon; skip
-    _last_reconcile_time = now
 
-    cursor = mysql.connection.cursor()
-    cursor.execute("""
-        SELECT logID, placeID, detectedName, latitude, longitude, barangayID
-        FROM geospatial_logs
-        WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL
-    """)
-    red_flags = cursor.fetchall()
-    cursor.close()
-
-    if not red_flags:
-        hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
+    # Prevent concurrent reconcile runs (mirrors the _snap_lock pattern)
+    if not _reconcile_lock.acquire(blocking=False):
+        print("[Reconcile] Already running. Skipping duplicate concurrent call.")
         return 0
 
-    registry = _load_registry()
-    converted_count = 0
-    total = len(red_flags)
+    try:
+        _last_reconcile_time = now
 
-    hub.publish_to_admins({"type": "reconcile_progress", "percentage": 0, "status": f"Checking {total} Red flag(s) against the registry...", "converted": 0, "total": total, "stage": "running"})
+        cursor = mysql.connection.cursor()
+        cursor.execute("""
+            SELECT logID, placeID, detectedName, latitude, longitude, barangayID
+            FROM geospatial_logs
+            WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL
+        """)
+        red_flags = cursor.fetchall()
+        cursor.close()
 
-    for idx, flag in enumerate(red_flags):
-        name = flag.get("detectedName") or ""
-        lat = flag.get("latitude")
-        lng = flag.get("longitude")
-        b_id = flag.get("barangayID")
-        place_id = flag.get("placeID")
+        if not red_flags:
+            if not silent:
+                hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
+            return 0
 
-        matched, dist, score = _match_poi_to_registry(name, lat, lng, registry, poi_barangay_id=b_id)
-        if matched:
-            app_status = (matched.get('applicationStatus') or 'Active').strip()
-            target_color = 'Green' if app_status == 'Active' else (
-                'Orange' if app_status == 'Expired' else (
-                    'Black' if app_status == 'Revoked' else (
-                        'Purple' if app_status == 'Closed' else 'Yellow'
+        registry = _load_registry()
+        converted_count = 0
+        total = len(red_flags)
+
+        if not silent:
+            hub.publish_to_admins({"type": "reconcile_progress", "percentage": 0, "status": f"Checking {total} Red flag(s) against the registry...", "converted": 0, "total": total, "stage": "running"})
+
+        for idx, flag in enumerate(red_flags):
+            name = flag.get("detectedName") or ""
+            lat = flag.get("latitude")
+            lng = flag.get("longitude")
+            b_id = flag.get("barangayID")
+            place_id = flag.get("placeID")
+
+            matched, dist, score = _match_poi_to_registry(name, lat, lng, registry, poi_barangay_id=b_id)
+            if matched:
+                app_status = (matched.get('applicationStatus') or 'Active').strip()
+                target_color = 'Green' if app_status == 'Active' else (
+                    'Orange' if app_status == 'Expired' else (
+                        'Black' if app_status == 'Revoked' else (
+                            'Purple' if app_status == 'Closed' else 'Yellow'
+                        )
                     )
                 )
-            )
-            target_b_id = matched.get('barangayID') or b_id
-            _match_registry_to_google(
-                place_id, matched['businessID'], matched['businessName'],
-                target_color=target_color, lat=lat, lng=lng, barangay_id=target_b_id
-            )
-            converted_count += 1
+                target_b_id = matched.get('barangayID') or b_id
+                _match_registry_to_google(
+                    place_id, matched['businessID'], matched['businessName'],
+                    target_color=target_color, lat=lat, lng=lng, barangay_id=target_b_id
+                )
+                converted_count += 1
 
-        if idx % 5 == 0 or idx == total - 1:
-            pct = min(99, int(((idx + 1) / total) * 100))
+            if not silent and (idx % 5 == 0 or idx == total - 1):
+                pct = min(99, int(((idx + 1) / max(total, 1)) * 100))
+                hub.publish_to_admins({
+                    "type": "reconcile_progress",
+                    "percentage": pct,
+                    "status": f"Checking '{name}'... ({idx + 1}/{total})",
+                    "converted": converted_count,
+                    "total": total,
+                    "stage": "running"
+                })
+
+        if not silent:
             hub.publish_to_admins({
                 "type": "reconcile_progress",
-                "percentage": pct,
-                "status": f"Checking '{name}'... ({idx + 1}/{total})",
+                "percentage": 100,
+                "status": f"Done. Converted {converted_count} of {total} flag(s).",
                 "converted": converted_count,
                 "total": total,
-                "stage": "running"
+                "stage": "completed"
             })
+        return converted_count
 
-    hub.publish_to_admins({
-        "type": "reconcile_progress",
-        "percentage": 100,
-        "status": f"Done. Converted {converted_count} of {total} flag(s).",
-        "converted": converted_count,
-        "total": total,
-        "stage": "completed"
-    })
-    return converted_count
+    finally:
+        _reconcile_lock.release()
 
 
 def _text_search_google_place(business_name: str, barangay_name: str):
@@ -389,7 +407,19 @@ def _text_search_google_place(business_name: str, barangay_name: str):
                 timeout=8,
             )
             data = resp.json()
-            if data.get("status") not in ("OK", "ZERO_RESULTS"):
+            api_status = data.get("status")
+            # Back off and retry once on rate-limit responses
+            if api_status == "OVER_QUERY_LIMIT" or resp.status_code == 429:
+                print(f"[Snap Registry] Rate limited on query '{query}'. Backing off 2s...")
+                time.sleep(2)
+                resp = http.get(
+                    "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                    params={"query": query, "key": api_key},
+                    timeout=8,
+                )
+                data = resp.json()
+                api_status = data.get("status")
+            if api_status not in ("OK", "ZERO_RESULTS"):
                 continue
 
             results = data.get("results", [])
@@ -423,48 +453,57 @@ def _text_search_google_place(business_name: str, barangay_name: str):
     return None, None, None
 
 
-import threading
-_snap_lock = threading.Lock()
-
-
-def snap_registry_to_google_maps(progress_cb=None):
+def snap_registry_to_google_maps(limit_to_ids=None):
     """
     For every registered business that still lacks a real Google Places pin
-    (i.e., no placeID in geospatial_logs or coordinates are a barangay centroid),
-    performs a Google Places Text Search to find their exact map location
-    and snaps the green pin there.
+    (i.e., no placeID in geospatial_logs), performs a Google Places Text Search
+    to find their exact map location and snaps the green pin there.
+
+    limit_to_ids: optional list/set of businessIDs to restrict the snap to only
+    those businesses (used by auto-snap-on-import to avoid re-processing the
+    entire registry on every upload).
 
     This is SEPARATE from run_detection — it uses Text Search (individual lookups)
     rather than Nearby Search, so it does not consume the monthly scan quota.
 
     Returns dict: {snapped, skipped, errors, total}
     """
+    if limit_to_ids is not None and not limit_to_ids:
+        return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0}
+
     if not _snap_lock.acquire(blocking=False):
         print("[Snap Registry] Snap already in progress. Skipping duplicate concurrent run.")
         return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0, "status": "already_running"}
 
     try:
-        # Load registry entries that don't have a linked placeID yet
+        # Load registry entries that don't yet have a confirmed Google Maps Place ID.
+        # Uses NOT EXISTS so the WHERE clause is clear and index-friendly:
+        # include any registry business that has no geospatial_log row with a placeID.
         cursor = mysql.connection.cursor()
         cursor.execute("""
             SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
                    r.businessAddress,
-                   b.barangayName,
-                   g.logID AS logID,
-                   g.placeID AS placeID,
-                   g.latitude AS g_lat,
-                   g.longitude AS g_lng
+                   b.barangayName
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
-            LEFT JOIN geospatial_logs g
-                ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
-            WHERE g.placeID IS NULL
-               OR g.logID IS NULL
+            WHERE NOT EXISTS (
+                SELECT 1 FROM geospatial_logs g
+                WHERE g.detectedName = r.businessName
+                  AND g.barangayID   = r.barangayID
+                  AND g.placeID IS NOT NULL
+            )
         """)
         rows = cursor.fetchall()
         cursor.close()
 
-        # Deduplicate — one entry per businessID
+        # If called with a scoped ID list (e.g. from auto-snap-on-import), filter down
+        if limit_to_ids is not None:
+            id_set = set(limit_to_ids)
+            if not id_set:
+                return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0}
+            rows = [r for r in rows if r.get("businessID") in id_set]
+
+        # Deduplicate — one entry per businessID (defensive guard)
         seen = set()
         entries = []
         for row in rows:
@@ -518,7 +557,7 @@ def snap_registry_to_google_maps(progress_cb=None):
                     errors += 1
 
             if idx % 3 == 0 or idx == total - 1:
-                pct = min(99, int(((idx + 1) / total) * 100))
+                pct = min(99, int(((idx + 1) / max(total, 1)) * 100))
                 hub.publish_to_admins({
                     "type": "snap_progress",
                     "percentage": pct,
@@ -527,8 +566,10 @@ def snap_registry_to_google_maps(progress_cb=None):
                     "stage": "running"
                 })
 
-            # Small delay to avoid hitting rate limits on Text Search
-            time.sleep(0.05)
+            # Throttle: 0.1s between Text Search calls (~10 req/s stays within
+            # the standard Google Places API quota). Backs off automatically
+            # for 2s on an OVER_QUERY_LIMIT / 429 response via _text_search_google_place.
+            time.sleep(0.1)
 
         hub.publish_to_admins({
             "type": "snap_progress",
@@ -925,9 +966,10 @@ def run_detection(user_id=None):
         })
         registry = _load_registry()
 
-        # Step 3a: Reconcile any existing Red flags already in the database against the registry
+        # Step 3a: Reconcile any existing Red flags already in the database against the registry.
+        # silent=True prevents the reconcile_progress SSE overlay from flashing mid-scan.
         try:
-            reconcile_existing_flags()
+            reconcile_existing_flags(silent=True)
         except Exception as re_err:
             print(f"[Run Detection] Reconcile error: {re_err}")
 

@@ -1952,7 +1952,9 @@ export default function MapPage() {
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
   const [snapProgress, setSnapProgress] = useState(null);
+  const snapProgressRef = useRef(null);
   const [reconcileProgress, setReconcileProgress] = useState(null);
+  const reconcileProgressRef = useRef(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
@@ -2160,6 +2162,7 @@ export default function MapPage() {
   useEffect(() => {
     const handleSnap = (e) => {
       const d = e.detail;
+      snapProgressRef.current = d;
       setSnapProgress(d);
       if (d?.stage === "completed") {
         fetchFlags(true);
@@ -2172,6 +2175,7 @@ export default function MapPage() {
   useEffect(() => {
     const handleRec = (e) => {
       const d = e.detail;
+      reconcileProgressRef.current = d;
       setReconcileProgress(d);
       if (d?.stage === "completed") {
         fetchFlags(true);
@@ -2423,18 +2427,21 @@ export default function MapPage() {
       confirmButtonText: 'Run Reconcile'
     });
     if (!confirm.isConfirmed) return;
+    reconcileProgressRef.current = { stage: 'running' };
     try {
       setReconcileProgress({ stage: 'running', percentage: 0, status: 'Starting reconciliation...', converted: 0, total: 0 });
       const res = await reconcileFlagsRequest(token);
-      // SSE will fire completed event; on HTTP return show final result if SSE didn't
-      if (reconcileProgress?.stage !== 'completed') {
+      // SSE drives progress; use the ref (not stale closure) to check live stage
+      if (reconcileProgressRef.current?.stage !== 'completed') {
+        reconcileProgressRef.current = { stage: 'completed' };
         setReconcileProgress(p => ({ ...p, stage: 'completed', percentage: 100 }));
         await fetchFlags();
       }
-      setTimeout(() => setReconcileProgress(null), 3000);
+      setTimeout(() => { setReconcileProgress(null); reconcileProgressRef.current = null; }, 3000);
       Swal.fire({ icon: 'success', title: 'Reconcile Complete', text: res?.message || 'Done.', confirmButtonColor: '#6366f1' });
     } catch (err) {
       setReconcileProgress(null);
+      reconcileProgressRef.current = null;
       Swal.fire({ icon: 'error', title: 'Reconcile Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
   };
@@ -2450,15 +2457,17 @@ export default function MapPage() {
       confirmButtonText: 'Snap Pins'
     });
     if (!confirm.isConfirmed) return;
+    snapProgressRef.current = { stage: 'running' };
     try {
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting...', snapped: 0, skipped: 0, errors: 0, total: 0 });
       const res = await snapRegistryRequest(token);
-      // SSE drives the overlay; on HTTP return clean up if SSE didn't fire completed yet
-      if (snapProgress?.stage !== 'completed') {
+      // SSE drives progress; use the ref (not stale closure) to check live stage
+      if (snapProgressRef.current?.stage !== 'completed') {
+        snapProgressRef.current = { stage: 'completed' };
         setSnapProgress(p => ({ ...p, stage: 'completed', percentage: 100 }));
         await fetchFlags();
       }
-      setTimeout(() => setSnapProgress(null), 3000);
+      setTimeout(() => { setSnapProgress(null); snapProgressRef.current = null; }, 3000);
       Swal.fire({
         icon: 'success',
         title: 'Snap Complete',
@@ -2467,6 +2476,7 @@ export default function MapPage() {
       });
     } catch (err) {
       setSnapProgress(null);
+      snapProgressRef.current = null;
       Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
   };
@@ -2809,21 +2819,21 @@ export default function MapPage() {
                 className="ghost-btn"
                 type="button"
                 onClick={handleReconcile}
-                disabled={runDetectionLoading}
+                disabled={runDetectionLoading || reconcileProgress?.stage === 'running'}
                 title="Re-check Red flags against the registry and fix mis-colored pins"
-                style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: reconcileProgress?.stage === 'running' ? 0.55 : 1 }}
               >
-                Reconcile
+                {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
               </button>
               <button
                 className="ghost-btn"
                 type="button"
                 onClick={handleSnapRegistry}
-                disabled={runDetectionLoading}
+                disabled={runDetectionLoading || snapProgress?.stage === 'running'}
                 title="Find registered businesses on Google Maps and snap their pins to exact locations"
-                style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: "#10b981" }}
+                style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: snapProgress?.stage === 'running' ? "#6ee7b7" : "#10b981", opacity: snapProgress?.stage === 'running' ? 0.55 : 1 }}
               >
-                Snap to Maps
+                {snapProgress?.stage === 'running' ? 'Snapping...' : 'Snap to Maps'}
               </button>
             </>
           )}

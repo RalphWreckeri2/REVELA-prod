@@ -51,20 +51,24 @@ def upload():
             return jsonify({"message": error}), 200
         return jsonify({"error": error}), 500
 
-    # Automatically trigger Snap to Maps in the background so pins snap immediately
-    try:
-        app_instance = current_app._get_current_object()
-        def _bg_snap(app):
-            with app.app_context():
-                try:
-                    from api.flags.service import snap_registry_to_google_maps
-                    snap_registry_to_google_maps()
-                except Exception as exc:
-                    print(f"[Auto-Snap on Upload] Background error: {exc}")
+    # Automatically trigger Snap to Maps in the background for newly imported businesses
+    # so their pins snap immediately without re-processing the entire registry.
+    new_ids = summary.get("inserted_ids") if summary else None
+    if new_ids:
+        try:
+            app_instance = current_app._get_current_object()
 
-        threading.Thread(target=_bg_snap, args=(app_instance,), daemon=True).start()
-    except Exception as te:
-        print(f"[Auto-Snap on Upload] Could not launch background thread: {te}")
+            def _bg_snap(app, ids):
+                with app.app_context():
+                    try:
+                        from api.flags.service import snap_registry_to_google_maps
+                        snap_registry_to_google_maps(limit_to_ids=ids)
+                    except Exception as exc:
+                        print(f"[Auto-Snap on Upload] Background error: {exc}")
+
+            threading.Thread(target=_bg_snap, args=(app_instance, new_ids), daemon=True).start()
+        except Exception as te:
+            print(f"[Auto-Snap on Upload] Could not launch background thread: {te}")
 
     return jsonify(summary), 201
 
@@ -97,20 +101,24 @@ def sync():
             return jsonify({"message": error}), 200
         return jsonify({"error": error}), 500
 
-    # Automatically trigger Snap to Maps in the background so updated/new pins snap immediately
-    try:
-        app_instance = current_app._get_current_object()
-        def _bg_snap(app):
-            with app.app_context():
-                try:
-                    from api.flags.service import snap_registry_to_google_maps
-                    snap_registry_to_google_maps()
-                except Exception as exc:
-                    print(f"[Auto-Snap on Sync] Background error: {exc}")
+    # Automatically trigger Snap to Maps in the background for newly imported/updated businesses
+    # so their pins snap immediately without re-processing the entire registry.
+    new_ids = summary.get("inserted_ids") if summary else None
+    if new_ids:
+        try:
+            app_instance = current_app._get_current_object()
 
-        threading.Thread(target=_bg_snap, args=(app_instance,), daemon=True).start()
-    except Exception as te:
-        print(f"[Auto-Snap on Sync] Could not launch background thread: {te}")
+            def _bg_snap(app, ids):
+                with app.app_context():
+                    try:
+                        from api.flags.service import snap_registry_to_google_maps
+                        snap_registry_to_google_maps(limit_to_ids=ids)
+                    except Exception as exc:
+                        print(f"[Auto-Snap on Sync] Background error: {exc}")
+
+            threading.Thread(target=_bg_snap, args=(app_instance, new_ids), daemon=True).start()
+        except Exception as te:
+            print(f"[Auto-Snap on Sync] Could not launch background thread: {te}")
 
     return jsonify(summary), 200
 
