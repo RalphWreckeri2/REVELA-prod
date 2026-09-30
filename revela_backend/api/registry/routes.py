@@ -1,4 +1,5 @@
-from flask import Blueprint, request, jsonify
+import threading
+from flask import Blueprint, request, jsonify, current_app
 from app import mysql
 from api.registry.service import (
     upload_registry,
@@ -50,6 +51,21 @@ def upload():
             return jsonify({"message": error}), 200
         return jsonify({"error": error}), 500
 
+    # Automatically trigger Snap to Maps in the background so pins snap immediately
+    try:
+        app_instance = current_app._get_current_object()
+        def _bg_snap(app):
+            with app.app_context():
+                try:
+                    from api.flags.service import snap_registry_to_google_maps
+                    snap_registry_to_google_maps()
+                except Exception as exc:
+                    print(f"[Auto-Snap on Upload] Background error: {exc}")
+
+        threading.Thread(target=_bg_snap, args=(app_instance,), daemon=True).start()
+    except Exception as te:
+        print(f"[Auto-Snap on Upload] Could not launch background thread: {te}")
+
     return jsonify(summary), 201
 
 
@@ -80,6 +96,21 @@ def sync():
         if "cancelled by user" in error:
             return jsonify({"message": error}), 200
         return jsonify({"error": error}), 500
+
+    # Automatically trigger Snap to Maps in the background so updated/new pins snap immediately
+    try:
+        app_instance = current_app._get_current_object()
+        def _bg_snap(app):
+            with app.app_context():
+                try:
+                    from api.flags.service import snap_registry_to_google_maps
+                    snap_registry_to_google_maps()
+                except Exception as exc:
+                    print(f"[Auto-Snap on Sync] Background error: {exc}")
+
+        threading.Thread(target=_bg_snap, args=(app_instance,), daemon=True).start()
+    except Exception as te:
+        print(f"[Auto-Snap on Sync] Could not launch background thread: {te}")
 
     return jsonify(summary), 200
 

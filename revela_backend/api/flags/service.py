@@ -423,6 +423,10 @@ def _text_search_google_place(business_name: str, barangay_name: str):
     return None, None, None
 
 
+import threading
+_snap_lock = threading.Lock()
+
+
 def snap_registry_to_google_maps(progress_cb=None):
     """
     For every registered business that still lacks a real Google Places pin
@@ -435,101 +439,114 @@ def snap_registry_to_google_maps(progress_cb=None):
 
     Returns dict: {snapped, skipped, errors, total}
     """
-    # Load registry entries that don't have a linked placeID yet
-    cursor = mysql.connection.cursor()
-    cursor.execute("""
-        SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
-               r.businessAddress,
-               b.barangayName,
-               g.logID AS logID,
-               g.placeID AS placeID,
-               g.latitude AS g_lat,
-               g.longitude AS g_lng
-        FROM official_registry r
-        LEFT JOIN barangays b ON r.barangayID = b.barangayID
-        LEFT JOIN geospatial_logs g
-            ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
-        WHERE g.placeID IS NULL
-           OR g.logID IS NULL
-    """)
-    rows = cursor.fetchall()
-    cursor.close()
+    if not _snap_lock.acquire(blocking=False):
+        print("[Snap Registry] Snap already in progress. Skipping duplicate concurrent run.")
+        return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0, "status": "already_running"}
 
-    # Deduplicate — one entry per businessID
-    seen = set()
-    entries = []
-    for row in rows:
-        bid = row.get("businessID")
-        if bid not in seen:
-            seen.add(bid)
-            entries.append(row)
+    try:
+        # Load registry entries that don't have a linked placeID yet
+        cursor = mysql.connection.cursor()
+        cursor.execute("""
+            SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
+                   r.businessAddress,
+                   b.barangayName,
+                   g.logID AS logID,
+                   g.placeID AS placeID,
+                   g.latitude AS g_lat,
+                   g.longitude AS g_lng
+            FROM official_registry r
+            LEFT JOIN barangays b ON r.barangayID = b.barangayID
+            LEFT JOIN geospatial_logs g
+                ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
+            WHERE g.placeID IS NULL
+               OR g.logID IS NULL
+        """)
+        rows = cursor.fetchall()
+        cursor.close()
 
-    total = len(entries)
-    snapped = 0
-    skipped = 0
-    errors = 0
+        # Deduplicate — one entry per businessID
+        seen = set()
+        entries = []
+        for row in rows:
+            bid = row.get("businessID")
+            if bid not in seen:
+                seen.add(bid)
+                entries.append(row)
 
-    hub.publish_to_admins({
-        "type": "snap_progress",
-        "percentage": 0,
-        "status": f"Starting snap for {total} unlinked business(es)...",
-        "snapped": 0, "skipped": 0, "errors": 0, "total": total,
-        "stage": "running"
-    })
+        total = len(entries)
+        snapped = 0
+        skipped = 0
+        errors = 0
 
-    for idx, entry in enumerate(entries):
-        biz_id = entry.get("businessID")
-        biz_name = entry.get("businessName") or ""
-        barangay_name = entry.get("barangayName") or ""
-        barangay_id = entry.get("barangayID")
-        app_status = (entry.get("applicationStatus") or "Active").strip()
+        hub.publish_to_admins({
+            "type": "snap_progress",
+            "percentage": 0,
+            "status": f"Starting snap for {total} unlinked business(es)...",
+            "snapped": 0, "skipped": 0, "errors": 0, "total": total,
+            "stage": "running"
+        })
 
-        place_id, p_lat, p_lng = _text_search_google_place(biz_name, barangay_name)
+        for idx, entry in enumerate(entries):
+            biz_id = entry.get("businessID")
+            biz_name = entry.get("businessName") or ""
+            barangay_name = entry.get("barangayName") or ""
+            barangay_id = entry.get("barangayID")
+            app_status = (entry.get("applicationStatus") or "Active").strip()
 
-        if not place_id or not p_lat or not p_lng:
-            skipped += 1
-        else:
-            target_color = 'Green' if app_status == 'Active' else (
-                'Orange' if app_status == 'Expired' else (
-                    'Black' if app_status == 'Revoked' else (
-                        'Purple' if app_status == 'Closed' else 'Yellow'
+            place_id, p_lat, p_lng = _text_search_google_place(biz_name, barangay_name)
+
+            if not place_id or not p_lat or not p_lng:
+                skipped += 1
+            else:
+                target_color = 'Green' if app_status == 'Active' else (
+                    'Orange' if app_status == 'Expired' else (
+                        'Black' if app_status == 'Revoked' else (
+                            'Purple' if app_status == 'Closed' else 'Yellow'
+                        )
                     )
                 )
-            )
-            try:
-                _match_registry_to_google(
-                    place_id, biz_id, biz_name,
-                    target_color=target_color,
-                    lat=p_lat, lng=p_lng,
-                    barangay_id=barangay_id
-                )
-                snapped += 1
-            except Exception as e:
-                print(f"[Snap Registry] Error snapping '{biz_name}': {e}")
-                errors += 1
+                try:
+                    _match_registry_to_google(
+                        place_id, biz_id, biz_name,
+                        target_color=target_color,
+                        lat=p_lat, lng=p_lng,
+                        barangay_id=barangay_id
+                    )
+                    snapped += 1
+                except Exception as e:
+                    print(f"[Snap Registry] Error snapping '{biz_name}': {e}")
+                    errors += 1
 
-        if idx % 3 == 0 or idx == total - 1:
-            pct = min(99, int(((idx + 1) / total) * 100))
-            hub.publish_to_admins({
-                "type": "snap_progress",
-                "percentage": pct,
-                "status": f"Looking up '{biz_name}'... ({idx + 1}/{total})",
-                "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
-                "stage": "running"
-            })
+            if idx % 3 == 0 or idx == total - 1:
+                pct = min(99, int(((idx + 1) / total) * 100))
+                hub.publish_to_admins({
+                    "type": "snap_progress",
+                    "percentage": pct,
+                    "status": f"Looking up '{biz_name}'... ({idx + 1}/{total})",
+                    "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
+                    "stage": "running"
+                })
 
-        # Small delay to avoid hitting rate limits on Text Search
-        time.sleep(0.05)
+            # Small delay to avoid hitting rate limits on Text Search
+            time.sleep(0.05)
 
-    hub.publish_to_admins({
-        "type": "snap_progress",
-        "percentage": 100,
-        "status": f"Done. Snapped {snapped}, not found on Maps: {skipped}, errors: {errors}.",
-        "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
-        "stage": "completed"
-    })
+        hub.publish_to_admins({
+            "type": "snap_progress",
+            "percentage": 100,
+            "status": f"Done. Snapped {snapped}, not found on Maps: {skipped}, errors: {errors}.",
+            "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
+            "stage": "completed"
+        })
 
-    return {"snapped": snapped, "skipped": skipped, "errors": errors, "total": total}
+        try:
+            hub.publish_to_admins({"type": "registry_updated"})
+        except Exception:
+            pass
+
+        return {"snapped": snapped, "skipped": skipped, "errors": errors, "total": total}
+
+    finally:
+        _snap_lock.release()
 
 
 
