@@ -258,6 +258,8 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
 
 _last_reconcile_time = 0.0  # module-level throttle
 _RECONCILE_INTERVAL_S = 300   # run at most once every 5 minutes
+_last_snap_time = 0.0       # module-level throttle for manual full-registry snaps
+_SNAP_INTERVAL_S = 300      # run manual full-registry snap at most once every 5 minutes
 _reconcile_lock = threading.Lock()
 _snap_lock = threading.Lock()
 
@@ -453,7 +455,7 @@ def _text_search_google_place(business_name: str, barangay_name: str):
     return None, None, None
 
 
-def snap_registry_to_google_maps(limit_to_ids=None):
+def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
     """
     For every registered business that still lacks a real Google Places pin
     (i.e., no placeID in geospatial_logs), performs a Google Places Text Search
@@ -461,21 +463,41 @@ def snap_registry_to_google_maps(limit_to_ids=None):
 
     limit_to_ids: optional list/set of businessIDs to restrict the snap to only
     those businesses (used by auto-snap-on-import to avoid re-processing the
-    entire registry on every upload).
+    entire registry on every upload). Scoped runs bypass the 5-minute cooldown.
+
+    force: if True, bypasses the 5-minute cooldown throttle on manual full scans.
 
     This is SEPARATE from run_detection — it uses Text Search (individual lookups)
     rather than Nearby Search, so it does not consume the monthly scan quota.
 
-    Returns dict: {snapped, skipped, errors, total}
+    Returns dict: {snapped, skipped, errors, total, status, message}
     """
+    global _last_snap_time
+    now = time.time()
+
     if limit_to_ids is not None and not limit_to_ids:
         return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0}
+
+    # Manual full scans are throttled to run at most once every 5 minutes (unless force=True)
+    if limit_to_ids is None and not force and (now - _last_snap_time) < _SNAP_INTERVAL_S:
+        remaining_s = int(_SNAP_INTERVAL_S - (now - _last_snap_time))
+        remaining_m = max(1, (remaining_s + 59) // 60)
+        return {
+            "snapped": 0,
+            "skipped": 0,
+            "errors": 0,
+            "total": 0,
+            "status": "throttled",
+            "message": f"Snap to Maps was run recently. Please wait {remaining_m} minute{'s' if remaining_m > 1 else ''} ({remaining_s}s) before running a full scan again."
+        }
 
     if not _snap_lock.acquire(blocking=False):
         print("[Snap Registry] Snap already in progress. Skipping duplicate concurrent run.")
         return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0, "status": "already_running"}
 
     try:
+        if limit_to_ids is None:
+            _last_snap_time = now
         # Load registry entries that don't yet have a confirmed Google Maps Place ID.
         # Uses NOT EXISTS so the WHERE clause is clear and index-friendly:
         # include any registry business that has no geospatial_log row with a placeID.
@@ -927,9 +949,10 @@ def run_detection(user_id=None):
     set_cancel("run_detection", False)
 
     # Check monthly quota
-    monthly_scans = get_monthly_detection_count()
-    if monthly_scans >= 999:
-        return None, "Monthly detection limit reached (999/999 scans used for this month). Detection scans can only be run 999 times a month."
+    quota_info = get_detection_quota_info()
+    if quota_info.get("is_limit_reached"):
+        limit = quota_info.get("monthly_limit", 2)
+        return None, f"Monthly detection limit reached ({limit}/{limit} scans used for this month). Detection scans can only be run {limit} times a month."
 
     run_id = create_detection_run(user_id)
     try:

@@ -90,7 +90,10 @@ def snap_registry_route():
     Note: uses Places Text Search (not Nearby Search) — does not consume
     the monthly detection scan quota."""
     try:
-        result = snap_registry_to_google_maps()
+        force = request.args.get("force", "false").lower() in ("true", "1")
+        if not force and request.is_json and request.json:
+            force = bool(request.json.get("force"))
+        result = snap_registry_to_google_maps(force=force)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

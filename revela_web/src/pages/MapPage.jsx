@@ -2461,6 +2461,29 @@ export default function MapPage() {
     try {
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting...', snapped: 0, skipped: 0, errors: 0, total: 0 });
       const res = await snapRegistryRequest(token);
+      if (res?.status === 'throttled') {
+        setSnapProgress(null);
+        snapProgressRef.current = null;
+        Swal.fire({
+          icon: 'info',
+          title: 'Snap on Cooldown',
+          text: res?.message || 'Snap to Maps was run recently. Please wait a few minutes before running a full scan again.',
+          confirmButtonColor: '#6366f1'
+        });
+        return;
+      }
+      if (res?.status === 'already_running') {
+        setSnapProgress(null);
+        snapProgressRef.current = null;
+        Swal.fire({
+          icon: 'warning',
+          title: 'Already Running',
+          text: 'A Snap to Maps operation is already in progress.',
+          confirmButtonColor: '#f59e0b'
+        });
+        return;
+      }
+
       // SSE drives progress; use the ref (not stale closure) to check live stage
       if (snapProgressRef.current?.stage !== 'completed') {
         snapProgressRef.current = { stage: 'completed' };
