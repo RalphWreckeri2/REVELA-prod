@@ -741,6 +741,8 @@ function MapCanvas({
   isPickingLocation,
   runDetectionLoading,
   detectionProgress,
+  snapProgress,
+  reconcileProgress,
   elapsedTime,
   satellite,
   clusters,
@@ -2914,6 +2916,8 @@ export default function MapPage() {
               isPickingLocation={isPickingYellowLocation}
               runDetectionLoading={runDetectionLoading}
               detectionProgress={detectionProgress}
+              snapProgress={snapProgress}
+              reconcileProgress={reconcileProgress}
               elapsedTime={elapsedTime}
               satellite={satellite}
               clusters={clusters}
