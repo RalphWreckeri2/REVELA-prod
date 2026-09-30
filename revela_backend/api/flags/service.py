@@ -60,11 +60,18 @@ def _normalize_business_name(name: str) -> str:
     s = name.lower()
     noise = [
         r'\binc\.?\b', r'\bcorp\.?\b', r'\bcorporation\b', r'\bco\.?\b', r'\bltd\.?\b',
-        r'\bsari[- ]sari\b', r'\bstore\b', r'\bgrocery\b', r'\bshop\b', r'\benterprises?\b',
-        r'\btradings?\b', r'\bphilippines?\b', r'\bph\b', r'\bbranch\b', r'\boutlet\b'
+        r'\bsari[- ]sari\b', r'\bstore\b', r'\btindahan\b', r'\bgrocery\b', r'\bminimart\b',
+        r'\bmart\b', r'\bsupermarket\b', r'\bshop\b', r'\benterprises?\b', r'\btradings?\b',
+        r'\bcommercial\b', r'\bphilippines?\b', r'\bph\b', r'\bbranch\b', r'\boutlet\b',
+        r'\brefilling\s+station\b', r'\bwater\s+refilling\b', r'\bwater\s+station\b',
+        r'\bdrinking\s+water\b', r'\bbakery\b', r'\bbakeshop\b', r'\bpanaderia\b',
+        r'\beatery\b', r'\bcarinderia\b', r'\bkarinderya\b', r'\brestaurant\b', r'\bgrill\b',
+        r'\bcanteen\b', r'\bfood\s+house\b', r'\bpharmacy\b', r'\bdrugstore\b',
+        r'\bsalon\b', r'\bbeauty\s+lounge\b', r'\bspa\b', r'\bbarbershop\b',
+        r'\bhardware\b', r'\bauto\s+supply\b', r'\bmotor\s+parts\b', r'\bvulcanizing\b'
     ]
     for n in noise:
-        s = re.sub(n, '', s)
+        s = re.sub(n, ' ', s)
     s = re.sub(r'[^a-z0-9\s]', ' ', s)
     return re.sub(r'\s+', ' ', s).strip()
 
@@ -74,23 +81,39 @@ def _name_similarity(name1: str, name2: str) -> float:
     n2 = _normalize_business_name(name2)
     if not n1 or not n2:
         return 0.0
-    if n1 == n2 or n1 in n2 or n2 in n1:
+    if n1 == n2:
         return 1.0
-    
-    words1 = set(n1.split())
-    words2 = set(n2.split())
+    if n1 in n2 or n2 in n1:
+        return 0.95
+
+    words1 = [w for w in n1.split() if len(w) > 1]
+    words2 = [w for w in n2.split() if len(w) > 1]
     if not words1 or not words2:
         return 0.0
-    overlap = len(words1.intersection(words2))
-    return overlap / max(len(words1), len(words2))
+
+    set1 = set(words1)
+    set2 = set(words2)
+    overlap = len(set1.intersection(set2))
+    if overlap == 0:
+        return 0.0
+
+    jaccard = overlap / len(set1.union(set2))
+    containment = overlap / min(len(set1), len(set2))
+
+    if containment >= 0.75 and overlap >= 2:
+        return max(jaccard, 0.85)
+    elif containment == 1.0:
+        return max(jaccard, 0.80)
+
+    return max(jaccard, containment * 0.5)
 
 
 def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id=None):
     """
     Finds matching registry entry for a POI using smart combination of:
-    1. For registry entries with GPS: geodesic distance (up to 100m) + name similarity.
-    2. For registry entries with GPS: proximity match (within 25m) even if name differs.
-    3. For registry entries WITHOUT GPS: high name similarity (>= 0.65) + matching barangay.
+    1. High name similarity (>= 0.65) regardless of distance (breaks free from generic centroids).
+    2. Proximity match (within 25m) even if name differs.
+    3. Medium name similarity with close distance or same barangay.
     Returns (matched_entry, distance_meters, similarity_score)
     """
     best_match = None
@@ -99,41 +122,48 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
 
     for entry in registry:
         sim = _name_similarity(poi_name, entry.get("businessName", ""))
+        if sim < 0.35:
+            continue
+
         reg_lat = entry.get("latitude")
         reg_lng = entry.get("longitude")
+        reg_b_id = entry.get("barangayID")
+        same_barangay = (reg_b_id is None) or (poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
 
-        # Case A: Registry entry has known GPS coordinates
+        # Case A: Registry entry has coordinates
         if reg_lat and reg_lng:
             dist = geodesic((poi_lat, poi_lng), (float(reg_lat), float(reg_lng))).meters
 
-            # High confidence name match within 100m
-            if sim >= 0.6 and dist <= 100:
-                if sim > best_score or (sim == best_score and dist < best_dist):
-                    best_score = sim
-                    best_dist = dist
-                    best_match = entry
-            # Break free from generic centroids: very high name similarity + same barangay (distance ignored)
-            elif sim >= 0.7:
-                reg_b_id = entry.get("barangayID")
-                same_barangay = (reg_b_id is None) or (poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
-                if same_barangay and sim > best_score:
-                    best_score = sim
-                    best_dist = dist
-                    best_match = entry
-            # Proximity match (within 25m) even if name differs
-            elif dist <= 25 and (best_score < 0.6 or dist < best_dist):
-                if best_score < 0.6:
-                    best_score = 0.5
+            # Proximity match (within 25m) with basic name overlap
+            if dist <= 25 and sim >= 0.4:
+                effective_score = sim + 0.35
+                if effective_score > best_score:
+                    best_score = effective_score
                     best_dist = dist
                     best_match = entry
 
-        # Case B: Registry entry lacks GPS coordinates — match by name & barangay!
+            # Close distance (within 150m) and good name match
+            elif dist <= 150 and sim >= 0.5:
+                effective_score = sim + (0.2 if same_barangay else 0.1)
+                if effective_score > best_score:
+                    best_score = effective_score
+                    best_dist = dist
+                    best_match = entry
+
+            # Strong name match (>= 0.65) regardless of distance (breaks free from centroid coordinates)
+            elif sim >= 0.65:
+                effective_score = sim + (0.1 if same_barangay else 0.0)
+                if effective_score > best_score:
+                    best_score = effective_score
+                    best_dist = dist
+                    best_match = entry
+
+        # Case B: Registry entry lacks GPS coordinates — match by name!
         else:
-            if sim >= 0.65:
-                reg_b_id = entry.get("barangayID")
-                same_barangay = (reg_b_id is None) or (poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
-                if same_barangay and sim > best_score:
-                    best_score = sim
+            if sim >= 0.6:
+                effective_score = sim + (0.1 if same_barangay else 0.0)
+                if effective_score > best_score:
+                    best_score = effective_score
                     best_dist = 0.0
                     best_match = entry
 
@@ -145,32 +175,11 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     Updates or inserts the geospatial log for an existing registry business 
     with its official Google Maps Place ID and dynamic status-based flag color.
     Also backfills discovered GPS coordinates into official_registry.
+    Cleans up any redundant unpositioned baseline logs for this business.
     """
     cursor = mysql.connection.cursor()
-    cursor.execute("""
-        SELECT logID FROM geospatial_logs
-        WHERE placeID = %s OR detectedName = %s
-        LIMIT 1
-    """, (place_id, detected_name))
-    row = cursor.fetchone()
 
-    if row:
-        cursor.execute("""
-            UPDATE geospatial_logs 
-            SET placeID = %s, flagColor = %s,
-                latitude = %s,
-                longitude = %s
-            WHERE logID = %s
-        """, (place_id, target_color, lat, lng, row["logID"]))
-    elif lat and lng and barangay_id:
-        cursor.execute("""
-            INSERT INTO geospatial_logs
-                (barangayID, reportID, detectedName, latitude, longitude,
-                 flagColor, placeID, nearestLandmark)
-            VALUES (%s, NULL, %s, %s, %s, %s, %s, NULL)
-        """, (barangay_id, detected_name, lat, lng, target_color, place_id))
-
-    # Backfill discovered GPS coordinates into official_registry if it lacked them
+    # 1. Backfill discovered GPS coordinates into official_registry
     if business_id and lat and lng:
         cursor.execute("""
             UPDATE official_registry
@@ -179,8 +188,98 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
             WHERE businessID = %s
         """, (lat, lng, business_id))
 
+    # 2. Check all geospatial_logs matching placeID OR (detectedName + barangayID)
+    cursor.execute("""
+        SELECT logID, placeID, flagColor, latitude, longitude
+        FROM geospatial_logs
+        WHERE placeID = %s OR (detectedName = %s AND barangayID = %s)
+    """, (place_id, detected_name, barangay_id))
+    matched_logs = cursor.fetchall()
+
+    if matched_logs:
+        # Keep primary log (prefer the one with placeID)
+        primary_log = None
+        for log in matched_logs:
+            if log.get("placeID") == place_id:
+                primary_log = log
+                break
+        if not primary_log:
+            primary_log = matched_logs[0]
+
+        cursor.execute("""
+            UPDATE geospatial_logs 
+            SET placeID = %s, flagColor = %s,
+                detectedName = %s,
+                latitude = %s,
+                longitude = %s,
+                barangayID = COALESCE(%s, barangayID)
+            WHERE logID = %s
+        """, (place_id, target_color, detected_name, lat, lng, barangay_id, primary_log["logID"]))
+
+        # Remove redundant duplicate unpositioned logs
+        for log in matched_logs:
+            if log["logID"] != primary_log["logID"]:
+                cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
+
+    elif lat and lng and barangay_id:
+        cursor.execute("""
+            INSERT INTO geospatial_logs
+                (barangayID, reportID, detectedName, latitude, longitude,
+                 flagColor, placeID, nearestLandmark)
+            VALUES (%s, NULL, %s, %s, %s, %s, %s, NULL)
+        """, (barangay_id, detected_name, lat, lng, target_color, place_id))
+
     mysql.connection.commit()
     cursor.close()
+
+
+def reconcile_existing_flags():
+    """
+    Reconciles existing Red flags in geospatial_logs against official_registry.
+    If a Red flag was erroneously created for a registered business, converts it
+    to Green (or appropriate permit status color), updates official_registry GPS,
+    and removes any duplicate unpositioned baseline logs.
+    """
+    cursor = mysql.connection.cursor()
+    cursor.execute("""
+        SELECT logID, placeID, detectedName, latitude, longitude, barangayID
+        FROM geospatial_logs
+        WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL
+    """)
+    red_flags = cursor.fetchall()
+    cursor.close()
+
+    if not red_flags:
+        return 0
+
+    registry = _load_registry()
+    converted_count = 0
+
+    for flag in red_flags:
+        name = flag.get("detectedName") or ""
+        lat = flag.get("latitude")
+        lng = flag.get("longitude")
+        b_id = flag.get("barangayID")
+        place_id = flag.get("placeID")
+
+        matched, dist, score = _match_poi_to_registry(name, lat, lng, registry, poi_barangay_id=b_id)
+        if matched:
+            app_status = (matched.get('applicationStatus') or 'Active').strip()
+            target_color = 'Green' if app_status == 'Active' else (
+                'Orange' if app_status == 'Expired' else (
+                    'Black' if app_status == 'Revoked' else (
+                        'Purple' if app_status == 'Closed' else 'Yellow'
+                    )
+                )
+            )
+            target_b_id = matched.get('barangayID') or b_id
+            _match_registry_to_google(
+                place_id, matched['businessID'], matched['businessName'],
+                target_color=target_color, lat=lat, lng=lng, barangay_id=target_b_id
+            )
+            converted_count += 1
+
+    return converted_count
 
 
 # ── Google Places fetch ───────────────────────────────────────────────────────
@@ -558,6 +657,12 @@ def run_detection(user_id=None):
         })
         registry = _load_registry()
 
+        # Step 3a: Reconcile any existing Red flags already in the database against the registry
+        try:
+            reconcile_existing_flags()
+        except Exception as re_err:
+            print(f"[Run Detection] Reconcile error: {re_err}")
+
         total_checked = len(places)
         new_flags = 0
 
@@ -605,7 +710,18 @@ def run_detection(user_id=None):
             if not _within_municipality(lat, lng):
                 continue
 
-            if _already_flagged(place_id):
+            # Check existing status of this placeID in geospatial_logs
+            cursor = mysql.connection.cursor()
+            cursor.execute("""
+                SELECT logID, flagColor FROM geospatial_logs
+                WHERE placeID = %s
+                LIMIT 1
+            """, (place_id,))
+            existing_flag = cursor.fetchone()
+            cursor.close()
+
+            # If it is already a resolved registry flag (Green, Orange, Black, Purple), skip
+            if existing_flag and existing_flag["flagColor"] in ("Green", "Orange", "Black", "Purple"):
                 continue
 
             # Publish matching progress updates periodically
@@ -622,6 +738,11 @@ def run_detection(user_id=None):
 
             # Filter out non-commercial entities (churches, schools, barangay halls, courts, cemeteries, etc.)
             if _is_non_business_place(place):
+                if existing_flag and existing_flag["flagColor"] == "Red":
+                    cursor = mysql.connection.cursor()
+                    cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (existing_flag["logID"],))
+                    mysql.connection.commit()
+                    cursor.close()
                 continue
 
             nearest, dist, sim_score = _match_poi_to_registry(
@@ -629,10 +750,11 @@ def run_detection(user_id=None):
             )
 
             if nearest is None:
-                flag_id = _insert_red_flag(place_id, place_name, lat,
-                                 lng, barangay_id, address)
-                inserted_flag_ids.append(flag_id)
-                new_flags += 1
+                if not existing_flag:
+                    flag_id = _insert_red_flag(place_id, place_name, lat,
+                                     lng, barangay_id, address)
+                    inserted_flag_ids.append(flag_id)
+                    new_flags += 1
             else:
                 app_status = (nearest.get('applicationStatus') or 'Active').strip()
                 if app_status == 'Active':
@@ -694,6 +816,12 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
            Pending → Yellow  (anything else → Yellow)
     """
     try:
+        if page == 1 and not color and not reported_by_user_id:
+            try:
+                reconcile_existing_flags()
+            except Exception:
+                pass
+
         cursor = mysql.connection.cursor()
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
