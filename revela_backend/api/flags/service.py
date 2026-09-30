@@ -233,13 +233,25 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     cursor.close()
 
 
-def reconcile_existing_flags():
+_last_reconcile_time = 0.0  # module-level throttle
+_RECONCILE_INTERVAL_S = 300   # run at most once every 5 minutes
+
+
+def reconcile_existing_flags(force: bool = False):
     """
     Reconciles existing Red flags in geospatial_logs against official_registry.
     If a Red flag was erroneously created for a registered business, converts it
     to Green (or appropriate permit status color), updates official_registry GPS,
     and removes any duplicate unpositioned baseline logs.
+
+    Throttled to run at most once every 5 minutes unless force=True.
     """
+    global _last_reconcile_time
+    now = time.time()
+    if not force and (now - _last_reconcile_time) < _RECONCILE_INTERVAL_S:
+        return 0   # too soon; skip
+    _last_reconcile_time = now
+
     cursor = mysql.connection.cursor()
     cursor.execute("""
         SELECT logID, placeID, detectedName, latitude, longitude, barangayID
@@ -816,12 +828,6 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
            Pending → Yellow  (anything else → Yellow)
     """
     try:
-        if page == 1 and not color and not reported_by_user_id:
-            try:
-                reconcile_existing_flags()
-            except Exception:
-                pass
-
         cursor = mysql.connection.cursor()
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
