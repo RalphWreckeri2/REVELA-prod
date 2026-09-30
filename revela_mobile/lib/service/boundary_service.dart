@@ -62,32 +62,39 @@ class BoundaryService {
   }
 
   String _normalizeName(String name) {
-    // Remove "Brgy.", "Barangay", "(Pob.)", extra spaces, and lowercase
-    return name
-        .replaceAll(RegExp(r'brgy\.?\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'barangay\s*', caseSensitive: false), '')
-        .replaceAll(RegExp(r'\(Pob\.\)', caseSensitive: false), '')
-        .replaceAll('-', ' ')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim()
-        .toLowerCase();
+    return canonicalBarangayKey(name);
+  }
+
+  /// Canonical normalization function that maps any raw barangay name variant
+  /// (e.g., "District II (Pob.)", "Barangay II", "Barangay II-A", "Lumang Lipa")
+  /// to a unique standard key without substring ambiguity.
+  static String canonicalBarangayKey(String name) {
+    String s = name.toLowerCase().trim();
+    // Remove prefixes and parentheticals
+    s = s.replaceAll(RegExp(r'brgy\.?\s*', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'barangay\s*', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'\(pob\.\)', caseSensitive: false), '');
+    s = s.replaceAll(RegExp(r'pob\.?', caseSensitive: false), '');
+    s = s.replaceAll('-', ' ');
+    s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    // Alias mappings between GeoJSON ADM4_EN names & database names
+    if (s == 'district i' || s == 'district 1' || s == 'i' || s == '1') return 'barangay 1';
+    if (s == 'district ii' || s == 'district 2' || s == 'ii' || s == '2') return 'barangay 2';
+    if (s == 'ii a' || s == '2 a' || s == 'iia' || s == '2a' || s == 'ii-a') return 'barangay 2a';
+    if (s == 'district iii' || s == 'district 3' || s == 'iii' || s == '3') return 'barangay 3';
+    if (s == 'district iv' || s == 'district 4' || s == 'iv' || s == '4') return 'barangay 4';
+    if (s == 'lumang lipa' || s == 'lumanglipa') return 'lumanglipa';
+
+    // Strip spaces for all other barangays (e.g. "san sebastian" -> "sansebastian")
+    return s.replaceAll(' ', '');
   }
 
   List<List<List<double>>>? getPolygons(String barangayName) {
     if (!_isLoaded || _barangayPolygons.isEmpty) return null;
 
-    final normalized = _normalizeName(barangayName);
-    List<List<List<double>>>? polygons = _barangayPolygons[normalized];
-    
-    if (polygons == null) {
-      for (var key in _barangayPolygons.keys) {
-        if (key.contains(normalized) || normalized.contains(key)) {
-          polygons = _barangayPolygons[key];
-          break;
-        }
-      }
-    }
-    return polygons;
+    final canonicalKey = canonicalBarangayKey(barangayName);
+    return _barangayPolygons[canonicalKey];
   }
 
   /// Returns true if (lat, lng) falls inside ANY Mataasnakahoy barangay polygon,
@@ -158,25 +165,9 @@ class BoundaryService {
 
     if (matchedKey == null) return null;
 
-    // Match with barangays list
+    // Match with barangays list using exact canonical key comparison
     for (var b in barangays) {
-      final norm = _normalizeName(b.name);
-      if (norm == matchedKey || norm.contains(matchedKey) || matchedKey.contains(norm)) {
-        return b;
-      }
-    }
-
-    // Roman numeral and digit normalization mapping
-    final romanMap = {
-      'district i': '1', 'district ii': '2', 'district iii': '3', 'district iv': '4',
-      'i': '1', 'ii': '2', 'iii': '3', 'iv': '4', 'ii a': '2', '2 a': '2',
-    };
-    final keyDigit = romanMap[matchedKey] ?? matchedKey;
-
-    for (var b in barangays) {
-      final norm = _normalizeName(b.name);
-      final bDigit = romanMap[norm] ?? norm;
-      if (bDigit == keyDigit || norm.contains(keyDigit) || keyDigit.contains(norm)) {
+      if (canonicalBarangayKey(b.name) == matchedKey) {
         return b;
       }
     }

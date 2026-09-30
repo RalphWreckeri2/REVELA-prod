@@ -130,7 +130,7 @@ def get_detection_quota_info():
     - resets_on: date when monthly limit resets (1st of next month)
     - last_run: info about latest scan
     """
-    monthly_limit = 2
+    monthly_limit = 999
     used = get_monthly_detection_count()
     remaining = max(0, monthly_limit - used)
 

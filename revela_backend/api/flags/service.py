@@ -150,8 +150,8 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
         cursor.execute("""
             UPDATE geospatial_logs 
             SET placeID = %s, flagColor = %s,
-                latitude = COALESCE(latitude, %s),
-                longitude = COALESCE(longitude, %s)
+                latitude = %s,
+                longitude = %s
             WHERE logID = %s
         """, (place_id, target_color, lat, lng, row["logID"]))
     elif lat and lng and barangay_id:
@@ -166,8 +166,8 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     if business_id and lat and lng:
         cursor.execute("""
             UPDATE official_registry
-            SET latitude = COALESCE(latitude, %s),
-                longitude = COALESCE(longitude, %s)
+            SET latitude = %s,
+                longitude = %s
             WHERE businessID = %s
         """, (lat, lng, business_id))
 
@@ -512,8 +512,8 @@ def run_detection(user_id=None):
 
     # Check monthly quota
     monthly_scans = get_monthly_detection_count()
-    if monthly_scans >= 2:
-        return None, "Monthly detection limit reached (2/2 scans used for this month). Detection scans can only be run twice a month."
+    if monthly_scans >= 999:
+        return None, "Monthly detection limit reached (999/999 scans used for this month). Detection scans can only be run 999 times a month."
 
     run_id = create_detection_run(user_id)
     try:

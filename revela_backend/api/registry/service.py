@@ -542,9 +542,9 @@ def sync_registry(file, ext: str):
             existing = cursor.fetchone()
 
             if existing:
-                # Preserve existing coordinates if new geocoding returned None
-                final_lat = lat if lat is not None else existing.get("latitude")
-                final_lng = lng if lng is not None else existing.get("longitude")
+                # Preserve existing coordinates to avoid overwriting exact pins from detection scan with generic geocoded ones
+                final_lat = existing.get("latitude") if existing.get("latitude") is not None else lat
+                final_lng = existing.get("longitude") if existing.get("longitude") is not None else lng
 
                 cursor.execute(
                     """
