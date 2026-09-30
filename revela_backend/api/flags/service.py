@@ -112,6 +112,14 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
                     best_score = sim
                     best_dist = dist
                     best_match = entry
+            # Break free from generic centroids: very high name similarity + same barangay (distance ignored)
+            elif sim >= 0.7:
+                reg_b_id = entry.get("barangayID")
+                same_barangay = (reg_b_id is None) or (poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
+                if same_barangay and sim > best_score:
+                    best_score = sim
+                    best_dist = dist
+                    best_match = entry
             # Proximity match (within 25m) even if name differs
             elif dist <= 25 and (best_score < 0.6 or dist < best_dist):
                 if best_score < 0.6:
@@ -141,9 +149,9 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
     cursor = mysql.connection.cursor()
     cursor.execute("""
         SELECT logID FROM geospatial_logs
-        WHERE detectedName = %s
+        WHERE placeID = %s OR detectedName = %s
         LIMIT 1
-    """, (detected_name,))
+    """, (place_id, detected_name))
     row = cursor.fetchone()
 
     if row:
