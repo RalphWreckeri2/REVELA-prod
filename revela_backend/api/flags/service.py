@@ -53,6 +53,7 @@ def _within_municipality(lat: float, lng: float) -> bool:
 
 
 
+import difflib
 import re
 
 def _normalize_business_name(name: str) -> str:
@@ -61,15 +62,18 @@ def _normalize_business_name(name: str) -> str:
     s = name.lower()
     noise = [
         r'\binc\.?\b', r'\bcorp\.?\b', r'\bcorporation\b', r'\bco\.?\b', r'\bltd\.?\b',
-        r'\bsari[- ]sari\b', r'\bstore\b', r'\btindahan\b', r'\bgrocery\b', r'\bminimart\b',
+        r'\bsari[- ]*sari\b', r'\bstore\b', r'\btindahan\b', r'\bgrocery\b', r'\bmini[- ]*mart\b',
         r'\bmart\b', r'\bsupermarket\b', r'\bshop\b', r'\benterprises?\b', r'\btradings?\b',
         r'\bcommercial\b', r'\bphilippines?\b', r'\bph\b', r'\bbranch\b', r'\boutlet\b',
-        r'\brefilling\s+station\b', r'\bwater\s+refilling\b', r'\bwater\s+station\b',
-        r'\bdrinking\s+water\b', r'\bbakery\b', r'\bbakeshop\b', r'\bpanaderia\b',
+        r'\brefilling\s*station\b', r'\bwater\s*refilling\b', r'\bwater\s*station\b',
+        r'\bdrinking\s*water\b', r'\bbakery\b', r'\bbake\s*shop\b', r'\bpanaderia\b',
         r'\beatery\b', r'\bcarinderia\b', r'\bkarinderya\b', r'\brestaurant\b', r'\bgrill\b',
-        r'\bcanteen\b', r'\bfood\s+house\b', r'\bpharmacy\b', r'\bdrugstore\b',
-        r'\bsalon\b', r'\bbeauty\s+lounge\b', r'\bspa\b', r'\bbarbershop\b',
-        r'\bhardware\b', r'\bauto\s+supply\b', r'\bmotor\s+parts\b', r'\bvulcanizing\b'
+        r'\bcanteen\b', r'\bfood\s*house\b', r'\bpharmacy\b', r'\bdrugstore\b',
+        r'\bsalon\b', r'\bbeauty\s*lounge\b', r'\bspa\b', r'\bbarbershop\b',
+        r'\bhardware\b', r'\bauto\s*supply\b', r'\bmotor\s*parts\b', r'\bvulcanizing\b',
+        r'\bcoffee\s*shop\b', r'\bgeneral\s*merchandise\b', r'\bservices?\b',
+        r'\bcenter\b', r'\bcentre\b', r'\bhub\b', r'\bkitchen\b',
+        r'\blomi\b', r'\blomihan\b', r'\bgotohan\b'
     ]
     for n in noise:
         s = re.sub(n, ' ', s)
@@ -87,26 +91,43 @@ def _name_similarity(name1: str, name2: str) -> float:
     if n1 in n2 or n2 in n1:
         return 0.95
 
+    # 1. Spaceless comparison (catches compound words like "dosbastardos" vs "dos bastardos")
+    s1 = n1.replace(" ", "")
+    s2 = n2.replace(" ", "")
+    if s1 and s2:
+        if s1 == s2:
+            return 0.95
+        if s1 in s2 or s2 in s1:
+            ratio = min(len(s1), len(s2)) / max(len(s1), len(s2))
+            if ratio >= 0.65:
+                return max(0.85, ratio)
+            return max(0.60, ratio)
+        spaceless_sim = difflib.SequenceMatcher(None, s1, s2).ratio()
+        if spaceless_sim >= 0.75:
+            return spaceless_sim
+
+    # 2. Token overlap (Jaccard + Containment)
     words1 = [w for w in n1.split() if len(w) > 1]
     words2 = [w for w in n2.split() if len(w) > 1]
     if not words1 or not words2:
-        return 0.0
+        return difflib.SequenceMatcher(None, n1, n2).ratio()
 
     set1 = set(words1)
     set2 = set(words2)
     overlap = len(set1.intersection(set2))
-    if overlap == 0:
-        return 0.0
+    if overlap > 0:
+        jaccard = overlap / len(set1.union(set2))
+        containment = overlap / min(len(set1), len(set2))
 
-    jaccard = overlap / len(set1.union(set2))
-    containment = overlap / min(len(set1), len(set2))
+        if containment >= 0.75 and overlap >= 2:
+            return max(jaccard, 0.85)
+        elif containment == 1.0:
+            return max(jaccard, 0.80)
+        return max(jaccard, containment * 0.5)
 
-    if containment >= 0.75 and overlap >= 2:
-        return max(jaccard, 0.85)
-    elif containment == 1.0:
-        return max(jaccard, 0.80)
-
-    return max(jaccard, containment * 0.5)
+    # 3. Fuzzy character-level fallback if token overlap is zero
+    seq_sim = difflib.SequenceMatcher(None, n1, n2).ratio()
+    return seq_sim if seq_sim >= 0.60 else 0.0
 
 
 def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id=None):
@@ -335,33 +356,69 @@ def _text_search_google_place(business_name: str, barangay_name: str):
     if not api_key:
         return None, None, None
 
-    query = f"{business_name}, {barangay_name}, Mataasnakahoy, Batangas, Philippines"
-    try:
-        resp = http.get(
-            "https://maps.googleapis.com/maps/api/place/textsearch/json",
-            params={"query": query, "key": api_key},
-            timeout=8,
-        )
-        data = resp.json()
-        if data.get("status") != "OK":
-            return None, None, None
+    cleaned_name = _normalize_business_name(business_name)
+    queries = []
 
-        results = data.get("results", [])
-        for result in results:
-            loc = result.get("geometry", {}).get("location", {})
-            p_lat = loc.get("lat")
-            p_lng = loc.get("lng")
-            place_id = result.get("place_id")
-            name = result.get("name", "")
+    # 1. Specific query with barangay if available
+    if barangay_name:
+        queries.append(f"{business_name}, {barangay_name}, Mataasnakahoy, Batangas, Philippines")
+        if cleaned_name and cleaned_name != business_name.lower():
+            queries.append(f"{cleaned_name}, {barangay_name}, Mataasnakahoy, Batangas")
 
-            # Verify it's within Mataasnakahoy and name is plausible
-            if p_lat and p_lng and _within_municipality(p_lat, p_lng):
-                sim = _name_similarity(business_name, name)
-                if sim >= 0.5:
-                    return place_id, p_lat, p_lng
+    # 2. Broader queries without barangay (many Google Maps listings omit the Roman numeral barangay)
+    queries.append(f"{business_name}, Mataasnakahoy, Batangas, Philippines")
+    if cleaned_name and cleaned_name != business_name.lower():
+        queries.append(f"{cleaned_name}, Mataasnakahoy, Batangas")
 
-    except Exception as e:
-        print(f"[Snap Registry] Text search error for '{business_name}': {e}")
+    # Deduplicate queries preserving order
+    seen_q = set()
+    uniq_queries = []
+    for q in queries:
+        if q not in seen_q:
+            seen_q.add(q)
+            uniq_queries.append(q)
+
+    best_match = None
+    best_sim = 0.0
+
+    for query in uniq_queries:
+        try:
+            resp = http.get(
+                "https://maps.googleapis.com/maps/api/place/textsearch/json",
+                params={"query": query, "key": api_key},
+                timeout=8,
+            )
+            data = resp.json()
+            if data.get("status") not in ("OK", "ZERO_RESULTS"):
+                continue
+
+            results = data.get("results", [])
+            for result in results:
+                loc = result.get("geometry", {}).get("location", {})
+                p_lat = loc.get("lat")
+                p_lng = loc.get("lng")
+                place_id = result.get("place_id")
+                name = result.get("name", "")
+
+                # Verify it's within Mataasnakahoy and name is plausible
+                if p_lat and p_lng and _within_municipality(p_lat, p_lng):
+                    sim = _name_similarity(business_name, name)
+                    if cleaned_name:
+                        sim = max(sim, _name_similarity(cleaned_name, name))
+
+                    if sim >= 0.50 and sim > best_sim:
+                        best_sim = sim
+                        best_match = (place_id, p_lat, p_lng)
+
+            # High confidence match (>= 0.70) found -> return immediately
+            if best_match and best_sim >= 0.70:
+                return best_match
+
+        except Exception as e:
+            print(f"[Snap Registry] Text search error for query '{query}': {e}")
+
+    if best_match:
+        return best_match
 
     return None, None, None
 
@@ -1222,9 +1279,37 @@ def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_co
 
 
 def update_flag_color(log_id, color):
-    """Update a flag's color manually (e.g. to Purple, Orange, Yellow, Red, Black, Green)."""
+    """Update a flag's color manually (e.g. to Purple, Orange, Yellow, Red, Black, Green).
+    Supports both real geospatial_logs (log_id > 0) and virtual registry flags (log_id < 0).
+    """
     try:
         cursor = mysql.connection.cursor()
+
+        if log_id < 0:
+            biz_id = -log_id
+            status_map = {
+                "Green": "Active",
+                "Purple": "Closed",
+                "Orange": "Expired",
+                "Black": "Revoked",
+                "Yellow": "Pending"
+            }
+            app_status = status_map.get(color, "Pending")
+            cursor.execute("UPDATE official_registry SET applicationStatus = %s WHERE businessID = %s", (app_status, biz_id))
+            mysql.connection.commit()
+            cursor.close()
+
+            try:
+                from api.notifications import hub
+                hub.publish_to_admins({
+                    "type": "flag_updated",
+                    "logID": log_id,
+                    "color": color
+                })
+            except Exception:
+                pass
+            return True, None
+
         cursor.execute("SELECT flagColor, detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
         row = cursor.fetchone()
         if not row:
@@ -1260,6 +1345,89 @@ def update_flag_color(log_id, color):
                 "type": "flag_updated",
                 "logID": log_id,
                 "color": color
+            })
+        except Exception:
+            pass
+
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def update_flag_location(log_id: int, lat: float, lng: float):
+    """
+    Update coordinates of a flag manually (e.g. via drag-and-drop on the map).
+    Handles both:
+      - log_id > 0: real geospatial_logs entry
+      - log_id < 0: virtual registry entry (businessID = -log_id)
+    Also updates barangayID based on new coordinates and backfills official_registry.
+    """
+    try:
+        cursor = mysql.connection.cursor()
+        new_barangay_id = _get_barangay_id_by_coords(lat, lng)
+
+        if log_id < 0:
+            # Virtual flag from official_registry (businessID = -log_id)
+            biz_id = -log_id
+            cursor.execute("""
+                UPDATE official_registry
+                SET latitude = %s,
+                    longitude = %s,
+                    barangayID = COALESCE(%s, barangayID)
+                WHERE businessID = %s
+            """, (lat, lng, new_barangay_id, biz_id))
+            mysql.connection.commit()
+            cursor.close()
+
+            try:
+                from api.notifications import hub
+                hub.publish_to_admins({
+                    "type": "flag_location_updated",
+                    "logID": log_id,
+                    "latitude": lat,
+                    "longitude": lng
+                })
+            except Exception:
+                pass
+
+            return True, None
+
+        # Real flag in geospatial_logs
+        cursor.execute("SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
+        row = cursor.fetchone()
+        if not row:
+            cursor.close()
+            return False, "Flag not found"
+
+        detected_name = row["detectedName"]
+        cursor.execute("""
+            UPDATE geospatial_logs
+            SET latitude = %s,
+                longitude = %s,
+                barangayID = COALESCE(%s, barangayID)
+            WHERE logID = %s
+        """, (lat, lng, new_barangay_id, log_id))
+
+        # Also backfill official_registry if matching business exists
+        if detected_name:
+            cursor.execute("""
+                UPDATE official_registry
+                SET latitude = %s,
+                    longitude = %s,
+                    barangayID = COALESCE(%s, barangayID)
+                WHERE businessName = %s
+            """, (lat, lng, new_barangay_id, detected_name))
+
+        mysql.connection.commit()
+        cursor.close()
+
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({
+                "type": "flag_location_updated",
+                "logID": log_id,
+                "latitude": lat,
+                "longitude": lng
             })
         except Exception:
             pass
@@ -1328,6 +1496,22 @@ def delete_flag(log_id):
     """Delete a flag. If it has a corresponding registry entry, delete that too."""
     try:
         cursor = mysql.connection.cursor()
+
+        if log_id < 0:
+            biz_id = -log_id
+            cursor.execute("DELETE FROM official_registry WHERE businessID = %s", (biz_id,))
+            mysql.connection.commit()
+            cursor.close()
+
+            try:
+                from api.notifications import hub
+                hub.publish_to_admins({
+                    "type": "flag_deleted",
+                    "logID": log_id
+                })
+            except Exception:
+                pass
+            return True, None
 
         # Find the flag
         cursor.execute(

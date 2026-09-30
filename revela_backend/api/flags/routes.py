@@ -9,6 +9,7 @@ from api.flags.service import (
     delete_flag,
     reconcile_existing_flags,
     snap_registry_to_google_maps,
+    update_flag_location,
 )
 from api.middleware.decorators import jwt_required, admin_required
 
@@ -180,8 +181,29 @@ def black_flag_route(log_id):
     return jsonify({"message": f"Flag #{log_id} escalated to Black"}), 200
 
 
+# ── PUT /api/flags/:id/location ───────────────────────────────────────────────
+@flags_bp.route("/<int(signed=True):log_id>/location", methods=["PUT"])
+@admin_required()
+def change_flag_location_route(log_id):
+    """Update a flag's coordinates manually (via admin drag & drop)."""
+    data = request.get_json()
+    if not data or "latitude" not in data or "longitude" not in data:
+        return jsonify({"error": "Missing 'latitude' or 'longitude' parameter"}), 400
+
+    try:
+        lat = float(data["latitude"])
+        lng = float(data["longitude"])
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid coordinates"}), 400
+
+    success, error = update_flag_location(log_id, lat, lng)
+    if not success:
+        return jsonify({"error": error}), 400
+    return jsonify({"message": f"Flag #{log_id} location updated successfully"}), 200
+
+
 # ── PATCH /api/flags/:id/color ────────────────────────────────────────────────
-@flags_bp.route("/<int:log_id>/color", methods=["PATCH"])
+@flags_bp.route("/<int(signed=True):log_id>/color", methods=["PATCH"])
 @admin_required()
 def change_flag_color_route(log_id):
     """Update a flag's color manually (e.g. to Purple, Orange, Yellow, Red, Black, Green)."""
@@ -201,7 +223,7 @@ def change_flag_color_route(log_id):
 
 
 # ── DELETE /api/flags/:id ─────────────────────────────────────────────────────
-@flags_bp.route("/<int:log_id>", methods=["DELETE"])
+@flags_bp.route("/<int(signed=True):log_id>", methods=["DELETE"])
 @admin_required()
 def delete_flag_route(log_id):
     """Delete a specific flag. Also deletes associated registry records if they exist."""
