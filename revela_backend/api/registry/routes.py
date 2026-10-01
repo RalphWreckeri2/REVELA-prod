@@ -1,3 +1,4 @@
+import os
 import threading
 from flask import Blueprint, request, jsonify, current_app
 from app import mysql
@@ -49,12 +50,16 @@ def upload():
     if error:
         if "cancelled by user" in error:
             return jsonify({"message": error}), 200
+        if "quota reached" in error or "Remaining geocoding quota" in error:
+            return jsonify({"error": error}), 429
+        if "Maximum" in error and "imported per batch" in error:
+            return jsonify({"error": error}), 400
         return jsonify({"error": error}), 500
 
     # Automatically trigger Snap to Maps in the background for newly imported businesses
     # so their pins snap immediately without re-processing the entire registry.
     new_ids = summary.get("inserted_ids") if summary else None
-    if new_ids:
+    if new_ids and os.getenv("AUTO_SNAP_ON_IMPORT") == "1":
         try:
             app_instance = current_app._get_current_object()
 
@@ -99,12 +104,16 @@ def sync():
     if error:
         if "cancelled by user" in error:
             return jsonify({"message": error}), 200
+        if "quota reached" in error or "Remaining geocoding quota" in error:
+            return jsonify({"error": error}), 429
+        if "Maximum" in error and "synced per batch" in error:
+            return jsonify({"error": error}), 400
         return jsonify({"error": error}), 500
 
     # Automatically trigger Snap to Maps in the background for newly imported/updated businesses
     # so their pins snap immediately without re-processing the entire registry.
     new_ids = summary.get("inserted_ids") if summary else None
-    if new_ids:
+    if new_ids and os.getenv("AUTO_SNAP_ON_IMPORT") == "1":
         try:
             app_instance = current_app._get_current_object()
 

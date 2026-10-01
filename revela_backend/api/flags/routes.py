@@ -1,3 +1,4 @@
+import os
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity
 from api.flags.service import (
@@ -10,6 +11,7 @@ from api.flags.service import (
     reconcile_existing_flags,
     snap_registry_to_google_maps,
     update_flag_location,
+    get_places_usage_today,
 )
 from api.middleware.decorators import jwt_required, admin_required
 
@@ -17,6 +19,13 @@ flags_bp = Blueprint("flags", __name__)
 
 from api.utils.cancellation import set_cancel 
 from api.models.detection_runs import get_detection_quota_info
+
+# ── GET /api/flags/places-usage ───────────────────────────────────────────────
+@flags_bp.route("/places-usage", methods=["GET"])
+@admin_required()
+def places_usage_route():
+    """Return today's Places API usage and daily caps."""
+    return jsonify(get_places_usage_today()), 200
 
 # ── GET /api/flags/detection-quota ────────────────────────────────────────────
 @flags_bp.route("/detection-quota", methods=["GET"])
@@ -31,6 +40,8 @@ def get_detection_quota_route():
 @admin_required()
 def reset_detection_quota_route():
     """Reset detection scan quota for testing purposes."""
+    if os.getenv("ALLOW_QUOTA_RESET") != "1":
+        return jsonify({"error": "Quota reset is disabled in production."}), 403
     from api.models.detection_runs import reset_detection_quota
     reset_detection_quota()
     updated_quota = get_detection_quota_info()
@@ -59,7 +70,7 @@ def run_detection_route():
     if error:
         if error == "Detection cancelled by user.":
             return jsonify({"message": error}), 200
-        if "Monthly detection limit reached" in error:
+        if "Monthly detection limit reached" in error or ("Places API" in error and "limit reached" in error) or "budget" in error.lower():
             return jsonify({"error": error}), 429
         return jsonify({"error": error}), 500
     return jsonify(result), 200

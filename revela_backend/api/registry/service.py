@@ -77,6 +77,13 @@ COLUMN_MAP = {
     "renewaldate":         "lastRenewalDate",
     "issue_date":          "lastRenewalDate",
     "permit_date":         "lastRenewalDate",
+
+    # coordinates if provided in CSV
+    "latitude":            "latitude",
+    "lat":                 "latitude",
+    "longitude":           "longitude",
+    "lng":                 "longitude",
+    "long":                "longitude",
 }
 
 VALID_STATUSES = {"Active", "Expired", "Revoked", "Pending", "Closed"}
@@ -96,12 +103,85 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+GEOCODE_MONTHLY_CAP  = int(os.getenv("GEOCODE_MONTHLY_CAP", "8000"))   # free tier is 10,000/month
+GEOCODE_DAILY_CAP    = int(os.getenv("GEOCODE_DAILY_CAP", "500"))      # 500 geocodes per day
+MAX_IMPORT_PER_BATCH = int(os.getenv("MAX_IMPORT_PER_BATCH", "500"))   # maximum 500 businesses per import batch
+_geo_tables_ready = False
+_GEO_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"   # no '%' characters
+
+
+def get_geocode_remaining_today():
+    """Return remaining geocode requests allowed today."""
+    global _geo_tables_ready
+    cur = mysql.connection.cursor()
+    try:
+        if not _geo_tables_ready:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS places_api_usage (
+                    usageDate DATE NOT NULL, kind VARCHAR(20) NOT NULL,
+                    requestCount INT NOT NULL DEFAULT 0, PRIMARY KEY (usageDate, kind)
+                ) ENGINE=InnoDB
+            """)
+            _geo_tables_ready = True
+        cur.execute("SELECT requestCount FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
+        row = cur.fetchone()
+        used = int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0) if row else 0
+        return max(0, GEOCODE_DAILY_CAP - used)
+    finally:
+        cur.close()
+
+
+def _reserve_geocode_call():
+    """Take one Geocoding request from the monthly + daily budget. False = over budget or DB problem."""
+    global _geo_tables_ready
+    cur = mysql.connection.cursor()
+    try:
+        if not _geo_tables_ready:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS places_api_usage (
+                    usageDate DATE NOT NULL, kind VARCHAR(20) NOT NULL,
+                    requestCount INT NOT NULL DEFAULT 0, PRIMARY KEY (usageDate, kind)
+                ) ENGINE=InnoDB
+            """)
+            _geo_tables_ready = True
+        cur.execute(f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_GEO_MONTH_KEY}, 'geo_month', 0)")
+        cur.execute("INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'geo_day', 0)")
+        cur.execute(f"""
+            UPDATE places_api_usage SET requestCount = requestCount + 1
+            WHERE usageDate = {_GEO_MONTH_KEY} AND kind = 'geo_month' AND requestCount < %s
+        """, (GEOCODE_MONTHLY_CAP,))
+        month_ok = cur.rowcount == 1
+        day_ok = False
+        if month_ok:
+            cur.execute("""
+                UPDATE places_api_usage SET requestCount = requestCount + 1
+                WHERE usageDate = CURDATE() AND kind = 'geo_day' AND requestCount < %s
+            """, (GEOCODE_DAILY_CAP,))
+            day_ok = cur.rowcount == 1
+            if not day_ok:
+                cur.execute(f"""
+                    UPDATE places_api_usage SET requestCount = requestCount - 1
+                    WHERE usageDate = {_GEO_MONTH_KEY} AND kind = 'geo_month'
+                """)
+        mysql.connection.commit()
+        return month_ok and day_ok
+    except Exception as e:
+        mysql.connection.rollback()
+        print(f"[Geocode budget] error, skipping geocode: {e}")
+        return False                 # fail closed
+    finally:
+        cur.close()
+
+
 def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     """Call Google Geocoding API for a business address.
     Uses the full business address plus barangay for better accuracy.
     Returns (lat, lng) or (None, None) on failure."""
     if not GOOGLE_MAPS_API_KEY:
         return None, None
+
+    if not _reserve_geocode_call():
+        return None, None            # row is still saved, just without coordinates
 
     address_parts = [
         part.strip() for part in [address, barangay, "Mataasnakahoy", "Batangas", "Philippines"]
@@ -247,28 +327,40 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     If no map pin exists yet and coordinates are provided, auto-seed a new pin.
     """
     flag_color = _status_to_flag_color(status)
+    name_clean = str(business_name).strip()
+
     cursor.execute(
         """
-        UPDATE geospatial_logs g
-        JOIN (
-            SELECT logID
-            FROM geospatial_logs
-            WHERE barangayID = %s AND detectedName = %s
-            ORDER BY detectedDate DESC
-            LIMIT 1
-        ) latest ON g.logID = latest.logID
-        SET g.flagColor = %s
+        SELECT logID, flagColor, latitude, longitude
+        FROM geospatial_logs
+        WHERE barangayID = %s AND detectedName = %s
+        ORDER BY detectedDate DESC
+        LIMIT 1
         """,
-        (barangay_id, str(business_name).strip(), flag_color),
+        (barangay_id, name_clean),
     )
-    if cursor.rowcount == 0 and lat is not None and lng is not None:
+    existing_pin = cursor.fetchone()
+
+    if existing_pin:
+        pin_id = existing_pin["logID"] if isinstance(existing_pin, dict) else existing_pin[0]
+        cursor.execute(
+            """
+            UPDATE geospatial_logs
+            SET flagColor = %s,
+                latitude = COALESCE(latitude, %s),
+                longitude = COALESCE(longitude, %s)
+            WHERE logID = %s
+            """,
+            (flag_color, lat, lng, pin_id),
+        )
+    elif lat is not None and lng is not None:
         cursor.execute(
             """
             INSERT INTO geospatial_logs
                 (barangayID, detectedName, latitude, longitude, flagColor, nearestLandmark)
             VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (barangay_id, str(business_name).strip(), lat, lng, flag_color, address)
+            (barangay_id, name_clean, lat, lng, flag_color, address),
         )
 
 
@@ -281,7 +373,10 @@ def upload_registry(file, ext: str):
         raw = file.read()
 
         if ext == ".csv":
-            df = pd.read_csv(io.BytesIO(raw), encoding="utf-8", dtype=str)
+            try:
+                df = pd.read_csv(io.BytesIO(raw), encoding="utf-8", dtype=str)
+            except UnicodeDecodeError:
+                df = pd.read_csv(io.BytesIO(raw), encoding="latin1", dtype=str)
         else:
             df = pd.read_excel(io.BytesIO(raw), dtype=str)
 
@@ -290,6 +385,39 @@ def upload_registry(file, ext: str):
         df = df.where(pd.notna(df), None)  # replace NaN with None
 
         total_rows = len(df)
+        if total_rows == 0:
+            return None, "The uploaded file contains no data rows."
+
+        if total_rows > MAX_IMPORT_PER_BATCH:
+            return None, (
+                f"Maximum {MAX_IMPORT_PER_BATCH} businesses can be imported per batch (your file has {total_rows} rows). "
+                f"Please split your file into batches of up to {MAX_IMPORT_PER_BATCH} rows."
+            )
+
+        # Count rows that actually need geocoding (those without valid pre-filled coordinates)
+        rows_needing_geocode = total_rows
+        if "latitude" in df.columns and "longitude" in df.columns:
+            has_valid_coords = (
+                df["latitude"].notna() & (df["latitude"].astype(str).str.strip() != "") &
+                df["longitude"].notna() & (df["longitude"].astype(str).str.strip() != "")
+            )
+            rows_needing_geocode = int((~has_valid_coords).sum())
+
+        if rows_needing_geocode > 0:
+            remaining_today = get_geocode_remaining_today()
+            if remaining_today <= 0:
+                return None, (
+                    f"Daily geocoding quota reached ({GEOCODE_DAILY_CAP}/{GEOCODE_DAILY_CAP} businesses mapped today). "
+                    "Please import your next batch of businesses tomorrow, or include latitude and longitude columns for all rows in your CSV."
+                )
+
+            if rows_needing_geocode > remaining_today:
+                return None, (
+                    f"Remaining geocoding quota for today is {remaining_today} businesses ({GEOCODE_DAILY_CAP - remaining_today} mapped already today). "
+                    f"Your file requires geocoding for {rows_needing_geocode} businesses without coordinates. "
+                    f"Please upload a file with at most {remaining_today} businesses to geocode, or wait until tomorrow so they all get pins."
+                )
+
         inserted = 0
         geocoded_ok = 0
         geocoded_failed = 0
@@ -339,13 +467,22 @@ def upload_registry(file, ext: str):
             address_raw = row.get("businessAddress") or ""
             lat, lng = None, None
 
-            if address_raw:
+            raw_lat = row.get("latitude")
+            raw_lng = row.get("longitude")
+            if raw_lat and raw_lng:
+                try:
+                    lat, lng = float(raw_lat), float(raw_lng)
+                    geocoded_ok += 1
+                except Exception:
+                    lat, lng = None, None
+
+            if lat is None and address_raw:
                 lat, lng = _geocode(address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
                     geocoded_failed += 1
-            else:
+            elif lat is None:
                 geocoded_failed += 1
 
             # Status (BPLO files may use application or registration status columns)
@@ -455,7 +592,10 @@ def sync_registry(file, ext: str):
         raw = file.read()
 
         if ext == ".csv":
-            df = pd.read_csv(io.BytesIO(raw), encoding="utf-8", dtype=str)
+            try:
+                df = pd.read_csv(io.BytesIO(raw), encoding="utf-8", dtype=str)
+            except UnicodeDecodeError:
+                df = pd.read_csv(io.BytesIO(raw), encoding="latin1", dtype=str)
         else:
             df = pd.read_excel(io.BytesIO(raw), dtype=str)
 
@@ -464,6 +604,15 @@ def sync_registry(file, ext: str):
         df = df.where(pd.notna(df), None)
 
         total_rows = len(df)
+        if total_rows == 0:
+            return None, "The uploaded file contains no data rows."
+
+        if total_rows > MAX_IMPORT_PER_BATCH:
+            return None, (
+                f"Maximum {MAX_IMPORT_PER_BATCH} businesses can be synced per batch (your file has {total_rows} rows). "
+                f"Please split your file into batches of up to {MAX_IMPORT_PER_BATCH} rows."
+            )
+
         inserted = 0
         updated = 0
         geocoded_ok = 0
@@ -507,10 +656,34 @@ def sync_registry(file, ext: str):
                     f"Row {idx + 2}: barangay '{barangay_raw}' not found — skipped")
                 continue
 
+            name_key = str(business_name).strip()
+            # Check if this business already exists in the database
+            cursor.execute(
+                """
+                SELECT businessID, latitude, longitude FROM official_registry
+                WHERE businessName = %s AND barangayID = %s
+                LIMIT 1
+                """,
+                (name_key, barangay_id),
+            )
+            existing = cursor.fetchone()
+
             address_raw = row.get("businessAddress") or ""
             lat, lng = None, None
 
-            if address_raw:
+            raw_lat = row.get("latitude")
+            raw_lng = row.get("longitude")
+            if raw_lat and raw_lng:
+                try:
+                    lat, lng = float(raw_lat), float(raw_lng)
+                    geocoded_ok += 1
+                except Exception:
+                    lat, lng = None, None
+            elif existing and existing.get("latitude") is not None and existing.get("longitude") is not None:
+                # Existing business already has valid coordinates — reuse them (consumes 0 Google quota!)
+                lat, lng = float(existing["latitude"]), float(existing["longitude"])
+                geocoded_ok += 1
+            elif address_raw:
                 lat, lng = _geocode(address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
@@ -528,24 +701,10 @@ def sync_registry(file, ext: str):
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
-            name_key = str(business_name).strip()
             btype = str(row.get("businessType") or "").strip() or None
             lob = str(row.get("lineOfBusiness") or "").strip() or None
             addr = str(address_raw).strip() or None
             bsize = str(row.get("businessSize") or "").strip() or None
-
-            # Collation utf8mb4_unicode_ci is case-insensitive — LOWER(TRIM())
-            # wrapping on the column side prevents index use and is redundant.
-            # Strip is applied to the parameter value in Python instead.
-            cursor.execute(
-                """
-                SELECT businessID, latitude, longitude FROM official_registry
-                WHERE businessName = %s AND barangayID = %s
-                LIMIT 1
-                """,
-                (name_key, barangay_id),
-            )
-            existing = cursor.fetchone()
 
             if existing:
                 # Preserve existing coordinates to avoid overwriting exact pins from detection scan with generic geocoded ones

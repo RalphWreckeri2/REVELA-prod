@@ -533,6 +533,19 @@ export async function snapRegistryRequest(token) {
   }
 }
 
+export async function getPlacesUsageRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/flags/places-usage`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 export async function resetDetectionQuotaRequest(token) {
   if (!token) throw new Error("Missing authentication token.");
   try {

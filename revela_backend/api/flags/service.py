@@ -13,6 +13,230 @@ from api.notifications import hub
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
+# ── Places API cost guard ─────────────────────────────────────────────────────
+# Hard daily ceilings, stored in MySQL so they survive restarts and multiple workers.
+# Tune via env vars on Railway without redeploying code.
+#
+# FREE-TIER MATH (legacy Places API): every Nearby/Text Search response includes rating
+# fields, which triggers the "Atmosphere Data" SKU — free only up to 1,000 events/MONTH,
+# shared by both endpoints. That is the real ceiling, not the 5,000 Nearby/Text Search tiers.
+# So we keep ONE shared monthly budget below 1,000, plus a daily cap so a single bad day
+# can't eat the whole month.
+PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "900"))   # < 1,000 free Atmosphere events
+PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "45"))    # stay under the 50/day Google-side quota
+PLACES_KINDS = ("nearby", "textsearch")   # both draw from the same shared budget
+SNAP_MAX_PER_RUN     = int(os.getenv("SNAP_MAX_PER_RUN", "100"))   # businesses per snap run
+SNAP_MAX_QUERIES     = 3     # Text Search queries tried per business (was up to 4)
+SNAP_RETRY_DAYS      = 90    # don't re-search a business we already tried within this window
+
+
+class PlacesBudgetExceeded(Exception):
+    pass
+
+
+_budget_tables_ready = False
+
+
+def _ensure_budget_tables():
+    """Create the guard tables once per server process (not on every call)."""
+    global _budget_tables_ready
+    if _budget_tables_ready:
+        return
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS places_api_usage (
+                usageDate    DATE        NOT NULL,
+                kind         VARCHAR(20) NOT NULL,
+                requestCount INT         NOT NULL DEFAULT 0,
+                PRIMARY KEY (usageDate, kind)
+            ) ENGINE=InnoDB
+        """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS snap_lookup_log (
+                businessID    INT      NOT NULL PRIMARY KEY,
+                lastAttemptAt DATETIME NOT NULL,
+                found         TINYINT(1) NOT NULL DEFAULT 0
+            ) ENGINE=InnoDB
+        """)
+        # Checkpoints for a multi-day scan. Stores ONLY our own grid coordinates + a timestamp.
+        # No Google content (names, addresses, ratings, coordinates of places) is stored here.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scan_point_log (
+                pointKey    VARCHAR(64) NOT NULL PRIMARY KEY,
+                completedAt DATETIME    NOT NULL
+            ) ENGINE=InnoDB
+        """)
+        # Cleanly purge obsolete cache table if it existed from previous version
+        cur.execute("DROP TABLE IF EXISTS places_nearby_cache")
+        mysql.connection.commit()
+        _budget_tables_ready = True      # only set after everything succeeded
+    finally:
+        cur.close()
+
+
+# First day of the current month. NOTE: no '%' characters on purpose. MySQLdb runs
+# `query % args` whenever args are passed, so a literal '%Y-%m' in a query would raise
+# "ValueError: unsupported format character".
+_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
+
+
+def _reserve_places_call(kind):
+    """
+    Atomically take one request from the shared monthly AND daily budgets, or raise.
+    Rows in places_api_usage: kind='month' (usageDate = first of month) and kind='day'.
+    """
+    _ensure_budget_tables()
+    month_ok = day_ok = False
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute(f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_MONTH_KEY}, 'month', 0)")
+        cur.execute("INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'day', 0)")
+
+        cur.execute(f"""
+            UPDATE places_api_usage SET requestCount = requestCount + 1
+            WHERE usageDate = {_MONTH_KEY} AND kind = 'month' AND requestCount < %s
+        """, (PLACES_MONTHLY_CAP,))
+        month_ok = cur.rowcount == 1
+
+        if month_ok:
+            cur.execute("""
+                UPDATE places_api_usage SET requestCount = requestCount + 1
+                WHERE usageDate = CURDATE() AND kind = 'day' AND requestCount < %s
+            """, (PLACES_DAILY_CAP,))
+            day_ok = cur.rowcount == 1
+            if not day_ok:   # give the monthly slot back
+                cur.execute(f"""
+                    UPDATE places_api_usage SET requestCount = requestCount - 1
+                    WHERE usageDate = {_MONTH_KEY} AND kind = 'month'
+                """)
+        mysql.connection.commit()
+    except Exception:
+        mysql.connection.rollback()
+        raise                      # callers fail CLOSED: no budget row, no Google request
+    finally:
+        cur.close()
+
+    if not month_ok:
+        raise PlacesBudgetExceeded(
+            f"Places API monthly limit reached ({PLACES_MONTHLY_CAP} requests/month, kept under Google's free tier). "
+            "Available again next month.")
+    if not day_ok:
+        raise PlacesBudgetExceeded(
+            f"Places API daily limit reached ({PLACES_DAILY_CAP} requests/day). Try again tomorrow.")
+
+
+def _places_get(kind, url, **kwargs):
+    """Every Google Places HTTP call in this module must go through here."""
+    _reserve_places_call(kind)
+    return http.get(url, **kwargs)
+
+
+def get_places_usage_today():
+    _ensure_budget_tables()
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute(f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
+        m = cur.fetchone()
+        cur.execute("SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'day'")
+        d = cur.fetchone()
+        m_used = int((m.get("c") if isinstance(m, dict) else m[0]) or 0) if m else 0
+        d_used = int((d.get("c") if isinstance(d, dict) else d[0]) or 0) if d else 0
+
+        geo_info = {"cap": 500, "remaining": 500, "used": 0}
+        try:
+            from api.registry.service import get_geocode_remaining_today, GEOCODE_DAILY_CAP
+            geo_rem = get_geocode_remaining_today()
+            geo_info = {
+                "cap": GEOCODE_DAILY_CAP,
+                "remaining": geo_rem,
+                "used": max(0, GEOCODE_DAILY_CAP - geo_rem),
+            }
+        except Exception:
+            pass
+
+        return {
+            "month": {
+                "used": m_used,
+                "cap": PLACES_MONTHLY_CAP,
+                "remaining": max(0, PLACES_MONTHLY_CAP - m_used),
+            },
+            "monthly": {
+                "used": m_used,
+                "cap": PLACES_MONTHLY_CAP,
+                "remaining": max(0, PLACES_MONTHLY_CAP - m_used),
+            },
+            "today": {
+                "used": d_used,
+                "cap": PLACES_DAILY_CAP,
+                "remaining": max(0, PLACES_DAILY_CAP - d_used),
+            },
+            "snap": {
+                "max_per_run": SNAP_MAX_PER_RUN,
+                "cooldown_days": SNAP_RETRY_DAYS,
+            },
+            "geocode": geo_info,
+        }
+    finally:
+        cur.close()
+
+
+def _record_snap_attempt(business_id, found):
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO snap_lookup_log (businessID, lastAttemptAt, found)
+            VALUES (%s, NOW(), %s)
+            ON DUPLICATE KEY UPDATE lastAttemptAt = NOW(), found = VALUES(found)
+        """, (business_id, 1 if found else 0))
+        mysql.connection.commit()
+    finally:
+        cur.close()
+
+
+def _completed_points_this_cycle():
+    """
+    Grid points already finished since the last COMPLETED scan (so a scan interrupted by the
+    daily budget resumes instead of restarting). Our own grid keys only.
+    """
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            SELECT pointKey FROM scan_point_log
+            WHERE completedAt > COALESCE(
+                    (SELECT MAX(completedAt) FROM detection_runs WHERE status IN ('completed', 'reset')),
+                    '1970-01-01')
+              AND completedAt > NOW() - INTERVAL 30 DAY
+        """)
+        return {(r["pointKey"] if isinstance(r, dict) else r[0]) for r in cur.fetchall()}
+    finally:
+        cur.close()
+
+
+def _mark_point_done(point_key):
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO scan_point_log (pointKey, completedAt) VALUES (%s, NOW())
+            ON DUPLICATE KEY UPDATE completedAt = NOW()
+        """, (point_key,))
+        mysql.connection.commit()
+    finally:
+        cur.close()
+
+
+def _unmark_points(point_keys):
+    if not point_keys:
+        return
+    cur = mysql.connection.cursor()
+    try:
+        marks = ",".join(["%s"] * len(point_keys))
+        cur.execute(f"DELETE FROM scan_point_log WHERE pointKey IN ({marks})", tuple(point_keys))
+        mysql.connection.commit()
+    finally:
+        cur.close()
+
+
 # ── GeoJSON Loading ───────────────────────────────────────────────────────────
 MATAASNAKAHOY_GEOJSON_PATH = os.path.join(os.path.dirname(__file__), '..', 'utils', 'mataasnakahoy.json')
 _BARANGAY_POLYGONS = {}
@@ -397,30 +621,25 @@ def _text_search_google_place(business_name: str, barangay_name: str):
         if q not in seen_q:
             seen_q.add(q)
             uniq_queries.append(q)
+    uniq_queries = uniq_queries[:SNAP_MAX_QUERIES]
 
     best_match = None
     best_sim = 0.0
 
     for query in uniq_queries:
         try:
-            resp = http.get(
+            resp = _places_get(
+                "textsearch",
                 "https://maps.googleapis.com/maps/api/place/textsearch/json",
                 params={"query": query, "key": api_key},
                 timeout=8,
             )
             data = resp.json()
             api_status = data.get("status")
-            # Back off and retry once on rate-limit responses
+            # Hard stop on rate-limit responses — retrying only burns more quota
             if api_status == "OVER_QUERY_LIMIT" or resp.status_code == 429:
-                print(f"[Snap Registry] Rate limited on query '{query}'. Backing off 2s...")
-                time.sleep(2)
-                resp = http.get(
-                    "https://maps.googleapis.com/maps/api/place/textsearch/json",
-                    params={"query": query, "key": api_key},
-                    timeout=8,
-                )
-                data = resp.json()
-                api_status = data.get("status")
+                raise PlacesBudgetExceeded(
+                    "Places API limit reached (Google returned OVER_QUERY_LIMIT). Try again tomorrow.")
             if api_status not in ("OK", "ZERO_RESULTS"):
                 continue
 
@@ -446,6 +665,8 @@ def _text_search_google_place(business_name: str, barangay_name: str):
             if best_match and best_sim >= 0.70:
                 return best_match
 
+        except PlacesBudgetExceeded:
+            raise
         except Exception as e:
             print(f"[Snap Registry] Text search error for query '{query}': {e}")
 
@@ -457,20 +678,11 @@ def _text_search_google_place(business_name: str, barangay_name: str):
 
 def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
     """
-    For every registered business that still lacks a real Google Places pin
-    (i.e., no placeID in geospatial_logs), performs a Google Places Text Search
-    to find their exact map location and snaps the green pin there.
-
-    limit_to_ids: optional list/set of businessIDs to restrict the snap to only
-    those businesses (used by auto-snap-on-import to avoid re-processing the
-    entire registry on every upload). Scoped runs bypass the 5-minute cooldown.
-
-    force: if True, bypasses the 5-minute cooldown throttle on manual full scans.
-
-    This is SEPARATE from run_detection — it uses Text Search (individual lookups)
-    rather than Nearby Search, so it does not consume the monthly scan quota.
-
-    Returns dict: {snapped, skipped, errors, total, status, message}
+    Snap registry businesses lacking a Google Place ID to their Maps location.
+    Cost controls: attempted businesses are skipped for SNAP_RETRY_DAYS, at most
+    SNAP_MAX_PER_RUN businesses per run, and every request counts against a
+    persistent daily cap. `force` only bypasses the in-memory 5-minute throttle;
+    it can NOT bypass the caps or the retry window.
     """
     global _last_snap_time
     now = time.time()
@@ -478,16 +690,11 @@ def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
     if limit_to_ids is not None and not limit_to_ids:
         return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0}
 
-    # Manual full scans are throttled to run at most once every 5 minutes (unless force=True)
     if limit_to_ids is None and not force and (now - _last_snap_time) < _SNAP_INTERVAL_S:
         remaining_s = int(_SNAP_INTERVAL_S - (now - _last_snap_time))
         remaining_m = max(1, (remaining_s + 59) // 60)
         return {
-            "snapped": 0,
-            "skipped": 0,
-            "errors": 0,
-            "total": 0,
-            "status": "throttled",
+            "snapped": 0, "skipped": 0, "errors": 0, "total": 0, "status": "throttled",
             "message": f"Snap to Maps was run recently. Please wait {remaining_m} minute{'s' if remaining_m > 1 else ''} ({remaining_s}s) before running a full scan again."
         }
 
@@ -496,13 +703,19 @@ def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
         return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0, "status": "already_running"}
 
     try:
+        _ensure_budget_tables()
         if limit_to_ids is None:
             _last_snap_time = now
-        # Load registry entries that don't yet have a confirmed Google Maps Place ID.
-        # Uses NOT EXISTS so the WHERE clause is clear and index-friendly:
-        # include any registry business that has no geospatial_log row with a placeID.
+
+        # Scoped runs (auto-snap after import) filter by ID inside SQL, not in Python
+        id_filter, id_params = "", []
+        if limit_to_ids is not None:
+            ids = list(set(limit_to_ids))
+            id_filter = " AND r.businessID IN (" + ",".join(["%s"] * len(ids)) + ")"
+            id_params = ids
+
         cursor = mysql.connection.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
                    r.businessAddress,
                    b.barangayName
@@ -514,37 +727,35 @@ def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
                   AND g.barangayID   = r.barangayID
                   AND g.placeID IS NOT NULL
             )
-        """)
+            AND NOT EXISTS (
+                SELECT 1 FROM snap_lookup_log s
+                WHERE s.businessID = r.businessID
+                  AND s.lastAttemptAt > NOW() - INTERVAL %s DAY
+            )
+            {id_filter}
+        """, [SNAP_RETRY_DAYS] + id_params)
         rows = cursor.fetchall()
         cursor.close()
 
-        # If called with a scoped ID list (e.g. from auto-snap-on-import), filter down
-        if limit_to_ids is not None:
-            id_set = set(limit_to_ids)
-            if not id_set:
-                return {"snapped": 0, "skipped": 0, "errors": 0, "total": 0}
-            rows = [r for r in rows if r.get("businessID") in id_set]
-
-        # Deduplicate — one entry per businessID (defensive guard)
-        seen = set()
-        entries = []
+        seen, entries = set(), []
         for row in rows:
             bid = row.get("businessID")
             if bid not in seen:
                 seen.add(bid)
                 entries.append(row)
 
+        pending_total = len(entries)
+        entries = entries[:SNAP_MAX_PER_RUN]          # per-run cap
+        left_over = pending_total - len(entries)
+
         total = len(entries)
-        snapped = 0
-        skipped = 0
-        errors = 0
+        snapped = skipped = errors = 0
+        budget_msg = None
 
         hub.publish_to_admins({
-            "type": "snap_progress",
-            "percentage": 0,
+            "type": "snap_progress", "percentage": 0,
             "status": f"Starting snap for {total} unlinked business(es)...",
-            "snapped": 0, "skipped": 0, "errors": 0, "total": total,
-            "stage": "running"
+            "snapped": 0, "skipped": 0, "errors": 0, "total": total, "stage": "running"
         })
 
         for idx, entry in enumerate(entries):
@@ -554,7 +765,13 @@ def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
             barangay_id = entry.get("barangayID")
             app_status = (entry.get("applicationStatus") or "Active").strip()
 
-            place_id, p_lat, p_lng = _text_search_google_place(biz_name, barangay_name)
+            try:
+                place_id, p_lat, p_lng = _text_search_google_place(biz_name, barangay_name)
+            except PlacesBudgetExceeded as be:
+                budget_msg = str(be)
+                break
+
+            _record_snap_attempt(biz_id, bool(place_id and p_lat and p_lng))
 
             if not place_id or not p_lat or not p_lng:
                 skipped += 1
@@ -562,17 +779,12 @@ def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
                 target_color = 'Green' if app_status == 'Active' else (
                     'Orange' if app_status == 'Expired' else (
                         'Black' if app_status == 'Revoked' else (
-                            'Purple' if app_status == 'Closed' else 'Yellow'
-                        )
-                    )
-                )
+                            'Purple' if app_status == 'Closed' else 'Yellow')))
                 try:
                     _match_registry_to_google(
                         place_id, biz_id, biz_name,
-                        target_color=target_color,
-                        lat=p_lat, lng=p_lng,
-                        barangay_id=barangay_id
-                    )
+                        target_color=target_color, lat=p_lat, lng=p_lng,
+                        barangay_id=barangay_id)
                     snapped += 1
                 except Exception as e:
                     print(f"[Snap Registry] Error snapping '{biz_name}': {e}")
@@ -581,152 +793,149 @@ def snap_registry_to_google_maps(limit_to_ids=None, force: bool = False):
             if idx % 3 == 0 or idx == total - 1:
                 pct = min(99, int(((idx + 1) / max(total, 1)) * 100))
                 hub.publish_to_admins({
-                    "type": "snap_progress",
-                    "percentage": pct,
+                    "type": "snap_progress", "percentage": pct,
                     "status": f"Looking up '{biz_name}'... ({idx + 1}/{total})",
-                    "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
-                    "stage": "running"
+                    "snapped": snapped, "skipped": skipped, "errors": errors,
+                    "total": total, "stage": "running"
                 })
-
-            # Throttle: 0.1s between Text Search calls (~10 req/s stays within
-            # the standard Google Places API quota). Backs off automatically
-            # for 2s on an OVER_QUERY_LIMIT / 429 response via _text_search_google_place.
             time.sleep(0.1)
 
-        hub.publish_to_admins({
-            "type": "snap_progress",
-            "percentage": 100,
-            "status": f"Done. Snapped {snapped}, not found on Maps: {skipped}, errors: {errors}.",
-            "snapped": snapped, "skipped": skipped, "errors": errors, "total": total,
-            "stage": "completed"
-        })
+        done_msg = f"Done. Snapped {snapped}, not found on Maps: {skipped}, errors: {errors}."
+        if left_over > 0:
+            done_msg += f" {left_over} more business(es) remain — run again later."
+        if budget_msg:
+            done_msg = f"Stopped early: {budget_msg} Snapped {snapped} so far."
 
+        hub.publish_to_admins({
+            "type": "snap_progress", "percentage": 100, "status": done_msg,
+            "snapped": snapped, "skipped": skipped, "errors": errors,
+            "total": total, "stage": "completed"
+        })
         try:
             hub.publish_to_admins({"type": "registry_updated"})
         except Exception:
             pass
 
-        return {"snapped": snapped, "skipped": skipped, "errors": errors, "total": total}
+        result = {"snapped": snapped, "skipped": skipped, "errors": errors,
+                  "total": total, "remaining": left_over}
+        if budget_msg:
+            result["status"] = "budget_exceeded"
+            result["message"] = budget_msg
+        return result
 
     finally:
         _snap_lock.release()
 
 
 
-# ── Google Places fetch ───────────────────────────────────────────────────────
+# ── Google Places fetch & checkpointed grid scan ───────────────────────────────
 
-def _fetch_places_for_point(lat, lng, radius_m, places_dict):
+DETECTION_RADIUS_M = 850
+
+
+def _grid_points():
+    """Same grid as before (unchanged numbers)."""
+    min_lat, max_lat = 13.9450, 14.0125
+    min_lng, max_lng = 121.0120, 121.1260
+    step = 0.0075
+    points = []
+    lat = min_lat
+    while lat <= max_lat:
+        lng = min_lng
+        while lng <= max_lng:
+            if _MUNICIPALITY_BOUNDARY.buffer(0.001).contains(Point(lng, lat)):
+                points.append((lat, lng))
+            lng += step
+        lat += step
+    return points
+
+
+def _fetch_point_results(lat, lng, radius_m):
+    """
+    Fetch all result pages for ONE grid point. Nothing is stored.
+    Returns (results, complete). Raises PlacesBudgetExceeded when a limit is hit.
+    """
     api_key = (
         os.getenv("GOOGLE_MAPS_API_KEY")
         or os.getenv("GOOGLE_PLACES_API_KEY")
         or os.getenv("VITE_GOOGLE_MAPS_API_KEY")
     )
     if not api_key:
-        print("[Run Detection] Error: GOOGLE_MAPS_API_KEY environment variable is not configured.")
-        return 0
+        raise RuntimeError("GOOGLE_MAPS_API_KEY environment variable is not configured.")
 
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    # Omit restrictive type="establishment" so ALL local stores, groceries, convenience stores, and service shops are returned
-    params = {
-        "location": f"{lat},{lng}",
-        "radius":   radius_m,
-        "key":      api_key,
-    }
-
-    outside_count = 0
-
+    params = {"location": f"{lat},{lng}", "radius": radius_m, "key": api_key}
     headers = {
         "User-Agent": "REVELA-Backend/1.0",
         "Referer": os.getenv("FRONTEND_URL", "https://revela-web.up.railway.app/"),
         "Origin": os.getenv("FRONTEND_URL", "https://revela-web.up.railway.app/").rstrip("/"),
     }
+    results, complete = [], True
 
     while True:
         try:
-            resp = http.get(url, params=params, headers=headers, timeout=10)
+            resp = _places_get("nearby", url, params=params, headers=headers, timeout=10)
             data = resp.json()
+        except PlacesBudgetExceeded:
+            raise
         except Exception as he:
             print(f"[Run Detection] HTTP error querying point ({lat}, {lng}): {he}")
-            break
+            return results, False
 
         status = data.get("status")
+        if status in ("OVER_QUERY_LIMIT", "REQUEST_DENIED"):
+            raise PlacesBudgetExceeded(
+                f"Places API limit reached (Google returned {status}). Try again tomorrow.")
         if status not in ("OK", "ZERO_RESULTS"):
             print(f"[Run Detection] Places API status: {status}, message: {data.get('error_message')}")
-            break
+            return results, False
 
-        for p in data.get("results", []):
-            place_id = p.get("place_id")
-            # Deduplicate overlapping circles
-            if not place_id or place_id in places_dict:
-                continue
-
-            loc = p.get("geometry", {}).get("location", {})
-            p_lat = loc.get("lat")
-            p_lng = loc.get("lng")
-
-            if p_lat is None or p_lng is None:
-                continue
-
-            if _within_municipality(p_lat, p_lng):
-                places_dict[place_id] = p
-            else:
-                outside_count += 1
-
+        results.extend(data.get("results", []))
         next_token = data.get("next_page_token")
         if not next_token:
-            break
-
+            return results, complete
         time.sleep(2)
         params = {"pagetoken": next_token, "key": api_key}
 
-    return outside_count
 
-
-def _fetch_all_places(progress_cb=None):
+def _scan_grid(process_places, progress_cb, state):
     """
-    Uses a dense grid-based search to bypass Google Places API's 60-result limit per circle.
-    Returns a flat list of place dicts — filtered to municipality bounds.
+    Walk the grid. For every point not finished in this scan cycle:
+    fetch -> process_places(results inside the municipality) -> checkpoint.
+    `state` is filled in as we go, so the caller still has it if PlacesBudgetExceeded is raised.
     """
-    places_dict = {}
-    total_outside = 0
+    done_before = _completed_points_this_cycle()
+    points = _grid_points()
+    state["total_points"] = len(points)
 
-    # Bounding Box covering Mataasnakahoy
-    min_lat, max_lat = 13.9450, 14.0125
-    min_lng, max_lng = 121.0120, 121.1260
-
-    # 830m grid step (~0.0075 degrees) and 850m radius cover the municipality with ~65-80 query
-    # points — fast enough to complete in a reasonable time while the 850m radius and the
-    # municipality polygon filter ensure no POI slips through the gaps between circles.
-    # NOTE: Small local stores (e.g. DALI Everyday Grocery) are caught by the name-similarity
-    # matching logic in _match_poi_to_registry, not by grid density, so coarser steps are safe.
-    step = 0.0075
-    radius_m = 850
-
-    # 1. Precalculate grid points to allow progress tracking
-    grid_points = []
-    lat = min_lat
-    while lat <= max_lat:
-        lng = min_lng
-        while lng <= max_lng:
-            # Buffer the municipality polygon slightly (~110m) for search grid points
-            if _MUNICIPALITY_BOUNDARY.buffer(0.001).contains(Point(lng, lat)):
-                grid_points.append((lat, lng))
-            lng += step
-        lat += step
-
-    total_steps = len(grid_points)
-
-    # 2. Iterate and query each point
-    for idx, (lat, lng) in enumerate(grid_points):
+    for idx, (lat, lng) in enumerate(points):
         if is_cancelled("run_detection"):
             break
+        key = f"{lat:.5f},{lng:.5f}"
+        if key in done_before:
+            state["skipped_points"] += 1
+            continue
 
         if progress_cb:
-            progress_cb(idx, total_steps, lat, lng)
-        outside = _fetch_places_for_point(lat, lng, radius_m, places_dict)
-        total_outside += outside
+            progress_cb(idx, len(points), lat, lng)
 
-    return list(places_dict.values()), total_outside
+        results, complete = _fetch_point_results(lat, lng, DETECTION_RADIUS_M)
+
+        inside = []
+        for p in results:
+            loc = (p.get("geometry") or {}).get("location") or {}
+            p_lat, p_lng = loc.get("lat"), loc.get("lng")
+            if p_lat is None or p_lng is None:
+                continue
+            if _within_municipality(p_lat, p_lng):
+                inside.append(p)
+            else:
+                state["outside"] += 1
+
+        process_places(inside)
+        if complete:
+            _mark_point_done(key)
+            state["done_keys"].append(key)
 
 
 # ── Registry loader ───────────────────────────────────────────────────────────
@@ -939,27 +1148,28 @@ from api.models.detection_runs import (
 
 def run_detection(user_id=None):
     """
-    Full detection cycle:
+    Full detection cycle, resumable across days:
     1. Enforce monthly limit (max 2 completed scans per calendar month)
-    2. Fetch Places API POIs — filter to municipality boundary
-    3. Cross-reference against OFFICIAL_REGISTRY (20m threshold)
-    4. Insert Red Flags for unmatched POIs
-    Returns { new_flags, total_checked, outside_boundary, quota }
+    2. For each grid point not yet done in this cycle: fetch Places POIs, cross-reference against
+       OFFICIAL_REGISTRY, insert Red Flags for unmatched POIs, checkpoint the point
+    3. If the Places budget runs out, keep the progress and stop (status 'partial', quota NOT used)
     """
     set_cancel("run_detection", False)
 
-    # Check monthly quota
     quota_info = get_detection_quota_info()
     if quota_info.get("is_limit_reached"):
         limit = quota_info.get("monthly_limit", 2)
         return None, f"Monthly detection limit reached ({limit}/{limit} scans used for this month). Detection scans can only be run {limit} times a month."
 
     run_id = create_detection_run(user_id)
-    try:
-        from api.notifications import hub
+    state = {"done_keys": [], "total_points": 0, "skipped_points": 0, "outside": 0}
+    inserted_flag_ids = []
+    seen_place_ids = set()
+    counters = {"new_flags": 0, "total_checked": 0}
 
+    try:
         def progress_callback(idx, total_steps, lat, lng):
-            percentage = int((idx / total_steps) * 80)
+            percentage = int((idx / max(total_steps, 1)) * 95)
             hub.publish_to_admins({
                 "type": "detection_progress",
                 "stage": "scanning",
@@ -969,161 +1179,125 @@ def run_detection(user_id=None):
                 "status": f"Scanning coordinates ({lat:.4f}, {lng:.4f}) — step {idx + 1} of {total_steps}..."
             })
 
-        places, outside_count = _fetch_all_places(progress_callback)
-
-        if is_cancelled("run_detection"):
-            update_detection_run_status(run_id, "cancelled")
-            hub.publish_to_admins({
-                "type": "detection_progress",
-                "stage": "completed",
-                "percentage": 100,
-                "status": "Detection cancelled by user. No flags were recorded."
-            })
-            return None, "Detection cancelled by user."
-
         hub.publish_to_admins({
-            "type": "detection_progress",
-            "stage": "matching",
-            "percentage": 82,
+            "type": "detection_progress", "stage": "matching", "percentage": 1,
             "status": "Loading official business registry database..."
         })
         registry = _load_registry()
-
-        # Step 3a: Reconcile any existing Red flags already in the database against the registry.
-        # silent=True prevents the reconcile_progress SSE overlay from flashing mid-scan.
         try:
             reconcile_existing_flags(silent=True)
         except Exception as re_err:
             print(f"[Run Detection] Reconcile error: {re_err}")
 
-        total_checked = len(places)
-        new_flags = 0
+        def process_places(places):
+            for place in places:
+                place_id = place.get("place_id")
+                if not place_id or place_id in seen_place_ids:
+                    continue          # overlapping grid circles return the same place
+                seen_place_ids.add(place_id)
+                counters["total_checked"] += 1
 
-        hub.publish_to_admins({
-            "type": "detection_progress",
-            "stage": "matching",
-            "percentage": 85,
-            "status": f"Cross-referencing {total_checked} detected POIs against official registry..."
-        })
+                place_name = place.get("name", "Unknown")
+                loc = (place.get("geometry") or {}).get("location") or {}
+                lat, lng = loc.get("lat"), loc.get("lng")
+                address = place.get("vicinity")
+                if not lat or not lng:
+                    continue
+                if not _within_municipality(lat, lng):
+                    continue
 
-        inserted_flag_ids = []
+                cursor = mysql.connection.cursor()
+                cursor.execute("""
+                    SELECT logID, flagColor FROM geospatial_logs
+                    WHERE placeID = %s
+                    LIMIT 1
+                """, (place_id,))
+                existing_flag = cursor.fetchone()
+                cursor.close()
 
-        for idx, place in enumerate(places):
-            if is_cancelled("run_detection"):
-                # Rollback all inserted flags during this session
-                if inserted_flag_ids:
-                    cursor = mysql.connection.cursor()
-                    format_strings = ','.join(['%s'] * len(inserted_flag_ids))
-                    cursor.execute(f"DELETE FROM geospatial_logs WHERE logID IN ({format_strings})", tuple(inserted_flag_ids))
-                    mysql.connection.commit()
-                    cursor.close()
-                update_detection_run_status(run_id, "cancelled")
-                hub.publish_to_admins({
-                    "type": "detection_progress",
-                    "stage": "completed",
-                    "percentage": 100,
-                    "status": "Detection cancelled by user. Discovered flags rolled back."
-                })
-                return None, "Detection cancelled by user."
+                if existing_flag and existing_flag["flagColor"] in ("Green", "Orange", "Black", "Purple"):
+                    continue
 
-            place_id = place.get("place_id")
-            place_name = place.get("name", "Unknown")
-            geometry = place.get("geometry") or {}
-            loc = geometry.get("location") or {}
-            lat = loc.get("lat")
-            lng = loc.get("lng")
-            address = place.get("vicinity")   # street address from Places API
-            plus_code = place.get("plus_code") or {}
-            compound_code = plus_code.get("compound_code", "")
+                barangay_id = _get_barangay_id_by_coords(lat, lng)
 
-            if not lat or not lng or not place_id:
-                continue
+                if _is_non_business_place(place):
+                    if existing_flag and existing_flag["flagColor"] == "Red":
+                        cursor = mysql.connection.cursor()
+                        cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (existing_flag["logID"],))
+                        mysql.connection.commit()
+                        cursor.close()
+                    continue
 
-            # Ensure coordinates are within municipality polygon
-            if not _within_municipality(lat, lng):
-                continue
-
-            # Check existing status of this placeID in geospatial_logs
-            cursor = mysql.connection.cursor()
-            cursor.execute("""
-                SELECT logID, flagColor FROM geospatial_logs
-                WHERE placeID = %s
-                LIMIT 1
-            """, (place_id,))
-            existing_flag = cursor.fetchone()
-            cursor.close()
-
-            # If it is already a resolved registry flag (Green, Orange, Black, Purple), skip
-            if existing_flag and existing_flag["flagColor"] in ("Green", "Orange", "Black", "Purple"):
-                continue
-
-            # Publish matching progress updates periodically
-            if idx % 5 == 0 or idx == total_checked - 1:
-                percentage = 85 + int(((idx + 1) / (total_checked or 1)) * 12)
-                hub.publish_to_admins({
-                    "type": "detection_progress",
-                    "stage": "matching",
-                    "percentage": percentage,
-                    "status": f"Analyzing geospatial location for “{place_name}” ({idx + 1}/{total_checked})..."
-                })
-
-            barangay_id = _get_barangay_id_by_coords(lat, lng)
-
-            # Filter out non-commercial entities (churches, schools, barangay halls, courts, cemeteries, etc.)
-            if _is_non_business_place(place):
-                if existing_flag and existing_flag["flagColor"] == "Red":
-                    cursor = mysql.connection.cursor()
-                    cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (existing_flag["logID"],))
-                    mysql.connection.commit()
-                    cursor.close()
-                continue
-
-            nearest, dist, sim_score = _match_poi_to_registry(
-                place_name, lat, lng, registry, poi_barangay_id=barangay_id
-            )
-
-            if nearest is None:
-                if not existing_flag:
-                    flag_id = _insert_red_flag(place_id, place_name, lat,
-                                     lng, barangay_id, address)
-                    inserted_flag_ids.append(flag_id)
-                    new_flags += 1
-            else:
-                app_status = (nearest.get('applicationStatus') or 'Active').strip()
-                if app_status == 'Active':
-                    target_color = 'Green'
-                elif app_status == 'Expired':
-                    target_color = 'Orange'
-                elif app_status == 'Revoked':
-                    target_color = 'Black'
-                elif app_status == 'Closed':
-                    target_color = 'Purple'
-                else:
-                    target_color = 'Yellow'
-
-                target_barangay_id = nearest.get('barangayID') or barangay_id
-                _match_registry_to_google(
-                    place_id, nearest['businessID'], nearest['businessName'],
-                    target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id
+                nearest, dist, sim_score = _match_poi_to_registry(
+                    place_name, lat, lng, registry, poi_barangay_id=barangay_id
                 )
 
+                if nearest is None:
+                    if not existing_flag:
+                        flag_id = _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address)
+                        inserted_flag_ids.append(flag_id)
+                        counters["new_flags"] += 1
+                else:
+                    app_status = (nearest.get("applicationStatus") or "Active").strip()
+                    target_color = (
+                        "Green" if app_status == "Active" else
+                        "Orange" if app_status == "Expired" else
+                        "Black" if app_status == "Revoked" else
+                        "Purple" if app_status == "Closed" else "Yellow"
+                    )
+                    target_barangay_id = nearest.get("barangayID") or barangay_id
+                    _match_registry_to_google(
+                        place_id, nearest["businessID"], nearest["businessName"],
+                        target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id
+                    )
+
+        _scan_grid(process_places, progress_callback, state)
+
+        if is_cancelled("run_detection"):
+            # Roll back the flags created by THIS run and un-checkpoint its points, so a later
+            # run re-scans them (otherwise their flags would be missing but the points "done").
+            if inserted_flag_ids:
+                cursor = mysql.connection.cursor()
+                format_strings = ",".join(["%s"] * len(inserted_flag_ids))
+                cursor.execute(f"DELETE FROM geospatial_logs WHERE logID IN ({format_strings})", tuple(inserted_flag_ids))
+                mysql.connection.commit()
+                cursor.close()
+            _unmark_points(state["done_keys"])
+            update_detection_run_status(run_id, "cancelled")
+            hub.publish_to_admins({
+                "type": "detection_progress", "stage": "completed", "percentage": 100,
+                "status": "Detection cancelled by user. Flags found in this run were rolled back."
+            })
+            return None, "Detection cancelled by user."
+
+        new_flags = counters["new_flags"]
+        total_checked = counters["total_checked"]
         update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
 
         hub.publish_to_admins({
-            "type": "detection_progress",
-            "stage": "completed",
-            "percentage": 100,
+            "type": "detection_progress", "stage": "completed", "percentage": 100,
             "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
         })
-
-        quota_info = get_detection_quota_info()
 
         return {
             "new_flags":        new_flags,
             "total_checked":    total_checked,
-            "outside_boundary": outside_count,
-            "quota":            quota_info,
+            "outside_boundary": state["outside"],
+            "quota":            get_detection_quota_info(),
         }, None
+
+    except PlacesBudgetExceeded as be:
+        done_total = state["skipped_points"] + len(state["done_keys"])
+        update_detection_run_status(
+            run_id, "partial",
+            new_flags=counters["new_flags"], total_checked=counters["total_checked"])
+        msg = (f"{be} Progress is saved: {done_total} of {state['total_points']} grid points are done, "
+               f"{counters['new_flags']} new flag(s) recorded in this run. Run Detection again later to continue "
+               "where it stopped. This did not use one of your monthly scans.")
+        hub.publish_to_admins({
+            "type": "detection_progress", "stage": "completed", "percentage": 100, "status": msg
+        })
+        return None, msg
 
     except Exception as e:
         update_detection_run_status(run_id, "failed")

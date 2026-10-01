@@ -162,7 +162,11 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
         header: true,
         skipEmptyLines: true,
         complete: (results) => {
-          setFileRowCount(Array.isArray(results.data) ? results.data.length : null);
+          const count = Array.isArray(results.data) ? results.data.length : null;
+          setFileRowCount(count);
+          if (count !== null && count > 500) {
+            setError(`File contains ${count.toLocaleString()} rows, exceeding the 500-record batch limit.`);
+          }
         },
         error: () => setFileRowCount(null),
       });
@@ -171,6 +175,41 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
 
   const handleSubmit = async () => {
     if (!file) return;
+    if (fileRowCount !== null && fileRowCount > 500) {
+      setError(`File exceeds maximum batch limit of 500 rows (${fileRowCount.toLocaleString()} rows detected). Please split your file into batches of 500 or fewer.`);
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: isSync ? 'Confirm Registry Sync' : 'Confirm Registry Upload',
+      html: `
+        <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+          <p style="margin-bottom: 12px;">You are about to process <strong>${fileRowCount ? fileRowCount.toLocaleString() : 'the selected'}</strong> business records from <code>${file.name}</code>.</p>
+
+          <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;">
+            <div style="font-weight: 700; color: #2563eb; margin-bottom: 4px; font-size: 13px;">
+              📋 Import &amp; Geocoding Rules:
+            </div>
+            <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
+              <li><strong>Batch Cap:</strong> Maximum 500 records per file.</li>
+              <li><strong>Daily Geocoding Budget:</strong> 500 businesses mapped per day (resets daily at midnight).</li>
+              <li>Addresses without coordinates will be mapped using Google Geocoding API. If today's 500 daily quota is reached, remaining unmapped rows must wait until tomorrow.</li>
+            </ul>
+          </div>
+
+          <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #047857;">
+            💡 <strong>Pro-Tip:</strong> If your file includes <code>latitude</code> and <code>longitude</code> columns, geocoding quota is skipped completely!
+          </div>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: 'var(--color-primary, #6366f1)',
+      cancelButtonColor: 'var(--color-muted, #64748b)',
+      confirmButtonText: isSync ? 'Proceed with Sync' : 'Start Upload'
+    });
+    if (!confirm.isConfirmed) return;
+
     setLoading(true);
     setError("");
     abortControllerRef.current = new AbortController();
@@ -193,7 +232,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtoncolor: "var(--color-muted)",
+      cancelButtonColor: 'var(--color-muted, #64748b)',
       confirmButtonText: 'Yes, cancel it'
     });
 
@@ -367,6 +406,25 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
                 : "Upload the official BPLO registry CSV or Excel file. The system will geocode each business address and seed the registry table."}
             </p>
 
+            {/* Batch & Quota Guidance */}
+            <div style={{
+              background: "rgba(59, 130, 246, 0.08)",
+              border: "1px solid rgba(59, 130, 246, 0.25)",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              fontSize: "12.5px",
+              color: "#1d4ed8",
+              marginBottom: "16px",
+              lineHeight: 1.5
+            }}>
+              <strong>Batch &amp; Rate Limits:</strong>
+              <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
+                <li><strong>Batch Cap:</strong> Maximum <strong>500 businesses</strong> per file upload.</li>
+                <li><strong>Daily Geocoding Budget:</strong> Up to <strong>500 businesses</strong> mapped per day (resets daily at midnight).</li>
+                <li><strong>Tip:</strong> If your file includes <code>latitude</code> and <code>longitude</code> columns, geocoding quota is skipped completely!</li>
+              </ul>
+            </div>
+
             {/* Drop zone */}
             <div
               style={{ ...s.dropZone, ...(dragging ? s.dropZoneActive : {}) }}
@@ -376,11 +434,11 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
             >
               {file ? (
                 <>
-                  <div style={{ color: "var(--color-primary)", marginBottom: 8 }}><Icon.FileText /></div>
-                  <p style={{ color: "var(--color-primary)", fontWeight: 600, fontSize: 14 }}>{file.name}</p>
+                  <div style={{ color: (fileRowCount !== null && fileRowCount > 500) ? "var(--color-danger, #ef4444)" : "var(--color-primary)", marginBottom: 8 }}><Icon.FileText /></div>
+                  <p style={{ color: (fileRowCount !== null && fileRowCount > 500) ? "var(--color-danger, #ef4444)" : "var(--color-primary)", fontWeight: 600, fontSize: 14 }}>{file.name}</p>
                   {fileRowCount !== null && (
-                    <p style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 4 }}>
-                      {fileRowCount.toLocaleString()} row{fileRowCount !== 1 ? "s" : ""} detected
+                    <p style={{ fontSize: 12, color: (fileRowCount > 500) ? "var(--color-danger, #ef4444)" : "var(--color-muted)", fontWeight: (fileRowCount > 500) ? 700 : 400, marginTop: 4 }}>
+                      {fileRowCount.toLocaleString()} row{fileRowCount !== 1 ? "s" : ""} detected {fileRowCount > 500 ? "(Exceeds 500 limit)" : ""}
                     </p>
                   )}
                 </>
@@ -420,8 +478,9 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
               <button className="ghost-btn" onClick={onClose}>Cancel</button>
               <button
                 className="primary-btn"
-                disabled={!file}
-                style={!file ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+                disabled={!file || (fileRowCount !== null && fileRowCount > 500)}
+                style={(!file || (fileRowCount !== null && fileRowCount > 500)) ? { opacity: 0.5, cursor: "not-allowed" } : {}}
+                title={(fileRowCount !== null && fileRowCount > 500) ? `File contains ${fileRowCount} rows, exceeding the 500-record limit` : ""}
                 onClick={handleSubmit}
               >
                 <Icon.Upload /> {isSync ? "Import & sync" : "Process File"}

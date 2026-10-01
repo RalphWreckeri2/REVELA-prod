@@ -31,12 +31,13 @@ import {
   updateFlagColorRequest,
   cancelRunDetection,
   getDetectionQuotaRequest,
+  getPlacesUsageRequest,
   reconcileFlagsRequest,
   snapRegistryRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
-// â”€â”€ Icons â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 const Icon = {
   Layers: () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1533,7 +1534,7 @@ function MapCanvas({
             <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
               <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.3)", flexShrink: 0 }}>
                 <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #10b981", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>
               </div>
               <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Snapping Pins to Google Maps</span>
@@ -1572,7 +1573,7 @@ function MapCanvas({
             <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
               <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)", flexShrink: 0 }}>
                 <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #6366f1", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>
               </div>
               <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Reconciling Flags</span>
@@ -1956,6 +1957,7 @@ export default function MapPage() {
   const [reconcileProgress, setReconcileProgress] = useState(null);
   const reconcileProgressRef = useRef(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
+  const [placesUsage, setPlacesUsage] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
@@ -2091,10 +2093,23 @@ export default function MapPage() {
     }
   }, [token, isAdmin]);
 
+  const fetchPlacesUsage = useCallback(async () => {
+    if (!token || !isAdmin) return;
+    try {
+      const data = await getPlacesUsageRequest(token);
+      if (data) {
+        setPlacesUsage(data);
+      }
+    } catch (err) {
+      console.error("Failed to load places usage", err);
+    }
+  }, [token, isAdmin]);
+
   useEffect(() => {
     fetchFlags(false);
     fetchDetectionQuota();
-  }, [fetchFlags, fetchDetectionQuota]);
+    fetchPlacesUsage();
+  }, [fetchFlags, fetchDetectionQuota, fetchPlacesUsage]);
 
   useEffect(() => {
     if (!token || !isAdmin) return;
@@ -2148,6 +2163,7 @@ export default function MapPage() {
         }
         fetchFlags(true);
         fetchDetectionQuota();
+        fetchPlacesUsage();
       }
     };
     window.addEventListener("revela:detection-progress", handleProgress);
@@ -2157,7 +2173,7 @@ export default function MapPage() {
         clearInterval(timerIntervalRef.current);
       }
     };
-  }, [fetchFlags, fetchDetectionQuota]);
+  }, [fetchFlags, fetchDetectionQuota, fetchPlacesUsage]);
 
   useEffect(() => {
     const handleSnap = (e) => {
@@ -2166,11 +2182,12 @@ export default function MapPage() {
       setSnapProgress(d);
       if (d?.stage === "completed") {
         fetchFlags(true);
+        fetchPlacesUsage();
       }
     };
     window.addEventListener("revela:snap-progress", handleSnap);
     return () => window.removeEventListener("revela:snap-progress", handleSnap);
-  }, [fetchFlags]);
+  }, [fetchFlags, fetchPlacesUsage]);
 
   useEffect(() => {
     const handleRec = (e) => {
@@ -2295,23 +2312,54 @@ export default function MapPage() {
       return;
     }
 
+    if (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) {
+      await Swal.fire({
+        title: 'Daily Places Budget Reached',
+        html: `<p style="font-size:14px; margin-bottom:8px;">Today's Google Places API limit of <strong>45 requests</strong> has been reached.</p>
+               <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
+                 Used today: <strong>${placesUsage.today.used}/45</strong>.<br/>
+                 To guarantee a $0.00 bill and prevent extra charges, detection scans are paused until tomorrow (resets at midnight).
+               </p>`,
+        icon: 'warning',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
     const isFinalScan = remaining === 1;
+    const placesTodayLeft = placesUsage?.today?.remaining ?? 45;
+    const placesMonthLeft = placesUsage?.monthly?.remaining ?? 900;
 
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
-      html: `<p style="margin-bottom:12px; font-size:14px;">This will scan Google Places within Mataasnakahoy and cross-reference against the official business registry.</p>
-             ${isFinalScan ? `
-             <div style="background:rgba(245,158,11,0.12); border:1px solid rgba(245,158,11,0.4); border-radius:8px; padding:10px 14px; font-size:13px; color:#f59e0b; text-align:left;">
-               <strong>Notice: This is your 2nd and final scan for this month.</strong><br/>
-               <span style="font-size:12px; opacity:0.95;">After this scan, detection will be locked until <strong>${detectionQuota?.resets_on || 'the 1st of next month'}</strong>.</span>
-             </div>
-             ` : `
-             <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); border-radius:8px; padding:10px 14px; font-size:13px; color:#6366f1; text-align:left;">
-               <strong>Monthly Quota:</strong> 2 of 2 scans remaining for this month.<br/>
-               <span style="font-size:12px; opacity:0.85;">(Limited to 2 scans/month; resets on ${detectionQuota?.resets_on || 'the 1st of next month'})</span>
-             </div>
-             `}`,
+      html: `
+        <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+          <p style="margin-bottom: 12px;">This will scan Google Places within Mataasnakahoy and cross-reference against the official business registry to discover unregistered commercial activities.</p>
+
+          <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;">
+            <div style="font-weight: 700; color: #6366f1; margin-bottom: 4px; font-size: 13px;">
+              📊 Quota & Limits Overview:
+            </div>
+            <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
+              <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of 2</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
+              <li><strong>Daily Places API Budget:</strong> <b>${placesTodayLeft} of 45</b> requests left today (resets at midnight).</li>
+              <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 900</b> requests left.</li>
+            </ul>
+          </div>
+
+          <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #047857;">
+            🛡️ <strong>Zero-Overcharge Safe:</strong> If the 45 daily API cap is reached mid-scan, progress is automatically saved as <em>Partial</em>. Your monthly scan quota is NOT consumed, and scanning resumes seamlessly tomorrow!
+          </div>
+
+          ${isFinalScan ? `
+            <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #f59e0b; margin-top: 8px;">
+              ⚠️ <strong>Warning:</strong> This is your 2nd and final scan for this month.
+            </div>
+          ` : ''}
+        </div>
+      `,
       icon: isFinalScan ? 'warning' : 'question',
       showCancelButton: true,
       confirmButtonColor: '#6366f1',
@@ -2336,6 +2384,7 @@ export default function MapPage() {
       const result = await runDetectionRequest(token);
       await fetchFlags();
       await fetchDetectionQuota();
+      await fetchPlacesUsage();
       setClusters([]);
 
       // Stop loader so map is fully visible behind dialog
@@ -2399,12 +2448,23 @@ export default function MapPage() {
       }
     } catch (err) {
       console.error("Detection scan error:", err);
-      Swal.fire({
-        icon: "error",
-        title: "Detection Scan Failed",
-        text: err.message || "An error occurred during the geospatial scan.",
-        confirmButtonColor: "#ef4444"
-      });
+      if (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("budget") || err.message.toLowerCase().includes("limit"))) {
+        Swal.fire({
+          icon: "warning",
+          title: "Daily Limit Reached",
+          text: err.message,
+          confirmButtonColor: "#6366f1"
+        });
+        await fetchPlacesUsage();
+        await fetchDetectionQuota();
+      } else {
+        Swal.fire({
+          icon: "error",
+          title: "Detection Scan Failed",
+          text: err.message || "An error occurred during the geospatial scan.",
+          confirmButtonColor: "#ef4444"
+        });
+      }
       setActionError(err.message || "Detection failed.");
     } finally {
       setRunDetectionLoading(false);
@@ -2420,10 +2480,18 @@ export default function MapPage() {
   const handleReconcile = async () => {
     const confirm = await Swal.fire({
       title: 'Reconcile Flags?',
-      html: `<p style="font-size:14px;">This will re-check all existing <strong>Red flags</strong> against the official business registry and convert any matches to the correct color (Green, Orange, etc.).</p>`,
+      html: `
+        <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+          <p style="margin-bottom:12px;">This will re-check all existing <strong>Red flags</strong> against the official business registry and convert any matches to their correct color (Green, Orange, etc.).</p>
+          <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#6366f1;">
+            ⚡ <strong>100% Local & Free:</strong> This operation runs directly against your database and consumes <strong>0 Google API quota</strong>.
+          </div>
+        </div>
+      `,
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#6366f1',
+      cancelButtonColor: 'var(--color-muted, #64748b)',
       confirmButtonText: 'Run Reconcile'
     });
     if (!confirm.isConfirmed) return;
@@ -2447,13 +2515,52 @@ export default function MapPage() {
   };
 
   const handleSnapRegistry = async () => {
+    if (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) {
+      await Swal.fire({
+        title: 'Daily Places Budget Reached',
+        html: `<p style="font-size:14px; margin-bottom:8px;">Today's Google Places API limit of <strong>45 requests</strong> has been reached.</p>
+               <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
+                 Used today: <strong>${placesUsage.today.used}/45</strong>.<br/>
+                 To guarantee a $0.00 bill and protect Google's Free Tier, Snap to Maps is locked until tomorrow (resets at midnight).
+               </p>`,
+        icon: 'warning',
+        confirmButtonColor: '#10b981',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
+    const placesTodayLeft = placesUsage?.today?.remaining ?? 45;
+    const placesMonthLeft = placesUsage?.monthly?.remaining ?? 900;
+    const maxPerRun = placesUsage?.snap?.max_per_run ?? 100;
+
     const confirm = await Swal.fire({
       title: 'Snap Pins to Google Maps?',
-      html: `<p style="font-size:14px;">For every registered business without a Google Maps pin, this will look up its exact location using <strong>Places Text Search</strong> and snap its green flag there.</p>
-             <p style="font-size:12px; color:#94a3b8; margin-top:8px;">This does <strong>not</strong> consume your monthly detection scan quota.</p>`,
+      html: `
+        <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+          <p style="margin-bottom:12px;">This feature looks up registered businesses without Google Maps pins using <strong>Places Text Search</strong> and snaps their green pins directly onto the map.</p>
+          
+          <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:10px 14px; margin-bottom:10px;">
+            <div style="font-weight:700; color:#059669; margin-bottom:4px; font-size:13px;">
+              📍 Feature Limits & Rules:
+            </div>
+            <ul style="margin:4px 0 0 16px; padding:0; font-size:12.5px; color:inherit;">
+              <li><strong>Daily Places Budget:</strong> <b>${placesTodayLeft} of 45</b> requests left today (resets at midnight).</li>
+              <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 900</b> requests left.</li>
+              <li><strong>Batch Cap:</strong> Maximum of <b>${maxPerRun} unpinned businesses</b> checked per click.</li>
+              <li><strong>90-Day Cooldown:</strong> Businesses not found on Maps won't waste your quota again for 90 days.</li>
+            </ul>
+          </div>
+
+          <p style="font-size:12px; color:var(--color-muted, #64748b); margin-top:8px;">
+            💡 <em>Note: This does <strong>not</strong> consume your monthly detection scan quota (0/2).</em>
+          </p>
+        </div>
+      `,
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#10b981',
+      cancelButtonColor: 'var(--color-muted, #64748b)',
       confirmButtonText: 'Snap Pins'
     });
     if (!confirm.isConfirmed) return;
@@ -2461,6 +2568,7 @@ export default function MapPage() {
     try {
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting...', snapped: 0, skipped: 0, errors: 0, total: 0 });
       const res = await snapRegistryRequest(token);
+      await fetchPlacesUsage();
       if (res?.status === 'throttled') {
         setSnapProgress(null);
         snapProgressRef.current = null;
@@ -2469,6 +2577,17 @@ export default function MapPage() {
           title: 'Snap on Cooldown',
           text: res?.message || 'Snap to Maps was run recently. Please wait a few minutes before running a full scan again.',
           confirmButtonColor: '#6366f1'
+        });
+        return;
+      }
+      if (res?.status === 'budget_exceeded' || res?.status === 'budget_exhausted') {
+        setSnapProgress(null);
+        snapProgressRef.current = null;
+        Swal.fire({
+          icon: 'warning',
+          title: 'Daily Budget Exceeded',
+          text: res?.message || "Today's Places API daily limit has been reached.",
+          confirmButtonColor: '#f59e0b'
         });
         return;
       }
@@ -2489,6 +2608,7 @@ export default function MapPage() {
         snapProgressRef.current = { stage: 'completed' };
         setSnapProgress(p => ({ ...p, stage: 'completed', percentage: 100 }));
         await fetchFlags();
+        await fetchPlacesUsage();
       }
       setTimeout(() => { setSnapProgress(null); snapProgressRef.current = null; }, 3000);
       Swal.fire({
@@ -2500,7 +2620,17 @@ export default function MapPage() {
     } catch (err) {
       setSnapProgress(null);
       snapProgressRef.current = null;
-      Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
+      await fetchPlacesUsage();
+      if (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("budget") || err.message.toLowerCase().includes("limit"))) {
+        Swal.fire({
+          icon: "warning",
+          title: "Daily Limit Reached",
+          text: err.message,
+          confirmButtonColor: "#f59e0b"
+        });
+      } else {
+        Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
+      }
     }
   };
 
@@ -2804,15 +2934,19 @@ export default function MapPage() {
                 className="primary-btn"
                 type="button"
                 onClick={handleRunDetection}
-                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0)}
+                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)}
                 title={
-                  detectionQuota && detectionQuota.remaining_this_month === 0
-                    ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
-                    : "Run geospatial detection scan (Max 2x/month)"
+                  runDetectionLoading
+                    ? "Detection scan in progress…"
+                    : detectionQuota && detectionQuota.remaining_this_month === 0
+                      ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
+                      : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
+                        ? "Daily Google Places limit reached (0/45 remaining). Resets at midnight."
+                        : "Run geospatial detection scan (Max 2x/month)"
                 }
                 style={{
-                  opacity: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? 0.6 : 1,
-                  cursor: (detectionQuota && detectionQuota.remaining_this_month === 0 && !runDetectionLoading) ? "not-allowed" : "pointer",
+                  opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)) && !runDetectionLoading ? 0.6 : 1,
+                  cursor: ((detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)) && !runDetectionLoading ? "not-allowed" : "pointer",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "7px"
@@ -2852,11 +2986,42 @@ export default function MapPage() {
                 className="ghost-btn"
                 type="button"
                 onClick={handleSnapRegistry}
-                disabled={runDetectionLoading || snapProgress?.stage === 'running'}
-                title="Find registered businesses on Google Maps and snap their pins to exact locations"
-                style={{ display: "inline-flex", alignItems: "center", gap: "6px", color: snapProgress?.stage === 'running' ? "#6ee7b7" : "#10b981", opacity: snapProgress?.stage === 'running' ? 0.55 : 1 }}
+                disabled={runDetectionLoading || snapProgress?.stage === 'running' || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)}
+                title={
+                  snapProgress?.stage === 'running'
+                    ? "Snapping pins in progress…"
+                    : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
+                      ? "Daily Google Places limit reached (0/45 remaining). Resets at midnight."
+                      : "Find registered businesses on Google Maps and snap their pins to exact locations"
+                }
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  color: snapProgress?.stage === 'running' ? "#6ee7b7" : (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) ? "var(--color-muted, #94a3b8)" : "#10b981",
+                  opacity: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? 0.6 : (snapProgress?.stage === 'running' ? 0.55 : 1),
+                  cursor: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? "not-allowed" : "pointer"
+                }}
               >
-                {snapProgress?.stage === 'running' ? 'Snapping...' : 'Snap to Maps'}
+                <span>{snapProgress?.stage === 'running' ? 'Snapping...' : 'Snap to Maps'}</span>
+                {placesUsage && placesUsage.today && (
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      padding: "1px 7px",
+                      borderRadius: "10px",
+                      background: placesUsage.today.remaining <= 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
+                      color: placesUsage.today.remaining <= 0 ? "#ef4444" : "#059669",
+                      fontWeight: 700,
+                      letterSpacing: "0.02em",
+                      lineHeight: 1.4,
+                      display: "inline-flex",
+                      alignItems: "center"
+                    }}
+                  >
+                    {placesUsage.today.remaining}/45
+                  </span>
+                )}
               </button>
             </>
           )}
