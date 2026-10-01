@@ -1957,6 +1957,7 @@ export default function MapPage() {
   const [reconcileProgress, setReconcileProgress] = useState(null);
   const reconcileProgressRef = useRef(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
+  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [placesUsage, setPlacesUsage] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
@@ -2973,56 +2974,79 @@ export default function MapPage() {
                 )}
               </button>
               <button
-                className="ghost-btn"
+                className={`ghost-btn ${showAdvancedTools ? 'active' : ''}`}
                 type="button"
-                onClick={handleReconcile}
-                disabled={runDetectionLoading || reconcileProgress?.stage === 'running'}
-                title="Re-check Red flags against the registry and fix mis-colored pins"
-                style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: reconcileProgress?.stage === 'running' ? 0.55 : 1 }}
-              >
-                {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
-              </button>
-              <button
-                className="ghost-btn"
-                type="button"
-                onClick={handleSnapRegistry}
-                disabled={runDetectionLoading || snapProgress?.stage === 'running' || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)}
-                title={
-                  snapProgress?.stage === 'running'
-                    ? "Snapping pins in progress…"
-                    : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
-                      ? "Daily Google Places limit reached (0/45 remaining). Resets at midnight."
-                      : "Find registered businesses on Google Maps and snap their pins to exact locations"
-                }
+                onClick={() => setShowAdvancedTools(prev => !prev)}
+                title="Advanced Tools"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
-                  gap: "6px",
-                  color: snapProgress?.stage === 'running' ? "#6ee7b7" : (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) ? "var(--color-muted, #94a3b8)" : "#10b981",
-                  opacity: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? 0.6 : (snapProgress?.stage === 'running' ? 0.55 : 1),
-                  cursor: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? "not-allowed" : "pointer"
+                  justifyContent: "center",
+                  padding: "0 10px",
+                  background: showAdvancedTools ? "var(--color-bg-secondary, #f1f5f9)" : "transparent"
                 }}
               >
-                <span>{snapProgress?.stage === 'running' ? 'Snapping...' : 'Snap to Maps'}</span>
-                {placesUsage && placesUsage.today && (
-                  <span
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="1"></circle>
+                  <circle cx="19" cy="12" r="1"></circle>
+                  <circle cx="5" cy="12" r="1"></circle>
+                </svg>
+              </button>
+              {showAdvancedTools && (
+                <>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    onClick={handleReconcile}
+                    disabled={runDetectionLoading || reconcileProgress?.stage === 'running'}
+                    title="Re-check Red flags against the registry and fix mis-colored pins"
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: reconcileProgress?.stage === 'running' ? 0.55 : 1 }}
+                  >
+                    {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
+                  </button>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    onClick={handleSnapRegistry}
+                    disabled={runDetectionLoading || snapProgress?.stage === 'running' || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)}
+                    title={
+                      snapProgress?.stage === 'running'
+                        ? "Snapping pins in progress…"
+                        : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
+                          ? "Daily Google Places limit reached (0/45 remaining). Resets at midnight."
+                          : "Find registered businesses on Google Maps and snap their pins to exact locations"
+                    }
                     style={{
-                      fontSize: "11px",
-                      padding: "1px 7px",
-                      borderRadius: "10px",
-                      background: placesUsage.today.remaining <= 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
-                      color: placesUsage.today.remaining <= 0 ? "#ef4444" : "#059669",
-                      fontWeight: 700,
-                      letterSpacing: "0.02em",
-                      lineHeight: 1.4,
                       display: "inline-flex",
-                      alignItems: "center"
+                      alignItems: "center",
+                      gap: "6px",
+                      color: snapProgress?.stage === 'running' ? "#6ee7b7" : (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) ? "var(--color-muted, #94a3b8)" : "#10b981",
+                      opacity: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? 0.6 : (snapProgress?.stage === 'running' ? 0.55 : 1),
+                      cursor: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? "not-allowed" : "pointer"
                     }}
                   >
-                    {placesUsage.today.remaining}/45
-                  </span>
-                )}
-              </button>
+                    <span>{snapProgress?.stage === 'running' ? 'Snapping...' : 'Snap to Maps'}</span>
+                    {placesUsage && placesUsage.today && (
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          padding: "1px 7px",
+                          borderRadius: "10px",
+                          background: placesUsage.today.remaining <= 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
+                          color: placesUsage.today.remaining <= 0 ? "#ef4444" : "#059669",
+                          fontWeight: 700,
+                          letterSpacing: "0.02em",
+                          lineHeight: 1.4,
+                          display: "inline-flex",
+                          alignItems: "center"
+                        }}
+                      >
+                        {placesUsage.today.remaining}/45
+                      </span>
+                    )}
+                  </button>
+                </>
+              )}
             </>
           )}
         </div>
