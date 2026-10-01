@@ -143,7 +143,7 @@ def get_places_usage_today():
         m_used = int((m.get("c") if isinstance(m, dict) else m[0]) or 0) if m else 0
         d_used = int((d.get("c") if isinstance(d, dict) else d[0]) or 0) if d else 0
 
-        geo_info = {"cap": 500, "remaining": 500, "used": 0}
+        geo_info = {"cap": 1500, "remaining": 1500, "used": 0}
         try:
             from api.registry.service import get_geocode_remaining_today, GEOCODE_DAILY_CAP
             geo_rem = get_geocode_remaining_today()

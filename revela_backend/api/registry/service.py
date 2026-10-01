@@ -104,8 +104,8 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 GEOCODE_MONTHLY_CAP  = int(os.getenv("GEOCODE_MONTHLY_CAP", "8000"))   # free tier is 10,000/month
-GEOCODE_DAILY_CAP    = int(os.getenv("GEOCODE_DAILY_CAP", "500"))      # 500 geocodes per day
-MAX_IMPORT_PER_BATCH = int(os.getenv("MAX_IMPORT_PER_BATCH", "500"))   # maximum 500 businesses per import batch
+GEOCODE_DAILY_CAP    = int(os.getenv("GEOCODE_DAILY_CAP", "1500"))      # 1500 geocodes per day
+MAX_IMPORT_PER_BATCH = int(os.getenv("MAX_IMPORT_PER_BATCH", "1500"))   # maximum 1500 businesses per import batch
 _geo_tables_ready = False
 _GEO_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"   # no '%' characters
 
