@@ -462,10 +462,23 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
             </div>
 
             {/* Column hint */}
-            <div style={s.hint}>
+            <div style={{ ...s.hint, display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <strong>Expected columns (flexible naming):</strong>
-              &nbsp; business_name, barangay, business_type, line_of_business, size_of_business,
-              business_address, status / status_of_registration, last_renewal_date
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {["Business Name", "Type of Business", "Status of Application", "Status of Registration", "Year of Registration", "Business Address", "Barangay Name", "Line of Business", "Size of Business", "Coordinates (Optional)"].map(col => (
+                  <span key={col} style={{
+                    background: "var(--color-bg-secondary, #f1f5f9)",
+                    color: "var(--color-ink, #334155)",
+                    padding: "4px 8px",
+                    borderRadius: "4px",
+                    fontSize: "11px",
+                    fontWeight: "600",
+                    border: "1px solid var(--color-border, #e2e8f0)"
+                  }}>
+                    {col}
+                  </span>
+                ))}
+              </div>
             </div>
 
             {error && (
