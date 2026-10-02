@@ -9,7 +9,6 @@ from api.flags.service import (
     escalate_to_black,
     delete_flag,
     reconcile_existing_flags,
-    snap_registry_to_google_maps,
     update_flag_location,
     get_places_usage_today,
 )
@@ -87,25 +86,6 @@ def reconcile_flags_route():
     try:
         converted = reconcile_existing_flags(force=True)
         return jsonify({"message": f"{converted} flag(s) reconciled.", "converted": converted}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-# ── POST /api/flags/snap-registry ─────────────────────────────────────────────
-@flags_bp.route("/snap-registry", methods=["POST"])
-@admin_required()
-def snap_registry_route():
-    """For every registered business without a linked Google Maps Place ID,
-    perform a Text Search lookup to find and snap its pin to the exact
-    Google Maps location. Returns counts of snapped, skipped, and errors.
-    Note: uses Places Text Search (not Nearby Search) — does not consume
-    the monthly detection scan quota."""
-    try:
-        force = request.args.get("force", "false").lower() in ("true", "1")
-        if not force and request.is_json and request.json:
-            force = bool(request.json.get("force"))
-        result = snap_registry_to_google_maps(force=force)
-        return jsonify(result), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

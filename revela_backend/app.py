@@ -131,6 +131,30 @@ def _start_permit_expiry_scheduler(app):
         replace_existing=True,
     )
 
+    def _run_places_refresh():
+        """Refresh aging Google coordinates to comply with 30-day cache limits."""
+        with app.app_context():
+            try:
+                from api.registry.places_resolver import refresh_expired_coords, purge_expired_coords
+                # Automatically refresh coords older than 20 days (stays within 30-day limit)
+                res = refresh_expired_coords()
+                app.logger.info(f"[Scheduler] Map Pins Refresh: {res}")
+                
+                # Safety net: clear Google coords older than 28 days that failed to refresh
+                # Default is dry_run=True, so it just logs for now.
+                purge_res = purge_expired_coords(dry_run=True)
+                app.logger.info(f"[Scheduler] Map Pins Purge: {purge_res}")
+            except Exception as exc:
+                app.logger.error(f"[Scheduler] Map Pins Refresh failed: {exc}")
+
+    # I-schedule itong tumakbo araw-araw (e.g. tuwing 3:00 AM)
+    scheduler.add_job(
+        _run_places_refresh,
+        CronTrigger(hour=3, minute=0),
+        id="refresh_places_daily",
+        replace_existing=True,
+    )
+
     scheduler.start()
     # Ensure the scheduler stops cleanly when the process exits.
     atexit.register(lambda: scheduler.shutdown(wait=False))

@@ -11,6 +11,7 @@ from api.registry.service import (
     delete_business,
 )
 from api.middleware.decorators import jwt_required, admin_required
+from api.registry import places_resolver
 
 registry_bp = Blueprint("registry", __name__)
 
@@ -56,25 +57,6 @@ def upload():
             return jsonify({"error": error}), 400
         return jsonify({"error": error}), 500
 
-    # Automatically trigger Snap to Maps in the background for newly imported businesses
-    # so their pins snap immediately without re-processing the entire registry.
-    new_ids = summary.get("inserted_ids") if summary else None
-    if new_ids and os.getenv("AUTO_SNAP_ON_IMPORT") == "1":
-        try:
-            app_instance = current_app._get_current_object()
-
-            def _bg_snap(app, ids):
-                with app.app_context():
-                    try:
-                        from api.flags.service import snap_registry_to_google_maps
-                        snap_registry_to_google_maps(limit_to_ids=ids)
-                    except Exception as exc:
-                        print(f"[Auto-Snap on Upload] Background error: {exc}")
-
-            threading.Thread(target=_bg_snap, args=(app_instance, new_ids), daemon=True).start()
-        except Exception as te:
-            print(f"[Auto-Snap on Upload] Could not launch background thread: {te}")
-
     return jsonify(summary), 201
 
 
@@ -109,25 +91,6 @@ def sync():
         if "Maximum" in error and "synced per batch" in error:
             return jsonify({"error": error}), 400
         return jsonify({"error": error}), 500
-
-    # Automatically trigger Snap to Maps in the background for newly imported/updated businesses
-    # so their pins snap immediately without re-processing the entire registry.
-    new_ids = summary.get("inserted_ids") if summary else None
-    if new_ids and os.getenv("AUTO_SNAP_ON_IMPORT") == "1":
-        try:
-            app_instance = current_app._get_current_object()
-
-            def _bg_snap(app, ids):
-                with app.app_context():
-                    try:
-                        from api.flags.service import snap_registry_to_google_maps
-                        snap_registry_to_google_maps(limit_to_ids=ids)
-                    except Exception as exc:
-                        print(f"[Auto-Snap on Sync] Background error: {exc}")
-
-            threading.Thread(target=_bg_snap, args=(app_instance, new_ids), daemon=True).start()
-        except Exception as te:
-            print(f"[Auto-Snap on Sync] Could not launch background thread: {te}")
 
     return jsonify(summary), 200
 
@@ -216,3 +179,30 @@ def get_barangays():
     # Convert cursor results to list of dicts
     data = [dict(row) for row in rows] if rows else []
     return jsonify({"data": data}), 200
+
+
+# ── GET /api/registry/review ──────────────────────────────────────────────────
+@registry_bp.route("/review", methods=["GET"])
+@admin_required()
+def review_queue():
+    """Businesses whose map pin was matched with low confidence and awaits admin review."""
+    page = request.args.get("page", 1, type=int)
+    per_page = min(request.args.get("limit", 20, type=int), 100)
+    result, error = places_resolver.list_review_queue(page=page, per_page=per_page)
+    if error:
+        return jsonify({"error": error}), 500
+    return jsonify(result), 200
+
+
+# ── POST /api/registry/<id>/review  body: {"action": "approve" | "reject"} ────
+@registry_bp.route("/<int:business_id>/review", methods=["POST"])
+@admin_required()
+def review_decide(business_id):
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    if action not in ("approve", "reject"):
+        return jsonify({"error": "action must be 'approve' or 'reject'"}), 400
+    ok, error = places_resolver.decide_review(business_id, approve=(action == "approve"))
+    if not ok:
+        return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
+    return jsonify({"message": f"Pin {action}d"}), 200

@@ -5,6 +5,7 @@ import os
 from app import mysql
 from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
+from api.registry import places_resolver
 
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -204,6 +205,18 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     return None, None
 
 
+def _resolve_location(business_name, address, barangay):
+    """Returns (lat, lng, meta).
+    PLACES_RESOLVER_ENABLED=1 -> Places Text Search (+ quality-gated geocode fallback), meta describes provenance.
+    Otherwise -> legacy _geocode behaviour unchanged, meta=None."""
+    if places_resolver.enabled():
+        return places_resolver.resolve_location(
+            str(business_name).strip(), address, barangay,
+            reserve_geocode=_reserve_geocode_call)
+    lat, lng = _geocode(address, barangay)
+    return lat, lng, None
+
+
 DISTRICT_ALIASES = {
     "district i":   "Barangay I",
     "district ii":  "Barangay II",
@@ -258,6 +271,8 @@ def _resolve_barangay_id(barangay_name: str, lookup: dict[str, int]) -> int | No
     # Substring fallback
     for key, bid in lookup.items():
         if cleaned.lower() in key or key in cleaned.lower():
+            return bid
+        if cleaned_nospace in key.replace(" ", "") or key.replace(" ", "") in cleaned_nospace:
             return bid
 
     return None
@@ -424,6 +439,7 @@ def upload_registry(file, ext: str):
         skipped = 0
         errors = []
         inserted_ids = []  # track newly inserted businessIDs for scoped auto-snap
+        seen_counts = {}
 
         from api.notifications import hub
 
@@ -445,6 +461,12 @@ def upload_registry(file, ext: str):
                 return None, "Import cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
+            biz_id = str(row.get("Business ID") or "").strip()
+
+            if not biz_id:
+                skipped += 1
+                errors.append(f"Row {idx + 2}: missing Business ID — skipped")
+                continue
 
             # businessName is required
             if not business_name or str(business_name).strip() == "":
@@ -476,8 +498,9 @@ def upload_registry(file, ext: str):
                 except Exception:
                     lat, lng = None, None
 
+            geo_meta = {"coord_source": "csv"} if lat is not None else None
             if lat is None and address_raw:
-                lat, lng = _geocode(address_raw, barangay_raw)
+                lat, lng, geo_meta = _resolve_location(business_name, address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -498,46 +521,43 @@ def upload_registry(file, ext: str):
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
             name_key = str(business_name).strip()
+            addr_key = str(address_raw).strip() or None
 
-            # Insert — skip duplicates (same name + barangayID).
-            # Collation utf8mb4_unicode_ci is case-insensitive so LOWER() is
-            # redundant on both sides and prevents index use — removed.
+            # Track duplicates within this CSV
+            if biz_id in seen_counts:
+                skipped += 1
+                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
+                continue
+            seen_counts[biz_id] = 1
+
+            # Insert — ignore duplicates if the DB already has this biz_id
             cursor.execute(
                 """
-                INSERT INTO official_registry
-                    (barangayID, businessName, businessType, lineOfBusiness,
+                INSERT IGNORE INTO official_registry
+                    (businessID, barangayID, businessName, businessType, lineOfBusiness,
                     businessAddress, latitude, longitude, applicationStatus,
                     lastRenewalDate, businessSize)
-                SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                FROM DUAL
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM official_registry
-                    WHERE businessName = %s
-                    AND barangayID = %s
-                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
+                    biz_id,
                     barangay_id,
                     name_key,
                     str(row.get("businessType") or "").strip() or None,
                     str(row.get("lineOfBusiness") or "").strip() or None,
-                    str(address_raw).strip() or None,
+                    addr_key,
                     lat,
                     lng,
                     status,
                     renewal_date,
                     str(row.get("businessSize") or "").strip() or None,
-                    # WHERE NOT EXISTS params
-                    name_key,
-                    barangay_id,
                 ),
             )
 
             if cursor.rowcount > 0:
                 inserted += 1
-                new_id = cursor.lastrowid
-                if new_id:
-                    inserted_ids.append(new_id)
+                inserted_ids.append(biz_id)
+                places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 flag_color = _status_to_flag_color(status)
                 # Auto-seed Flag baseline into GEOSPATIAL_LOGS
                 insert_green_flag(
@@ -620,6 +640,7 @@ def sync_registry(file, ext: str):
         skipped = 0
         errors = []
         inserted_ids = []  # track newly inserted businessIDs for scoped auto-snap
+        matched_db_ids = set()
 
         from api.notifications import hub
 
@@ -641,6 +662,12 @@ def sync_registry(file, ext: str):
                 return None, "Sync cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
+            biz_id = str(row.get("Business ID") or "").strip()
+
+            if not biz_id:
+                skipped += 1
+                errors.append(f"Row {idx + 2}: missing Business ID — skipped")
+                continue
 
             if not business_name or str(business_name).strip() == "":
                 skipped += 1
@@ -657,14 +684,27 @@ def sync_registry(file, ext: str):
                 continue
 
             name_key = str(business_name).strip()
+            address_raw = row.get("businessAddress") or ""
+            addr_key = str(address_raw).strip() or None
+
+            geo_meta = None
+            reused_existing = False
+
+            # Track ALL IDs processed in this CSV to prevent duplicate inserts crashing the transaction
+            if biz_id in matched_db_ids:
+                # If we've already synced this ID in this run, treat it as skip.
+                skipped += 1
+                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
+                continue
+            matched_db_ids.add(biz_id)
+
             # Check if this business already exists in the database
             cursor.execute(
                 """
                 SELECT businessID, latitude, longitude FROM official_registry
-                WHERE businessName = %s AND barangayID = %s
-                LIMIT 1
+                WHERE businessID = %s
                 """,
-                (name_key, barangay_id),
+                (biz_id,),
             )
             existing = cursor.fetchone()
 
@@ -682,9 +722,10 @@ def sync_registry(file, ext: str):
             elif existing and existing.get("latitude") is not None and existing.get("longitude") is not None:
                 # Existing business already has valid coordinates — reuse them (consumes 0 Google quota!)
                 lat, lng = float(existing["latitude"]), float(existing["longitude"])
+                reused_existing = True
                 geocoded_ok += 1
             elif address_raw:
-                lat, lng = _geocode(address_raw, barangay_raw)
+                lat, lng, geo_meta = _resolve_location(business_name, address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -697,6 +738,8 @@ def sync_registry(file, ext: str):
                 or row.get("registrationStatus")
                 or "Active"
             )
+            if geo_meta is None and lat is not None and not reused_existing:
+                geo_meta = {"coord_source": "csv"}   # coordinates came from the uploaded file
             status = _normalise_status(status_raw)
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
@@ -714,6 +757,8 @@ def sync_registry(file, ext: str):
                 cursor.execute(
                     """
                     UPDATE official_registry SET
+                        barangayID = %s,
+                        businessName = %s,
                         businessType = %s,
                         lineOfBusiness = %s,
                         businessAddress = %s,
@@ -725,6 +770,8 @@ def sync_registry(file, ext: str):
                     WHERE businessID = %s
                     """,
                     (
+                        barangay_id,
+                        name_key,
                         btype,
                         lob,
                         addr,
@@ -733,22 +780,25 @@ def sync_registry(file, ext: str):
                         status,
                         renewal_date,
                         bsize,
-                        existing["businessID"],
+                        biz_id,
                     ),
                 )
                 updated += 1
+                if existing.get("latitude") is None:   # we actually wrote new coordinates
+                    places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 # Propagate status → flag color on the map pin (auto-seed if missing)
                 _sync_flag_color(cursor, barangay_id, name_key, status, final_lat, final_lng, addr)
             else:
                 cursor.execute(
                     """
                     INSERT INTO official_registry
-                        (barangayID, businessName, businessType, lineOfBusiness,
+                        (businessID, barangayID, businessName, businessType, lineOfBusiness,
                         businessAddress, latitude, longitude, applicationStatus,
                         lastRenewalDate, businessSize)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
+                        biz_id,
                         barangay_id,
                         name_key,
                         btype,
@@ -763,9 +813,8 @@ def sync_registry(file, ext: str):
                 )
                 if cursor.rowcount > 0:
                     inserted += 1
-                    new_id = cursor.lastrowid
-                    if new_id:
-                        inserted_ids.append(new_id)
+                    inserted_ids.append(biz_id)
+                    places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                     flag_color = _status_to_flag_color(status)
                     insert_green_flag(
                         barangay_id,
@@ -1234,4 +1283,3 @@ def check_and_expire_old_permits():
         except Exception:
             pass
         return None
-
