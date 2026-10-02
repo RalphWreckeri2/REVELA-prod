@@ -438,7 +438,7 @@ def upload_registry(file, ext: str):
         geocoded_failed = 0
         skipped = 0
         errors = []
-        inserted_ids = []  # track newly inserted businessIDs for scoped auto-snap
+
         seen_counts = {}
 
         from api.notifications import hub

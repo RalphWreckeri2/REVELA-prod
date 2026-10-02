@@ -480,7 +480,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
     if not force and (now - _last_reconcile_time) < _RECONCILE_INTERVAL_S:
         return 0   # too soon; skip
 
-    # Prevent concurrent reconcile runs (mirrors the _snap_lock pattern)
+    # Prevent concurrent reconcile runs
     if not _reconcile_lock.acquire(blocking=False):
         print("[Reconcile] Already running. Skipping duplicate concurrent call.")
         return 0
