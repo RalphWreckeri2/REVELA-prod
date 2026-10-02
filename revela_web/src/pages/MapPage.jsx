@@ -2264,9 +2264,9 @@ export default function MapPage() {
     if (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) {
       await Swal.fire({
         title: 'Daily Places Budget Reached',
-        html: `<p style="font-size:14px; margin-bottom:8px;">Today's Google Places API limit of <strong>45 requests</strong> has been reached.</p>
+        html: `<p style="font-size:14px; margin-bottom:8px;">Today's Google Places API limit of <strong>1000 requests</strong> has been reached.</p>
                <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
-                 Used today: <strong>${placesUsage.today.used}/45</strong>.<br/>
+                 Used today: <strong>${placesUsage.today.used}/1000</strong>.<br/>
                  To guarantee a $0.00 bill and prevent extra charges, detection scans are paused until tomorrow (resets at midnight).
                </p>`,
         icon: 'warning',
@@ -2278,7 +2278,7 @@ export default function MapPage() {
 
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
     const isFinalScan = remaining === 1;
-    const placesTodayLeft = placesUsage?.today?.remaining ?? 2000;
+    const placesTodayLeft = placesUsage?.today?.remaining ?? 1000;
     const placesMonthLeft = placesUsage?.monthly?.remaining ?? 2000;
 
     const confirmRes = await Swal.fire({
@@ -2293,13 +2293,13 @@ export default function MapPage() {
             </div>
             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
               <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of 2</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
-              <li><strong>Daily Places API Budget:</strong> <b>${placesTodayLeft} of 2000</b> requests left today (resets at midnight).</li>
+              <li><strong>Daily Places API Budget:</strong> <b>${placesTodayLeft} of 1000</b> requests left today (resets at midnight).</li>
               <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 2000</b> requests left.</li>
             </ul>
           </div>
 
           <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #047857;">
-            🛡️ <strong>Zero-Overcharge Safe:</strong> If the 2000 daily API cap is reached mid-scan, progress is automatically saved as <em>Partial</em>. Your monthly scan quota is NOT consumed, and scanning resumes seamlessly tomorrow!
+            🛡️ <strong>Zero-Overcharge Safe:</strong> If the 1000 daily API cap is reached mid-scan, progress is automatically saved as <em>Partial</em>. Your monthly scan quota is NOT consumed, and scanning resumes seamlessly tomorrow!
           </div>
 
           ${isFinalScan ? `

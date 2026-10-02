@@ -19,7 +19,7 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 #
 
 PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "2000")) 
-PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "2000"))  
+PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "1000"))  
 PLACES_KINDS = ("nearby", "textsearch")
 
 
