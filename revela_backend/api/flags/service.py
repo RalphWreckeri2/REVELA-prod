@@ -17,14 +17,10 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 # Hard daily ceilings, stored in MySQL so they survive restarts and multiple workers.
 # Tune via env vars on Railway without redeploying code.
 #
-# FREE-TIER MATH (legacy Places API): every Nearby/Text Search response includes rating
-# fields, which triggers the "Atmosphere Data" SKU — free only up to 1,000 events/MONTH,
-# shared by both endpoints. That is the real ceiling, not the 5,000 Nearby/Text Search tiers.
-# So we keep ONE shared monthly budget below 1,000, plus a daily cap so a single bad day
-# can't eat the whole month.
-PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "900"))   # < 1,000 free Atmosphere events
-PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "45"))    # stay under the 50/day Google-side quota
-PLACES_KINDS = ("nearby", "textsearch")   # both draw from the same shared budget
+
+PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "2000")) 
+PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "2000"))  
+PLACES_KINDS = ("nearby", "textsearch")
 
 
 

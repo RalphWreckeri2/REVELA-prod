@@ -2278,8 +2278,8 @@ export default function MapPage() {
 
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
     const isFinalScan = remaining === 1;
-    const placesTodayLeft = placesUsage?.today?.remaining ?? 45;
-    const placesMonthLeft = placesUsage?.monthly?.remaining ?? 900;
+    const placesTodayLeft = placesUsage?.today?.remaining ?? 2000;
+    const placesMonthLeft = placesUsage?.monthly?.remaining ?? 2000;
 
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
@@ -2293,13 +2293,13 @@ export default function MapPage() {
             </div>
             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
               <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of 2</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
-              <li><strong>Daily Places API Budget:</strong> <b>${placesTodayLeft} of 45</b> requests left today (resets at midnight).</li>
-              <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 900</b> requests left.</li>
+              <li><strong>Daily Places API Budget:</strong> <b>${placesTodayLeft} of 2000</b> requests left today (resets at midnight).</li>
+              <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 2000</b> requests left.</li>
             </ul>
           </div>
 
           <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #047857;">
-            🛡️ <strong>Zero-Overcharge Safe:</strong> If the 45 daily API cap is reached mid-scan, progress is automatically saved as <em>Partial</em>. Your monthly scan quota is NOT consumed, and scanning resumes seamlessly tomorrow!
+            🛡️ <strong>Zero-Overcharge Safe:</strong> If the 2000 daily API cap is reached mid-scan, progress is automatically saved as <em>Partial</em>. Your monthly scan quota is NOT consumed, and scanning resumes seamlessly tomorrow!
           </div>
 
           ${isFinalScan ? `
