@@ -1527,44 +1527,7 @@ function MapCanvas({
         );
       })()}
 
-      {/* Snap-to-Maps progress overlay */}
-      {snapProgress && snapProgress.stage !== 'completed' && (
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", zIndex: 200 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: "linear-gradient(135deg, rgba(16, 30, 20, 0.95), rgba(5, 46, 22, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: "1px solid rgba(16, 185, 129, 0.25)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
-              <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.3)", flexShrink: 0 }}>
-                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #10b981", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 3s linear infinite" }}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Snapping Pins to Google Maps</span>
-                <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Places Text Search</span>
-              </div>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: 11, color: "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Looking up businesses</span>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.percentage ?? 0}%</span>
-              </div>
-              <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(16,185,129,0.15)" }}>
-                <div style={{ width: `${snapProgress?.percentage ?? 0}%`, height: "100%", background: "linear-gradient(90deg, #059669, #10b981, #34d399, #10b981)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: "progress-shimmer 2.5s linear infinite" }} />
-              </div>
-              <div style={{ fontSize: 12, color: "#d1fae5", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Searching..."}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 4 }}>
-                {[["Snapped", snapProgress?.snapped ?? 0, "#10b981"], ["Skipped", snapProgress?.skipped ?? 0, "#94a3b8"], ["Errors", snapProgress?.errors ?? 0, "#ef4444"]].map(([label, val, color]) => (
-                  <div key={label} style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>{label}</div>
-                    <div style={{ fontSize: 18, fontWeight: 800, color }}>{val}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div style={{ fontSize: 11, color: "#6ee7b7", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 10 }}>
-              {snapProgress?.total > 0 ? `${Math.max(snapProgress.snapped + snapProgress.skipped + snapProgress.errors, 0)} of ${snapProgress.total} processed` : "Counting businesses..."}
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Reconcile progress overlay */}
       {reconcileProgress && reconcileProgress.stage !== 'completed' && (
@@ -3004,47 +2967,7 @@ export default function MapPage() {
                   >
                     {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
                   </button>
-                  <button
-                    className="ghost-btn"
-                    type="button"
-                    onClick={handleSnapRegistry}
-                    disabled={runDetectionLoading || snapProgress?.stage === 'running' || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)}
-                    title={
-                      snapProgress?.stage === 'running'
-                        ? "Snapping pins in progress…"
-                        : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
-                          ? "Daily Google Places limit reached (0/45 remaining). Resets at midnight."
-                          : "Find registered businesses on Google Maps and snap their pins to exact locations"
-                    }
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      color: snapProgress?.stage === 'running' ? "#6ee7b7" : (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) ? "var(--color-muted, #94a3b8)" : "#10b981",
-                      opacity: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? 0.6 : (snapProgress?.stage === 'running' ? 0.55 : 1),
-                      cursor: (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0 && snapProgress?.stage !== 'running') ? "not-allowed" : "pointer"
-                    }}
-                  >
-                    <span>{snapProgress?.stage === 'running' ? 'Snapping...' : 'Snap to Maps'}</span>
-                    {placesUsage && placesUsage.today && (
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          padding: "1px 7px",
-                          borderRadius: "10px",
-                          background: placesUsage.today.remaining <= 0 ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
-                          color: placesUsage.today.remaining <= 0 ? "#ef4444" : "#059669",
-                          fontWeight: 700,
-                          letterSpacing: "0.02em",
-                          lineHeight: 1.4,
-                          display: "inline-flex",
-                          alignItems: "center"
-                        }}
-                      >
-                        {placesUsage.today.remaining}/45
-                      </span>
-                    )}
-                  </button>
+
                 </>
               )}
             </>
