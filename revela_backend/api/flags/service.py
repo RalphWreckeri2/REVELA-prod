@@ -25,9 +25,7 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "900"))   # < 1,000 free Atmosphere events
 PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "45"))    # stay under the 50/day Google-side quota
 PLACES_KINDS = ("nearby", "textsearch")   # both draw from the same shared budget
-SNAP_MAX_PER_RUN     = int(os.getenv("SNAP_MAX_PER_RUN", "100"))   # businesses per snap run
-SNAP_MAX_QUERIES     = 3     # Text Search queries tried per business (was up to 4)
-SNAP_RETRY_DAYS      = 90    # don't re-search a business we already tried within this window
+
 
 
 class PlacesBudgetExceeded(Exception):
@@ -52,13 +50,7 @@ def _ensure_budget_tables():
                 PRIMARY KEY (usageDate, kind)
             ) ENGINE=InnoDB
         """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS snap_lookup_log (
-                businessID    INT      NOT NULL PRIMARY KEY,
-                lastAttemptAt DATETIME NOT NULL,
-                found         TINYINT(1) NOT NULL DEFAULT 0
-            ) ENGINE=InnoDB
-        """)
+
         # Checkpoints for a multi-day scan. Stores ONLY our own grid coordinates + a timestamp.
         # No Google content (names, addresses, ratings, coordinates of places) is stored here.
         cur.execute("""
@@ -171,27 +163,14 @@ def get_places_usage_today():
                 "cap": PLACES_DAILY_CAP,
                 "remaining": max(0, PLACES_DAILY_CAP - d_used),
             },
-            "snap": {
-                "max_per_run": SNAP_MAX_PER_RUN,
-                "cooldown_days": SNAP_RETRY_DAYS,
-            },
+
             "geocode": geo_info,
         }
     finally:
         cur.close()
 
 
-def _record_snap_attempt(business_id, found):
-    cur = mysql.connection.cursor()
-    try:
-        cur.execute("""
-            INSERT INTO snap_lookup_log (businessID, lastAttemptAt, found)
-            VALUES (%s, NOW(), %s)
-            ON DUPLICATE KEY UPDATE lastAttemptAt = NOW(), found = VALUES(found)
-        """, (business_id, 1 if found else 0))
-        mysql.connection.commit()
-    finally:
-        cur.close()
+
 
 
 def _completed_points_this_cycle():
@@ -482,10 +461,7 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
 
 _last_reconcile_time = 0.0  # module-level throttle
 _RECONCILE_INTERVAL_S = 300   # run at most once every 5 minutes
-_last_snap_time = 0.0       # module-level throttle for manual full-registry snaps
-_SNAP_INTERVAL_S = 300      # run manual full-registry snap at most once every 5 minutes
 _reconcile_lock = threading.Lock()
-_snap_lock = threading.Lock()
 
 
 def reconcile_existing_flags(force: bool = False, silent: bool = False):

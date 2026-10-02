@@ -637,9 +637,7 @@ def sync_registry(file, ext: str):
         updated = 0
         geocoded_ok = 0
         geocoded_failed = 0
-        skipped = 0
         errors = []
-        inserted_ids = []  # track newly inserted businessIDs for scoped auto-snap
         matched_db_ids = set()
 
         from api.notifications import hub

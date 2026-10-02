@@ -520,18 +520,6 @@ export async function reconcileFlagsRequest(token) {
   }
 }
 
-export async function snapRegistryRequest(token) {
-  if (!token) throw new Error("Missing authentication token.");
-  try {
-    const res = await fetch(`${BASE_URL}/flags/snap-registry`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return await handleResponse(res);
-  } catch (err) {
-    connectionGuard(err);
-  }
-}
 
 export async function getPlacesUsageRequest(token) {
   if (!token) throw new Error("Missing authentication token.");

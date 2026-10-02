@@ -81,8 +81,7 @@ def run_detection_route():
 def reconcile_flags_route():
     """Re-evaluate all existing Red flags against the official registry.
     Any Red flag whose name/location matches a registered business is
-    converted to the appropriate permit-status color (Green, Orange, etc.)
-    and its pin is snapped to the real coordinates."""
+    converted to the appropriate permit-status color (Green, Orange, etc.)."""
     try:
         converted = reconcile_existing_flags(force=True)
         return jsonify({"message": f"{converted} flag(s) reconciled.", "converted": converted}), 200

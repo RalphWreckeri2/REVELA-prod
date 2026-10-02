@@ -33,7 +33,6 @@ import {
   getDetectionQuotaRequest,
   getPlacesUsageRequest,
   reconcileFlagsRequest,
-  snapRegistryRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -742,7 +741,6 @@ function MapCanvas({
   isPickingLocation,
   runDetectionLoading,
   detectionProgress,
-  snapProgress,
   reconcileProgress,
   elapsedTime,
   satellite,
@@ -1915,8 +1913,7 @@ export default function MapPage() {
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
-  const [snapProgress, setSnapProgress] = useState(null);
-  const snapProgressRef = useRef(null);
+
   const [reconcileProgress, setReconcileProgress] = useState(null);
   const reconcileProgressRef = useRef(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
@@ -2139,19 +2136,7 @@ export default function MapPage() {
     };
   }, [fetchFlags, fetchDetectionQuota, fetchPlacesUsage]);
 
-  useEffect(() => {
-    const handleSnap = (e) => {
-      const d = e.detail;
-      snapProgressRef.current = d;
-      setSnapProgress(d);
-      if (d?.stage === "completed") {
-        fetchFlags(true);
-        fetchPlacesUsage();
-      }
-    };
-    window.addEventListener("revela:snap-progress", handleSnap);
-    return () => window.removeEventListener("revela:snap-progress", handleSnap);
-  }, [fetchFlags, fetchPlacesUsage]);
+
 
   useEffect(() => {
     const handleRec = (e) => {
@@ -2478,125 +2463,6 @@ export default function MapPage() {
     }
   };
 
-  const handleSnapRegistry = async () => {
-    if (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) {
-      await Swal.fire({
-        title: 'Daily Places Budget Reached',
-        html: `<p style="font-size:14px; margin-bottom:8px;">Today's Google Places API limit of <strong>45 requests</strong> has been reached.</p>
-               <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
-                 Used today: <strong>${placesUsage.today.used}/45</strong>.<br/>
-                 To guarantee a $0.00 bill and protect Google's Free Tier, Snap to Maps is locked until tomorrow (resets at midnight).
-               </p>`,
-        icon: 'warning',
-        confirmButtonColor: '#10b981',
-        confirmButtonText: 'Understood'
-      });
-      return;
-    }
-
-    const placesTodayLeft = placesUsage?.today?.remaining ?? 45;
-    const placesMonthLeft = placesUsage?.monthly?.remaining ?? 900;
-    const maxPerRun = placesUsage?.snap?.max_per_run ?? 100;
-
-    const confirm = await Swal.fire({
-      title: 'Snap Pins to Google Maps?',
-      html: `
-        <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-          <p style="margin-bottom:12px;">This feature looks up registered businesses without Google Maps pins using <strong>Places Text Search</strong> and snaps their green pins directly onto the map.</p>
-          
-          <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:10px 14px; margin-bottom:10px;">
-            <div style="font-weight:700; color:#059669; margin-bottom:4px; font-size:13px;">
-              📍 Feature Limits & Rules:
-            </div>
-            <ul style="margin:4px 0 0 16px; padding:0; font-size:12.5px; color:inherit;">
-              <li><strong>Daily Places Budget:</strong> <b>${placesTodayLeft} of 45</b> requests left today (resets at midnight).</li>
-              <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 900</b> requests left.</li>
-              <li><strong>Batch Cap:</strong> Maximum of <b>${maxPerRun} unpinned businesses</b> checked per click.</li>
-              <li><strong>90-Day Cooldown:</strong> Businesses not found on Maps won't waste your quota again for 90 days.</li>
-            </ul>
-          </div>
-
-          <p style="font-size:12px; color:var(--color-muted, #64748b); margin-top:8px;">
-            💡 <em>Note: This does <strong>not</strong> consume your monthly detection scan quota (0/2).</em>
-          </p>
-        </div>
-      `,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonColor: '#10b981',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
-      confirmButtonText: 'Snap Pins'
-    });
-    if (!confirm.isConfirmed) return;
-    snapProgressRef.current = { stage: 'running' };
-    try {
-      setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting...', snapped: 0, skipped: 0, errors: 0, total: 0 });
-      const res = await snapRegistryRequest(token);
-      await fetchPlacesUsage();
-      if (res?.status === 'throttled') {
-        setSnapProgress(null);
-        snapProgressRef.current = null;
-        Swal.fire({
-          icon: 'info',
-          title: 'Snap on Cooldown',
-          text: res?.message || 'Snap to Maps was run recently. Please wait a few minutes before running a full scan again.',
-          confirmButtonColor: '#6366f1'
-        });
-        return;
-      }
-      if (res?.status === 'budget_exceeded' || res?.status === 'budget_exhausted') {
-        setSnapProgress(null);
-        snapProgressRef.current = null;
-        Swal.fire({
-          icon: 'warning',
-          title: 'Daily Budget Exceeded',
-          text: res?.message || "Today's Places API daily limit has been reached.",
-          confirmButtonColor: '#f59e0b'
-        });
-        return;
-      }
-      if (res?.status === 'already_running') {
-        setSnapProgress(null);
-        snapProgressRef.current = null;
-        Swal.fire({
-          icon: 'warning',
-          title: 'Already Running',
-          text: 'A Snap to Maps operation is already in progress.',
-          confirmButtonColor: '#f59e0b'
-        });
-        return;
-      }
-
-      // SSE drives progress; use the ref (not stale closure) to check live stage
-      if (snapProgressRef.current?.stage !== 'completed') {
-        snapProgressRef.current = { stage: 'completed' };
-        setSnapProgress(p => ({ ...p, stage: 'completed', percentage: 100 }));
-        await fetchFlags();
-        await fetchPlacesUsage();
-      }
-      setTimeout(() => { setSnapProgress(null); snapProgressRef.current = null; }, 3000);
-      Swal.fire({
-        icon: 'success',
-        title: 'Snap Complete',
-        html: `<div style="text-align:left;font-size:13px;">Snapped: <b>${res?.snapped ?? 0}</b><br/>Not found on Maps: <b>${res?.skipped ?? 0}</b><br/>Errors: <b>${res?.errors ?? 0}</b><br/>Total processed: <b>${res?.total ?? 0}</b></div>`,
-        confirmButtonColor: '#10b981'
-      });
-    } catch (err) {
-      setSnapProgress(null);
-      snapProgressRef.current = null;
-      await fetchPlacesUsage();
-      if (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("budget") || err.message.toLowerCase().includes("limit"))) {
-        Swal.fire({
-          icon: "warning",
-          title: "Daily Limit Reached",
-          text: err.message,
-          confirmButtonColor: "#f59e0b"
-        });
-      } else {
-        Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
-      }
-    }
-  };
 
 
   const handleCancelDetection = async () => {
@@ -3061,7 +2927,6 @@ export default function MapPage() {
               isPickingLocation={isPickingYellowLocation}
               runDetectionLoading={runDetectionLoading}
               detectionProgress={detectionProgress}
-              snapProgress={snapProgress}
               reconcileProgress={reconcileProgress}
               elapsedTime={elapsedTime}
               satellite={satellite}
