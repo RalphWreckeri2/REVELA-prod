@@ -20,6 +20,7 @@ import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 
 const DEFAULT_CENTER = { lat: 13.9667, lng: 121.1167 };
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 
 const FLAG_COLORS = {
   Red: { marker: "#ef4444", bg: "var(--flag-red-bg)", text: "var(--flag-red-text)", label: "Detected Unregistered" },
@@ -437,7 +438,7 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
         {loadError ? (
           <div style={miniMapFallback}>
             <span>⚠ Google Maps failed to load.</span>
-            <small>{googleMapsApiKey
+            <small>{GOOGLE_MAPS_API_KEY
               ? `Google Maps error: ${loadError?.message || String(loadError)}`
               : "No VITE_GOOGLE_MAPS_API_KEY configured in .env"
             }</small>
@@ -789,7 +790,6 @@ export default function HomePage() {
 
   const isDark = resolvedTheme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
-  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
   const { isLoaded, loadError } = useGoogleMapsScript();
 
 

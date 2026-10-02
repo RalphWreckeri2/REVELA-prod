@@ -13,6 +13,15 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 # Column name aliases — maps whatever the Excel/CSV header is → our internal key.
 # Add more aliases here if the BPLO file uses different headers.
 COLUMN_MAP = {
+    # business id
+    "business_id":         "Business ID",
+    "businessid":          "Business ID",
+    "business_id_no":      "Business ID",
+    "business_no":         "Business ID",
+    "id":                  "Business ID",
+    "permit_no":           "Business ID",
+    "permit_number":       "Business ID",
+
     # business name
     "business_name":       "businessName",
     "businessname":        "businessName",
@@ -443,7 +452,8 @@ def upload_registry(file, ext: str):
         if "businessAddress" in df.columns:
             has_address = df["businessAddress"].notna() & (df["businessAddress"].astype(str).str.strip() != "")
             
-        biz_ids = df["Business ID"].astype(str).str.strip() if "Business ID" in df.columns else pd.Series("", index=df.index)
+        biz_id_col = "Business ID" if "Business ID" in df.columns else ("businessID" if "businessID" in df.columns else ("business_id" if "business_id" in df.columns else None))
+        biz_ids = df[biz_id_col].astype(str).str.strip() if biz_id_col else pd.Series("", index=df.index)
         is_new = ~biz_ids.isin(existing_db_ids)
         is_first_occurrence = ~biz_ids.duplicated()
 
@@ -497,7 +507,7 @@ def upload_registry(file, ext: str):
                 return None, "Import cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
-            biz_id = str(row.get("Business ID") or "").strip()
+            biz_id = str(row.get("Business ID") or row.get("businessID") or row.get("business_id") or "").strip()
 
             if not biz_id:
                 skipped += 1
@@ -701,7 +711,7 @@ def sync_registry(file, ext: str):
                 return None, "Sync cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
-            biz_id = str(row.get("Business ID") or "").strip()
+            biz_id = str(row.get("Business ID") or row.get("businessID") or row.get("business_id") or "").strip()
 
             if not biz_id:
                 skipped += 1

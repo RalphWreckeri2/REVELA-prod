@@ -5,7 +5,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useContext, useMemo } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -13,7 +12,6 @@ import { GoogleMap, Data } from "@react-google-maps/api";
 import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import DashboardLayout from "../components/DashboardLayout";
 import InspectorReportsModal from "../components/InspectorReportsModal";
-import StatusBadge from "../components/StatusBadge";
 import { AuthContext } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -2275,7 +2273,7 @@ export default function MapPage() {
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
     const isFinalScan = remaining === 1;
     const placesTodayLeft = placesUsage?.today?.remaining ?? 1000;
-    const placesMonthLeft = placesUsage?.monthly?.remaining ?? 2000;
+    const placesMonthLeft = placesUsage?.month?.remaining ?? placesUsage?.monthly?.remaining ?? 2000;
 
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
@@ -2767,7 +2765,7 @@ export default function MapPage() {
                     : detectionQuota && detectionQuota.remaining_this_month === 0
                       ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
                       : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
-                        ? "Daily Google Places limit reached (0/45 remaining). Resets at midnight."
+                        ? `Daily Google Places limit reached (0/${placesUsage?.today?.cap || 1000} remaining). Resets at midnight.`
                         : "Run geospatial detection scan (Max 2x/month)"
                 }
                 style={{
