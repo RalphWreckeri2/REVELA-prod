@@ -465,7 +465,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
             <div style={{ ...s.hint, display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <strong>Expected columns (flexible naming):</strong>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {["Business Name", "Type of Business", "Status of Application", "Status of Registration", "Year of Registration", "Business Address", "Barangay Name", "Line of Business", "Size of Business", "Coordinates (Optional)"].map(col => (
+                {["Business ID", "Business Name", "Type of Business", "Status of Application", "Status of Registration", "Year of Registration", "Business Address", "Barangay Name", "Line of Business", "Size of Business", "Coordinates (Optional)"].map(col => (
                   <span key={col} style={{
                     background: "var(--color-bg-secondary, #f1f5f9)",
                     color: "var(--color-ink, #334155)",
