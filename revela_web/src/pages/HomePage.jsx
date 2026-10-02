@@ -7,17 +7,18 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useLoadScript, GoogleMap } from "@react-google-maps/api";
+import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
 import KpiCard from "../components/KpiCard";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getOpsRankingsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "./MapPage";
+import { useGoogleMapsScript } from "../utils/googleMaps";
+import { REVELA_MAP_ID } from "../utils/mapStyles";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 
-const MAP_LIBRARIES = ["places", "marker"];
 const DEFAULT_CENTER = { lat: 13.9667, lng: 121.1167 };
 
 const FLAG_COLORS = {
@@ -452,7 +453,7 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
               disableDefaultUI: true,
               clickableIcons: false,
               zoomControl: false,
-              mapId: "34390388b3abb63aa84876a7",
+              mapId: REVELA_MAP_ID,
               colorScheme: isDark ? "DARK" : "LIGHT",
             }}
             onLoad={handleMapLoad}
@@ -789,11 +790,7 @@ export default function HomePage() {
   const isDark = resolvedTheme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
-  const { isLoaded, loadError } = useLoadScript({
-    googleMapsApiKey,
-    libraries: MAP_LIBRARIES,
-    version: "beta",
-  });
+  const { isLoaded, loadError } = useGoogleMapsScript();
 
 
   // KPIs
@@ -854,7 +851,7 @@ export default function HomePage() {
             }
           }).then((result) => {
             if (data.new_year_rollover.notification_id) {
-              markNotificationsReadRequest(token, [data.new_year_rollover.notification_id]).catch(() => {});
+              markNotificationsReadRequest(token, [data.new_year_rollover.notification_id]).catch(() => { });
             }
             if (result.isConfirmed) {
               navigate("/registry");

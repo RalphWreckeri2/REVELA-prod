@@ -9,13 +9,15 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
-import { useLoadScript, GoogleMap, Data } from "@react-google-maps/api";
+import { GoogleMap, Data } from "@react-google-maps/api";
 import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import DashboardLayout from "../components/DashboardLayout";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import StatusBadge from "../components/StatusBadge";
 import { AuthContext } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
+import { useGoogleMapsScript } from "../utils/googleMaps";
+import { REVELA_MAP_ID } from "../utils/mapStyles";
 import {
   API_ORIGIN,
   getFlagsRequest,
@@ -156,7 +158,6 @@ const Icon = {
 
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const DEFAULT_MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
-const MAP_LIBRARIES = ["places", "marker"];
 
 // `public/data/mataasnakahoy.json` is a single outer boundary for the whole
 // municipality. Feature names must be listed here so the heatmap sums all
@@ -1288,7 +1289,7 @@ function MapCanvas({
           clickableIcons: false,
           zoomControl: false,
           mapTypeId: satellite ? "satellite" : "roadmap",
-          mapId: "34390388b3abb63aa84876a7",
+          mapId: REVELA_MAP_ID,
           colorScheme: isDark && !satellite ? "DARK" : "LIGHT",
         }}
         onLoad={handleMapLoad}
@@ -1895,12 +1896,7 @@ export default function MapPage() {
   const navigate = useNavigate();
   const { token, user } = useContext(AuthContext);
   const { isDark } = useTheme();
-  const googleMapsApiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
-  const { isLoaded, loadError } = useLoadScript({
-    googleMapsApiKey,
-    libraries: MAP_LIBRARIES,
-    version: "beta",
-  });
+  const { isLoaded, loadError } = useGoogleMapsScript();
 
   const mapRef = useRef(null);
 

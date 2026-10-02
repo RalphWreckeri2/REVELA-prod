@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useContext } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useTheme } from "../context/ThemeContext";
 import DashboardLayout from "../components/DashboardLayout";
 import { AuthContext } from "../context/AuthContext";
@@ -14,15 +14,14 @@ import {
   cleanupEvidenceStorageRequest,
   API_ORIGIN
 } from "../services/api";
-import { useLoadScript, GoogleMap, Marker } from "@react-google-maps/api";
-import { darkMapStyle, REVELA_MAP_ID } from "../utils/mapStyles";
+import { GoogleMap, Marker } from "@react-google-maps/api";
+import { useGoogleMapsScript } from "../utils/googleMaps";
+import { REVELA_MAP_ID } from "../utils/mapStyles";
 import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
 import AboutCreditsModal from "../components/AboutCreditsModal";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
-
-const LIBRARIES = ["places"];
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const EyeIcon = () => (
@@ -232,7 +231,8 @@ function Setup2FAModal({ onClose, token, onSuccess, isClosing }) {
 // ── Map Picker Modal ──────────────────────────────────────────────────────────
 // Rendered through <AnimatePresence>, which injects an `isClosing` prop during
 // the exit animation — a raw DOM <div> can't receive it, hence this component.
-function MapPickerModal({ isLoaded, loadError, isDark, center, marker, onPick, onClose, isClosing }) {
+function MapPickerModal({ isDark, center, marker, onPick, onClose, isClosing }) {
+  const { isLoaded, loadError } = useGoogleMapsScript();
   // Portal: escape the .saas-content stacking context so the modal clears the navbar
   return createPortal(
     <div
@@ -312,12 +312,6 @@ export default function SettingsPage() {
   const [savingPolicy, setSavingPolicy] = useState(false);
 
   const [showMapModal, setShowMapModal] = useState(false);
-  const { isLoaded, loadError } = useLoadScript({
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
-    libraries: LIBRARIES,
-    // Keep in sync with MapPage/HomePage — mixing script versions can double-load the Maps API
-    version: "beta",
-  });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [show2FAModal, setShow2FAModal] = useState(false);
   const [showTermsDoc, setShowTermsDoc] = useState(false);
@@ -1164,8 +1158,6 @@ export default function SettingsPage() {
       {/* Map Picker Modal */}
       <AnimatePresence isVisible={showMapModal}>
         <MapPickerModal
-          isLoaded={isLoaded}
-          loadError={loadError}
           isDark={isDark}
           center={{ lat: wlcConfig.bplo_lat || 13.9639, lng: wlcConfig.bplo_lng || 121.1114 }}
           marker={wlcConfig.bplo_lat && wlcConfig.bplo_lng ? { lat: wlcConfig.bplo_lat, lng: wlcConfig.bplo_lng } : null}

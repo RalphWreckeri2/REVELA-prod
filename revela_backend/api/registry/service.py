@@ -131,6 +131,18 @@ def get_geocode_remaining_today():
     finally:
         cur.close()
 
+def get_geocode_remaining_month():
+    """Return remaining geocode requests allowed this month."""
+    global _geo_tables_ready
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute(f"SELECT requestCount FROM places_api_usage WHERE usageDate = {_GEO_MONTH_KEY} AND kind = 'geo_month'")
+        row = cur.fetchone()
+        used = int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0) if row else 0
+        return max(0, GEOCODE_MONTHLY_CAP - used)
+    finally:
+        cur.close()
+
 
 def _reserve_geocode_call():
     """Take one Geocoding request from the monthly + daily budget. False = over budget or DB problem."""
@@ -409,28 +421,51 @@ def upload_registry(file, ext: str):
                 f"Please split your file into batches of up to {MAX_IMPORT_PER_BATCH} rows."
             )
 
-        # Count rows that actually need geocoding (those without valid pre-filled coordinates)
-        rows_needing_geocode = total_rows
+        # Fetch existing IDs to avoid geocoding duplicates
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT businessID FROM official_registry")
+        existing_db_ids = set()
+        for r in cursor.fetchall():
+            val = r.get("businessID") if isinstance(r, dict) else r[0]
+            if val:
+                existing_db_ids.add(str(val).strip())
+        cursor.close()
+
+        # Count rows that actually need geocoding (those without valid pre-filled coordinates, with an address, and not duplicates)
+        has_valid_coords = pd.Series(False, index=df.index)
         if "latitude" in df.columns and "longitude" in df.columns:
             has_valid_coords = (
                 df["latitude"].notna() & (df["latitude"].astype(str).str.strip() != "") &
                 df["longitude"].notna() & (df["longitude"].astype(str).str.strip() != "")
             )
-            rows_needing_geocode = int((~has_valid_coords).sum())
+            
+        has_address = pd.Series(True, index=df.index)
+        if "businessAddress" in df.columns:
+            has_address = df["businessAddress"].notna() & (df["businessAddress"].astype(str).str.strip() != "")
+            
+        biz_ids = df["Business ID"].astype(str).str.strip() if "Business ID" in df.columns else pd.Series("", index=df.index)
+        is_new = ~biz_ids.isin(existing_db_ids)
+        is_first_occurrence = ~biz_ids.duplicated()
+
+        needs_geo = ~has_valid_coords & has_address & is_new & is_first_occurrence
+        rows_needing_geocode = int(needs_geo.sum())
 
         if rows_needing_geocode > 0:
             remaining_today = get_geocode_remaining_today()
-            if remaining_today <= 0:
+            remaining_month = get_geocode_remaining_month()
+            remaining = min(remaining_today, remaining_month)
+
+            if remaining <= 0:
                 return None, (
-                    f"Daily geocoding quota reached ({GEOCODE_DAILY_CAP}/{GEOCODE_DAILY_CAP} businesses mapped today). "
-                    "Please import your next batch of businesses tomorrow, or include latitude and longitude columns for all rows in your CSV."
+                    f"Geocoding quota reached (Daily cap: {GEOCODE_DAILY_CAP}, Monthly cap: {GEOCODE_MONTHLY_CAP}). "
+                    "Please import your next batch tomorrow/next month, or include latitude and longitude columns."
                 )
 
-            if rows_needing_geocode > remaining_today:
+            if rows_needing_geocode > remaining:
                 return None, (
-                    f"Remaining geocoding quota for today is {remaining_today} businesses ({GEOCODE_DAILY_CAP - remaining_today} mapped already today). "
-                    f"Your file requires geocoding for {rows_needing_geocode} businesses without coordinates. "
-                    f"Please upload a file with at most {remaining_today} businesses to geocode, or wait until tomorrow so they all get pins."
+                    f"Remaining geocoding quota is {remaining} businesses. "
+                    f"Your file requires geocoding for {rows_needing_geocode} new businesses without coordinates. "
+                    f"Please upload a file with at most {remaining} new businesses to geocode, or wait until quota resets."
                 )
 
         inserted = 0
@@ -438,6 +473,7 @@ def upload_registry(file, ext: str):
         geocoded_failed = 0
         skipped = 0
         errors = []
+        inserted_ids = []
 
         seen_counts = {}
 
@@ -484,6 +520,18 @@ def upload_registry(file, ext: str):
                 errors.append(
                     f"Row {idx + 2}: barangay '{barangay_raw}' not found — skipped")
                 continue
+                
+            # Track duplicates within this CSV
+            if biz_id in seen_counts:
+                skipped += 1
+                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
+                continue
+            seen_counts[biz_id] = 1
+
+            if biz_id in existing_db_ids:
+                skipped += 1
+                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' already exists in the database — skipped")
+                continue
 
             # Geocode
             address_raw = row.get("businessAddress") or ""
@@ -522,13 +570,6 @@ def upload_registry(file, ext: str):
 
             name_key = str(business_name).strip()
             addr_key = str(address_raw).strip() or None
-
-            # Track duplicates within this CSV
-            if biz_id in seen_counts:
-                skipped += 1
-                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
-                continue
-            seen_counts[biz_id] = 1
 
             # Insert — ignore duplicates if the DB already has this biz_id
             cursor.execute(

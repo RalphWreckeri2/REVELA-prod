@@ -128,8 +128,18 @@ def get_places_usage_today():
         m = cur.fetchone()
         cur.execute("SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'day'")
         d = cur.fetchone()
+        
+        cur.execute(f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_ts_month'")
+        ts_m = cur.fetchone()
+        cur.execute(f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_pd_month'")
+        pd_m = cur.fetchone()
+
         m_used = int((m.get("c") if isinstance(m, dict) else m[0]) or 0) if m else 0
         d_used = int((d.get("c") if isinstance(d, dict) else d[0]) or 0) if d else 0
+        
+        ts_m_used = int((ts_m.get("c") if isinstance(ts_m, dict) else ts_m[0]) or 0) if ts_m else 0
+        pd_m_used = int((pd_m.get("c") if isinstance(pd_m, dict) else pd_m[0]) or 0) if pd_m else 0
+
 
         geo_info = {"cap": 1500, "remaining": 1500, "used": 0}
         try:
@@ -142,6 +152,8 @@ def get_places_usage_today():
             }
         except Exception:
             pass
+
+        from api.registry.places_resolver import TS_MONTHLY_CAP, PD_MONTHLY_CAP
 
         return {
             "month": {
@@ -159,8 +171,17 @@ def get_places_usage_today():
                 "cap": PLACES_DAILY_CAP,
                 "remaining": max(0, PLACES_DAILY_CAP - d_used),
             },
-
             "geocode": geo_info,
+            "text_search_month": {
+                "used": ts_m_used,
+                "cap": TS_MONTHLY_CAP,
+                "remaining": max(0, TS_MONTHLY_CAP - ts_m_used),
+            },
+            "place_details_month": {
+                "used": pd_m_used,
+                "cap": PD_MONTHLY_CAP,
+                "remaining": max(0, PD_MONTHLY_CAP - pd_m_used),
+            }
         }
     finally:
         cur.close()
@@ -1001,12 +1022,21 @@ def run_detection(user_id=None):
 
         new_flags = counters["new_flags"]
         total_checked = counters["total_checked"]
-        update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
+        done_total = state["skipped_points"] + len(state["done_keys"])
 
-        hub.publish_to_admins({
-            "type": "detection_progress", "stage": "completed", "percentage": 100,
-            "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
-        })
+        if done_total < state["total_points"]:
+            update_detection_run_status(run_id, "partial", new_flags=new_flags, total_checked=total_checked)
+            msg = f"Scan partial: {done_total} of {state['total_points']} grid points completed. {new_flags} new flags recorded. Run again to finish."
+            hub.publish_to_admins({
+                "type": "detection_progress", "stage": "completed", "percentage": 100,
+                "status": msg
+            })
+        else:
+            update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
+            hub.publish_to_admins({
+                "type": "detection_progress", "stage": "completed", "percentage": 100,
+                "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
+            })
 
         return {
             "new_flags":        new_flags,

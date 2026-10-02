@@ -284,6 +284,8 @@ def _g(row, key, idx):
 # ------------------------------ maintenance ----------------------------------
 def refresh_expired_coords(limit=500):
     """Renew Google-derived coordinates older than REFRESH_AFTER_DAYS via Place Details (Essentials)."""
+    if not enabled():
+        return {"refreshed": 0, "skipped": "resolver disabled"}
     if not os.getenv("GOOGLE_MAPS_API_KEY") or _halted:
         return {"refreshed": 0, "skipped": "no key or halted"}
     cur = mysql.connection.cursor()
