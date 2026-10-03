@@ -2,7 +2,109 @@ import React, { useState, useMemo } from "react";
 import { createPortal } from "react-dom";
 import municipalSeal from "../assets/seal.png";
 
-const MANUAL_SECTIONS = [
+const docStyles = {
+  subheading: {
+    fontSize: "16px",
+    fontWeight: 700,
+    color: "var(--color-ink)",
+    margin: "24px 0 10px 0",
+    paddingBottom: "6px",
+    borderBottom: "1px solid var(--color-border-soft)",
+  },
+  list: {
+    margin: "8px 0 16px 20px",
+    padding: 0,
+    fontSize: "13.5px",
+    lineHeight: "1.65",
+  },
+  code: {
+    background: "var(--color-hover)",
+    padding: "2px 6px",
+    borderRadius: "4px",
+    fontFamily: "monospace",
+    fontSize: "12px",
+    color: "var(--color-primary-dark)",
+  },
+  calloutInfo: {
+    background: "rgba(16, 185, 129, 0.08)",
+    borderLeft: "4px solid var(--color-primary, #10b981)",
+    padding: "12px 16px",
+    borderRadius: "0 8px 8px 0",
+    margin: "16px 0",
+    fontSize: "13px",
+    lineHeight: "1.55",
+  },
+  calloutWarning: {
+    background: "rgba(245, 158, 11, 0.1)",
+    borderLeft: "4px solid #f59e0b",
+    padding: "12px 16px",
+    borderRadius: "0 8px 8px 0",
+    margin: "16px 0",
+    fontSize: "13px",
+    lineHeight: "1.55",
+  },
+  workflowBox: {
+    background: "var(--color-surface)",
+    border: "1px solid var(--color-border)",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    fontSize: "12.5px",
+    fontWeight: 600,
+    color: "var(--color-ink)",
+    margin: "10px 0",
+    overflowX: "auto",
+  },
+  formulaBox: {
+    background: "var(--color-surface)",
+    border: "1px solid var(--color-border)",
+    padding: "14px 18px",
+    borderRadius: "10px",
+    fontSize: "15px",
+    color: "var(--color-primary-dark)",
+    margin: "14px 0",
+    textAlign: "center",
+  },
+  table: {
+    width: "100%",
+    borderCollapse: "collapse",
+    fontSize: "12.5px",
+  },
+  th: {
+    textAlign: "left",
+    padding: "8px 12px",
+    borderBottom: "2px solid var(--color-border)",
+    color: "var(--color-muted)",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    fontSize: "11px",
+  },
+  td: {
+    padding: "10px 12px",
+    borderBottom: "1px solid var(--color-border-soft)",
+    verticalAlign: "top",
+    lineHeight: "1.45",
+  },
+  faqItem: {
+    marginBottom: "14px",
+    padding: "12px 16px",
+    borderRadius: "10px",
+    background: "var(--color-surface)",
+    border: "1px solid var(--color-border-soft)",
+  },
+  faqQ: {
+    fontWeight: 700,
+    fontSize: "13.5px",
+    color: "var(--color-ink)",
+    marginBottom: "6px",
+  },
+  faqA: {
+    fontSize: "13px",
+    color: "var(--color-muted)",
+    lineHeight: "1.5",
+  },
+};
+
+const getManualSections = () => [
   {
     id: "overview",
     number: "1.0",
@@ -310,19 +412,21 @@ export default function InstructionalManualModal({ initialSectionId = "overview"
   const [activeSectionId, setActiveSectionId] = useState(initialSectionId);
   const [searchQuery, setSearchQuery] = useState("");
 
+  const sections = useMemo(() => getManualSections(), []);
+
   const filteredSections = useMemo(() => {
-    if (!searchQuery.trim()) return MANUAL_SECTIONS;
+    if (!searchQuery.trim()) return sections;
     const q = searchQuery.toLowerCase();
-    return MANUAL_SECTIONS.filter(s =>
+    return sections.filter(s =>
       s.title.toLowerCase().includes(q) ||
       s.badge.toLowerCase().includes(q) ||
       s.number.includes(q)
     );
-  }, [searchQuery]);
+  }, [searchQuery, sections]);
 
   const activeSection = useMemo(() => {
-    return MANUAL_SECTIONS.find(s => s.id === activeSectionId) || MANUAL_SECTIONS[0];
-  }, [activeSectionId]);
+    return sections.find(s => s.id === activeSectionId) || sections[0];
+  }, [activeSectionId, sections]);
 
   const handlePrint = () => {
     window.print();
@@ -577,104 +681,3 @@ export default function InstructionalManualModal({ initialSectionId = "overview"
   );
 }
 
-const docStyles = {
-  subheading: {
-    fontSize: "16px",
-    fontWeight: 700,
-    color: "var(--color-ink)",
-    margin: "24px 0 10px 0",
-    paddingBottom: "6px",
-    borderBottom: "1px solid var(--color-border-soft)",
-  },
-  list: {
-    margin: "8px 0 16px 20px",
-    padding: 0,
-    fontSize: "13.5px",
-    lineHeight: "1.65",
-  },
-  code: {
-    background: "var(--color-hover)",
-    padding: "2px 6px",
-    borderRadius: "4px",
-    fontFamily: "monospace",
-    fontSize: "12px",
-    color: "var(--color-primary-dark)",
-  },
-  calloutInfo: {
-    background: "rgba(16, 185, 129, 0.08)",
-    borderLeft: "4px solid var(--color-primary, #10b981)",
-    padding: "12px 16px",
-    borderRadius: "0 8px 8px 0",
-    margin: "16px 0",
-    fontSize: "13px",
-    lineHeight: "1.55",
-  },
-  calloutWarning: {
-    background: "rgba(245, 158, 11, 0.1)",
-    borderLeft: "4px solid #f59e0b",
-    padding: "12px 16px",
-    borderRadius: "0 8px 8px 0",
-    margin: "16px 0",
-    fontSize: "13px",
-    lineHeight: "1.55",
-  },
-  workflowBox: {
-    background: "var(--color-surface)",
-    border: "1px solid var(--color-border)",
-    padding: "10px 14px",
-    borderRadius: "8px",
-    fontSize: "12.5px",
-    fontWeight: 600,
-    color: "var(--color-ink)",
-    margin: "10px 0",
-    overflowX: "auto",
-  },
-  formulaBox: {
-    background: "var(--color-surface)",
-    border: "1px solid var(--color-border)",
-    padding: "14px 18px",
-    borderRadius: "10px",
-    fontSize: "15px",
-    color: "var(--color-primary-dark)",
-    margin: "14px 0",
-    textAlign: "center",
-  },
-  table: {
-    width: "100%",
-    borderCollapse: "collapse",
-    fontSize: "12.5px",
-  },
-  th: {
-    textAlign: "left",
-    padding: "8px 12px",
-    borderBottom: "2px solid var(--color-border)",
-    color: "var(--color-muted)",
-    fontWeight: 700,
-    textTransform: "uppercase",
-    fontSize: "11px",
-  },
-  td: {
-    padding: "10px 12px",
-    borderBottom: "1px solid var(--color-border-soft)",
-    verticalAlign: "top",
-    lineHeight: "1.45",
-  },
-  faqItem: {
-    marginBottom: "14px",
-    padding: "12px 16px",
-    borderRadius: "10px",
-    background: "var(--color-surface)",
-    border: "1px solid var(--color-border-soft)",
-  },
-  faqQ: {
-    fontWeight: 700,
-    fontSize: "13.5px",
-    color: "var(--color-ink)",
-    marginBottom: "6px",
-  },
-  faqA: {
-    fontSize: "13px",
-    color: "var(--color-muted)",
-    lineHeight: "1.5",
-  },
-};
