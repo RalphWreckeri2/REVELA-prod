@@ -524,6 +524,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       'https://ralphwreckeri2.github.io/revela_pn/',
                                     ),
                                   ),
+                                  Divider(
+                                    height: 1,
+                                    indent: 56,
+                                    color: context.adaptiveBorder,
+                                  ),
+                                  ListTile(
+                                    leading: Icon(
+                                      Icons.cookie_outlined,
+                                      color: context.adaptivePrimary,
+                                    ),
+                                    title: const Text(
+                                      'Cookie & Storage Policy',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    trailing: Icon(
+                                      Icons.chevron_right,
+                                      color: context.adaptiveTextLight,
+                                    ),
+                                    onTap: () => _openLegalUrl(
+                                      'https://ralphwreckeri2.github.io/revela_cookies/',
+                                    ),
+                                  ),
                                 ],
                               ),
                               const SizedBox(height: 24),

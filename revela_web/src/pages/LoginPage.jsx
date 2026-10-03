@@ -8,6 +8,7 @@ import Swal from "sweetalert2";
 import sealImg from "../assets/seal.png";
 import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
+import CookiePolicyPage from "../components/CookiePolicyPage";
 import AboutCreditsModal from "../components/AboutCreditsModal";
 import AnimatePresence from "../components/AnimatePresence";
 
@@ -128,7 +129,14 @@ export default function LoginPage() {
   // ── Legal docs state ──
   const [showTermsDoc, setShowTermsDoc] = useState(false);
   const [showPrivacyDoc, setShowPrivacyDoc] = useState(false);
+  const [showCookieDoc, setShowCookieDoc] = useState(false);
   const [showAboutDoc, setShowAboutDoc] = useState(false);
+
+  const handleSwitchLegalDoc = (docKey) => {
+    setShowTermsDoc(docKey === "terms");
+    setShowPrivacyDoc(docKey === "privacy");
+    setShowCookieDoc(docKey === "cookies");
+  };
 
   // ── Handlers ─────────────────────────────────────────────────────────────────
 
@@ -655,8 +663,8 @@ export default function LoginPage() {
               style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
             >
               Terms &amp; Conditions
-            </button>{" "}
-            and{" "}
+            </button>
+            {", "}
             <button
               type="button"
               className="text-accent"
@@ -664,8 +672,24 @@ export default function LoginPage() {
               style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
             >
               Privacy Policy
+            </button>
+            {", and "}
+            <button
+              type="button"
+              className="text-accent"
+              onClick={() => setShowCookieDoc(true)}
+              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
+            >
+              Cookie Policy
             </button>.
           </p>
+
+          <div style={{ display: "flex", justifyContent: "center" }}>
+            <div className="login-storage-badge">
+              <span className="storage-badge-dot"></span>
+              <span>This portal uses essential local storage for authentication. <button type="button" onClick={() => setShowCookieDoc(true)}>Details</button></span>
+            </div>
+          </div>
 
           <p style={{ marginTop: 10, marginBottom: 0, fontSize: 11, color: "#94a3b8", textAlign: "center" }}>
             REVELA Platform &bull;{" "}
@@ -684,13 +708,19 @@ export default function LoginPage() {
       {/* Modals */}
       <AnimatePresence isVisible={showTermsDoc}>
         <LegalDocModal title="Terms & Conditions" onClose={() => setShowTermsDoc(false)}>
-          <TermsPage />
+          <TermsPage onSwitchDoc={handleSwitchLegalDoc} isModal={true} />
         </LegalDocModal>
       </AnimatePresence>
 
       <AnimatePresence isVisible={showPrivacyDoc}>
         <LegalDocModal title="Privacy Policy" onClose={() => setShowPrivacyDoc(false)}>
-          <PrivacyPage />
+          <PrivacyPage onSwitchDoc={handleSwitchLegalDoc} isModal={true} />
+        </LegalDocModal>
+      </AnimatePresence>
+
+      <AnimatePresence isVisible={showCookieDoc}>
+        <LegalDocModal title="Cookie & Storage Policy" onClose={() => setShowCookieDoc(false)}>
+          <CookiePolicyPage onSwitchDoc={handleSwitchLegalDoc} isModal={true} />
         </LegalDocModal>
       </AnimatePresence>
 

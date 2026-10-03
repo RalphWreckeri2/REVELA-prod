@@ -11,6 +11,9 @@ import InspectionPage from './pages/InspectionPage';
 import UserManagementPage from './pages/UserManagementPage';
 import ExportReportsPage from './pages/ExportReportsPage';
 import SettingsPage from './pages/SettingsPage';
+import TermsPage from './components/TermsPage';
+import PrivacyPage from './components/PrivacyPage';
+import CookiePolicyPage from './components/CookiePolicyPage';
 
 export default function App() {
   return (
@@ -18,8 +21,12 @@ export default function App() {
       <ThemeProvider>
         <BrowserRouter>
           <Routes>
-            {/* Public */}
+            {/* Public & Legal */}
             <Route path="/" element={<LoginPage />} />
+            <Route path="/terms" element={<TermsPage />} />
+            <Route path="/privacy" element={<PrivacyPage />} />
+            <Route path="/cookies" element={<CookiePolicyPage />} />
+            <Route path="/cookie-policy" element={<CookiePolicyPage />} />
 
             {/* Protected */}
             <Route path="/home" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />

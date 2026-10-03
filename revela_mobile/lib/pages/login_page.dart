@@ -1466,7 +1466,7 @@ class _LoginPageState extends State<LoginPage> {
                                             'https://ralphwreckeri2.github.io/revela_tc/',
                                           ),
                                       ),
-                                      const TextSpan(text: ' and '),
+                                      const TextSpan(text: ', '),
                                       TextSpan(
                                         text: 'Privacy Policy',
                                         style: TextStyle(
@@ -1478,6 +1478,20 @@ class _LoginPageState extends State<LoginPage> {
                                         recognizer: TapGestureRecognizer()
                                           ..onTap = () => _openLegalUrl(
                                             'https://ralphwreckeri2.github.io/revela_pn/',
+                                          ),
+                                      ),
+                                      const TextSpan(text: ', and '),
+                                      TextSpan(
+                                        text: 'Cookie Policy',
+                                        style: TextStyle(
+                                          color: context.adaptivePrimary
+                                              .withValues(alpha: 0.8),
+                                          fontWeight: FontWeight.bold,
+                                          decoration: TextDecoration.underline,
+                                        ),
+                                        recognizer: TapGestureRecognizer()
+                                          ..onTap = () => _openLegalUrl(
+                                            'https://ralphwreckeri2.github.io/revela_cookies/',
                                           ),
                                       ),
                                       const TextSpan(text: '.'),

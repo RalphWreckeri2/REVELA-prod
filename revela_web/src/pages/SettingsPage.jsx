@@ -19,6 +19,7 @@ import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
+import CookiePolicyPage from "../components/CookiePolicyPage";
 import AboutCreditsModal from "../components/AboutCreditsModal";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
@@ -316,7 +317,14 @@ export default function SettingsPage() {
   const [show2FAModal, setShow2FAModal] = useState(false);
   const [showTermsDoc, setShowTermsDoc] = useState(false);
   const [showPrivacyDoc, setShowPrivacyDoc] = useState(false);
+  const [showCookieDoc, setShowCookieDoc] = useState(false);
   const [showAboutDoc, setShowAboutDoc] = useState(false);
+
+  const handleSwitchLegalDoc = (docKey) => {
+    setShowTermsDoc(docKey === "terms");
+    setShowPrivacyDoc(docKey === "privacy");
+    setShowCookieDoc(docKey === "cookies");
+  };
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 });
   const [sectors, setSectors] = useState([]);
 
@@ -1126,6 +1134,13 @@ export default function SettingsPage() {
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div>
+                <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Cookie &amp; Storage Policy</div>
+                <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Review how REVELA uses essential web storage and Google Maps cookies.</div>
+              </div>
+              <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => setShowCookieDoc(true)}>View</button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div>
                 <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>About &amp; Credits</div>
                 <div style={{ color: "var(--color-muted)", fontSize: 12 }}>View system specifications, municipal details, and the core development team.</div>
               </div>
@@ -1143,12 +1158,17 @@ export default function SettingsPage() {
       </AnimatePresence>
       <AnimatePresence isVisible={showTermsDoc}>
         <LegalDocModal title="Terms & Conditions" onClose={() => setShowTermsDoc(false)}>
-          <TermsPage />
+          <TermsPage onSwitchDoc={handleSwitchLegalDoc} isModal={true} />
         </LegalDocModal>
       </AnimatePresence>
       <AnimatePresence isVisible={showPrivacyDoc}>
         <LegalDocModal title="Privacy Policy" onClose={() => setShowPrivacyDoc(false)}>
-          <PrivacyPage />
+          <PrivacyPage onSwitchDoc={handleSwitchLegalDoc} isModal={true} />
+        </LegalDocModal>
+      </AnimatePresence>
+      <AnimatePresence isVisible={showCookieDoc}>
+        <LegalDocModal title="Cookie & Storage Policy" onClose={() => setShowCookieDoc(false)}>
+          <CookiePolicyPage onSwitchDoc={handleSwitchLegalDoc} isModal={true} />
         </LegalDocModal>
       </AnimatePresence>
       <AnimatePresence isVisible={showAboutDoc}>
