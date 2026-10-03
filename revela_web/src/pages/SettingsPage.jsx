@@ -21,6 +21,7 @@ import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
 import CookiePolicyPage from "../components/CookiePolicyPage";
 import AboutCreditsModal from "../components/AboutCreditsModal";
+import InstructionalManualModal from "../components/InstructionalManualModal";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 
@@ -319,6 +320,13 @@ export default function SettingsPage() {
   const [showPrivacyDoc, setShowPrivacyDoc] = useState(false);
   const [showCookieDoc, setShowCookieDoc] = useState(false);
   const [showAboutDoc, setShowAboutDoc] = useState(false);
+  const [showInstructionalModal, setShowInstructionalModal] = useState(false);
+  const [instructionalInitialChapter, setInstructionalInitialChapter] = useState("overview");
+
+  const openInstructionalManual = (chapterId = "overview") => {
+    setInstructionalInitialChapter(chapterId);
+    setShowInstructionalModal(true);
+  };
 
   const handleSwitchLegalDoc = (docKey) => {
     setShowTermsDoc(docKey === "terms");
@@ -1111,16 +1119,175 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {/* Instructional Material & System SOP */}
+        <section className="saas-card frosted-glass">
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <h3 style={{ margin: 0, color: "var(--color-ink)", fontSize: 18, fontWeight: 800 }}>
+                    Instructional Material &amp; Standard Operating Procedures (SOP)
+                  </h3>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "var(--color-primary, #10b981)",
+                      background: "var(--color-primary-light, rgba(16, 185, 129, 0.1))",
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                    }}
+                  >
+                    BPLO Official Manual
+                  </span>
+                </div>
+                <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13, maxWidth: 680, lineHeight: 1.5 }}>
+                  Official BPLO operating guidelines, regulatory access controls under R.A. 10175, automated detection scan quotas, dispatch Kanban lifecycle, and mobile field inspection protocols.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => openInstructionalManual("overview")}
+                style={{
+                  fontSize: 13,
+                  padding: "8px 16px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                </svg>
+                Open Complete Manual
+              </button>
+            </div>
+          </div>
+
+          {/* Quick-Access Chapter Cards */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: 12,
+          }}>
+            {[
+              {
+                id: "roles",
+                icon: "🏛️",
+                title: "Roles & R.A. 10175",
+                tag: "Governance",
+                summary: "Super Admin, Admin, and Inspector privileges. Mandatory audit logs, password reset rate limits (2/day), and legal safeguards under Republic Act 10175.",
+                btnLabel: "Read Chapter 2.0 →",
+              },
+              {
+                id: "web-portal",
+                icon: "🛰️",
+                title: "Detection & API Budgets",
+                tag: "Quotas",
+                summary: "Strict limit of 2 scans/month; 1,000 requests/day Places API budget with zero-overcharge partial progress saving to preserve municipal funds.",
+                btnLabel: "Read Chapter 3.4 →",
+              },
+              {
+                id: "web-portal",
+                icon: "📑",
+                title: "Registry & Geocoding Caps",
+                tag: "Data Ingestion",
+                summary: "Batch limit of 1,500 records per upload; 1,500 daily Google geocoding cap. Pre-populated latitude/longitude columns bypass geocoding limits.",
+                btnLabel: "Read Chapter 3.5 →",
+              },
+              {
+                id: "web-portal",
+                icon: "📋",
+                title: "Kanban Dispatch & Redo",
+                tag: "Workflow",
+                summary: "Assigned ➔ Reassigned ➔ Submitted ➔ Verified. Past-deadline guards, inspector reassignment, and 'Send back' for blurry evidence.",
+                btnLabel: "Read Chapter 3.6 →",
+              },
+              {
+                id: "mobile-app",
+                icon: "📱",
+                title: "Field App & Offline SQLite",
+                tag: "Mobile",
+                summary: "3-step wizard (Result, Photos, Review), mandatory biometric setup, local sqflite caching, and Mataasnakahoy boundary enforcement.",
+                btnLabel: "Read Chapter 4.0 →",
+              },
+              {
+                id: "wlc-policy",
+                icon: "⚖️",
+                title: "WLC Model & Coordinates",
+                tag: "Mathematical Model",
+                summary: "OPS = 68% Risk + 7% Sector + 25% Distance. BPLO reference center at 13.960413° N, 121.114547° E (Mataasnakahoy Municipal Hall).",
+                btnLabel: "Read Chapter 5.0 →",
+              },
+            ].map((card, idx) => (
+              <div
+                key={idx}
+                className="hover-lift"
+                onClick={() => openInstructionalManual(card.id)}
+                style={{
+                  padding: "16px",
+                  borderRadius: 12,
+                  background: "var(--color-surface)",
+                  border: "1px solid var(--color-border-soft)",
+                  display: "flex",
+                  flexDirection: "column",
+                  justifyContent: "space-between",
+                  cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}
+              >
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 18 }}>{card.icon}</span>
+                      <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--color-ink)" }}>{card.title}</span>
+                    </div>
+                    <span style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      padding: "2px 6px",
+                      borderRadius: 4,
+                      background: "var(--color-hover)",
+                      color: "var(--color-muted)",
+                      textTransform: "uppercase",
+                    }}>
+                      {card.tag}
+                    </span>
+                  </div>
+                  <p style={{ margin: "0 0 12px 0", fontSize: 12, color: "var(--color-muted)", lineHeight: 1.45 }}>
+                    {card.summary}
+                  </p>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", display: "flex", alignItems: "center", gap: 4 }}>
+                  <span>{card.btnLabel}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* Legal & Support */}
         <section className="saas-card frosted-glass">
           <div style={{ marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18 }}>Legal & Support</h3>
-            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Review the platform's terms of service and privacy policy.</p>
+            <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18 }}>Legal &amp; Support</h3>
+            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Review the platform's terms of service, official operating procedures, and privacy policy.</p>
           </div>
           <div style={{ display: "grid", gap: 12 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <div>
-                <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Terms & Conditions</div>
+                <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>System Instructional Manual &amp; SOP</div>
+                <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Access the complete BPLO Standard Operating Procedures, quotas, and field protocols.</div>
+              </div>
+              <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => openInstructionalManual("overview")}>View</button>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontWeight: 700, color: "var(--color-ink)" }}>Terms &amp; Conditions</div>
                 <div style={{ color: "var(--color-muted)", fontSize: 12 }}>Read the terms of service for using the REVELA platform.</div>
               </div>
               <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => setShowTermsDoc(true)}>View</button>
@@ -1149,6 +1316,13 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
+
+      <AnimatePresence isVisible={showInstructionalModal}>
+        <InstructionalManualModal
+          initialSectionId={instructionalInitialChapter}
+          onClose={() => setShowInstructionalModal(false)}
+        />
+      </AnimatePresence>
 
       <AnimatePresence isVisible={showPasswordModal}>
         <ChangePasswordModal token={token} onClose={() => setShowPasswordModal(false)} />
