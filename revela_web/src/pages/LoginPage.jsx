@@ -70,7 +70,7 @@ function LegalDocModal({ title, children, onClose, isClosing }) {
       className={"modal-backdrop" + (isClosing ? " closing" : "")}
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
-        background: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(6px)",
+        background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(6px)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
       }}
       onClick={onClose}
@@ -78,18 +78,46 @@ function LegalDocModal({ title, children, onClose, isClosing }) {
       <div
         className={"modal-panel" + (isClosing ? " closing" : "")}
         style={{
-          background: "#fff", borderRadius: 16,
-          width: "min(100%, 800px)", height: "min(90vh, 800px)",
-          display: "flex", flexDirection: "column",
-          boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+          background: "var(--color-modal-bg, #ffffff)",
+          color: "var(--color-ink)",
+          borderRadius: 20,
+          width: "min(100%, 820px)",
+          height: "min(90vh, 820px)",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 25px 70px rgba(0,0,0,0.7)",
+          border: "1px solid var(--color-border-soft)",
+          overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px", borderBottom: "1px solid rgba(0,0,0,0.08)" }}>
-          <h3 style={{ margin: 0, fontSize: 16, color: "#1a202c" }}>{title}</h3>
-          <button className="modal-close-btn" onClick={onClose} style={{ position: 'relative', background: "transparent", border: "none", cursor: "pointer", color: "#64748b", fontSize: 20 }}>✕</button>
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "16px 24px",
+          borderBottom: "1px solid var(--color-border-soft)",
+          background: "var(--color-surface, rgba(0,0,0,0.3))",
+        }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--color-ink)" }}>{title}</h3>
+          <button
+            className="modal-close-btn"
+            onClick={onClose}
+            style={{
+              position: 'relative',
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              color: "var(--color-muted)",
+              fontSize: 20,
+              padding: "4px 8px",
+              borderRadius: "6px",
+            }}
+          >
+            ✕
+          </button>
         </div>
-        <div style={{ flex: 1, overflowY: "auto" }}>{children}</div>
+        <div style={{ flex: 1, overflowY: "auto", background: "var(--color-modal-bg, #ffffff)" }}>{children}</div>
       </div>
     </div>
   );

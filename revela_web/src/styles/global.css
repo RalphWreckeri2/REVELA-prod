@@ -766,12 +766,12 @@ html.theme-dark {
   --color-subtle: #6b7280;
   --color-border: rgba(255, 255, 255, 0.15);
   --color-border-soft: rgba(255, 255, 255, 0.08);
-  --color-surface: #111111;
+  --color-surface: #0a0a0a;
   --color-page-bg: #000000;
 
-  --color-modal-bg: #1a1a1a;
-  --color-input-bg: #111111;
-  --color-card-alt: #161616;
+  --color-modal-bg: #0d0d0d;
+  --color-input-bg: #141414;
+  --color-card-alt: #141414;
   --color-hover: rgba(255, 255, 255, 0.05);
 
   --glass-bg: rgba(17, 17, 17, 0.75);
@@ -1670,6 +1670,121 @@ html.theme-dark .ambient-bg-mesh {
 }
 .legal-inline-btn:hover {
   color: var(--color-primary-dark);
+}
+
+/* ── Dark Mode Overrides for Legal Pages & Modals (True Obsidian Black) ── */
+html.theme-dark .legal-page-container {
+  background: #000000;
+  background-image: none;
+}
+html.theme-dark .legal-page-content {
+  background: #0e0e0e;
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #f8f9fa;
+  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.9);
+}
+html.theme-dark .legal-page-container--modal .legal-page-content {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+html.theme-dark .legal-page-eyebrow {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+}
+html.theme-dark .legal-page-content h1 {
+  color: #ffffff;
+}
+html.theme-dark .legal-page-divider {
+  background: #eab308;
+}
+html.theme-dark .legal-page-subtitle {
+  color: #888888;
+}
+html.theme-dark .legal-page-content p {
+  color: #cccccc;
+}
+html.theme-dark .legal-page-content h2 {
+  color: #ffffff;
+  border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+html.theme-dark .legal-page-content li {
+  color: #cccccc;
+}
+html.theme-dark .legal-page-content li strong {
+  color: #ffffff;
+}
+html.theme-dark .legal-page-notice {
+  background: rgba(234, 179, 8, 0.1);
+  border-color: rgba(234, 179, 8, 0.25);
+}
+html.theme-dark .legal-page-notice p {
+  color: #fde047;
+}
+html.theme-dark .legal-page-restricted {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.25);
+  color: #fca5a5;
+}
+html.theme-dark .legal-page-footer {
+  border-top-color: rgba(255, 255, 255, 0.1);
+  color: #777777;
+}
+html.theme-dark .legal-page-footer strong {
+  color: #34d399;
+}
+html.theme-dark .legal-nav-tabs {
+  background: #141414;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+html.theme-dark .legal-nav-tab {
+  color: #888888;
+}
+html.theme-dark .legal-nav-tab:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+html.theme-dark .legal-nav-tab.active {
+  background: #242424;
+  color: #34d399;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+html.theme-dark .legal-table-wrapper {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+html.theme-dark .legal-table th {
+  background: #141414;
+  color: #ffffff;
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+html.theme-dark .legal-table td {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  color: #cccccc;
+}
+html.theme-dark .legal-table code {
+  background: rgba(255, 255, 255, 0.08);
+  color: #34d399;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+html.theme-dark .legal-badge--essential {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+}
+html.theme-dark .legal-badge--functional {
+  background: rgba(252, 211, 77, 0.15);
+  color: #fcd34d;
+}
+html.theme-dark .legal-back-btn,
+html.theme-dark .legal-action-pill-btn {
+  background: #141414;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #cccccc;
+}
+html.theme-dark .legal-back-btn:hover,
+html.theme-dark .legal-action-pill-btn:hover {
+  background: rgba(52, 211, 153, 0.15);
+  border-color: #34d399;
+  color: #34d399;
 }
 
 

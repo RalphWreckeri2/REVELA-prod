@@ -57,20 +57,22 @@ function LegalDocModal({ title, children, onClose, isClosing }) {
       <div
         className={"modal-panel" + (isClosing ? " closing" : "")}
         style={{
-          background: "var(--color-modal-bg)", borderRadius: 16,
-          width: "min(100%, 800px)", height: "min(90vh, 800px)",
+          background: "var(--color-modal-bg)", borderRadius: 20,
+          width: "min(100%, 820px)", height: "min(90vh, 820px)",
           display: "flex", flexDirection: "column",
-          boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+          boxShadow: "0 25px 70px rgba(0,0,0,0.7)",
+          border: "1px solid var(--color-border-soft)",
+          overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px", borderBottom: "1px solid var(--color-border-soft)" }}>
-          <h3 style={{ margin: 0, fontSize: 16, color: "var(--color-ink)" }}>{title}</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 24px", borderBottom: "1px solid var(--color-border-soft)", background: "var(--color-surface)" }}>
+          <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--color-ink)" }}>{title}</h3>
           <button className="modal-close-btn" onClick={onClose}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
-        <div style={{ flex: 1, overflowY: "auto" }}>{children}</div>
+        <div style={{ flex: 1, overflowY: "auto", background: "var(--color-modal-bg)" }}>{children}</div>
       </div>
     </div>,
     document.body
