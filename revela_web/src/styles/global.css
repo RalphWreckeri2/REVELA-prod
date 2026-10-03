@@ -168,11 +168,11 @@ body {
 
 /* Dark chart tooltips must not inherit dark text from the page theme. */
 .recharts-default-tooltip {
-  background: #111827 !important;
-  border: 1px solid #374151 !important;
+  background: #0a0a0a !important;
+  border: 1px solid #262626 !important;
   border-radius: 8px !important;
   color: #fff !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6) !important;
 }
 .recharts-default-tooltip .recharts-tooltip-label,
 .recharts-default-tooltip .recharts-tooltip-item {
@@ -853,16 +853,16 @@ html.theme-dark .ghost-btn:hover {
 }
 html.theme-dark .registry-action-btn {
   background: transparent;
-  border-color: #374151;
+  border-color: #262626;
   color: #e5e7eb;
 }
-html.theme-dark .registry-action-btn:hover { background: #1f2937; border-color: #4b5563; }
+html.theme-dark .registry-action-btn:hover { background: #1a1a1a; border-color: #383838; }
 html.theme-dark .priority-filter-btn {
-  background: rgba(255, 255, 255, 0.06) !important;
-  border-color: #374151 !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: #262626 !important;
   color: #f3f4f6 !important;
 }
-html.theme-dark .priority-filter-btn:hover { background: #1f2937 !important; border-color: #4b5563 !important; }
+html.theme-dark .priority-filter-btn:hover { background: #1a1a1a !important; border-color: #383838 !important; }
 html.theme-dark .saas-footer p { color: var(--color-muted); }
 html.theme-dark .primary-btn {
   background: var(--color-primary);

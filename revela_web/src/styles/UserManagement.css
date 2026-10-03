@@ -342,7 +342,7 @@
   position: fixed;
   inset: 0;
   z-index: 100;
-  background: rgba(15, 23, 42, 0.5);
+  background: rgba(0, 0, 0, 0.75);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   display: flex;
@@ -367,7 +367,7 @@
   overflow-y: auto;
   box-sizing: border-box;
   position: relative;
-  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
   animation: revela-slide-up var(--duration-slow) var(--ease-out);
 }
 .um-modal.closing {

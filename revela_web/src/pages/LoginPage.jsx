@@ -70,7 +70,7 @@ function LegalDocModal({ title, children, onClose, isClosing }) {
       className={"modal-backdrop" + (isClosing ? " closing" : "")}
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
-        background: "rgba(15, 23, 42, 0.6)", backdropFilter: "blur(6px)",
+        background: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(6px)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
       }}
       onClick={onClose}

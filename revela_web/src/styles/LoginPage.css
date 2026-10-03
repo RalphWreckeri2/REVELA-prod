@@ -529,31 +529,35 @@
   }
 }
 
-/* ── Dark Mode Overrides ── */
+/* ── Dark Mode Overrides (Pure Obsidian & Carbon Black) ── */
 html.theme-dark .login-root {
-  background: var(--color-page-bg);
+  background: #000000;
 }
-html.theme-dark .orb-tl { background: rgba(52, 211, 153, 0.15); }
-html.theme-dark .orb-br { background: rgba(252, 211, 77, 0.1); }
-html.theme-dark .orb-mid { background: rgba(16, 185, 129, 0.08); }
-html.theme-dark .topo-overlay { opacity: 0.03; filter: invert(1); }
+html.theme-dark .orb-tl { background: rgba(52, 211, 153, 0.06); }
+html.theme-dark .orb-br { background: rgba(252, 211, 77, 0.04); }
+html.theme-dark .orb-mid { background: rgba(16, 185, 129, 0.03); }
+html.theme-dark .topo-overlay { opacity: 0.025; filter: grayscale(1) invert(1); }
 
 html.theme-dark .login-card {
-  background: rgba(17, 24, 39, 0.86);
-  border-color: #1f2937;
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+  background: rgba(12, 12, 12, 0.96);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
 html.theme-dark .left-panel {
-  background: rgba(15, 23, 42, 0.4);
-  border-right-color: var(--color-border);
+  background: #050505;
+  border-right-color: rgba(255, 255, 255, 0.08);
+}
+
+html.theme-dark .left-inner-orb {
+  display: none;
 }
 
 html.theme-dark .muni-name,
 html.theme-dark .wordmark,
 html.theme-dark .portal-label,
 html.theme-dark .form-heading {
-  color: var(--color-ink);
+  color: #ffffff;
 }
 
 html.theme-dark .muni-pre,
@@ -563,36 +567,44 @@ html.theme-dark .brand-desc,
 html.theme-dark .form-sub,
 html.theme-dark .field-label,
 html.theme-dark .forgot-btn {
-  color: var(--color-muted);
+  color: #888888;
+}
+
+html.theme-dark .forgot-btn:hover {
+  color: #34d399;
 }
 
 html.theme-dark .legal-note {
-  color: #ff8a8a;
-  background: rgba(255, 138, 138, 0.1);
-  border-color: rgba(255, 138, 138, 0.2);
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.18);
 }
 
 .text-accent {
   color: #56ab2f !important;
 }
 html.theme-dark .text-accent {
-  color: #81c784 !important;
+  color: #34d399 !important;
 }
 
 html.theme-dark .tagline {
-  color: var(--color-subtle);
+  color: #666666;
 }
 
 html.theme-dark .glass-input {
-  background: #1f2937;
-  border-color: #374151;
-  color: #fff;
+  background: #141414;
+  border-color: #262626;
+  color: #ffffff;
+}
+
+html.theme-dark .glass-input::placeholder {
+  color: #555555;
 }
 
 html.theme-dark .glass-input:focus {
   border-color: #10b981;
-  background: #1f2937;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.16);
+  background: #141414;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
 }
 
 html.theme-dark .signin-btn { background: #059669; color: #fff; }
@@ -600,29 +612,30 @@ html.theme-dark .signin-btn:hover { background: #10b981; }
 
 html.theme-dark .pw-toggle,
 html.theme-dark .input-icon {
-  color: var(--color-muted);
+  color: #666666;
 }
 html.theme-dark .pw-toggle:hover {
-  color: var(--color-ink);
+  color: #ffffff;
 }
 
 html.theme-dark .otp-box {
-  background: rgba(15, 23, 42, 0.4);
-  border-color: var(--color-border);
+  background: #111111;
+  border-color: rgba(255, 255, 255, 0.1);
 }
 html.theme-dark .otp-desc {
-  color: var(--color-ink);
+  color: #ffffff;
 }
 
 html.theme-dark .modal-backdrop {
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.75);
 }
 html.theme-dark .modal-content {
-  background: var(--color-modal-bg);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  background: #0e0e0e;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.9);
 }
 html.theme-dark .modal-close {
-  color: var(--color-subtle);
+  color: #777777;
 }
 html.theme-dark .modal-close:hover {
   color: var(--color-danger);
@@ -630,8 +643,8 @@ html.theme-dark .modal-close:hover {
 }
 html.theme-dark .btn-secondary {
   background: rgba(255, 255, 255, 0.05);
-  border-color: var(--color-border);
-  color: var(--color-ink);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
 }
 html.theme-dark .btn-secondary:hover {
   background: rgba(255, 255, 255, 0.1);
@@ -684,12 +697,13 @@ html.theme-dark .btn-secondary:hover {
 }
 
 html.theme-dark .login-minimal-link {
-  color: #94a3b8;
+  color: #777777;
 }
 html.theme-dark .login-minimal-link:hover {
-  color: #81c784;
+  color: #34d399;
 }
 html.theme-dark .login-minimal-dot {
-  color: #475569;
+  color: #333333;
 }
+
 

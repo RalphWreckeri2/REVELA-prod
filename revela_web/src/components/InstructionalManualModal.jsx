@@ -439,7 +439,7 @@ export default function InstructionalManualModal({ initialSectionId = "overview"
         position: "fixed",
         inset: 0,
         zIndex: 99999,
-        background: "rgba(15, 23, 42, 0.65)",
+        background: "rgba(0, 0, 0, 0.8)",
         backdropFilter: "blur(6px)",
         display: "flex",
         alignItems: "center",

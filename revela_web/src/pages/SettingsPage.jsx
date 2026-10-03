@@ -48,7 +48,7 @@ function LegalDocModal({ title, children, onClose, isClosing }) {
     <div
       style={{
         position: "fixed", inset: 0, zIndex: 9999,
-        background: "rgba(15, 23, 42, 0.55)", backdropFilter: "blur(4px)",
+        background: "rgba(0, 0, 0, 0.75)", backdropFilter: "blur(4px)",
         display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
       }}
       className={"modal-backdrop" + (isClosing ? " closing" : "")}
