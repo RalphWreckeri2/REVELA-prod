@@ -1672,43 +1672,7 @@ html.theme-dark .ambient-bg-mesh {
   color: var(--color-primary-dark);
 }
 
-/* Subtle storage badge for login & dashboard footer */
-.login-storage-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 14px;
-  padding: 6px 14px;
-  background: rgba(148, 163, 184, 0.08);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 999px;
-  font-size: 11px;
-  color: #94a3b8;
-  line-height: 1.4;
-  text-align: center;
-}
-.login-storage-badge .storage-badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  box-shadow: 0 0 6px var(--color-primary);
-  flex-shrink: 0;
-}
-.login-storage-badge button {
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--color-primary);
-  font-weight: 600;
-  text-decoration: underline;
-  cursor: pointer;
-  font-size: 11px;
-  margin-left: 2px;
-}
-.login-storage-badge button:hover {
-  color: var(--color-primary-dark);
-}
+
 
 @media (max-width: 640px) {
   .legal-page-content {

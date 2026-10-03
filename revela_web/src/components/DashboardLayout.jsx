@@ -203,7 +203,7 @@ function Sidebar({ onLogout, onOpenAbout }) {
           </svg>
           Logout
         </button>
-        <div style={{ marginTop: 8, textAlign: "center" }}>
+        <div style={{ marginTop: 4, textAlign: "left" }}>
           <button
             type="button"
             onClick={onOpenAbout}
@@ -214,8 +214,9 @@ function Sidebar({ onLogout, onOpenAbout }) {
               fontSize: "11px",
               fontWeight: 500,
               cursor: "pointer",
-              padding: "4px 8px",
+              padding: "4px 0",
               borderRadius: "4px",
+              display: "inline-block",
               transition: "color var(--duration-fast)",
             }}
             onMouseEnter={(e) => (e.currentTarget.style.color = "var(--color-ink)")}

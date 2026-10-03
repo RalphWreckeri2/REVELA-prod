@@ -654,54 +654,43 @@ export default function LoginPage() {
             Violators will be prosecuted under RA 10175.
           </p>
 
-          <p style={{ marginTop: 14, marginBottom: 0, fontSize: 12, lineHeight: 1.6, color: "#94a3b8", textAlign: "center" }}>
-            By signing in, you agree to our{" "}
+          <div className="login-minimal-footer">
             <button
               type="button"
-              className="text-accent"
+              className="login-minimal-link"
               onClick={() => setShowTermsDoc(true)}
-              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
+              title="Terms & Conditions"
             >
               Terms &amp; Conditions
             </button>
-            {", "}
+            <span className="login-minimal-dot">&bull;</span>
             <button
               type="button"
-              className="text-accent"
+              className="login-minimal-link"
               onClick={() => setShowPrivacyDoc(true)}
-              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
+              title="Privacy Policy"
             >
               Privacy Policy
             </button>
-            {", and "}
+            <span className="login-minimal-dot">&bull;</span>
             <button
               type="button"
-              className="text-accent"
+              className="login-minimal-link"
               onClick={() => setShowCookieDoc(true)}
-              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
+              title="Cookie & Storage Policy"
             >
               Cookie Policy
-            </button>.
-          </p>
-
-          <div style={{ display: "flex", justifyContent: "center" }}>
-            <div className="login-storage-badge">
-              <span className="storage-badge-dot"></span>
-              <span>This portal uses essential local storage for authentication. <button type="button" onClick={() => setShowCookieDoc(true)}>Details</button></span>
-            </div>
-          </div>
-
-          <p style={{ marginTop: 10, marginBottom: 0, fontSize: 11, color: "#94a3b8", textAlign: "center" }}>
-            REVELA Platform &bull;{" "}
+            </button>
+            <span className="login-minimal-dot">&bull;</span>
             <button
               type="button"
-              className="text-accent"
+              className="login-minimal-link"
               onClick={() => setShowAboutDoc(true)}
-              style={{ background: "none", border: "none", padding: 0, font: "inherit", fontSize: "inherit", fontWeight: 600, cursor: "pointer" }}
+              title="About & Credits"
             >
-              About &amp; Credits
+              Credits
             </button>
-          </p>
+          </div>
         </div>
       </div>
 

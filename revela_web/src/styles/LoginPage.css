@@ -636,3 +636,60 @@ html.theme-dark .btn-secondary {
 html.theme-dark .btn-secondary:hover {
   background: rgba(255, 255, 255, 0.1);
 }
+
+/* ── Minimal Legal & Credits Footer (Single Line) ── */
+.login-minimal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 20px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.login-minimal-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: color var(--duration-fast, 0.15s);
+  text-decoration: none;
+}
+
+.login-minimal-link:hover {
+  color: #56ab2f;
+  text-decoration: underline;
+}
+
+.login-minimal-dot {
+  color: #cbd5e1;
+  font-size: 10px;
+  user-select: none;
+}
+
+@media (max-width: 480px) {
+  .login-minimal-footer {
+    gap: 6px;
+    font-size: 10px;
+  }
+  .login-minimal-link {
+    font-size: 10px;
+  }
+}
+
+html.theme-dark .login-minimal-link {
+  color: #94a3b8;
+}
+html.theme-dark .login-minimal-link:hover {
+  color: #81c784;
+}
+html.theme-dark .login-minimal-dot {
+  color: #475569;
+}
+
