@@ -15,6 +15,7 @@ from google.genai import types
 from app import mysql
 from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
+from api.models.detection_runs import get_recent_detection_runs
 from api.analytics.filters import (
     parse_analytics_filters,
     registry_sql,
@@ -55,11 +56,13 @@ def _get_candidate_gemini_models(client, force_refresh=False):
                     elif "gemini" in m_name:
                         discovered.append(m_name)
         _LAST_MODEL_DISCOVERY_TIME = now
-        print(f"[Gemini] Monthly model auto-discovery completed. Found: {discovered}")
+        print(
+            f"[Gemini] Monthly model auto-discovery completed. Found: {discovered}")
     except Exception as e:
         print(f"[Gemini] Model auto-discovery note: {e}")
 
-    candidates = discovered + [_CACHED_GEMINI_MODEL, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    candidates = discovered + [_CACHED_GEMINI_MODEL, "gemini-3.6-flash",
+                               "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     return list(dict.fromkeys(candidates))
 
 
@@ -86,7 +89,6 @@ def invalidate_analytics_cache():
 analytics_bp = Blueprint("analytics", __name__)
 
 
-
 @analytics_bp.route("/all", methods=["GET"])
 @jwt_required()
 def get_all_analytics():
@@ -96,13 +98,15 @@ def get_all_analytics():
 
         cached = _analytics_cache.get(cache_key)
         if cached and (time.time() - cached["ts"]) < _ANALYTICS_CACHE_TTL:
-            data = dict(cached["data"])  # shallow copy so we can append per-user rollover
+            # shallow copy so we can append per-user rollover
+            data = dict(cached["data"])
             status_code = cached["status_code"]
         else:
             data, status_code = _get_all_analytics_inner(F)
             if status_code == 200:
                 _analytics_cache[cache_key] = {
-                    "data": dict(data),  # store a clean copy so the local mutation below is safe
+                    # store a clean copy so the local mutation below is safe
+                    "data": dict(data),
                     "ts": time.time(),
                     "status_code": status_code,
                 }
@@ -125,8 +129,10 @@ def get_all_analytics():
         rollover_info = None
         if notif:
             body = notif["body"]
-            m = re.search(r"Welcome to (\d+)!.*?marked (\d+) active", body, re.DOTALL)
-            year  = int(m.group(1)) if m else __import__('datetime').date.today().year
+            m = re.search(
+                r"Welcome to (\d+)!.*?marked (\d+) active", body, re.DOTALL)
+            year = int(m.group(1)) if m else __import__(
+                'datetime').date.today().year
             count = int(m.group(2)) if m else 0
             rollover_info = {
                 "detected": True,
@@ -322,9 +328,9 @@ def _get_all_analytics_inner(F=None):
         GROUP BY b.barangayName, nature
         ORDER BY b.barangayName ASC, count DESC
     """, reg_o_p)
-    
+
     nature_per_barangay_raw = cur.fetchall()
-    
+
     # Process into a format suitable for stacked bar chart: [{barangayName: 'Brgy 1', 'Retail': 10, 'Food': 5}, ...]
     nature_per_barangay_dict = {}
     for row in nature_per_barangay_raw:
@@ -334,9 +340,8 @@ def _get_all_analytics_inner(F=None):
         if brgy not in nature_per_barangay_dict:
             nature_per_barangay_dict[brgy] = {"barangayName": brgy}
         nature_per_barangay_dict[brgy][nature] = count
-    
-    nature_per_barangay = list(nature_per_barangay_dict.values())
 
+    nature_per_barangay = list(nature_per_barangay_dict.values())
 
     # Business size
     cur.execute(f"""
@@ -464,29 +469,78 @@ def _get_all_analytics_inner(F=None):
         if r["red_count"] > 0 or r["flagged_count"] >= 5
     )
 
-    # Category non-compliance
-    # NOTE: join is normalized (case/whitespace-insensitive) because detected names
-    # from the field rarely match registry names character-for-character — an exact
-    # match dumps most logs into the 'Unclassified' bucket. We also count DISTINCT
-    # detected entities (name + barangay), not raw detection events, so the ranking
-    # reflects how many unique businesses are flagged per line of business.
+    # Attribute a sector only when trimmed name + barangay resolves to one registry row.
+    registry_match_sql = """
+        SELECT TRIM(businessName) AS normalized_name,
+               barangayID,
+               MIN(businessID) AS businessID,
+               COUNT(DISTINCT businessID) AS match_count
+        FROM official_registry
+        GROUP BY TRIM(businessName), barangayID
+    """
     cur.execute(f"""
         SELECT
-            COALESCE(o.lineOfBusiness, 'Unclassified') AS category,
-            COUNT(DISTINCT CONCAT(g.detectedName, '|', g.barangayID)) AS flagged_count
+            COALESCE(NULLIF(TRIM(o.lineOfBusiness), ''), 'Unspecified sector') AS category,
+            COUNT(DISTINCT o.businessID) AS flagged_count
         FROM geospatial_logs g
-        LEFT JOIN official_registry o ON g.detectedName = o.businessName
-            AND g.barangayID = o.barangayID{reg_o}
+        JOIN ({registry_match_sql}) rm
+            ON rm.normalized_name = TRIM(g.detectedName)
+           AND rm.barangayID = g.barangayID
+           AND rm.match_count = 1
+        JOIN official_registry o ON o.businessID = rm.businessID
         WHERE 1=1 AND g.flagColor != 'Green' 
-          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
+          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g} {reg_o}
         GROUP BY category
         ORDER BY flagged_count DESC
         LIMIT 10
-    """, reg_o_p + geo_g_p)
-    category_noncompliance = [
-        {"category": row["category"], "flagged_count": row["flagged_count"]}
+    """, geo_g_p + reg_o_p)
+    flagged_by_sector = list(cur.fetchall())
+
+    cur.execute(f"""
+        SELECT COALESCE(NULLIF(TRIM(lineOfBusiness), ''), 'Unspecified sector') AS category,
+               COUNT(DISTINCT businessID) AS total_registered
+        FROM official_registry
+        WHERE 1=1 {reg_all}
+        GROUP BY category
+    """, reg_all_p)
+    sector_denominators = {
+        row["category"]: int(row["total_registered"] or 0)
         for row in cur.fetchall()
-    ]
+    }
+    category_risk_drivers = []
+    for row in flagged_by_sector:
+        category = row["category"]
+        flagged_count = int(row["flagged_count"] or 0)
+        total_registered = sector_denominators.get(category, 0)
+        category_risk_drivers.append({
+            "category": category,
+            "flagged_count": flagged_count,
+            "total_registered": total_registered,
+            "non_green_rate": round(flagged_count / total_registered * 100, 1) if total_registered else 0,
+        })
+
+    cur.execute(f"""
+        SELECT COUNT(DISTINCT g.logID) AS total_flagged_records,
+               COUNT(DISTINCT CASE WHEN rm.match_count = 1 THEN g.logID END) AS linked_records,
+               COUNT(DISTINCT CASE WHEN rm.match_count IS NULL THEN g.logID END) AS unlinked_records,
+               COUNT(DISTINCT CASE WHEN rm.match_count > 1 THEN g.logID END) AS ambiguous_records
+        FROM geospatial_logs g
+        LEFT JOIN ({registry_match_sql}) rm
+            ON rm.normalized_name = TRIM(g.detectedName)
+           AND rm.barangayID = g.barangayID
+        WHERE g.flagColor != 'Green'
+          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
+    """, geo_g_p)
+    linkage_row = cur.fetchone() or {}
+    total_flagged_records = int(linkage_row.get("total_flagged_records") or 0)
+    linked_records = int(linkage_row.get("linked_records") or 0)
+    category_linkage_summary = {
+        "total_flagged_records": total_flagged_records,
+        "linked_records": linked_records,
+        "unlinked_records": int(linkage_row.get("unlinked_records") or 0),
+        "ambiguous_records": int(linkage_row.get("ambiguous_records") or 0),
+        "linkage_rate": round(linked_records / total_flagged_records * 100, 1) if total_flagged_records else 0,
+    }
 
     # Weekly red-flag trend
     cur.execute(f"""
@@ -513,7 +567,9 @@ def _get_all_analytics_inner(F=None):
     dbscan_clusters = []
     try:
         cur.execute(f"""
-            SELECT g.latitude, g.longitude, COALESCE(b.barangayName, 'Unknown Area') as barangayName
+                 SELECT g.logID, g.detectedName, g.detectedDate, g.flagColor,
+                     g.latitude, g.longitude,
+                     COALESCE(b.barangayName, 'Unknown Area') as barangayName
             FROM geospatial_logs g
             LEFT JOIN barangays b ON g.barangayID = b.barangayID
             WHERE g.flagColor IN ('Red', 'Black')
@@ -551,6 +607,10 @@ def _get_all_analytics_inner(F=None):
             # Export points for visualization
             for idx, row in enumerate(hotspot_data):
                 dbscan_clusters.append({
+                    "log_id": int(row['logID']),
+                    "detected_name": row['detectedName'],
+                    "detected_date": row['detectedDate'].strftime("%Y-%m-%d %H:%M") if row['detectedDate'] else None,
+                    "flag_color": row['flagColor'],
                     "lat": float(row['latitude']),
                     "lng": float(row['longitude']),
                     "cluster": int(labels[idx]),
@@ -566,7 +626,7 @@ def _get_all_analytics_inner(F=None):
                 dominant_barangay = Counter(
                     cluster_barangays).most_common(1)[0][0]
 
-                dbscan_insight = f"Primary Hotspot: {cluster_size} unregistered/high-risk businesses located closely together near {dominant_barangay}. Immediate inspection recommended."
+                dbscan_insight = f"Largest DBSCAN group: {cluster_size} flagged records near {dominant_barangay}. Review as a field-inspection triage lead."
             else:
                 dbscan_insight = "No densely packed zones of high-risk businesses detected at this time."
     except Exception as e:
@@ -604,13 +664,14 @@ def _get_all_analytics_inner(F=None):
                 risk_values = [p['risk'] for p in points]
                 threshold = np.percentile(risk_values, 75) if sum(
                     risk_values) > 0 else 0
-                
+
                 morans_data["threshold"] = float(threshold)
                 morans_data["points"] = [
-                    {"barangay": p['name'], "risk": p['risk'], "is_high_risk": bool(p['risk'] > threshold and p['risk'] > 0)}
+                    {"barangay": p['name'], "risk": p['risk'], "is_high_risk": bool(
+                        p['risk'] > threshold and p['risk'] > 0)}
                     for p in points
                 ]
-                
+
                 high_risk_points = [
                     p for p in points if p['risk'] > threshold and p['risk'] > 0]
 
@@ -640,11 +701,11 @@ def _get_all_analytics_inner(F=None):
                     avg_hr = np.mean(hr_dists) if hr_dists else 0
 
                     if 0 < avg_hr < (avg_all * 0.85):
-                        morans_insight = f"Concentrated Risk: High-risk barangays are heavily grouped together, primarily located in the {ns}-{ew} sector."
+                        morans_insight = f"Concentration signal: high-risk barangay centroids are closer together under the current distance heuristic, primarily in the {ns}-{ew} sector."
                     elif avg_hr > (avg_all * 1.15):
-                        morans_insight = f"Widespread Risk: High-risk barangays are scattered widely across the municipality."
+                        morans_insight = "Dispersion signal: high-risk barangay centroids are farther apart under the current distance heuristic."
                     else:
-                        morans_insight = f"No Obvious Pattern: High-risk areas are distributed randomly without obvious clustering."
+                        morans_insight = "No clear concentration or dispersion signal under the current distance heuristic."
                 else:
                     morans_insight = "Not enough variation in risk to determine regional patterns."
     except Exception as e:
@@ -755,16 +816,18 @@ def _get_all_analytics_inner(F=None):
     cur.execute(
         "SELECT COUNT(*) AS n FROM users WHERE userRole = 'Inspector' AND isActive = 1")
     inspector_row = cur.fetchone()
-    total_inspectors = int(inspector_row["n"]) if inspector_row and inspector_row["n"] else 6
+    total_inspectors = int(
+        inspector_row["n"]) if inspector_row and inspector_row["n"] else 6
 
     # Pass the actual WLC weights (w1, w2, w3 are already normalised floats from config)
     dispatch_weights = {"w1": w1, "w2": w2, "w3": w3}
-    dispatch_recommendations = generate_recommendations(rankings, total_inspectors, dispatch_weights)
+    dispatch_recommendations = generate_recommendations(
+        rankings, total_inspectors, dispatch_weights)
 
     # ══════════════════════════════════════════════════════════════════════════
     # TIER 4 — OPERATIONS
     # ══════════════════════════════════════════════════════════════════════════
-    
+
     # 1. Inspector Leaderboard
     # Driven FROM users (LEFT JOIN reports) so EVERY active inspector appears —
     # including those with zero assigned/reported tasks. The old INNER-JOIN-
@@ -855,8 +918,10 @@ def _get_all_analytics_inner(F=None):
             },
         },
         "diagnostic": {
+            "scan_history":         get_recent_detection_runs(),
             "barangay_risk_data":     barangay_risk_data,
-            "category_noncompliance": category_noncompliance,
+            "category_risk_drivers": category_risk_drivers,
+            "category_linkage_summary": category_linkage_summary,
             "flag_trend":             flag_trend,
             "dbscan_insight":         dbscan_insight,
             "morans_insight":         morans_insight,
@@ -1062,7 +1127,6 @@ def reset_config_endpoint():
     return jsonify({"message": "WLC configuration reset to default successfully.", "data": updated_config}), 200
 
 
-
 @analytics_bp.route("/chat", methods=["POST"])
 @jwt_required()
 def analytics_chat():
@@ -1094,39 +1158,47 @@ def analytics_chat():
         geo = chart_data.get("geographic", [])
         if geo:
             try:
-                sorted_geo = sorted(geo, key=lambda x: sum(v for k, v in x.items() if k != "barangay" and isinstance(v, (int, float))), reverse=True)
+                sorted_geo = sorted(geo, key=lambda x: sum(v for k, v in x.items(
+                ) if k != "barangay" and isinstance(v, (int, float))), reverse=True)
             except Exception:
                 sorted_geo = geo
-            summary_parts.append(f"All Barangays (by business volume, highest first): {json.dumps(sorted_geo)}")
+            summary_parts.append(
+                f"All Barangays (by business volume, highest first): {json.dumps(sorted_geo)}")
 
         # Sectoral (business lines) – all sectors
         sectors = chart_data.get("sectoral", [])
         if sectors:
             try:
-                sorted_sectors = sorted(sectors, key=lambda x: x.get("count", x.get("value", 0)), reverse=True)
+                sorted_sectors = sorted(sectors, key=lambda x: x.get(
+                    "count", x.get("value", 0)), reverse=True)
             except Exception:
                 sorted_sectors = sectors
-            summary_parts.append(f"All Business Sectors (by count, highest first): {json.dumps(sorted_sectors)}")
+            summary_parts.append(
+                f"All Business Sectors (by count, highest first): {json.dumps(sorted_sectors)}")
 
         # Business sizes
         sizes = chart_data.get("size", [])
         if sizes:
-            summary_parts.append(f"Business Size Distribution: {json.dumps(sizes)}")
+            summary_parts.append(
+                f"Business Size Distribution: {json.dumps(sizes)}")
 
         # Legal structure
         legal = chart_data.get("legalStructure", [])
         if legal:
-            summary_parts.append(f"Business Legal Structure: {json.dumps(legal)}")
+            summary_parts.append(
+                f"Business Legal Structure: {json.dumps(legal)}")
 
         # Compliance by size
         comp_size = chart_data.get("complianceBySize", [])
         if comp_size:
-            summary_parts.append(f"Compliance by Business Size: {json.dumps(comp_size)}")
+            summary_parts.append(
+                f"Compliance by Business Size: {json.dumps(comp_size)}")
 
         # Compliance timeline
         timeline = chart_data.get("complianceTimeline", [])
         if timeline:
-            summary_parts.append(f"Compliance Timeline (12 months): {json.dumps(timeline)}")
+            summary_parts.append(
+                f"Compliance Timeline (12 months): {json.dumps(timeline)}")
 
         # Enforcement / Flag breakdown (aggregate totals across all barangays)
         enforcement = chart_data.get("enforcement", [])
@@ -1144,32 +1216,49 @@ def analytics_chat():
                 "orange_flags": total_orange,
                 "total_non_green_flags": total_red + total_yellow + total_black + total_orange
             }
-            summary_parts.append(f"Flag Color Breakdown (system-wide totals): {json.dumps(flag_summary)}")
+            summary_parts.append(
+                f"Flag Color Breakdown (system-wide totals): {json.dumps(flag_summary)}")
             # Also include top flagged barangays
-            flagged_barangays = [b for b in enforcement if (b.get("red_count", 0) + b.get("yellow_count", 0) + b.get("black_count", 0) + b.get("orange_count", 0)) > 0]
+            flagged_barangays = [b for b in enforcement if (b.get("red_count", 0) + b.get(
+                "yellow_count", 0) + b.get("black_count", 0) + b.get("orange_count", 0)) > 0]
             if flagged_barangays:
-                flagged_barangays.sort(key=lambda x: x.get("red_count", 0) + x.get("yellow_count", 0) + x.get("black_count", 0) + x.get("orange_count", 0), reverse=True)
-                summary_parts.append(f"Barangays with non-green flags: {json.dumps(flagged_barangays[:10])}")
+                flagged_barangays.sort(key=lambda x: x.get("red_count", 0) + x.get(
+                    "yellow_count", 0) + x.get("black_count", 0) + x.get("orange_count", 0), reverse=True)
+                summary_parts.append(
+                    f"Barangays with non-green flags: {json.dumps(flagged_barangays[:10])}")
 
         # Audit summary
         audit = chart_data.get("audit", {})
         if audit:
-            summary_parts.append(f"Inspection/Audit Summary: {json.dumps(audit)}")
+            summary_parts.append(
+                f"Inspection/Audit Summary: {json.dumps(audit)}")
 
         # Barangay risk data (diagnostic) – top 10
         brgy_risk = chart_data.get("barangayRisk", [])
         if brgy_risk:
-            summary_parts.append(f"Top Barangay Risk Data: {json.dumps(brgy_risk[:10])}")
+            summary_parts.append(
+                f"Top Barangay Risk Data: {json.dumps(brgy_risk[:10])}")
 
-        # Category noncompliance (diagnostic)
-        cat_noncomp = chart_data.get("categoryNoncompliance", [])
-        if cat_noncomp:
-            summary_parts.append(f"Category Noncompliance: {json.dumps(cat_noncomp)}")
+        # Sector status metrics use only unique registry matches.
+        category_risk_drivers = chart_data.get("categoryRiskDrivers", [])
+        category_linkage = chart_data.get("categoryLinkageSummary", {})
+        if category_risk_drivers:
+            summary_parts.append(
+                "Registry-linked non-Green records by sector (current status, not confirmed violations): "
+                f"{json.dumps(category_risk_drivers)}")
+        if category_linkage:
+            summary_parts.append(
+                "Flagged-record registry linkage summary (unique trimmed-name + barangay matches): "
+                f"{json.dumps(category_linkage)}")
 
-        # Flag trend (diagnostic)
-        flag_trend = chart_data.get("flagTrend", [])
-        if flag_trend:
-            summary_parts.append(f"Flag Trend: {json.dumps(flag_trend)}")
+        # Detection scan history is municipality-wide and independent of dashboard filters.
+        scan_history = chart_data.get("scanHistory", [])
+        if scan_history:
+            summary_parts.append(
+                "Detection Scan History (municipality-wide): "
+                f"{json.dumps(scan_history)}. Scan yield is new flags divided by raw Places results checked; "
+                "it is not classification accuracy, and partial runs are incomplete and not directly comparable."
+            )
 
         # ── PRESCRIPTIVE TIER ──
 
@@ -1188,17 +1277,20 @@ def analytics_chat():
                 "flagged_count": r.get("flagged_count"),
                 "non_compliance_rate": r.get("non_compliance_rate"),
             } for r in ops_rankings]
-            summary_parts.append(f"OPS Priority Rankings (WLC-based, all barangays): {json.dumps(slim_rankings)}")
+            summary_parts.append(
+                f"OPS Priority Rankings (WLC-based, all barangays): {json.dumps(slim_rankings)}")
 
         # WLC Config (weights)
         wlc_config = chart_data.get("wlcConfig", {})
         if wlc_config:
-            summary_parts.append(f"WLC Weight Configuration: {json.dumps(wlc_config)}")
+            summary_parts.append(
+                f"WLC Weight Configuration: {json.dumps(wlc_config)}")
 
         # Dispatch Recommendations
         dispatch = chart_data.get("dispatchRecommendations", [])
         if dispatch:
-            summary_parts.append(f"Dispatch Recommendations: {json.dumps(dispatch[:10])}")
+            summary_parts.append(
+                f"Dispatch Recommendations: {json.dumps(dispatch[:10])}")
 
         # ── OPERATIONS TIER ──
 
@@ -1217,14 +1309,17 @@ def analytics_chat():
         # Status breakdown
         status_breakdown = chart_data.get("statusBreakdown", [])
         if status_breakdown:
-            summary_parts.append(f"Inspection Status Breakdown: {json.dumps(status_breakdown)}")
+            summary_parts.append(
+                f"Inspection Status Breakdown: {json.dumps(status_breakdown)}")
 
         # Inspection timeline
         insp_timeline = chart_data.get("inspectionTimeline", [])
         if insp_timeline:
-            summary_parts.append(f"Inspection Timeline (monthly): {json.dumps(insp_timeline)}")
+            summary_parts.append(
+                f"Inspection Timeline (monthly): {json.dumps(insp_timeline)}")
 
-        data_context = "\n".join(summary_parts) if summary_parts else "No data available."
+        data_context = "\n".join(
+            summary_parts) if summary_parts else "No data available."
 
         system_message = (
             "You are the REVELA AI Analyst — the built-in analytics assistant for REVELA.\n\n"
@@ -1257,8 +1352,8 @@ def analytics_chat():
             "'Non-Active' includes Expired, Closed, and Pending — it does NOT necessarily mean the business is violating rules, unless the status is Revoked (which means the business is a notorious offender).\n"
             "- **Compliance Timeline**: Monthly trend of active vs non-active business counts over the past 12 months.\n"
             "- **Barangay Risk**: Diagnostic data showing which barangays have the highest concentration of non-compliant businesses.\n"
-            "- **Category Noncompliance**: Which business categories (lines of business) have the most non-compliant entries.\n"
-            "- **Flag Trend**: Weekly trend of new flags raised.\n"
+            "- **Registry-linked status by sector**: Current non-Green records with a unique registry match, shown against registry counts; this is not a confirmed-violation rate. Unlinked and ambiguous records have no sector attribution.\n"
+            "- **Detection Scan History**: Municipality-wide completed and partial scan attempts. Scan yield is a raw operational measure, not classification accuracy.\n"
             "- **OPS Score (Operational Priority Score)**: A composite score (0-100) computed using WLC (Weighted Linear Combination) "
             "that ranks barangays by inspection priority. Higher score = higher priority for dispatching inspectors.\n"
             "- **WLC Weights**: The OPS score is computed from three weighted sub-scores:\n"
@@ -1276,8 +1371,8 @@ def analytics_chat():
             "- ALWAYS respect the numerical 'rank' exactly as provided in the OPS Priority Rankings and Dispatch Recommendations. Do NOT re-order barangays yourself (e.g. do not promote a lower-ranked barangay above a higher-ranked one just because of flag colors). Follow the exact WLC-computed ranking order.\n"
             "- When discussing compliance, frame it in terms of permit renewal and regulatory status, not moral judgments.\n"
             "- Be helpful to BPLO staff — suggest actionable next steps like 'consider prioritizing inspections in Barangay X' or 'the high proportion of Micro businesses suggests focusing outreach on small enterprise compliance'.\n"
-            "- Use Filipino-friendly language when appropriate (e.g., barangay, BPLO).\n\n" 
- 
+            "- Use Filipino-friendly language when appropriate (e.g., barangay, BPLO).\n\n"
+
             "## Dashboard Data\n"
             f"{data_context}\n\n"
             "Answer questions concisely, professionally, and accurately based ONLY on this data. "
@@ -1304,7 +1399,7 @@ def analytics_chat():
                     role=role,
                     parts=[types.Part.from_text(text=content_text)]
                 ))
-        
+
         contents.append(types.Content(
             role="user",
             parts=[types.Part.from_text(text=user_query)]
@@ -1312,7 +1407,8 @@ def analytics_chat():
 
         global _CACHED_GEMINI_MODEL
 
-        models_to_try = _get_candidate_gemini_models(client, force_refresh=False)
+        models_to_try = _get_candidate_gemini_models(
+            client, force_refresh=False)
         response = None
         last_error = None
 
@@ -1337,7 +1433,8 @@ def analytics_chat():
 
         # If cached candidates failed (e.g. model version expired), force refresh discovery once and retry
         if not response or not response.text:
-            refreshed_models = _get_candidate_gemini_models(client, force_refresh=True)
+            refreshed_models = _get_candidate_gemini_models(
+                client, force_refresh=True)
             for m in refreshed_models:
                 if m in models_to_try:
                     continue
@@ -1353,14 +1450,16 @@ def analytics_chat():
                     )
                     if response and response.text:
                         _CACHED_GEMINI_MODEL = m
-                        print(f"[Gemini] Switched and cached new active model: '{m}'")
+                        print(
+                            f"[Gemini] Switched and cached new active model: '{m}'")
                         break
                 except Exception as me:
                     last_error = me
                     continue
 
         if not response or not response.text:
-            raise last_error or Exception("No response returned by the Gemini AI model.")
+            raise last_error or Exception(
+                "No response returned by the Gemini AI model.")
 
         return jsonify({
             "response": response.text
@@ -1368,4 +1467,3 @@ def analytics_chat():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": f"AI Assistant Error: {str(e)}"}), 500
-

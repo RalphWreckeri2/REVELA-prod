@@ -239,7 +239,10 @@ def verify(report_id):
     if request.method == "OPTIONS":
         return "", 204
     """Admin confirms inspection result → updates geospatial_logs flagColor."""
-    result, error = verify_inspection(report_id=report_id)
+    result, error = verify_inspection(
+        report_id=report_id,
+        verified_by_user_id=get_jwt_identity(),
+    )
     if error:
         return jsonify({"error": error}), 400
     return jsonify(result), 200
@@ -312,7 +315,8 @@ def download_evidence_archive():
             if os.path.exists(temp_zip_path):
                 os.remove(temp_zip_path)
         except Exception as e:
-            current_app.logger.warning(f"Could not remove temp zip {temp_zip_path}: {e}")
+            current_app.logger.warning(
+                f"Could not remove temp zip {temp_zip_path}: {e}")
 
     return response
 
@@ -337,4 +341,3 @@ def cleanup_archived_photos():
         return jsonify({"error": error}), 500
 
     return jsonify(result), 200
-

@@ -1050,22 +1050,21 @@ export default function AnalyticsPage() {
   }));
 
 
-  // ── Diagnostic: category non-compliance horizontal bar ───────────────────
-  // flagged_count = unique flagged entities per line of business (backend joins
-  // detections to the registry with a normalized name match). 'Unclassified' is
-  // excluded here since it is not a real line of business.
-  const categoryData = (diag?.category_noncompliance || [])
-    .filter(r => !r.category.toLowerCase().includes("unclassified"))
-    .map(r => ({
-      name: r.category,
-      count: r.flagged_count,
-    }));
+  const categoryLinkageSummary = diag?.category_linkage_summary || {};
+  const categoryData = (diag?.category_risk_drivers || []).map((row) => {
+    const flaggedCount = Number(row.flagged_count || 0);
+    const totalRegistered = Number(row.total_registered || 0);
+    const nonGreenRate = Number(row.non_green_rate || 0);
+    return {
+      name: row.category,
+      flagged_count: flaggedCount,
+      total_registered: totalRegistered,
+      non_green_rate: nonGreenRate,
+      label: `${flaggedCount} / ${totalRegistered} (${nonGreenRate.toFixed(1)}%)`,
+    };
+  });
 
-  // ── Diagnostic: weekly flag trend line ───────────────────────────────────
-  const trendData = (diag?.flag_trend || []).map(r => ({
-    week: r.week_start?.slice(5) ?? r.week_start, // MM-DD
-    "New Red Flags": r.new_red_flags || 0,
-  }));
+  const scanHistory = diag?.scan_history || [];
 
   // ── Prescriptive: WLC radar (top 8) ──────────────────────────────────────
   const radarData = (presc?.rankings || []).slice(0, 8).map(r => ({
@@ -1230,8 +1229,9 @@ export default function AnalyticsPage() {
     audit: data?.descriptive?.audit_summary || {},
     kpis: data?.descriptive?.kpis || {},
     barangayRisk: data?.diagnostic?.barangay_risk_data || [],
-    categoryNoncompliance: data?.diagnostic?.category_noncompliance || [],
-    flagTrend: data?.diagnostic?.flag_trend || [],
+    categoryRiskDrivers: data?.diagnostic?.category_risk_drivers || [],
+    categoryLinkageSummary: data?.diagnostic?.category_linkage_summary || {},
+    scanHistory: data?.diagnostic?.scan_history || [],
     // Prescriptive tier
     opsRankings: data?.prescriptive?.rankings || [],
     wlcConfig: data?.prescriptive?.wlc_config || {},
@@ -2501,30 +2501,35 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                {/* Category Risk Drivers */}
+                {/* Registry-linked status by sector */}
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Category Risk Drivers</h3>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Sector-specific patterns — top flagged lines of business</p>
+                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registry-Linked Status by Sector</h3>
+                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Unique registry businesses with a current non-Green flag</p>
                     </div>
                   </div>
                   {loading ? <Skeleton h={220} /> : categoryData.length === 0 ? (
-                    <EmptyState h={220} title="No Category Risk Data" />
+                    <EmptyState h={220} title="No Linked Status Data" />
                   ) : (
                     <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                        <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 120, left: 10, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(226,232,240,0.4)" />
                           <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
                           <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--color-ink)", fontWeight: 500 }} width={120} axisLine={false} tickLine={false} tickFormatter={(val) => typeof val === 'string' && val.length > 18 ? val.substring(0, 18) + '…' : val} />
                           <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)" }} />
-                          <Bar dataKey="count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Flagged">
-                            <LabelList dataKey="count" position="right" fill="var(--color-ink)" fontSize={11} fontWeight={600} />
+                          <Bar dataKey="flagged_count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Registry-linked businesses">
+                            <LabelList dataKey="label" position="right" fill="var(--color-ink)" fontSize={10} fontWeight={600} />
                           </Bar>
                         </BarChart>
                       </ResponsiveContainer>
                     </div>
+                  )}
+                  {!loading && (
+                    <p style={{ margin: "12px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
+                      Bars show unique linked businesses / registry businesses in the sector and their non-Green status rate, not confirmed violations. Record linkage: {categoryLinkageSummary.linked_records ?? 0} of {categoryLinkageSummary.total_flagged_records ?? 0} flagged records ({categoryLinkageSummary.linkage_rate ?? 0}%); {categoryLinkageSummary.unlinked_records ?? 0} unlinked and {categoryLinkageSummary.ambiguous_records ?? 0} ambiguous records are excluded from sector rates.
+                    </p>
                   )}
                 </div>
               </div>
@@ -2604,7 +2609,7 @@ export default function AnalyticsPage() {
                       </svg>
                     </div>
                     <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>High-Risk Hotspot Detection (DBSCAN)</h3>
+                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>DBSCAN Flagged-Record Clusters (20 m neighbor distance)</h3>
                       <p style={{ fontSize: 14, color: "var(--color-muted)", margin: 0, lineHeight: 1.5 }}>
                         {loading ? "Analyzing local map patterns..." : (diag?.dbscan_insight || "Hotspot detection temporarily unavailable.")}
                       </p>
@@ -2622,11 +2627,7 @@ export default function AnalyticsPage() {
                                 seenClusters.add(entry.cluster);
                                 displayClusters.push({ ...entry, renderType: 'centroid' });
                               }
-                              // 2. Render each actual business with a slight spatial jitter so they don't overlap perfectly
-                              // 0.0004 degrees is roughly ~40 meters of scatter
-                              const jitterLat = entry.lat + (Math.random() - 0.5) * 0.0004;
-                              const jitterLng = entry.lng + (Math.random() - 0.5) * 0.0004;
-                              displayClusters.push({ ...entry, lat: jitterLat, lng: jitterLng, renderType: 'point' });
+                              displayClusters.push({ ...entry, renderType: 'point' });
                             }
                           });
 
@@ -2653,8 +2654,10 @@ export default function AnalyticsPage() {
                                             : `Cluster #${d.cluster} member`;
                                         return (
                                           <div style={{ background: "#111827", border: "1px solid #374151", color: "#ffffff", borderRadius: 8, padding: "8px 12px", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontSize: 12, lineHeight: 1.6 }}>
-                                            <div style={{ fontWeight: 700, color: "#ffffff", marginBottom: 2 }}>{d.barangay || "Unknown area"}</div>
+                                            <div style={{ fontWeight: 700, color: "#ffffff", marginBottom: 2 }}>{d.detected_name || "Unnamed record"}</div>
+                                            <div style={{ color: "#e5e7eb" }}>{d.barangay || "Unknown area"} · {d.flag_color || "No status"} · Log #{d.log_id}</div>
                                             <div style={{ color: "#e5e7eb" }}>{typeLabel}{d.is_primary ? " · Primary hotspot" : ""}</div>
+                                            <div style={{ color: "#e5e7eb", fontSize: 11 }}>Detected: {d.detected_date || "Unknown date"}</div>
                                             <div style={{ color: "#e5e7eb", fontSize: 11, marginTop: 2 }}>{d.lat?.toFixed(4)}°N, {d.lng?.toFixed(4)}°E</div>
                                           </div>
                                         );
@@ -2691,6 +2694,33 @@ export default function AnalyticsPage() {
                                 </ResponsiveContainer>
                               </div>
 
+                              <div style={{ maxHeight: 170, overflowY: "auto", marginTop: 10, border: "1px solid var(--color-border)", borderRadius: 8 }}>
+                                <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                                  <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
+                                    <tr style={{ color: "var(--color-muted)", fontSize: 10, textTransform: "uppercase" }}>
+                                      <th style={{ padding: "7px 8px" }}>Record</th>
+                                      <th style={{ padding: "7px 8px" }}>Barangay</th>
+                                      <th style={{ padding: "7px 8px" }}>Flag</th>
+                                      <th style={{ padding: "7px 8px" }}>Detected</th>
+                                      <th style={{ padding: "7px 8px" }}>Cluster</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {diag.dbscan_clusters.map((entry) => (
+                                      <tr key={entry.log_id} style={{ borderTop: "1px solid var(--color-border)" }}>
+                                        <td style={{ padding: "7px 8px", fontSize: 11, color: "var(--color-ink)" }}>
+                                          {entry.detected_name || "Unnamed record"} <span style={{ color: "var(--color-muted)" }}>#{entry.log_id}</span>
+                                        </td>
+                                        <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.barangay || "Unknown"}</td>
+                                        <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.flag_color || "—"}</td>
+                                        <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.detected_date || "—"}</td>
+                                        <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.cluster === -1 ? "Isolated" : `#${entry.cluster}`}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+
                               {/* ── DBSCAN Legend ─────────────────────── */}
                               <div style={{
                                 display: "flex", flexWrap: "wrap", gap: "12px 20px",
@@ -2701,22 +2731,22 @@ export default function AnalyticsPage() {
                                 {/* Primary hotspot */}
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                                   <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="2" /></svg>
-                                  <span><b style={{ color: "#6366f1" }}>Top Problem Area</b> — biggest group of risky businesses</span>
+                                  <span><b style={{ color: "#6366f1" }}>Largest cluster</b> — biggest group of flagged records</span>
                                 </span>
                                 {/* Secondary cluster */}
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                                   <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill={COLOR.orange} fillOpacity="0.15" stroke={COLOR.orange} strokeWidth="2" /></svg>
-                                  <span><b style={{ color: COLOR.orange }}>Other Problem Areas</b> — smaller groups nearby</span>
+                                  <span><b style={{ color: COLOR.orange }}>Other clusters</b> — smaller groups nearby</span>
                                 </span>
                                 {/* Flagged businesses */}
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                                   <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" fill="#6366f1" opacity="0.7" /><circle cx="13" cy="12" r="2.5" fill={COLOR.orange} opacity="0.7" /></svg>
-                                  <span>Individual flagged businesses in a group</span>
+                                  <span>Individual flagged records in a group</span>
                                 </span>
                                 {/* Isolated / noise */}
                                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                                   <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill={COLOR.slate} opacity="0.3" /></svg>
-                                  <span>Standalone businesses — not part of any group</span>
+                                  <span>Records not assigned to a cluster</span>
                                 </span>
                               </div>
                             </>
@@ -2739,7 +2769,7 @@ export default function AnalyticsPage() {
                       </svg>
                     </div>
                     <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Regional Risk Patterns (Moran's I)</h3>
+                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Regional Risk Dispersion (Centroid Heuristic)</h3>
                       <p style={{ fontSize: 14, color: "var(--color-muted)", margin: 0, lineHeight: 1.5 }}>
                         {loading ? "Evaluating broader geographic patterns..." : (diag?.morans_insight || "Regional analysis temporarily unavailable.")}
                       </p>
@@ -2775,22 +2805,47 @@ export default function AnalyticsPage() {
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, height: "calc(100% - 46px)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Weekly Red Flag Emergence</h3>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>Are we catching more critical issues over time?</p>
+                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Detection Scan History</h3>
+                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>Municipality-wide scan attempts; not affected by the dashboard filters.</p>
                     </div>
                   </div>
-                  {loading ? <Skeleton h={220} /> : trendData.length === 0 ? (
-                    <EmptyState h={220} title="No Trend Data" />
+                  {loading ? <Skeleton h={220} /> : scanHistory.length === 0 ? (
+                    <EmptyState h={220} title="No Scan History" message="Completed and partial detection scans will appear here." />
                   ) : (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <LineChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
-                        <XAxis dataKey="week" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Line type="monotone" dataKey="New Red Flags" stroke="#6366f1" strokeWidth={3} dot={{ r: 4, fill: "#6366f1" }} activeDot={{ r: 6 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <div style={{ maxHeight: 280, overflowY: "auto" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                        <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
+                          <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
+                            <th style={{ padding: "9px 8px" }}>Started</th>
+                            <th style={{ padding: "9px 8px" }}>Status</th>
+                            <th style={{ padding: "9px 8px", textAlign: "right" }}>Places results</th>
+                            <th style={{ padding: "9px 8px", textAlign: "right" }}>New candidates</th>
+                            <th style={{ padding: "9px 8px", textAlign: "right" }}>Yield</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {scanHistory.map((run) => {
+                            const checked = Number(run.total_checked || 0);
+                            const newFlags = Number(run.new_flags || 0);
+                            const yieldRate = run.status === "completed" && checked > 0
+                              ? `${((newFlags / checked) * 100).toFixed(1)}%`
+                              : "—";
+                            return (
+                              <tr key={run.run_id} style={{ borderBottom: "1px solid rgba(226,232,240,0.35)" }}>
+                                <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{run.started_at || "—"}</td>
+                                <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: run.status === "completed" ? COLOR.green : COLOR.orange }}>{run.status}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{checked}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{newFlags}</td>
+                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12, fontWeight: 700 }}>{yieldRate}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                      <p style={{ margin: "10px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
+                        Completed-scan yield = new candidate flags / Places results processed. The denominator includes out-of-area and non-business results; partial runs have no comparable yield.
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>

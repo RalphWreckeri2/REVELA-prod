@@ -9,7 +9,10 @@ import zipfile
 from datetime import datetime, timedelta
 
 from app import mysql
-
+from api.models.inspection_lifecycle_events import (
+    get_latest_inspection_cycle_id,
+    log_inspection_event,
+)
 
 
 # ── Inspector task list ───────────────────────────────────────────────────────
@@ -166,7 +169,6 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
             cursor.close()
             return None, "This business is already undergoing inspection and cannot be double-booked."
 
-
         # First-ever dispatch → 'Assigned'. Any existing report means the
         # admin is RE-dispatching, so it lands in 'Reassigned'.
         is_reassign = existing is not None
@@ -198,6 +200,16 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
             """, (inspector_user_id, log_id, new_status, deadline))
             report_id = cursor.lastrowid
 
+        log_inspection_event(
+            cursor,
+            report_id,
+            log_id,
+            "reassigned" if is_reassign else "dispatched",
+            actor_user_id=assigned_by,
+            assigned_to_user_id=inspector_user_id,
+            flag_color_at_event=flag.get("flagColor"),
+        )
+
         mysql.connection.commit()
         cursor.close()
 
@@ -223,6 +235,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         }, None
 
     except Exception as e:
+        mysql.connection.rollback()
         return None, str(e)
 
 
@@ -255,6 +268,8 @@ def submit_inspection(log_id, user_id, inspection_result,
         if not report:
             cursor.close()
             return None, "No open assignment found for this flag and inspector"
+
+        cycle_id = get_latest_inspection_cycle_id(cursor, report["reportID"])
 
         # Calculate resolution time in minutes
         cursor.execute("""
@@ -290,9 +305,23 @@ def submit_inspection(log_id, user_id, inspection_result,
         ))
 
         # Retrieve the current flagColor to return in the backend payload
-        cursor.execute("SELECT flagColor FROM geospatial_logs WHERE logID = %s", (log_id,))
+        cursor.execute(
+            "SELECT flagColor FROM geospatial_logs WHERE logID = %s", (log_id,))
         geo_log = cursor.fetchone()
         flag_color = geo_log["flagColor"] if geo_log else "Red"
+
+        log_inspection_event(
+            cursor,
+            report["reportID"],
+            log_id,
+            "submitted",
+            actor_user_id=uid,
+            assigned_to_user_id=uid,
+            flag_color_at_event=flag_color,
+            inspection_result=inspection_result,
+            remarks=notes,
+            cycle_id=cycle_id,
+        )
 
         mysql.connection.commit()
         cursor.close()
@@ -318,6 +347,7 @@ def submit_inspection(log_id, user_id, inspection_result,
         }, None
 
     except Exception as e:
+        mysql.connection.rollback()
         return None, str(e)
 
 
@@ -351,7 +381,6 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
                 "only Submitted or Verified reports can be sent back for redo"
             )
 
-
         cursor.execute(
             """
             SELECT userID, fullName, userRole FROM users
@@ -363,6 +392,10 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
         if not inspector:
             cursor.close()
             return None, f"Inspector userID {inspector_user_id} not found"
+
+        cursor.execute(
+            "SELECT flagColor FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
+        geo_flag = cursor.fetchone()
 
         cursor.execute(
             """
@@ -380,6 +413,16 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
             WHERE reportID = %s
             """,
             (inspector_user_id, deadline, report_id),
+        )
+
+        log_inspection_event(
+            cursor,
+            report_id,
+            report["targetID"],
+            "reassigned",
+            actor_user_id=assigned_by,
+            assigned_to_user_id=inspector_user_id,
+            flag_color_at_event=geo_flag["flagColor"] if geo_flag else None,
         )
 
         mysql.connection.commit()
@@ -407,12 +450,13 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
         }, None
 
     except Exception as e:
+        mysql.connection.rollback()
         return None, str(e)
 
 
 # ── Verify inspection ─────────────────────────────────────────────────────────
 
-def verify_inspection(report_id):
+def verify_inspection(report_id, verified_by_user_id=None):
     """
     Admin confirms the inspection result.
     1. Set verificationStatus → 'Verified'
@@ -422,7 +466,7 @@ def verify_inspection(report_id):
         cursor = mysql.connection.cursor()
 
         cursor.execute("""
-            SELECT reportID, targetID, inspectionResult, noticeLevel, verificationStatus
+            SELECT reportID, targetID, userID, inspectionResult, noticeLevel, verificationStatus
             FROM inspection_reports
             WHERE reportID = %s
         """, (report_id,))
@@ -439,6 +483,11 @@ def verify_inspection(report_id):
         if not report["inspectionResult"]:
             cursor.close()
             return None, "Report has no inspection result to verify"
+
+        cycle_id = get_latest_inspection_cycle_id(cursor, report_id)
+        cursor.execute(
+            "SELECT flagColor FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
+        geo_flag = cursor.fetchone()
 
         # Update report status
         cursor.execute("""
@@ -458,7 +507,8 @@ def verify_inspection(report_id):
         # If verified result is Purple (Closed / Abandoned),
         # also mark the official_registry entry as 'Closed'.
         if report["inspectionResult"] == "Purple":
-            cursor.execute("SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
+            cursor.execute(
+                "SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
             geo_row = cursor.fetchone()
             if geo_row and geo_row["detectedName"]:
                 cursor.execute("""
@@ -466,6 +516,18 @@ def verify_inspection(report_id):
                     SET applicationStatus = 'Closed'
                     WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
                 """, (geo_row["detectedName"], geo_row["barangayID"]))
+
+        log_inspection_event(
+            cursor,
+            report_id,
+            report["targetID"],
+            "verified",
+            actor_user_id=verified_by_user_id,
+            assigned_to_user_id=report["userID"],
+            flag_color_at_event=geo_flag["flagColor"] if geo_flag else None,
+            inspection_result=report["inspectionResult"],
+            cycle_id=cycle_id,
+        )
 
         mysql.connection.commit()
         cursor.close()
@@ -490,6 +552,7 @@ def verify_inspection(report_id):
         }, None
 
     except Exception as e:
+        mysql.connection.rollback()
         return None, str(e)
 
 
@@ -542,7 +605,7 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
             params + params,  # params appear twice — once per UNION branch
         )
         counts = {r["cnt_type"]: r["cnt"] for r in cursor.fetchall()}
-        total      = counts.get("collapsed", 0)
+        total = counts.get("collapsed", 0)
         total_rows = counts.get("all_rows", 0)
 
         cursor.execute(
@@ -666,7 +729,8 @@ def get_evidence_storage_stats(evidence_dir):
                         pass
 
         total_mb = round(total_bytes / (1024 * 1024), 2)
-        avg_file_size = (total_bytes / total_files) if total_files > 0 else (1.2 * 1024 * 1024)
+        avg_file_size = (
+            total_bytes / total_files) if total_files > 0 else (1.2 * 1024 * 1024)
 
         # 2. Query MySQL for verified reports
         cursor = mysql.connection.cursor()
@@ -758,10 +822,14 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
         for r in reports_data
     )
 
-    green_count = sum(1 for r in reports_data if (r.get("result_color") or "").strip().lower() == "green")
-    yellow_count = sum(1 for r in reports_data if (r.get("result_color") or "").strip().lower() == "yellow")
-    orange_count = sum(1 for r in reports_data if (r.get("result_color") or "").strip().lower() == "orange")
-    red_count = sum(1 for r in reports_data if (r.get("result_color") or "").strip().lower() == "red")
+    green_count = sum(1 for r in reports_data if (
+        r.get("result_color") or "").strip().lower() == "green")
+    yellow_count = sum(1 for r in reports_data if (
+        r.get("result_color") or "").strip().lower() == "yellow")
+    orange_count = sum(1 for r in reports_data if (
+        r.get("result_color") or "").strip().lower() == "orange")
+    red_count = sum(1 for r in reports_data if (
+        r.get("result_color") or "").strip().lower() == "red")
 
     def get_badge(result_color):
         rc = (result_color or "").strip().lower()
@@ -781,17 +849,21 @@ def _build_html_dossier(reports_data, filter_type, archive_dt):
 
     cards_html = []
     for rep in reports_data:
-        badge_label, badge_text_col, badge_bg_col, badge_border_col = get_badge(rep.get("result_color"))
-        b_name = html.escape(str(rep.get("business_name") or "Unknown Establishment"))
+        badge_label, badge_text_col, badge_bg_col, badge_border_col = get_badge(
+            rep.get("result_color"))
+        b_name = html.escape(
+            str(rep.get("business_name") or "Unknown Establishment"))
         barangay = html.escape(str(rep.get("barangay") or "Mataasnakahoy"))
         inspector = html.escape(str(rep.get("inspector") or "BPLO Inspector"))
         rep_id = rep.get("report_id")
         log_id = rep.get("log_id") or "N/A"
         ir_ts = html.escape(str(rep.get("timestamp") or "N/A"))
-        notice_lvl = rep.get("notice_level") if rep.get("notice_level") is not None else 0
+        notice_lvl = rep.get("notice_level") if rep.get(
+            "notice_level") is not None else 0
         lat_val = rep.get("latitude") or ""
         lng_val = rep.get("longitude") or ""
-        coords_str = f"{lat_val}, {lng_val}" if (lat_val and lng_val) else "Not Recorded"
+        coords_str = f"{lat_val}, {lng_val}" if (
+            lat_val and lng_val) else "Not Recorded"
         landmark = html.escape(str(rep.get("landmark") or "None specified"))
         res_time = str(rep.get("resolution_time") or "")
         res_str = f"{res_time} mins" if res_time else "N/A"
@@ -1649,7 +1721,8 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
             return None, f"Invalid filter type: {filter_type}. Must be one of {list(day_map.keys())}"
 
         days = day_map[filter_type]
-        cutoff_date = (datetime.now() - timedelta(days=days)) if days > 0 else None
+        cutoff_date = (datetime.now() - timedelta(days=days)
+                       ) if days > 0 else None
 
         cursor = mysql.connection.cursor()
         query = """
@@ -1730,15 +1803,18 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                 rep_id = rep.get("reportID")
                 log_id = rep.get("logID") or rep.get("targetID") or ""
                 b_name = rep.get("detectedName") or "Unknown_Business"
-                clean_name = (re.sub(r"[^\w\-_]", "_", b_name)[:30]).strip("_") or "Business"
+                clean_name = (re.sub(r"[^\w\-_]", "_", b_name)
+                              [:30]).strip("_") or "Business"
                 barangay = rep.get("barangayName") or "Mataasnakahoy"
                 inspector = rep.get("inspectorName") or "Inspector"
                 result_color = rep.get("inspectionResult") or "Verified"
-                notice_lvl = rep.get("noticeLevel") if rep.get("noticeLevel") is not None else 0
+                notice_lvl = rep.get("noticeLevel") if rep.get(
+                    "noticeLevel") is not None else 0
                 remarks = rep.get("remarks") or ""
                 ir_ts = str(rep.get("irTimestamp") or "")
                 deadline_val = str(rep.get("deadline") or "")
-                res_time = rep.get("resolutionTime") if rep.get("resolutionTime") is not None else ""
+                res_time = rep.get("resolutionTime") if rep.get(
+                    "resolutionTime") is not None else ""
                 lat_val = str(rep.get("latitude") or "")
                 lng_val = str(rep.get("longitude") or "")
                 landmark = rep.get("nearestLandmark") or ""
@@ -1772,7 +1848,8 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                     rep_had_file_on_disk = False
                     for idx, p in enumerate(photos):
                         orig_filename = os.path.basename(p)
-                        local_filepath = os.path.join(evidence_dir, orig_filename)
+                        local_filepath = os.path.join(
+                            evidence_dir, orig_filename)
 
                         ext = os.path.splitext(orig_filename)[1].lower()
                         if ext not in (".jpg", ".jpeg", ".png", ".webp"):
@@ -1780,7 +1857,8 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                         archive_arcname = f"evidence/Report_{rep_id}_{clean_name}_{date_str}_{idx+1}{ext}"
 
                         if os.path.isfile(local_filepath):
-                            zip_file.write(local_filepath, arcname=archive_arcname)
+                            zip_file.write(
+                                local_filepath, arcname=archive_arcname)
                             file_sz = os.path.getsize(local_filepath)
                             total_uncompressed_bytes += file_sz
                             archived_photos_count += 1
@@ -1857,11 +1935,14 @@ def generate_evidence_archive_zip(evidence_dir, filter_type):
                 })
 
             # 1. Interactive Offline HTML Dossier
-            dossier_html = _build_html_dossier(reports_for_dossier, filter_type, datetime.now())
-            zip_file.writestr("inspection_dossier.html", dossier_html.encode("utf-8"))
+            dossier_html = _build_html_dossier(
+                reports_for_dossier, filter_type, datetime.now())
+            zip_file.writestr("inspection_dossier.html",
+                              dossier_html.encode("utf-8"))
 
             # 2. Audit manifest spreadsheet
-            zip_file.writestr("manifest.csv", manifest_stream.getvalue().encode("utf-8-sig"))
+            zip_file.writestr(
+                "manifest.csv", manifest_stream.getvalue().encode("utf-8-sig"))
 
             # 3. Readme instructions
             readme_text = f"""========================================================================
@@ -1894,7 +1975,8 @@ PACKAGE CONTENTS:
 REVELA Intelligent Monitoring System
 Municipality of Mataasnakahoy
 """
-            zip_file.writestr("README_ARCHIVE.txt", readme_text.encode("utf-8"))
+            zip_file.writestr("README_ARCHIVE.txt",
+                              readme_text.encode("utf-8"))
 
         stats = {
             "archivedPhotos": archived_photos_count,
@@ -1927,7 +2009,8 @@ def cleanup_archived_evidence(evidence_dir, filter_type):
             return None, f"Invalid filter type: {filter_type}."
 
         days = day_map[filter_type]
-        cutoff_date = (datetime.now() - timedelta(days=days)) if days > 0 else None
+        cutoff_date = (datetime.now() - timedelta(days=days)
+                       ) if days > 0 else None
 
         cursor = mysql.connection.cursor()
         query = """
@@ -2000,7 +2083,8 @@ def cleanup_archived_evidence(evidence_dir, filter_type):
                 rep_changed = True
 
             if rep_changed:
-                updated_val = json.dumps(new_items) if is_json_array else new_items[0]
+                updated_val = json.dumps(
+                    new_items) if is_json_array else new_items[0]
                 cursor.execute("""
                     UPDATE inspection_reports
                     SET photoPath = %s
@@ -2022,4 +2106,3 @@ def cleanup_archived_evidence(evidence_dir, filter_type):
 
     except Exception as e:
         return None, str(e)
-

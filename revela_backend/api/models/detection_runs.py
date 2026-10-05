@@ -121,6 +121,38 @@ def get_latest_detection_run():
     return row
 
 
+def get_recent_detection_runs(limit=10):
+    """Return recent scan attempts for the analytics history view."""
+    ensure_detection_runs_table()
+    safe_limit = max(1, min(int(limit), 50))
+    cur = mysql.connection.cursor()
+    cur.execute("""
+        SELECT runID, startedAt, completedAt, status, newFlags, totalChecked
+        FROM detection_runs
+        ORDER BY startedAt DESC, runID DESC
+        LIMIT %s
+    """, (safe_limit,))
+    rows = list(cur.fetchall())
+    cur.close()
+
+    def format_datetime(value):
+        if hasattr(value, "strftime"):
+            return value.strftime("%Y-%m-%d %H:%M")
+        return value
+
+    return [
+        {
+            "run_id": row["runID"],
+            "started_at": format_datetime(row["startedAt"]),
+            "completed_at": format_datetime(row["completedAt"]),
+            "status": row["status"],
+            "new_flags": int(row["newFlags"] or 0),
+            "total_checked": int(row["totalChecked"] or 0),
+        }
+        for row in rows
+    ]
+
+
 def get_detection_quota_info():
     """
     Returns quota details for detection scans:
