@@ -2985,11 +2985,11 @@ export default function MapPage() {
           <div style={styles.statsStrip}>
             {[
               { label: "Total Flags", value: flags.length, color: "var(--color-ink)" },
-              { label: "Active Businesses", value: counts.Green, color: "#22c55e" },
-              { label: "1st/2nd Warning / Notice", value: counts.Orange, color: "#e65100" },
-              { label: "Detected Unregistered", value: counts.Red, color: "#ef4444" },
-              { label: "Suspected Unregistered", value: counts.Yellow, color: "#f59e0b" },
-              { label: "Closed / Abandoned", value: counts.Purple, color: "#7c3aed" },
+              { label: "Active Businesses", value: counts.Green, color: isDark ? "#4ade80" : "#22c55e" },
+              { label: "1st/2nd Warning / Notice", value: counts.Orange, color: isDark ? "#fb923c" : "#e65100" },
+              { label: "Detected Unregistered", value: counts.Red, color: isDark ? "#f87171" : "#ef4444" },
+              { label: "Suspected Unregistered", value: counts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b" },
+              { label: "Closed / Abandoned", value: counts.Purple, color: isDark ? "#c084fc" : "#7c3aed" },
               { label: "Critical Violations", value: counts.Black, color: "var(--color-ink)" },
             ].map(s => (
               <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}>
@@ -3050,9 +3050,9 @@ export default function MapPage() {
                       alignItems: "center",
                       width: "100%",
                       padding: "8px 12px",
-                      background: isSelected ? "var(--color-input-bg)" : "transparent",
+                      background: isSelected ? "var(--color-hover)" : "transparent",
                       border: "1px solid",
-                      borderColor: isSelected ? "var(--color-border-soft)" : "transparent",
+                      borderColor: isSelected ? "var(--color-border)" : "transparent",
                       borderRadius: 8,
                       cursor: "pointer",
                       transition: "all 0.15s ease",
@@ -3068,7 +3068,8 @@ export default function MapPage() {
                       <span style={{
                         fontSize: 13,
                         fontWeight: isSelected ? 700 : 500,
-                        color: isSelected ? "var(--color-ink)" : "var(--color-muted)"
+                        color: "var(--color-ink)",
+                        opacity: isSelected ? 1 : 0.85,
                       }}>
                         {label}
                       </span>
@@ -3076,7 +3077,8 @@ export default function MapPage() {
                     <span style={{
                       fontSize: 11,
                       fontWeight: 700,
-                      color: isSelected ? "var(--color-ink)" : "var(--color-muted)",
+                      color: "var(--color-ink)",
+                      opacity: isSelected ? 1 : 0.75,
                       background: isSelected ? "var(--color-hover)" : "transparent",
                       padding: "2px 8px",
                       borderRadius: 12
@@ -3088,28 +3090,32 @@ export default function MapPage() {
               })}
             </div>
 
-            {/* Source filter â€” shows only when Green is selected */}
+            {/* Source filter — shows only when Green is selected */}
             {filterColor === "Green" && (
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                 {[
                   { value: "all", label: "All Sources" },
-                  { value: "registry_only", label: "ðŸ“‹ Registry Only" },
-                  { value: "registry_and_maps", label: "ðŸ—ºï¸  Registry + Maps" },
-                ].map(s => (
-                  <button
-                    key={s.value}
-                    onClick={() => setFilterSource(s.value)}
-                    style={{
-                      ...styles.filterPill,
-                      fontSize: 10,
-                      background: filterSource === s.value ? "var(--color-ink)" : "var(--color-input-bg)",
-                      color: filterSource === s.value ? "#fff" : "var(--color-muted)",
-                      borderColor: filterSource === s.value ? "transparent" : "var(--color-border)",
-                    }}
-                  >
-                    {s.label}
-                  </button>
-                ))}
+                  { value: "registry_only", label: "Registry Only" },
+                  { value: "registry_and_maps", label: "Registry + Maps" },
+                ].map(s => {
+                  const isSelected = filterSource === s.value;
+                  return (
+                    <button
+                      key={s.value}
+                      onClick={() => setFilterSource(s.value)}
+                      style={{
+                        ...styles.filterPill,
+                        fontSize: 10,
+                        fontWeight: isSelected ? 700 : 600,
+                        background: isSelected ? "var(--color-primary)" : "var(--color-input-bg)",
+                        color: isSelected ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-ink)",
+                        borderColor: isSelected ? "var(--color-primary)" : "var(--color-border)",
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

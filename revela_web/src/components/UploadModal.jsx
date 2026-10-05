@@ -201,7 +201,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
 
           <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;">
             <div style="font-weight: 700; color: #2563eb; margin-bottom: 4px; font-size: 13px;">
-              📋 Import &amp; Geocoding Rules:
+              Import &amp; Geocoding Rules:
             </div>
             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
               <li><strong>Batch Cap:</strong> Maximum 1500 records per file.</li>

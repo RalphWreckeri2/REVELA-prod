@@ -1022,7 +1022,7 @@ export default function SettingsPage() {
             </label>
             <div style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+              gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
               gap: 10,
             }}>
               {[
@@ -1174,7 +1174,7 @@ export default function SettingsPage() {
           {/* Quick-Access Chapter Cards */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
             gap: 12,
           }}>
             {[

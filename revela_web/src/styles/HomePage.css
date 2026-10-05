@@ -12,8 +12,33 @@
 /* ── KPI Grid ── */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 1380px) {
+  .kpi-grid {
+    grid-template-columns: repeat(6, 1fr);
+    gap: 12px;
+  }
+  .kpi-grid > *:nth-child(1),
+  .kpi-grid > *:nth-child(2),
+  .kpi-grid > *:nth-child(3) {
+    grid-column: span 2;
+  }
+  .kpi-grid > *:nth-child(4),
+  .kpi-grid > *:nth-child(5) {
+    grid-column: span 3;
+  }
+}
+
+@media (max-width: 768px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+  .kpi-grid > * {
+    grid-column: span 1 !important;
+  }
 }
 
 .kpi-card {

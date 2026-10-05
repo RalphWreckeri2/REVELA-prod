@@ -695,8 +695,8 @@ export default function ExportReportsPage() {
         <DashboardLayout>
           {/* Page Header */}
           <div className="page-header" style={{ marginBottom: 28 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
-              <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, width: "100%" }}>
+              <div style={{ flex: "1 1 320px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                   <h1 className="page-title" style={{ margin: 0, fontSize: 24, fontWeight: 800 }}>
                     Export Reports &amp; Demographics
@@ -721,7 +721,7 @@ export default function ExportReportsPage() {
               </div>
 
               {/* Quick Master Actions */}
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginLeft: "auto", flexShrink: 0 }}>
                 <button
                   type="button"
                   className="secondary-btn"
