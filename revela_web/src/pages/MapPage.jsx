@@ -2288,6 +2288,29 @@ export default function MapPage() {
       return;
     }
 
+    if (detectionQuota && detectionQuota.registry_count === 0) {
+      await Swal.fire({
+        title: 'Official Registry Is Empty',
+        html: `
+          <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+            <p style="margin-bottom: 10px;">
+              No business records have been imported into the official registry yet.
+            </p>
+            <p style="margin-bottom: 10px; color: #b91c1c; font-weight: 600;">
+              ⚠️ Running a detection scan without an official registry will incorrectly flag every business found on Google Maps as an unregistered (Red) establishment and consume your monthly scan quota.
+            </p>
+            <p style="margin-bottom: 0; color: var(--color-muted, #64748b);">
+              Please navigate to <strong>Registry &rarr; Import</strong> and upload your official business records first so REVELA has data to cross-reference against.
+            </p>
+          </div>
+        `,
+        icon: 'warning',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
     const isFinalScan = remaining === 1;
     const placesTodayLeft = placesUsage?.today?.remaining ?? 1000;
@@ -2819,11 +2842,13 @@ export default function MapPage() {
                 title={
                   runDetectionLoading
                     ? "Detection scan in progress…"
-                    : detectionQuota && detectionQuota.remaining_this_month === 0
-                      ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
-                      : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
-                        ? `Daily Google Places limit reached (0/${placesUsage?.today?.cap || 1000} remaining). Resets at midnight.`
-                        : "Run geospatial detection scan (Max 2x/month)"
+                    : detectionQuota && detectionQuota.registry_count === 0
+                      ? "Official registry is empty. Import business permits first before running detection."
+                      : detectionQuota && detectionQuota.remaining_this_month === 0
+                        ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
+                        : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
+                          ? `Daily Google Places limit reached (0/${placesUsage?.today?.cap || 1000} remaining). Resets at midnight.`
+                          : "Run geospatial detection scan (Max 2x/month)"
                 }
                 style={{
                   opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)) && !runDetectionLoading ? 0.6 : 1,

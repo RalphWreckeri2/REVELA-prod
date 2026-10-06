@@ -915,6 +915,17 @@ def run_detection(user_id=None):
         limit = quota_info.get("monthly_limit", 2)
         return None, f"Monthly detection limit reached ({limit}/{limit} scans used for this month). Detection scans can only be run {limit} times a month."
 
+    # Guard: check if official_registry has any records
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
+        row = cursor.fetchone()
+        reg_count = (row.get("total") if isinstance(row, dict) else row[0]) if row else 0
+        if reg_count == 0:
+            return None, "Cannot run detection: The official business registry is empty. Please import official business records first so REVELA has a baseline to cross-reference against."
+    finally:
+        cursor.close()
+
     run_id = create_detection_run(user_id)
     state = {"done_keys": [], "total_points": 0, "skipped_points": 0, "outside": 0}
     inserted_flag_ids = []

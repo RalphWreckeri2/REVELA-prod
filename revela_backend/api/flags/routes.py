@@ -71,6 +71,8 @@ def run_detection_route():
             return jsonify({"message": error}), 200
         if "Monthly detection limit reached" in error or ("Places API" in error and "limit reached" in error) or "budget" in error.lower():
             return jsonify({"error": error}), 429
+        if "official business registry is empty" in error.lower():
+            return jsonify({"error": error}), 400
         return jsonify({"error": error}), 500
     return jsonify(result), 200
 

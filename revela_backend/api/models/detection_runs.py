@@ -190,11 +190,22 @@ def get_detection_quota_info():
             "triggeredByName": last_run.get("triggeredByName") or "Admin"
         }
 
+    reg_count = 0
+    try:
+        cur = mysql.connection.cursor()
+        cur.execute("SELECT COUNT(*) AS cnt FROM official_registry")
+        r_row = cur.fetchone()
+        cur.close()
+        reg_count = int((r_row.get("cnt") if isinstance(r_row, dict) else r_row[0]) or 0) if r_row else 0
+    except Exception as e:
+        print(f"[detection_runs] Error getting registry count: {e}")
+
     return {
         "monthly_limit": monthly_limit,
         "used_this_month": used,
         "remaining_this_month": remaining,
         "is_limit_reached": remaining <= 0,
         "resets_on": next_month.strftime("%B 1, %Y"),
-        "last_run": last_run_data
+        "last_run": last_run_data,
+        "registry_count": reg_count,
     }
