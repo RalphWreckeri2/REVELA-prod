@@ -2584,7 +2584,7 @@ export default function AnalyticsPage() {
                       </ResponsiveContainer>
                     </div>
                   )}
-                  {!loading && (
+                  {!loading && categoryData.length > 0 && (
                     <p style={{ margin: "12px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
                       Bars show unique linked businesses / registry businesses in the sector and their non-Green status rate, not confirmed violations. Record linkage: {categoryLinkageSummary.linked_records ?? 0} of {categoryLinkageSummary.total_flagged_records ?? 0} flagged records ({categoryLinkageSummary.linkage_rate ?? 0}%); {categoryLinkageSummary.unlinked_records ?? 0} unlinked and {categoryLinkageSummary.ambiguous_records ?? 0} ambiguous records are excluded from sector rates.
                     </p>
