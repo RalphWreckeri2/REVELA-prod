@@ -2462,11 +2462,48 @@ export default function MapPage() {
   };
 
   const handleReconcile = async () => {
+    if (detectionQuota && detectionQuota.registry_count === 0) {
+      await Swal.fire({
+        title: 'Official Registry Is Empty',
+        html: `
+          <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+            <p style="margin-bottom:10px;">There are no businesses imported into the official registry yet.</p>
+            <p style="margin-bottom:0; color:var(--color-muted, #64748b);">
+              Reconciliation matches existing Red flags against official permits. Please import your business records first under <strong>Registry &rarr; Import</strong>.
+            </p>
+          </div>
+        `,
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
+    const redCount = flags.filter(f => f.color === "Red").length;
+    if (redCount === 0) {
+      await Swal.fire({
+        title: 'No Red Flags to Reconcile',
+        html: `
+          <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+            <p style="margin-bottom:10px;">There are currently <strong>0 Red flags</strong> on the map.</p>
+            <p style="margin-bottom:0; color:var(--color-muted, #64748b);">
+              Reconciliation is only needed when there are Red flags (unregistered businesses found by detection scans or field reports) that need to be re-checked against newly imported business permits.
+            </p>
+          </div>
+        `,
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
     const confirm = await Swal.fire({
       title: 'Reconcile Flags?',
       html: `
         <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-          <p style="margin-bottom:12px;">This will re-check all existing <strong>Red flags</strong> against the official business registry and convert any matches to their correct color (Green, Orange, etc.).</p>
+          <p style="margin-bottom:12px;">This will re-check all <strong>${redCount} Red flag${redCount === 1 ? '' : 's'}</strong> against the official business registry and convert any matches to their correct color (Green, Orange, etc.).</p>
           <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.25); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#6366f1;">
             ⚡ <strong>100% Local & Free:</strong> This operation runs directly against your database and consumes <strong>0 Google API quota</strong>.
           </div>
@@ -2910,7 +2947,13 @@ export default function MapPage() {
                     type="button"
                     onClick={handleReconcile}
                     disabled={runDetectionLoading || reconcileProgress?.stage === 'running'}
-                    title="Re-check Red flags against the registry and fix mis-colored pins"
+                    title={
+                      detectionQuota && detectionQuota.registry_count === 0
+                        ? "Official registry is empty. Import business permits first before reconciling."
+                        : counts.Red === 0
+                          ? "No Red flags to reconcile."
+                          : `Re-check ${counts.Red} Red flag(s) against the registry and fix mis-colored pins`
+                    }
                     style={{
                       display: "inline-flex",
                       alignItems: "center",

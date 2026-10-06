@@ -85,8 +85,24 @@ def reconcile_flags_route():
     Any Red flag whose name/location matches a registered business is
     converted to the appropriate permit-status color (Green, Orange, etc.)."""
     try:
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
+        reg_row = cursor.fetchone()
+        reg_count = (reg_row.get("total") if isinstance(reg_row, dict) else reg_row[0]) if reg_row else 0
+
+        cursor.execute("SELECT COUNT(*) AS total FROM geospatial_logs WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL")
+        red_row = cursor.fetchone()
+        red_count = (red_row.get("total") if isinstance(red_row, dict) else red_row[0]) if red_row else 0
+        cursor.close()
+
+        if reg_count == 0:
+            return jsonify({"error": "Cannot reconcile: The official business registry is empty. Please import business records first."}), 400
+
+        if red_count == 0:
+            return jsonify({"message": "No Red flags to reconcile. All existing flags are already reconciled.", "converted": 0, "total": 0}), 200
+
         converted = reconcile_existing_flags(force=True)
-        return jsonify({"message": f"{converted} flag(s) reconciled.", "converted": converted}), 200
+        return jsonify({"message": f"{converted} flag(s) reconciled out of {red_count} Red flag(s).", "converted": converted, "total": red_count}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

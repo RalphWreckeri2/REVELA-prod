@@ -519,6 +519,16 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                 hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
             return 0
 
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
+        r_row = cursor.fetchone()
+        cursor.close()
+        reg_count = (r_row.get("total") if isinstance(r_row, dict) else r_row[0]) if r_row else 0
+        if reg_count == 0:
+            if not silent:
+                hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "Official registry is empty. No records to reconcile against.", "converted": 0, "total": len(red_flags), "stage": "completed"})
+            return 0
+
         registry = _load_registry()
         converted_count = 0
         total = len(red_flags)
