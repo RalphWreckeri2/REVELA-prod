@@ -117,6 +117,19 @@ VALID_STATUSES = {"Active", "Expired", "Revoked", "Pending", "Closed"}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _clean_str(val) -> str | None:
+    """Safely convert any input to a stripped string, returning None for empty/null/NaN values."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    if isinstance(val, float) and val.is_integer():
+        s = str(int(val)).strip()
+    else:
+        s = str(val).strip()
+    if not s or s.lower() == "nan":
+        return None
+    return s
+
+
 def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename raw CSV/Excel headers to our internal field names."""
     df.columns = [str(c).strip() for c in df.columns]
@@ -226,8 +239,8 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
         return None, None            # row is still saved, just without coordinates
 
     address_parts = [
-        part.strip() for part in [address, barangay, "Mataasnakahoy", "Batangas", "Philippines"]
-        if part and str(part).strip()
+        str(part).strip() for part in [address, barangay, "Mataasnakahoy", "Batangas", "Philippines"]
+        if _clean_str(part)
     ]
     full_address = ", ".join(address_parts)
 
@@ -250,11 +263,14 @@ def _resolve_location(business_name, address, barangay):
     """Returns (lat, lng, meta).
     PLACES_RESOLVER_ENABLED=1 -> Places Text Search (+ quality-gated geocode fallback), meta describes provenance.
     Otherwise -> legacy _geocode behaviour unchanged, meta=None."""
+    name_str = _clean_str(business_name) or ""
+    addr_str = _clean_str(address) or ""
+    brgy_str = _clean_str(barangay) or ""
     if places_resolver.enabled():
         return places_resolver.resolve_location(
-            str(business_name).strip(), address, barangay,
+            name_str, addr_str, brgy_str,
             reserve_geocode=_reserve_geocode_call)
-    lat, lng = _geocode(address, barangay)
+    lat, lng = _geocode(addr_str, brgy_str)
     return lat, lng, None
 
 
@@ -285,15 +301,15 @@ def _load_barangay_lookup() -> dict[str, int]:
     return lookup
 
 
-def _resolve_barangay_id(barangay_name: str, lookup: dict[str, int]) -> int | None:
+def _resolve_barangay_id(barangay_name, lookup: dict[str, int]) -> int | None:
     """
     Resolve a raw barangay name to a barangayID using a preloaded lookup dict.
     Falls back to partial matching when an exact match isn't found.
     """
-    if not barangay_name or not barangay_name.strip():
+    cleaned = _clean_str(barangay_name)
+    if not cleaned:
         return None
 
-    cleaned = barangay_name.strip()
     alias = DISTRICT_ALIASES.get(cleaned.lower())
     if alias:
         cleaned = alias
@@ -544,7 +560,8 @@ def upload_registry(file, ext: str):
                 return None, "Import cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
-            biz_id = str(row.get("Business ID") or row.get("businessID") or row.get("business_id") or "").strip()
+            biz_id_raw = row.get("Business ID") or row.get("businessID") or row.get("business_id")
+            biz_id = _clean_str(biz_id_raw) or ""
 
             if not biz_id:
                 skipped += 1
@@ -552,20 +569,21 @@ def upload_registry(file, ext: str):
                 continue
 
             # businessName is required
-            if not business_name or str(business_name).strip() == "":
+            name_key = _clean_str(business_name)
+            if not name_key:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing businessName — skipped")
                 continue
 
             # Resolve barangay using the preloaded dict (no per-row DB call)
-            barangay_raw = row.get("barangay") or ""
-            barangay_id = _resolve_barangay_id(barangay_raw, barangay_lookup) if barangay_raw else None
+            barangay_raw = row.get("barangay")
+            barangay_id = _resolve_barangay_id(barangay_raw, barangay_lookup)
 
             # If barangay not found, skip row — barangayID is NOT NULL
             if barangay_id is None:
                 skipped += 1
                 errors.append(
-                    f"Row {idx + 2}: barangay '{barangay_raw}' not found — skipped")
+                    f"Row {idx + 2}: barangay '{_clean_str(barangay_raw) or 'missing'}' not found — skipped")
                 continue
                 
             # Track duplicates within this CSV
@@ -581,12 +599,12 @@ def upload_registry(file, ext: str):
                 continue
 
             # Geocode
-            address_raw = row.get("businessAddress") or ""
+            address_raw = _clean_str(row.get("businessAddress"))
             lat, lng = None, None
 
             raw_lat = row.get("latitude")
             raw_lng = row.get("longitude")
-            if raw_lat and raw_lng:
+            if raw_lat is not None and raw_lng is not None and str(raw_lat).strip().lower() != "nan" and str(raw_lng).strip().lower() != "nan":
                 try:
                     lat, lng = float(raw_lat), float(raw_lng)
                     geocoded_ok += 1
@@ -595,7 +613,7 @@ def upload_registry(file, ext: str):
 
             geo_meta = {"coord_source": "csv"} if lat is not None else None
             if lat is None and address_raw:
-                lat, lng, geo_meta = _resolve_location(business_name, address_raw, barangay_raw)
+                lat, lng, geo_meta = _resolve_location(name_key, address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -617,8 +635,7 @@ def upload_registry(file, ext: str):
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
-            name_key = str(business_name).strip()
-            addr_key = str(address_raw).strip() or None
+            addr_key = address_raw
 
             # Insert — ignore duplicates if the DB already has this biz_id
             cursor.execute(
@@ -633,14 +650,14 @@ def upload_registry(file, ext: str):
                     biz_id,
                     barangay_id,
                     name_key,
-                    str(row.get("businessType") or "").strip() or None,
-                    str(row.get("lineOfBusiness") or "").strip() or None,
+                    _clean_str(row.get("businessType")),
+                    _clean_str(row.get("lineOfBusiness")),
                     addr_key,
                     lat,
                     lng,
                     status,
                     renewal_date,
-                    str(row.get("businessSize") or "").strip() or None,
+                    _clean_str(row.get("businessSize")),
                     reg_type,
                 ),
             )
@@ -656,7 +673,7 @@ def upload_registry(file, ext: str):
                     name_key,
                     lat,
                     lng,
-                    str(address_raw).strip() or None,
+                    address_raw,
                     color=flag_color
                 )
             else:
@@ -753,30 +770,31 @@ def sync_registry(file, ext: str):
                 return None, "Sync cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
-            biz_id = str(row.get("Business ID") or row.get("businessID") or row.get("business_id") or "").strip()
+            biz_id_raw = row.get("Business ID") or row.get("businessID") or row.get("business_id")
+            biz_id = _clean_str(biz_id_raw) or ""
 
             if not biz_id:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing Business ID — skipped")
                 continue
 
-            if not business_name or str(business_name).strip() == "":
+            name_key = _clean_str(business_name)
+            if not name_key:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing businessName — skipped")
                 continue
 
-            barangay_raw = row.get("barangay") or ""
-            barangay_id = _resolve_barangay_id(barangay_raw, barangay_lookup) if barangay_raw else None
+            barangay_raw = row.get("barangay")
+            barangay_id = _resolve_barangay_id(barangay_raw, barangay_lookup)
 
             if barangay_id is None:
                 skipped += 1
                 errors.append(
-                    f"Row {idx + 2}: barangay '{barangay_raw}' not found — skipped")
+                    f"Row {idx + 2}: barangay '{_clean_str(barangay_raw) or 'missing'}' not found — skipped")
                 continue
 
-            name_key = str(business_name).strip()
-            address_raw = row.get("businessAddress") or ""
-            addr_key = str(address_raw).strip() or None
+            address_raw = _clean_str(row.get("businessAddress"))
+            addr_key = address_raw
 
             geo_meta = None
             reused_existing = False
@@ -799,12 +817,11 @@ def sync_registry(file, ext: str):
             )
             existing = cursor.fetchone()
 
-            address_raw = row.get("businessAddress") or ""
             lat, lng = None, None
 
             raw_lat = row.get("latitude")
             raw_lng = row.get("longitude")
-            if raw_lat and raw_lng:
+            if raw_lat is not None and raw_lng is not None and str(raw_lat).strip().lower() != "nan" and str(raw_lng).strip().lower() != "nan":
                 try:
                     lat, lng = float(raw_lat), float(raw_lng)
                     geocoded_ok += 1
@@ -816,7 +833,7 @@ def sync_registry(file, ext: str):
                 reused_existing = True
                 geocoded_ok += 1
             elif address_raw:
-                lat, lng, geo_meta = _resolve_location(business_name, address_raw, barangay_raw)
+                lat, lng, geo_meta = _resolve_location(name_key, address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -836,10 +853,10 @@ def sync_registry(file, ext: str):
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
-            btype = str(row.get("businessType") or "").strip() or None
-            lob = str(row.get("lineOfBusiness") or "").strip() or None
-            addr = str(address_raw).strip() or None
-            bsize = str(row.get("businessSize") or "").strip() or None
+            btype = _clean_str(row.get("businessType"))
+            lob = _clean_str(row.get("lineOfBusiness"))
+            addr = address_raw
+            bsize = _clean_str(row.get("businessSize"))
 
             if existing:
                 # Preserve existing coordinates to avoid overwriting exact pins from detection scan with generic geocoded ones

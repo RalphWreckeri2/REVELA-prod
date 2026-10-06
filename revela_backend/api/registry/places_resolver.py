@@ -161,8 +161,8 @@ def _api_get_json(resp, label):
 
 # ------------------------------ resolution -----------------------------------
 def _text_search(name, address, barangay, post=requests.post):
-    parts = [p.strip() for p in (name, address, barangay, MUNICIPALITY, PROVINCE)
-             if p and str(p).strip()]
+    parts = [str(p).strip() for p in (name, address, barangay, MUNICIPALITY, PROVINCE)
+             if p is not None and str(p).strip() and str(p).strip().lower() != "nan"]
     body = {"textQuery": ", ".join(parts), "regionCode": "PH", "pageSize": 5}
     center = _floats("PLACES_CENTER", 2)
     if center:
@@ -182,8 +182,8 @@ def _text_search(name, address, barangay, post=requests.post):
 
 
 def _geocode_fallback(address, barangay, get=requests.get):
-    parts = [p.strip() for p in (address, barangay, MUNICIPALITY, PROVINCE, "Philippines")
-             if p and str(p).strip()]
+    parts = [str(p).strip() for p in (address, barangay, MUNICIPALITY, PROVINCE, "Philippines")
+             if p is not None and str(p).strip() and str(p).strip().lower() != "nan"]
     params = {"address": ", ".join(parts), "components": "country:PH",
               "key": os.getenv("GOOGLE_MAPS_API_KEY", "")}
     try:
