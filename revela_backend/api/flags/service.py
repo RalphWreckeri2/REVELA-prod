@@ -114,6 +114,18 @@ def _reserve_places_call(kind):
             f"Places API daily limit reached ({PLACES_DAILY_CAP} requests/day). Try again tomorrow.")
 
 
+def _refund_places_call():
+    """Refund one Places API slot when Google denies the request or fails without returning data."""
+    try:
+        cur = mysql.connection.cursor()
+        cur.execute(f"UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
+        cur.execute("UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = CURDATE() AND kind = 'day'")
+        mysql.connection.commit()
+        cur.close()
+    except Exception as e:
+        print(f"[Places budget] refund error: {e}")
+
+
 def _places_get(kind, url, **kwargs):
     """Every Google Places HTTP call in this module must go through here."""
     _reserve_places_call(kind)
@@ -643,11 +655,20 @@ def _fetch_point_results(lat, lng, radius_m):
             return results, False
 
         status = data.get("status")
-        if status in ("OVER_QUERY_LIMIT", "REQUEST_DENIED"):
+        err_msg = data.get("error_message") or ""
+        if status == "OVER_QUERY_LIMIT":
             raise PlacesBudgetExceeded(
-                f"Places API limit reached (Google returned {status}). Try again tomorrow.")
+                f"Places API daily budget reached (Google returned {status}). Try again tomorrow.")
+        if status == "REQUEST_DENIED":
+            _refund_places_call()
+            details = f": {err_msg}" if err_msg else ""
+            raise RuntimeError(
+                f"Google Maps Places API request was denied (REQUEST_DENIED){details}. "
+                "This is not a daily quota limit. Please verify in Google Cloud Console that 'Places API' "
+                "is enabled, billing is active, and the API key has no incompatible HTTP referrer restrictions."
+            )
         if status not in ("OK", "ZERO_RESULTS"):
-            print(f"[Run Detection] Places API status: {status}, message: {data.get('error_message')}")
+            print(f"[Run Detection] Places API status: {status}, message: {err_msg}")
             return results, False
 
         results.extend(data.get("results", []))

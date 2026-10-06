@@ -2432,7 +2432,7 @@ export default function MapPage() {
       }
     } catch (err) {
       console.error("Detection scan error:", err);
-      if (err.message && (err.message.includes("429") || err.message.toLowerCase().includes("budget") || err.message.toLowerCase().includes("limit"))) {
+      if (err.message && !err.message.includes("REQUEST_DENIED") && (err.message.includes("429") || err.message.toLowerCase().includes("daily budget reached") || err.message.toLowerCase().includes("daily limit reached") || err.message.toLowerCase().includes("monthly limit reached"))) {
         Swal.fire({
           icon: "warning",
           title: "Daily Limit Reached",
