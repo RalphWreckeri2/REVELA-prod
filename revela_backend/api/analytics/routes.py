@@ -590,7 +590,7 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # DBSCAN Hotspot Intelligence
-    dbscan_insight = "Not enough data to pinpoint specific high-risk zones."
+    dbscan_insight = "There is not enough location data to identify nearby groups of flagged records."
     dbscan_clusters = []
     try:
         cur.execute(f"""
@@ -653,15 +653,15 @@ def _get_all_analytics_inner(F=None):
                 dominant_barangay = Counter(
                     cluster_barangays).most_common(1)[0][0]
 
-                dbscan_insight = f"Largest DBSCAN group: {cluster_size} flagged records near {dominant_barangay}. Review as a field-inspection triage lead."
+                dbscan_insight = f"Largest nearby group: {cluster_size} flagged records around {dominant_barangay}. Consider prioritizing this area for inspection; proximity alone does not confirm a violation."
             else:
-                dbscan_insight = "No densely packed zones of high-risk businesses detected at this time."
+                dbscan_insight = "No nearby groups of flagged records were found."
     except Exception as e:
         print(f"DBSCAN Error: {e}")
         dbscan_insight = "Hotspot detection temporarily unavailable."
 
     # Moran's I Proxy (Spatial Autocorrelation)
-    morans_insight = "Not enough data to determine broader geographic patterns."
+    morans_insight = "There is not enough data to compare risk patterns across barangays."
     morans_data = {"points": [], "threshold": 0}
     try:
         cur.execute(f"""
@@ -728,13 +728,13 @@ def _get_all_analytics_inner(F=None):
                     avg_hr = np.mean(hr_dists) if hr_dists else 0
 
                     if 0 < avg_hr < (avg_all * 0.85):
-                        morans_insight = f"Concentration signal: high-risk barangay centroids are closer together under the current distance heuristic, primarily in the {ns}-{ew} sector."
+                        morans_insight = f"Several higher-risk barangays are relatively close together, mainly in the {ns}-{ew} area. This is a geographic screening signal, not evidence of a shared cause."
                     elif avg_hr > (avg_all * 1.15):
-                        morans_insight = "Dispersion signal: high-risk barangay centroids are farther apart under the current distance heuristic."
+                        morans_insight = "Higher-risk barangays are spread farther apart than average, so no single regional group stands out."
                     else:
-                        morans_insight = "No clear concentration or dispersion signal under the current distance heuristic."
+                        morans_insight = "Higher-risk barangays are neither notably close together nor unusually spread out."
                 else:
-                    morans_insight = "Not enough variation in risk to determine regional patterns."
+                    morans_insight = "There is not enough difference in flagged-record counts to identify a regional pattern."
     except Exception as e:
         print(f"Moran's I Proxy Error: {e}")
         morans_insight = "Regional pattern analysis temporarily unavailable."
