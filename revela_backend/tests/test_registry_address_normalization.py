@@ -1,6 +1,10 @@
 import unittest
 
-from api.registry.service import normalize_business_address
+from api.registry.service import (
+    normalize_business_address,
+    _clean_upper,
+    _normalise_registration_type,
+)
 
 
 class NormalizeBusinessAddressTests(unittest.TestCase):
@@ -24,6 +28,26 @@ class NormalizeBusinessAddressTests(unittest.TestCase):
             "RIZAL STREET",
         )
 
+    def test_clean_upper_transforms_to_uppercase(self):
+        self.assertEqual(_clean_upper("sari-sari store"), "SARI-SARI STORE")
+        self.assertEqual(_clean_upper("Single Proprietorship"), "SINGLE PROPRIETORSHIP")
+        self.assertEqual(_clean_upper("Retail of goods"), "RETAIL OF GOODS")
+        self.assertEqual(_clean_upper("micro"), "MICRO")
+        self.assertIsNone(_clean_upper(None))
+        self.assertIsNone(_clean_upper(""))
+        self.assertIsNone(_clean_upper("   "))
+
+    def test_normalise_registration_type_returns_uppercase(self):
+        self.assertEqual(_normalise_registration_type("New"), "NEW")
+        self.assertEqual(_normalise_registration_type("new"), "NEW")
+        self.assertEqual(_normalise_registration_type("NEW"), "NEW")
+        self.assertEqual(_normalise_registration_type("Renewal"), "RENEWAL")
+        self.assertEqual(_normalise_registration_type("renew"), "RENEWAL")
+        self.assertEqual(_normalise_registration_type("RENEWAL"), "RENEWAL")
+        self.assertIsNone(_normalise_registration_type(None))
+        self.assertIsNone(_normalise_registration_type(""))
+
 
 if __name__ == "__main__":
     unittest.main()
+

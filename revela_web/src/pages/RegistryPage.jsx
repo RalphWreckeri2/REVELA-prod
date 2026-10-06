@@ -100,13 +100,20 @@ const Icon = {
 
 
 const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed"];
-const REG_TYPE_FILTERS = ["All Types", "New", "Renewal"];
+const REG_TYPE_FILTERS = ["All Types", "NEW", "RENEWAL"];
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 const DEFAULT_PAGE_SIZE = 10;
 
 // ── Status helpers ─────────────────────────────────────────────────────────────
 function getStatusVariant(status) {
-  return { Active: "green", Expired: "gold", Revoked: "black", Pending: "default", Closed: "purple" }[status] ?? "default";
+  if (!status) return "default";
+  const s = String(status).toLowerCase();
+  if (s === "active") return "green";
+  if (s === "expired") return "gold";
+  if (s === "revoked") return "black";
+  if (s === "pending") return "default";
+  if (s === "closed") return "purple";
+  return "default";
 }
 
 function getFlagVariant(flag) {
@@ -298,25 +305,25 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                     </select>
                   ) : field === "registrationType" ? (
                     <select
-                      value={formData[field] || ""}
+                      value={(formData[field] || "").toUpperCase()}
                       onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
                       style={styles.editInput}
                     >
                       <option value="">Select type...</option>
-                      <option value="New">New</option>
-                      <option value="Renewal">Renewal</option>
+                      <option value="NEW">NEW</option>
+                      <option value="RENEWAL">RENEWAL</option>
                     </select>
                   ) : field === "businessSize" ? (
                     <select
-                      value={formData[field]}
+                      value={(formData[field] || "").toUpperCase()}
                       onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
                       style={styles.editInput}
                     >
                       <option value="">Select size...</option>
-                      <option value="Micro">Micro</option>
-                      <option value="Small">Small</option>
-                      <option value="Medium">Medium</option>
-                      <option value="Large">Large</option>
+                      <option value="MICRO">MICRO</option>
+                      <option value="SMALL">SMALL</option>
+                      <option value="MEDIUM">MEDIUM</option>
+                      <option value="LARGE">LARGE</option>
                     </select>
                   ) : (
                     <input

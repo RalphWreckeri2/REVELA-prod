@@ -131,6 +131,12 @@ def _clean_str(val) -> str | None:
     return s
 
 
+def _clean_upper(val) -> str | None:
+    """Safely convert any input to an uppercase stripped string, returning None for empty/null/NaN values."""
+    s = _clean_str(val)
+    return s.upper() if s else None
+
+
 def normalize_business_address(raw_address, barangay_name=None) -> str | None:
     """Normalise messy imported addresses without blanking out valid values.
 
@@ -436,7 +442,7 @@ def _get_barangay_id(barangay_name: str) -> int | None:
 
 
 def _normalise_registration_type(raw) -> str | None:
-    """Normalize registration type to 'New' or 'Renewal'."""
+    """Normalize registration type to 'NEW' or 'RENEWAL'."""
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return None
     val = str(raw).strip()
@@ -444,10 +450,10 @@ def _normalise_registration_type(raw) -> str | None:
         return None
     val_lower = val.lower()
     if "renew" in val_lower:
-        return "Renewal"
+        return "RENEWAL"
     if "new" in val_lower.split() or val_lower.startswith("new") or val_lower == "new":
-        return "New"
-    return val.title()
+        return "NEW"
+    return val.upper()
 
 
 def _normalise_status(raw: str) -> str:
@@ -600,7 +606,7 @@ def upload_registry(file, ext: str):
 
         biz_id_col = "Business ID" if "Business ID" in df.columns else (
             "businessID" if "businessID" in df.columns else ("business_id" if "business_id" in df.columns else None))
-        biz_ids = df[biz_id_col].astype(str).str.strip().str.lstrip("#").str.strip(
+        biz_ids = df[biz_id_col].astype(str).str.strip().str.lstrip("#").str.strip().str.upper(
         ) if biz_id_col else pd.Series("", index=df.index)
         is_new = ~biz_ids.isin(existing_db_ids)
         is_first_occurrence = ~biz_ids.duplicated()
@@ -657,7 +663,7 @@ def upload_registry(file, ext: str):
             business_name = row.get("businessName")
             biz_id_raw = row.get("Business ID") or row.get(
                 "businessID") or row.get("business_id")
-            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip()
+            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip().upper()
 
             if not biz_id:
                 skipped += 1
@@ -665,7 +671,7 @@ def upload_registry(file, ext: str):
                 continue
 
             # businessName is required
-            name_key = _clean_str(business_name)
+            name_key = _clean_upper(business_name)
             if not name_key:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing businessName — skipped")
@@ -751,14 +757,14 @@ def upload_registry(file, ext: str):
                     biz_id,
                     barangay_id,
                     name_key,
-                    _clean_str(row.get("businessType")),
-                    _clean_str(row.get("lineOfBusiness")),
+                    _clean_upper(row.get("businessType")),
+                    _clean_upper(row.get("lineOfBusiness")),
                     addr_key,
                     lat,
                     lng,
                     status,
                     renewal_date,
-                    _clean_str(row.get("businessSize")),
+                    _clean_upper(row.get("businessSize")),
                     reg_type,
                 ),
             )
@@ -873,14 +879,14 @@ def sync_registry(file, ext: str):
             business_name = row.get("businessName")
             biz_id_raw = row.get("Business ID") or row.get(
                 "businessID") or row.get("business_id")
-            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip()
+            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip().upper()
 
             if not biz_id:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing Business ID — skipped")
                 continue
 
-            name_key = _clean_str(business_name)
+            name_key = _clean_upper(business_name)
             if not name_key:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing businessName — skipped")
@@ -961,10 +967,10 @@ def sync_registry(file, ext: str):
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
-            btype = _clean_str(row.get("businessType"))
-            lob = _clean_str(row.get("lineOfBusiness"))
+            btype = _clean_upper(row.get("businessType"))
+            lob = _clean_upper(row.get("lineOfBusiness"))
             addr = address_raw
-            bsize = _clean_str(row.get("businessSize"))
+            bsize = _clean_upper(row.get("businessSize"))
 
             if existing:
                 # Preserve existing coordinates to avoid overwriting exact pins from detection scan with generic geocoded ones
@@ -1102,26 +1108,22 @@ def update_business(business_id, data: dict):
 
         if "businessName" in data:
             update_fields.append("businessName = %s")
-            params.append(str(data["businessName"]).strip())
+            params.append(_clean_upper(data["businessName"]))
         if "businessType" in data:
             update_fields.append("businessType = %s")
-            params.append(str(data["businessType"]).strip()
-                          if data["businessType"] else None)
+            params.append(_clean_upper(data["businessType"]))
         if "lineOfBusiness" in data:
             update_fields.append("lineOfBusiness = %s")
-            params.append(str(data["lineOfBusiness"]).strip()
-                          if data["lineOfBusiness"] else None)
+            params.append(_clean_upper(data["lineOfBusiness"]))
         if "businessAddress" in data:
             update_fields.append("businessAddress = %s")
-            params.append(str(data["businessAddress"]).strip()
-                          if data["businessAddress"] else None)
+            params.append(normalize_business_address(data["businessAddress"]) if data["businessAddress"] else None)
         if "applicationStatus" in data:
             update_fields.append("applicationStatus = %s")
             params.append(_normalise_status(data["applicationStatus"]))
         if "businessSize" in data:
             update_fields.append("businessSize = %s")
-            params.append(str(data["businessSize"]).strip()
-                          if data["businessSize"] else None)
+            params.append(_clean_upper(data["businessSize"]))
         if "registrationType" in data:
             update_fields.append("registrationType = %s")
             params.append(_normalise_registration_type(data["registrationType"])
@@ -1135,7 +1137,7 @@ def update_business(business_id, data: dict):
             # If the business name changed, update geospatial_logs to maintain the linkage
             current_name = old_name
             if "businessName" in data:
-                new_name = str(data["businessName"]).strip()
+                new_name = _clean_upper(data["businessName"]) or ""
                 if new_name.lower() != old_name.lower():
                     cursor.execute("""
                         UPDATE geospatial_logs
@@ -1234,9 +1236,9 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
             conditions.append("r.applicationStatus = %s")
             params.append(status)
 
-        if registration_type and registration_type in ("New", "Renewal"):
-            conditions.append("r.registrationType = %s")
-            params.append(registration_type)
+        if registration_type and registration_type.upper() in ("NEW", "RENEWAL"):
+            conditions.append("UPPER(r.registrationType) = %s")
+            params.append(registration_type.upper())
 
         if search:
             conditions.append(
