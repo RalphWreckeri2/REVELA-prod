@@ -698,11 +698,15 @@ def _load_registry():
                COALESCE(r.latitude, g.latitude) AS latitude,
                COALESCE(r.longitude, g.longitude) AS longitude
         FROM official_registry r
-        LEFT JOIN (
-            SELECT detectedName, barangayID, latitude, longitude
+        LEFT JOIN LATERAL (
+            SELECT latitude, longitude
             FROM geospatial_logs
-            WHERE flagColor = 'Green' AND latitude IS NOT NULL
-        ) g ON r.businessName = g.detectedName AND r.barangayID = g.barangayID
+            WHERE flagColor = 'Green'
+              AND latitude IS NOT NULL
+              AND detectedName = r.businessName
+              AND barangayID = r.barangayID
+            LIMIT 1
+        ) g ON TRUE
     """)
     rows = cursor.fetchall()
     cursor.close()
@@ -1193,9 +1197,13 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     ) AS verificationStatus
                 FROM geospatial_logs g
                 LEFT JOIN barangays b ON g.barangayID = b.barangayID
-                LEFT JOIN official_registry r
-                    ON r.businessName = g.detectedName
-                    AND r.barangayID = g.barangayID
+                LEFT JOIN LATERAL (
+                    SELECT businessID, businessSize, businessAddress, latitude, longitude
+                    FROM official_registry
+                    WHERE barangayID = g.barangayID
+                      AND businessName = g.detectedName
+                    LIMIT 1
+                ) r ON TRUE
                 {geo_where}
 
                 UNION ALL
