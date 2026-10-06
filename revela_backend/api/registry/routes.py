@@ -25,6 +25,18 @@ def cancel_import():
     set_cancel("registry_import", True)
     return jsonify({"message": "Cancellation requested"}), 200
 
+# ── POST /api/registry/reset-quota ────────────────────────────────────────────
+@registry_bp.route("/reset-quota", methods=["POST"])
+@admin_required()
+def reset_quota():
+    """Reset daily geocoding quota counters for today."""
+    from api.registry.service import reset_geocode_daily_quota
+    success = reset_geocode_daily_quota()
+    if success:
+        return jsonify({"message": "Daily geocoding quota has been reset for today."}), 200
+    return jsonify({"error": "Failed to reset quota"}), 500
+
+
 # ── POST /api/registry/upload ─────────────────────────────────────────────────
 @registry_bp.route("/upload", methods=["POST"])
 @admin_required()

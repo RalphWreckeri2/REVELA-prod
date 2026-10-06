@@ -136,7 +136,8 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     rename = {}
     for col in df.columns:
         clean = col.lower().strip()
-        key_stripped = clean.replace(" ", "_").replace("-", "_").replace(".", "").replace(",", "")
+        key_stripped = clean.replace(" ", "_").replace(
+            "-", "_").replace(".", "").replace(",", "")
         key_raw = clean.replace(" ", "_").replace("-", "_")
         if key_stripped in COLUMN_MAP:
             rename[col] = COLUMN_MAP[key_stripped]
@@ -146,11 +147,15 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-GEOCODE_MONTHLY_CAP  = int(os.getenv("GEOCODE_MONTHLY_CAP", "8000"))   # free tier is 10,000/month
-GEOCODE_DAILY_CAP    = int(os.getenv("GEOCODE_DAILY_CAP", "1500"))      # 1500 geocodes per day
-MAX_IMPORT_PER_BATCH = int(os.getenv("MAX_IMPORT_PER_BATCH", "1500"))   # maximum 1500 businesses per import batch
+# free tier is 10,000/month
+GEOCODE_MONTHLY_CAP = int(os.getenv("GEOCODE_MONTHLY_CAP", "8000"))
+# 1500 geocodes per day
+GEOCODE_DAILY_CAP = int(os.getenv("GEOCODE_DAILY_CAP", "1500"))
+# maximum 1500 businesses per import batch
+MAX_IMPORT_PER_BATCH = int(os.getenv("MAX_IMPORT_PER_BATCH", "1500"))
 _geo_tables_ready = False
-_GEO_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"   # no '%' characters
+# no '%' characters
+_GEO_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
 
 
 def get_geocode_remaining_today():
@@ -166,21 +171,26 @@ def get_geocode_remaining_today():
                 ) ENGINE=InnoDB
             """)
             _geo_tables_ready = True
-        cur.execute("SELECT requestCount FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
+        cur.execute(
+            "SELECT requestCount FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
         row = cur.fetchone()
-        used = int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0) if row else 0
+        used = int((row.get("requestCount") if isinstance(
+            row, dict) else row[0]) or 0) if row else 0
         return max(0, GEOCODE_DAILY_CAP - used)
     finally:
         cur.close()
+
 
 def get_geocode_remaining_month():
     """Return remaining geocode requests allowed this month."""
     global _geo_tables_ready
     cur = mysql.connection.cursor()
     try:
-        cur.execute(f"SELECT requestCount FROM places_api_usage WHERE usageDate = {_GEO_MONTH_KEY} AND kind = 'geo_month'")
+        cur.execute(
+            f"SELECT requestCount FROM places_api_usage WHERE usageDate = {_GEO_MONTH_KEY} AND kind = 'geo_month'")
         row = cur.fetchone()
-        used = int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0) if row else 0
+        used = int((row.get("requestCount") if isinstance(
+            row, dict) else row[0]) or 0) if row else 0
         return max(0, GEOCODE_MONTHLY_CAP - used)
     finally:
         cur.close()
@@ -199,8 +209,10 @@ def _reserve_geocode_call():
                 ) ENGINE=InnoDB
             """)
             _geo_tables_ready = True
-        cur.execute(f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_GEO_MONTH_KEY}, 'geo_month', 0)")
-        cur.execute("INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'geo_day', 0)")
+        cur.execute(
+            f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_GEO_MONTH_KEY}, 'geo_month', 0)")
+        cur.execute(
+            "INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'geo_day', 0)")
         cur.execute(f"""
             UPDATE places_api_usage SET requestCount = requestCount + 1
             WHERE usageDate = {_GEO_MONTH_KEY} AND kind = 'geo_month' AND requestCount < %s
@@ -226,6 +238,22 @@ def _reserve_geocode_call():
         return False                 # fail closed
     finally:
         cur.close()
+
+
+def reset_geocode_daily_quota() -> bool:
+    """Reset the daily geocoding usage counter for CURDATE() to allow re-testing."""
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("DELETE FROM places_api_usage WHERE usageDate = CURDATE()")
+        mysql.connection.commit()
+        return True
+    except Exception as e:
+        mysql.connection.rollback()
+        print(f"[Geocode budget] reset error: {e}")
+        return False
+    finally:
+        cur.close()
+
 
 
 def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
@@ -294,7 +322,9 @@ def _load_barangay_lookup() -> dict[str, int]:
     cursor.close()
     lookup = {}
     for row in rows:
-        name = row["barangayName"].strip()
+        name = _clean_str(row.get("barangayName"))
+        if not name:
+            continue
         lookup[name.lower()] = row["barangayID"]
         # Also index without spaces for fuzzy matching
         lookup[name.lower().replace(" ", "")] = row["barangayID"]
@@ -431,7 +461,8 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     existing_pin = cursor.fetchone()
 
     if existing_pin:
-        pin_id = existing_pin["logID"] if isinstance(existing_pin, dict) else existing_pin[0]
+        pin_id = existing_pin["logID"] if isinstance(
+            existing_pin, dict) else existing_pin[0]
         cursor.execute(
             """
             UPDATE geospatial_logs
@@ -498,22 +529,26 @@ def upload_registry(file, ext: str):
         if "latitude" in df.columns and "longitude" in df.columns:
             has_valid_coords = (
                 df["latitude"].notna() & (df["latitude"].astype(str).str.strip() != "") &
-                df["longitude"].notna() & (df["longitude"].astype(str).str.strip() != "")
+                df["longitude"].notna() & (
+                    df["longitude"].astype(str).str.strip() != "")
             )
-            
+
         has_address = pd.Series(True, index=df.index)
         if "businessAddress" in df.columns:
-            has_address = df["businessAddress"].notna() & (df["businessAddress"].astype(str).str.strip() != "")
-            
-        biz_id_col = "Business ID" if "Business ID" in df.columns else ("businessID" if "businessID" in df.columns else ("business_id" if "business_id" in df.columns else None))
-        biz_ids = df[biz_id_col].astype(str).str.strip() if biz_id_col else pd.Series("", index=df.index)
+            has_address = df["businessAddress"].notna() & (
+                df["businessAddress"].astype(str).str.strip() != "")
+
+        biz_id_col = "Business ID" if "Business ID" in df.columns else (
+            "businessID" if "businessID" in df.columns else ("business_id" if "business_id" in df.columns else None))
+        biz_ids = df[biz_id_col].astype(str).str.strip(
+        ) if biz_id_col else pd.Series("", index=df.index)
         is_new = ~biz_ids.isin(existing_db_ids)
         is_first_occurrence = ~biz_ids.duplicated()
 
         needs_geo = ~has_valid_coords & has_address & is_new & is_first_occurrence
         rows_needing_geocode = int(needs_geo.sum())
 
-        if rows_needing_geocode > 0:
+        if GOOGLE_MAPS_API_KEY and rows_needing_geocode > 0:
             remaining_today = get_geocode_remaining_today()
             remaining_month = get_geocode_remaining_month()
             remaining = min(remaining_today, remaining_month)
@@ -560,7 +595,8 @@ def upload_registry(file, ext: str):
                 return None, "Import cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
-            biz_id_raw = row.get("Business ID") or row.get("businessID") or row.get("business_id")
+            biz_id_raw = row.get("Business ID") or row.get(
+                "businessID") or row.get("business_id")
             biz_id = _clean_str(biz_id_raw) or ""
 
             if not biz_id:
@@ -585,17 +621,19 @@ def upload_registry(file, ext: str):
                 errors.append(
                     f"Row {idx + 2}: barangay '{_clean_str(barangay_raw) or 'missing'}' not found — skipped")
                 continue
-                
+
             # Track duplicates within this CSV
             if biz_id in seen_counts:
                 skipped += 1
-                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
+                errors.append(
+                    f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
                 continue
             seen_counts[biz_id] = 1
 
             if biz_id in existing_db_ids:
                 skipped += 1
-                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' already exists in the database — skipped")
+                errors.append(
+                    f"Row {idx + 2}: duplicate Business ID '{biz_id}' already exists in the database — skipped")
                 continue
 
             # Geocode
@@ -613,7 +651,8 @@ def upload_registry(file, ext: str):
 
             geo_meta = {"coord_source": "csv"} if lat is not None else None
             if lat is None and address_raw:
-                lat, lng, geo_meta = _resolve_location(name_key, address_raw, barangay_raw)
+                lat, lng, geo_meta = _resolve_location(
+                    name_key, address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -630,7 +669,8 @@ def upload_registry(file, ext: str):
             status = _normalise_status(status_raw)
 
             # Registration Type (New vs Renewal)
-            reg_type = _normalise_registration_type(row.get("registrationType"))
+            reg_type = _normalise_registration_type(
+                row.get("registrationType"))
 
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
@@ -770,7 +810,8 @@ def sync_registry(file, ext: str):
                 return None, "Sync cancelled by user — no data was saved."
 
             business_name = row.get("businessName")
-            biz_id_raw = row.get("Business ID") or row.get("businessID") or row.get("business_id")
+            biz_id_raw = row.get("Business ID") or row.get(
+                "businessID") or row.get("business_id")
             biz_id = _clean_str(biz_id_raw) or ""
 
             if not biz_id:
@@ -803,7 +844,8 @@ def sync_registry(file, ext: str):
             if biz_id in matched_db_ids:
                 # If we've already synced this ID in this run, treat it as skip.
                 skipped += 1
-                errors.append(f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
+                errors.append(
+                    f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
                 continue
             matched_db_ids.add(biz_id)
 
@@ -829,11 +871,13 @@ def sync_registry(file, ext: str):
                     lat, lng = None, None
             elif existing and existing.get("latitude") is not None and existing.get("longitude") is not None:
                 # Existing business already has valid coordinates — reuse them (consumes 0 Google quota!)
-                lat, lng = float(existing["latitude"]), float(existing["longitude"])
+                lat, lng = float(existing["latitude"]), float(
+                    existing["longitude"])
                 reused_existing = True
                 geocoded_ok += 1
             elif address_raw:
-                lat, lng, geo_meta = _resolve_location(name_key, address_raw, barangay_raw)
+                lat, lng, geo_meta = _resolve_location(
+                    name_key, address_raw, barangay_raw)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -846,10 +890,12 @@ def sync_registry(file, ext: str):
                 or "Active"
             )
             if geo_meta is None and lat is not None and not reused_existing:
-                geo_meta = {"coord_source": "csv"}   # coordinates came from the uploaded file
+                # coordinates came from the uploaded file
+                geo_meta = {"coord_source": "csv"}
             status = _normalise_status(status_raw)
 
-            reg_type = _normalise_registration_type(row.get("registrationType"))
+            reg_type = _normalise_registration_type(
+                row.get("registrationType"))
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
@@ -860,8 +906,10 @@ def sync_registry(file, ext: str):
 
             if existing:
                 # Preserve existing coordinates to avoid overwriting exact pins from detection scan with generic geocoded ones
-                final_lat = existing.get("latitude") if existing.get("latitude") is not None else lat
-                final_lng = existing.get("longitude") if existing.get("longitude") is not None else lng
+                final_lat = existing.get("latitude") if existing.get(
+                    "latitude") is not None else lat
+                final_lng = existing.get("longitude") if existing.get(
+                    "longitude") is not None else lng
 
                 cursor.execute(
                     """
@@ -895,10 +943,12 @@ def sync_registry(file, ext: str):
                     ),
                 )
                 updated += 1
-                if existing.get("latitude") is None:   # we actually wrote new coordinates
+                # we actually wrote new coordinates
+                if existing.get("latitude") is None:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 # Propagate status → flag color on the map pin (auto-seed if missing)
-                _sync_flag_color(cursor, barangay_id, name_key, status, final_lat, final_lng, addr)
+                _sync_flag_color(cursor, barangay_id, name_key,
+                                 status, final_lat, final_lng, addr)
             else:
                 cursor.execute(
                     """
@@ -1307,7 +1357,7 @@ def check_and_expire_old_permits():
     """
     try:
         cursor = mysql.connection.cursor()
-        
+
         # 1. Count active businesses from previous years
         cursor.execute(
             """
