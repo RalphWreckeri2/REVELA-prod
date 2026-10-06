@@ -2,6 +2,7 @@ import pandas as pd
 import requests as http
 import io
 import os
+import re
 from app import mysql
 from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
@@ -130,6 +131,51 @@ def _clean_str(val) -> str | None:
     return s
 
 
+def normalize_business_address(raw_address, barangay_name=None) -> str | None:
+    """Normalise messy imported addresses without blanking out valid values.
+
+    The goal is to strip obvious location noise such as district / purok / barangay
+    suffixes when they are attached to an otherwise usable street/building address,
+    but to preserve the original cleaned value instead of returning None for every
+    vague-but-real local description.
+    """
+    value = _clean_str(raw_address)
+    if not value:
+        return None
+
+    value = value.replace("&", " and ")
+    value = re.sub(r"\s+", " ", value).strip()
+
+    replacements = {
+        r"(?i)\bst\.?\b": "Street",
+        r"(?i)\bave\.?\b": "Avenue",
+        r"(?i)\bblvd\.?\b": "Boulevard",
+        r"(?i)\brd\.?\b": "Road",
+        r"(?i)\bdr\.?\b": "Drive",
+        r"(?i)\bln\.?\b": "Lane",
+    }
+    for pattern, replacement in replacements.items():
+        value = re.sub(pattern, replacement, value)
+
+    # Strip district / barangay / purok / block type labels anywhere in the value,
+    # since these are often appended as location metadata instead of the actual street.
+    value = re.sub(
+        r"(?i)\s*,?\s*(?:district|brgy|barangay)\s+[ivxlcdm0-9a-z.-]+", "", value)
+    value = re.sub(
+        r"(?i)\s*,?\s*(?:purok|blk|block|lot|phase|subd|subdivision)\s+[a-z0-9.-]+", "", value)
+    value = re.sub(
+        r"(?i)(?:\s*[.,;]?\s*(?:mataasnakahoy|batangas|philippines))+\s*$", "", value)
+
+    value = re.sub(r"\s+", " ", value).strip(" ,;.-")
+    value = re.sub(r"\s+([,.])", r"\1", value)
+
+    # Preserve a cleaned raw value instead of nulling out valid local business addresses.
+    if not value:
+        return _clean_str(raw_address) or ""
+
+    return value.strip(" ,;.-")
+
+
 def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Rename raw CSV/Excel headers to our internal field names."""
     df.columns = [str(c).strip() for c in df.columns]
@@ -255,7 +301,6 @@ def reset_geocode_daily_quota() -> bool:
         cur.close()
 
 
-
 def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     """Call Google Geocoding API for a business address.
     Uses the full business address plus barangay for better accuracy.
@@ -294,11 +339,25 @@ def _resolve_location(business_name, address, barangay):
     name_str = _clean_str(business_name) or ""
     addr_str = _clean_str(address) or ""
     brgy_str = _clean_str(barangay) or ""
+
     if places_resolver.enabled():
         return places_resolver.resolve_location(
             name_str, addr_str, brgy_str,
             reserve_geocode=_reserve_geocode_call)
-    lat, lng = _geocode(addr_str, brgy_str)
+
+    # Local BPLO data often contains only vague location labels such as "District IV"
+    # or "Purok 5". In those cases, use the business name + barangay as a geocode
+    # fallback instead of failing outright; it still places the pin in the correct barangay.
+    geo_target = addr_str
+    if not geo_target:
+        geo_target = name_str or brgy_str
+
+    if not geo_target and not brgy_str:
+        return None, None, None
+
+    lat, lng = _geocode(geo_target, brgy_str)
+    if lat is None and name_str and brgy_str:
+        lat, lng = _geocode(f"{name_str}, {brgy_str}", brgy_str)
     return lat, lng, None
 
 
@@ -637,7 +696,8 @@ def upload_registry(file, ext: str):
                 continue
 
             # Geocode
-            address_raw = _clean_str(row.get("businessAddress"))
+            address_raw = normalize_business_address(
+                row.get("businessAddress"), row.get("barangay"))
             lat, lng = None, None
 
             raw_lat = row.get("latitude")
@@ -834,7 +894,8 @@ def sync_registry(file, ext: str):
                     f"Row {idx + 2}: barangay '{_clean_str(barangay_raw) or 'missing'}' not found — skipped")
                 continue
 
-            address_raw = _clean_str(row.get("businessAddress"))
+            address_raw = normalize_business_address(
+                row.get("businessAddress"), row.get("barangay"))
             addr_key = address_raw
 
             geo_meta = None
