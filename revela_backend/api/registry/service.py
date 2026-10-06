@@ -171,9 +171,10 @@ def normalize_business_address(raw_address, barangay_name=None) -> str | None:
 
     # Preserve a cleaned raw value instead of nulling out valid local business addresses.
     if not value:
-        return _clean_str(raw_address) or ""
+        fallback = _clean_str(raw_address) or ""
+        return fallback.upper() if fallback else ""
 
-    return value.strip(" ,;.-")
+    return value.strip(" ,;.-").upper()
 
 
 def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -599,7 +600,7 @@ def upload_registry(file, ext: str):
 
         biz_id_col = "Business ID" if "Business ID" in df.columns else (
             "businessID" if "businessID" in df.columns else ("business_id" if "business_id" in df.columns else None))
-        biz_ids = df[biz_id_col].astype(str).str.strip(
+        biz_ids = df[biz_id_col].astype(str).str.strip().str.lstrip("#").str.strip(
         ) if biz_id_col else pd.Series("", index=df.index)
         is_new = ~biz_ids.isin(existing_db_ids)
         is_first_occurrence = ~biz_ids.duplicated()
@@ -656,7 +657,7 @@ def upload_registry(file, ext: str):
             business_name = row.get("businessName")
             biz_id_raw = row.get("Business ID") or row.get(
                 "businessID") or row.get("business_id")
-            biz_id = _clean_str(biz_id_raw) or ""
+            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip()
 
             if not biz_id:
                 skipped += 1
@@ -872,7 +873,7 @@ def sync_registry(file, ext: str):
             business_name = row.get("businessName")
             biz_id_raw = row.get("Business ID") or row.get(
                 "businessID") or row.get("business_id")
-            biz_id = _clean_str(biz_id_raw) or ""
+            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip()
 
             if not biz_id:
                 skipped += 1

@@ -16,12 +16,12 @@ class NormalizeBusinessAddressTests(unittest.TestCase):
         self.assertEqual(
             normalize_business_address(
                 "V. Templo St. District IV Mataasnakahoy Batangas"),
-            "V. Templo Street",
+            "V. TEMPLO STREET",
         )
         self.assertEqual(
             normalize_business_address(
                 "Rizal St. District III Mataasnakahoy Batangas"),
-            "Rizal Street",
+            "RIZAL STREET",
         )
 
 
