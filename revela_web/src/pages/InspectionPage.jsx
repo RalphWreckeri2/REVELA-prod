@@ -34,6 +34,18 @@ const formatResult = (val) => {
   }
 };
 
+const distanceMeters = (lat1, lng1, lat2, lng2) => {
+  const toRadians = (degrees) => degrees * Math.PI / 180;
+  const dLat = toRadians(lat2 - lat1);
+  const dLng = toRadians(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const finiteNumberOrNaN = (value) =>
+  value === null || value === undefined || value === "" ? Number.NaN : Number(value);
+
 // ── Icons ──────────────────────────────────────────────────────────────────────
 const Icon = {
   MapPin: () => (
@@ -289,12 +301,39 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing }) {
 function VerifyModal({ report, token, onClose, onSuccess, isClosing }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
+  const gpsLat = finiteNumberOrNaN(report.verifiedLatitude);
+  const gpsLng = finiteNumberOrNaN(report.verifiedLongitude);
+  const pinLat = finiteNumberOrNaN(report.latitude);
+  const pinLng = finiteNumberOrNaN(report.longitude);
+  const hasGps = Number.isFinite(gpsLat) && Number.isFinite(gpsLng);
+  const hasPin = Number.isFinite(pinLat) && Number.isFinite(pinLng);
+  const distance = hasGps && hasPin ? distanceMeters(gpsLat, gpsLng, pinLat, pinLng) : null;
+  const accuracy = finiteNumberOrNaN(report.verifiedAccuracy);
+  const hasAccuracy = Number.isFinite(accuracy) && accuracy >= 0;
+  const shouldSuggestLocationUpdate = hasGps
+    && (!hasPin || distance <= 500)
+    && hasAccuracy
+    && accuracy <= 100;
+  const [updateLocation, setUpdateLocation] = useState(shouldSuggestLocationUpdate);
+
+  const distanceLabel = distance == null
+    ? null
+    : distance < 1000
+      ? `${Math.round(distance)} m`
+      : `${(distance / 1000).toFixed(1)} km`;
+  const gpsStatus = distance == null
+    ? { text: hasGps ? "No current pin" : "No GPS fix", color: "#1d4ed8", background: "#eff6ff" }
+    : distance <= 100
+      ? { text: "On-site range", color: "#047857", background: "#ecfdf5" }
+      : distance <= 500
+        ? { text: "Nearby", color: "#a16207", background: "#fefce8" }
+        : { text: "Far from pin", color: "#b91c1c", background: "#fef2f2" };
 
   const handleVerify = async () => {
     setLoading(true);
     setError("");
     try {
-      await verifyInspectionRequest(report.reportID, token);
+      await verifyInspectionRequest(report.reportID, token, updateLocation);
       onSuccess();
       onClose();
     } catch (err) {
@@ -336,6 +375,49 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing }) {
             <p style={{ fontSize: 13, color: "var(--color-ink)", lineHeight: 1.6 }}>{report.remarks}</p>
           </div>
         )}
+
+        <div style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: 12, marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", margin: 0, textTransform: "uppercase" }}>
+              Inspector GPS
+            </p>
+            <span style={{ padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: gpsStatus.color, background: gpsStatus.background }}>
+              {gpsStatus.text}
+            </span>
+          </div>
+          {hasGps ? (
+            <>
+              <p style={{ fontSize: 12, color: "var(--color-ink)", margin: "0 0 5px" }}>
+                {gpsLat.toFixed(6)}, {gpsLng.toFixed(6)}
+              </p>
+              <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 5px" }}>
+                Current pin: {hasPin ? `${pinLat.toFixed(6)}, ${pinLng.toFixed(6)}` : "No coordinates"}
+              </p>
+              <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 10px" }}>
+                {hasAccuracy ? `Device accuracy ±${Math.round(accuracy)} m` : "Device accuracy not reported"}
+                {distanceLabel ? ` · ${distanceLabel} from current pin` : ""}
+              </p>
+              {hasAccuracy && accuracy > 100 && (
+                <p style={{ fontSize: 12, color: "#a16207", margin: "0 0 10px" }}>
+                  GPS accuracy is low; review the position before applying it.
+                </p>
+              )}
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, lineHeight: 1.5, color: "var(--color-ink)", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={updateLocation}
+                  onChange={event => setUpdateLocation(event.target.checked)}
+                  style={{ marginTop: 2 }}
+                />
+                Update the map pin and registry location to this GPS position
+              </label>
+            </>
+          ) : (
+            <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
+              This report has no valid GPS fix. Verification will not change the pin location.
+            </p>
+          )}
+        </div>
 
         {(() => {
           const evList = parseInspectionEvidence(report.photoPath);
@@ -411,7 +493,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing }) {
         <p style={{ fontSize: 13, color: "var(--color-ink)", marginBottom: 20, lineHeight: 1.6 }}>
           Review the evidence and notes above. Confirming will update the flag color to&nbsp;
           <strong>{report.inspectionResult}</strong> on the map.
-          This action cannot be undone.
+          The location changes only if the GPS update option is selected.
         </p>
 
         <div style={s.modalFooter}>

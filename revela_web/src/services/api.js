@@ -24,27 +24,36 @@ export function parseInspectionEvidence(photoPath) {
   }
 
   const base = API_ORIGIN.replace(/\/$/, "");
-  return rawPaths.map(p => {
-    if (!p) return null;
-    const isArchived = typeof p === "string" && p.startsWith("archived://");
-    const filename = isArchived ? p.replace("archived://", "") : p.split("/").pop();
-    if (filename === "none" || filename === "no-photo") return null;
-    const url = isArchived ? null : (p.startsWith("http") ? p : (p.startsWith("/") ? `${base}${p}` : `${base}/${p}`));
-    return {
-      raw: p,
-      isArchived,
-      filename,
-      url,
-    };
-  }).filter(Boolean);
+  return rawPaths
+    .map((p) => {
+      if (!p) return null;
+      const isArchived = typeof p === "string" && p.startsWith("archived://");
+      const filename = isArchived
+        ? p.replace("archived://", "")
+        : p.split("/").pop();
+      if (filename === "none" || filename === "no-photo") return null;
+      const url = isArchived
+        ? null
+        : p.startsWith("http")
+          ? p
+          : p.startsWith("/")
+            ? `${base}${p}`
+            : `${base}/${p}`;
+      return {
+        raw: p,
+        isArchived,
+        filename,
+        url,
+      };
+    })
+    .filter(Boolean);
 }
 
 export function inspectionEvidenceUrls(photoPath) {
   return parseInspectionEvidence(photoPath)
-    .filter(item => !item.isArchived && item.url)
-    .map(item => item.url);
+    .filter((item) => !item.isArchived && item.url)
+    .map((item) => item.url);
 }
-
 
 async function handleResponse(res) {
   try {
@@ -350,7 +359,8 @@ export async function getRegistryRequest(params = {}, token) {
     if (params.search) qs.set("search", params.search);
     if (params.barangayID) qs.set("barangayID", params.barangayID);
     if (params.status) qs.set("status", params.status);
-    if (params.registrationType) qs.set("registrationType", params.registrationType);
+    if (params.registrationType)
+      qs.set("registrationType", params.registrationType);
 
     const res = await fetch(`${BASE_URL}/registry/?${qs.toString()}`, {
       method: "GET",
@@ -381,14 +391,17 @@ export async function getBusinessByIdRequest(id, token) {
 
 export async function updateBusinessRequest(businessId, payload, token) {
   try {
-    const res = await fetch(`${BASE_URL}/registry/${encodeURIComponent(businessId)}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
+    const res = await fetch(
+      `${BASE_URL}/registry/${encodeURIComponent(businessId)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload),
-    });
+    );
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);
@@ -397,10 +410,13 @@ export async function updateBusinessRequest(businessId, payload, token) {
 
 export async function deleteBusinessRequest(businessId, token) {
   try {
-    const res = await fetch(`${BASE_URL}/registry/${encodeURIComponent(businessId)}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(
+      `${BASE_URL}/registry/${encodeURIComponent(businessId)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);
@@ -532,7 +548,6 @@ export async function reconcileFlagsRequest(token) {
     connectionGuard(err);
   }
 }
-
 
 export async function getPlacesUsageRequest(token) {
   if (!token) throw new Error("Missing authentication token.");
@@ -766,11 +781,19 @@ export async function submitInspectionRequest(payload, token) {
  * Admin verifies a submitted report → updates flagColor.
  * @param {number} reportId
  */
-export async function verifyInspectionRequest(reportId, token) {
+export async function verifyInspectionRequest(
+  reportId,
+  token,
+  updateLocation = false,
+) {
   try {
     const res = await fetch(`${BASE_URL}/inspections/${reportId}/verify`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ updateLocation }),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -881,7 +904,6 @@ export async function resetWlcConfigRequest(token) {
     connectionGuard(err);
   }
 }
-
 
 /**
  * Normalize (token, filters?) vs (filters, token) — same ambiguity as getFlagsRequest(params, token).
@@ -1013,9 +1035,9 @@ export async function sendAnalyticsChatRequest(payload, token) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1039,14 +1061,17 @@ export async function getEvidenceStorageStatsRequest(token) {
 
 export async function downloadEvidenceArchiveRequest(filter, token) {
   try {
-    const res = await fetch(`${BASE_URL}/inspections/archive-evidence/download`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+    const res = await fetch(
+      `${BASE_URL}/inspections/archive-evidence/download`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ filter }),
       },
-      body: JSON.stringify({ filter }),
-    });
+    );
 
     if (!res.ok) {
       let errMsg = `Download failed with status ${res.status}`;
@@ -1084,17 +1109,19 @@ export async function downloadEvidenceArchiveRequest(filter, token) {
 
 export async function cleanupEvidenceStorageRequest(filter, token) {
   try {
-    const res = await fetch(`${BASE_URL}/inspections/archive-evidence/cleanup`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+    const res = await fetch(
+      `${BASE_URL}/inspections/archive-evidence/cleanup`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ filter, confirm: true }),
       },
-      body: JSON.stringify({ filter, confirm: true }),
-    });
+    );
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);
   }
 }
-

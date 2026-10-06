@@ -65,12 +65,14 @@ class _InspectionModalState extends State<InspectionModal> {
     try {
       double? vLat;
       double? vLng;
+      double? vAccuracy;
       try {
         // Use pre-warmed location if available, otherwise fetch now
         _preWarmLocation();
         final p = await _locationFuture!;
         vLat = p.latitude;
         vLng = p.longitude;
+        vAccuracy = p.accuracy;
       } catch (e) {
         // Reset so next attempt gets a fresh fix
         _locationFuture = null;
@@ -112,6 +114,7 @@ class _InspectionModalState extends State<InspectionModal> {
         notes: remarks.isEmpty ? null : remarks,
         verifiedLat: vLat,
         verifiedLng: vLng,
+        verifiedAccuracy: vAccuracy,
         evidenceFiles: _uploadedPhotoUrls.isEmpty ? _evidenceFiles : null,
         photoURLs: _uploadedPhotoUrls.isEmpty ? null : _uploadedPhotoUrls,
       );
@@ -176,7 +179,9 @@ class _InspectionModalState extends State<InspectionModal> {
           imageQuality: 70,
         );
         if (pickedImage != null && mounted) {
-          final compressedFile = await compressImageFile(File(pickedImage.path));
+          final compressedFile = await compressImageFile(
+            File(pickedImage.path),
+          );
           final processedFile = XFile(compressedFile.path);
           final bytes = await compressedFile.readAsBytes();
           setState(() {
@@ -620,17 +625,26 @@ class _InspectionModalState extends State<InspectionModal> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const _SectionLabel(label: 'Administrative Notice', icon: Icons.gavel_outlined, isRequired: true),
+                            const _SectionLabel(
+                              label: 'Administrative Notice',
+                              icon: Icons.gavel_outlined,
+                              isRequired: true,
+                            ),
                             SizedBox(height: 8),
                             Text(
                               _inspectionResult == 'Orange'
                                   ? 'Select the non-compliance notice level. Enforces sequential escalation.'
                                   : 'Only available when result is "Warned / Non-Compliant".',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
                             ),
                             SizedBox(height: 12),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                              ),
                               decoration: BoxDecoration(
                                 color: context.adaptiveSurface,
                                 borderRadius: BorderRadius.circular(12),
@@ -642,15 +656,61 @@ class _InspectionModalState extends State<InspectionModal> {
                                   isExpanded: true,
                                   dropdownColor: context.adaptiveSurface,
                                   items: [
-                                    DropdownMenuItem(value: 0, child: Text('No Notice Issued', style: TextStyle(color: context.adaptiveTextDark))),
+                                    DropdownMenuItem(
+                                      value: 0,
+                                      child: Text(
+                                        'No Notice Issued',
+                                        style: TextStyle(
+                                          color: context.adaptiveTextDark,
+                                        ),
+                                      ),
+                                    ),
                                     if (widget.task.currentNoticeLevel == 0)
-                                      DropdownMenuItem(value: 1, child: Text('1st Notice: Warning', style: TextStyle(color: const Color(0xFFE65100), fontWeight: FontWeight.bold))),
+                                      DropdownMenuItem(
+                                        value: 1,
+                                        child: Text(
+                                          '1st Notice: Warning',
+                                          style: TextStyle(
+                                            color: const Color(0xFFE65100),
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
                                     if (widget.task.currentNoticeLevel == 1)
-                                      DropdownMenuItem(value: 2, child: Text('2nd Notice: Warning for Closure', style: TextStyle(color: Colors.deepOrange, fontWeight: FontWeight.bold))),
+                                      DropdownMenuItem(
+                                        value: 2,
+                                        child: Text(
+                                          '2nd Notice: Warning for Closure',
+                                          style: TextStyle(
+                                            color: Colors.deepOrange,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
                                     if (widget.task.currentNoticeLevel == 2)
-                                      DropdownMenuItem(value: 3, child: Text('3rd Notice: Closure', style: TextStyle(color: const Color(0xFFBF360C), fontWeight: FontWeight.bold))),
+                                      DropdownMenuItem(
+                                        value: 3,
+                                        child: Text(
+                                          '3rd Notice: Closure',
+                                          style: TextStyle(
+                                            color: const Color(0xFFBF360C),
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
                                     if (widget.task.currentNoticeLevel == 3)
-                                      DropdownMenuItem(value: 4, child: Text('Escalate to Black (Final)', style: TextStyle(color: context.isDarkMode ? Colors.white : Colors.black, fontWeight: FontWeight.bold))),
+                                      DropdownMenuItem(
+                                        value: 4,
+                                        child: Text(
+                                          'Escalate to Black (Final)',
+                                          style: TextStyle(
+                                            color: context.isDarkMode
+                                                ? Colors.white
+                                                : Colors.black,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
                                   ],
                                   onChanged: (val) {
                                     if (val != null) {
@@ -660,7 +720,9 @@ class _InspectionModalState extends State<InspectionModal> {
                                           _inspectionResult = 'Orange';
                                         } else if (val == 4) {
                                           _inspectionResult = 'Black';
-                                        } else if (_inspectionResult == 'Orange' || _inspectionResult == 'Black') {
+                                        } else if (_inspectionResult ==
+                                                'Orange' ||
+                                            _inspectionResult == 'Black') {
                                           _inspectionResult = 'Red';
                                         }
                                       });

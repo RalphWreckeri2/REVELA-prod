@@ -430,7 +430,9 @@ class InspectionService {
             // Retryable (network dropped mid-upload) — back to 'draft' so
             // the next reconnect cycle picks it up again.
             await _offlineStorage.updateDraftStatus(
-                draft.id!, DraftStatus.draft);
+              draft.id!,
+              DraftStatus.draft,
+            );
             await refreshPendingDraftStatuses();
             continue;
           }
@@ -443,6 +445,7 @@ class InspectionService {
               'noticeLevel': draft.noticeLevel,
               'verifiedLat': draft.verifiedLat,
               'verifiedLng': draft.verifiedLng,
+              'verifiedAccuracy': draft.verifiedAccuracy,
               'notes': draft.notes,
               'photoURL': urls.isEmpty ? null : jsonEncode(urls),
             },
@@ -457,7 +460,8 @@ class InspectionService {
           // (e.g. the assignment was revoked while offline) — mark terminal
           // so we stop hammering the API on every reconnect tick. Anything
           // network-level or 5xx also stays retryable.
-          final terminal = code >= 400 &&
+          final terminal =
+              code >= 400 &&
               code < 500 &&
               code != 401 &&
               code != 403 &&
@@ -503,6 +507,7 @@ class InspectionService {
     String? notes,
     double? verifiedLat,
     double? verifiedLng,
+    double? verifiedAccuracy,
     List<String>? evidenceLocalPaths,
     List<XFile>? evidenceFiles,
     List<String>? photoURLs,
@@ -557,6 +562,7 @@ class InspectionService {
           'noticeLevel': noticeLevel,
           'verifiedLat': verifiedLat,
           'verifiedLng': verifiedLng,
+          'verifiedAccuracy': verifiedAccuracy,
           'notes': notes,
           'photoURL': photoUrlPayload,
         },
@@ -575,6 +581,7 @@ class InspectionService {
           noticeLevel: noticeLevel,
           verifiedLat: verifiedLat,
           verifiedLng: verifiedLng,
+          verifiedAccuracy: verifiedAccuracy,
           // Only files that never made it to the server are queued;
           // URLs that uploaded successfully are preserved as-is.
           evidencePaths: pendingPaths,

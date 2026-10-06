@@ -17,7 +17,9 @@ void main() {
 
   test('saves and loads offline drafts', () async {
     final tempDir = Directory.systemTemp.createTempSync('revela_offline_test');
-    final storage = OfflineInspectionStorage(databasePath: '${tempDir.path}/inspection.db');
+    final storage = OfflineInspectionStorage(
+      databasePath: '${tempDir.path}/inspection.db',
+    );
 
     await storage.initialize();
     await storage.clearAll();
@@ -31,6 +33,7 @@ void main() {
       noticeLevel: 1,
       verifiedLat: 14.6,
       verifiedLng: 121.1,
+      verifiedAccuracy: 12.4,
       evidencePaths: const ['local/photo.jpg'],
       createdAt: DateTime.now().toUtc().toIso8601String(),
       updatedAt: DateTime.now().toUtc().toIso8601String(),
@@ -39,7 +42,9 @@ void main() {
 
     final savedId = await storage.saveDraft(draft);
     final db = await storage.database();
-    final count = firstIntValue(await db.rawQuery('SELECT COUNT(*) FROM inspection_drafts'));
+    final count = firstIntValue(
+      await db.rawQuery('SELECT COUNT(*) FROM inspection_drafts'),
+    );
     final drafts = await storage.getDrafts();
 
     // v3 consolidation: drafts, cached tasks AND the task cache all live in
@@ -56,6 +61,7 @@ void main() {
     expect(drafts, hasLength(1));
     expect(drafts.first.inspectionResult, 'Yellow');
     expect(drafts.first.notes, 'Offline draft');
+    expect(drafts.first.verifiedAccuracy, 12.4);
 
     await storage.close();
     tempDir.deleteSync(recursive: true);

@@ -162,6 +162,7 @@ def submit():
         notice_level=notice_level,
         verified_lat=data.get("verifiedLat"),
         verified_lng=data.get("verifiedLng"),
+        verified_accuracy=data.get("verifiedAccuracy"),
         notes=data.get("notes"),
         photo_url=data.get("photoURL"),
     )
@@ -239,9 +240,14 @@ def verify(report_id):
     if request.method == "OPTIONS":
         return "", 204
     """Admin confirms inspection result → updates geospatial_logs flagColor."""
+    data = request.get_json(silent=True) or {}
+    update_location = data.get("updateLocation", False)
+    if not isinstance(update_location, bool):
+        return jsonify({"error": "updateLocation must be a boolean"}), 400
     result, error = verify_inspection(
         report_id=report_id,
         verified_by_user_id=get_jwt_identity(),
+        update_location=update_location,
     )
     if error:
         return jsonify({"error": error}), 400

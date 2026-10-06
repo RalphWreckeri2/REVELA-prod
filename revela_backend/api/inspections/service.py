@@ -25,6 +25,62 @@ def _as_user_id(user_id):
         return user_id
 
 
+def _validated_inspection_gps(latitude, longitude, accuracy=None):
+    try:
+        latitude = float(latitude)
+        longitude = float(longitude)
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            return None, None, None
+    except (TypeError, ValueError):
+        return None, None, None
+
+    try:
+        accuracy = float(accuracy) if accuracy is not None else None
+        if accuracy is not None and (accuracy < 0 or accuracy != accuracy or accuracy == float("inf")):
+            accuracy = None
+    except (TypeError, ValueError):
+        accuracy = None
+    return latitude, longitude, accuracy
+
+
+_gps_columns_ensured = False
+
+
+def _ensure_gps_columns(cursor):
+    global _gps_columns_ensured
+    if _gps_columns_ensured:
+        return
+    try:
+        cursor.execute("SHOW COLUMNS FROM inspection_reports LIKE 'verifiedLatitude'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                ALTER TABLE inspection_reports
+                ADD COLUMN verifiedLatitude DECIMAL(10, 8) DEFAULT NULL AFTER nearestLandmark,
+                ADD COLUMN verifiedLongitude DECIMAL(11, 8) DEFAULT NULL AFTER verifiedLatitude,
+                ADD COLUMN verifiedAccuracy DECIMAL(8, 2) DEFAULT NULL AFTER verifiedLongitude
+            """)
+        _gps_columns_ensured = True
+    except Exception as e:
+        print(f"[inspections] GPS columns ensure notice: {e}")
+
+
+def _inspection_report_gps(report):
+    latitude = report.get("verifiedLatitude")
+    longitude = report.get("verifiedLongitude")
+    accuracy = report.get("verifiedAccuracy")
+
+    if latitude is None or longitude is None:
+        legacy_location = report.get("nearestLandmark") or ""
+        match = re.fullmatch(
+            r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*",
+            str(legacy_location),
+        )
+        if match:
+            latitude, longitude = match.groups()
+
+    return _validated_inspection_gps(latitude, longitude, accuracy)
+
+
 def get_inspector_tasks(user_id):
     """
     Return all inspection reports assigned to this inspector
@@ -134,6 +190,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
     """
     try:
         cursor = mysql.connection.cursor()
+        _ensure_gps_columns(cursor)
 
         # Guard: check the log exists
         cursor.execute(
@@ -188,6 +245,9 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
                     photoPath = NULL,
                     resolutionTime = NULL,
                     nearestLandmark = NULL,
+                    verifiedLatitude = NULL,
+                    verifiedLongitude = NULL,
+                    verifiedAccuracy = NULL,
                     irTimestamp = NOW()
                 WHERE reportID = %s
             """, (inspector_user_id, new_status, deadline, existing["reportID"]))
@@ -243,16 +303,17 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
 
 def submit_inspection(log_id, user_id, inspection_result,
                       notice_level=0,
-                      verified_lat=None, verified_lng=None,
+                      verified_lat=None, verified_lng=None, verified_accuracy=None,
                       notes=None, photo_url=None):
     """
     Inspector submits their field report for a given logID.
     Updates the existing Assigned report row to 'Submitted'.
-    verifiedLat/Lng stored in nearestLandmark as JSON-ish string for now
-    (extend schema if you add dedicated columns later).
+    GPS coordinates are stored separately; nearestLandmark retains the legacy
+    coordinate string for compatibility with older report readers.
     """
     try:
         cursor = mysql.connection.cursor()
+        _ensure_gps_columns(cursor)
 
         # Find the open assignment for this inspector + log
         uid = _as_user_id(user_id)
@@ -279,9 +340,10 @@ def submit_inspection(log_id, user_id, inspection_result,
         timing = cursor.fetchone()
         resolution_mins = timing["mins"] if timing else None
 
-        # Build a coords string for nearestLandmark if coords provided
+        verified_lat, verified_lng, verified_accuracy = _validated_inspection_gps(
+            verified_lat, verified_lng, verified_accuracy)
         landmark = None
-        if verified_lat and verified_lng:
+        if verified_lat is not None and verified_lng is not None:
             landmark = f"{verified_lat},{verified_lng}"
 
         cursor.execute("""
@@ -292,6 +354,9 @@ def submit_inspection(log_id, user_id, inspection_result,
                 remarks             = %s,
                 photoPath           = %s,
                 nearestLandmark     = COALESCE(%s, nearestLandmark),
+                verifiedLatitude    = %s,
+                verifiedLongitude   = %s,
+                verifiedAccuracy    = %s,
                 resolutionTime      = %s
             WHERE reportID = %s
         """, (
@@ -300,6 +365,9 @@ def submit_inspection(log_id, user_id, inspection_result,
             notes,
             photo_url,
             landmark,
+            verified_lat,
+            verified_lng,
+            verified_accuracy,
             resolution_mins,
             report["reportID"],
         ))
@@ -360,6 +428,7 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
     """
     try:
         cursor = mysql.connection.cursor()
+        _ensure_gps_columns(cursor)
 
         cursor.execute(
             """
@@ -408,6 +477,9 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
                 photoPath = NULL,
                 resolutionTime = NULL,
                 nearestLandmark = NULL,
+                verifiedLatitude = NULL,
+                verifiedLongitude = NULL,
+                verifiedAccuracy = NULL,
                 deadline = %s,
                 irTimestamp = NOW()
             WHERE reportID = %s
@@ -456,19 +528,25 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
 
 # ── Verify inspection ─────────────────────────────────────────────────────────
 
-def verify_inspection(report_id, verified_by_user_id=None):
+def verify_inspection(report_id, verified_by_user_id=None, update_location=False):
     """
     Admin confirms the inspection result.
     1. Set verificationStatus → 'Verified'
     2. Update geospatial_logs.flagColor to match inspectionResult
+    3. Optionally apply the inspector GPS after explicit admin confirmation.
     """
     try:
         cursor = mysql.connection.cursor()
+        _ensure_gps_columns(cursor)
 
         cursor.execute("""
-            SELECT reportID, targetID, userID, inspectionResult, noticeLevel, verificationStatus
-            FROM inspection_reports
-            WHERE reportID = %s
+                 SELECT ir.reportID, ir.targetID, ir.userID, ir.inspectionResult,
+                     ir.noticeLevel, ir.verificationStatus, ir.verifiedLatitude,
+                     ir.verifiedLongitude, ir.verifiedAccuracy, ir.nearestLandmark,
+                     g.detectedName, g.barangayID
+                 FROM inspection_reports ir
+                 LEFT JOIN geospatial_logs g ON g.logID = ir.targetID
+            WHERE ir.reportID = %s
         """, (report_id,))
         report = cursor.fetchone()
 
@@ -488,6 +566,45 @@ def verify_inspection(report_id, verified_by_user_id=None):
         cursor.execute(
             "SELECT flagColor FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
         geo_flag = cursor.fetchone()
+
+        location_updated = False
+        if update_location:
+            latitude, longitude, _ = _inspection_report_gps(report)
+            if latitude is None or longitude is None:
+                cursor.close()
+                return None, "This inspection has no valid GPS coordinates to apply"
+
+            from api.flags.service import _get_barangay_id_by_coords, _within_municipality
+
+            if not _within_municipality(latitude, longitude):
+                cursor.close()
+                return None, "Inspector GPS is outside the Mataasnakahoy boundary"
+
+            new_barangay_id = _get_barangay_id_by_coords(latitude, longitude)
+            if new_barangay_id is None:
+                cursor.close()
+                return None, "Could not determine the barangay for the inspector GPS"
+
+            cursor.execute(
+                """UPDATE geospatial_logs
+                   SET latitude = %s, longitude = %s, barangayID = %s
+                   WHERE logID = %s""",
+                (latitude, longitude, new_barangay_id, report["targetID"]),
+            )
+            if cursor.rowcount != 1:
+                mysql.connection.rollback()
+                cursor.close()
+                return None, "The target map pin could not be updated"
+
+            if report.get("detectedName") and report.get("barangayID") is not None:
+                cursor.execute(
+                    """UPDATE official_registry
+                       SET latitude = %s, longitude = %s, barangayID = %s
+                       WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s""",
+                    (latitude, longitude, new_barangay_id,
+                     report["detectedName"], report["barangayID"]),
+                )
+            location_updated = True
 
         # Update report status
         cursor.execute("""
@@ -526,6 +643,7 @@ def verify_inspection(report_id, verified_by_user_id=None):
             assigned_to_user_id=report["userID"],
             flag_color_at_event=geo_flag["flagColor"] if geo_flag else None,
             inspection_result=report["inspectionResult"],
+            remarks="Map location updated to inspector GPS" if location_updated else None,
             cycle_id=cycle_id,
         )
 
@@ -540,6 +658,7 @@ def verify_inspection(report_id, verified_by_user_id=None):
                 "logID": report["targetID"],
                 "status": "Verified",
                 "newFlagColor": report["inspectionResult"],
+                "locationUpdated": location_updated,
             })
         except Exception:
             pass
@@ -549,6 +668,7 @@ def verify_inspection(report_id, verified_by_user_id=None):
             "logID":            report["targetID"],
             "newFlagColor":     report["inspectionResult"],
             "status":           "Verified",
+            "locationUpdated":  location_updated,
         }, None
 
     except Exception as e:
@@ -565,6 +685,7 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
     """
     try:
         cursor = mysql.connection.cursor()
+        _ensure_gps_columns(cursor)
 
         conditions = []
         params = []
@@ -623,6 +744,9 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
                 ir.deadline,
                 ir.resolutionTime,
                 ir.nearestLandmark,
+                ir.verifiedLatitude,
+                ir.verifiedLongitude,
+                ir.verifiedAccuracy,
                 g.detectedName,
                 g.flagColor,
                 g.latitude,
@@ -650,6 +774,10 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
         cursor.close()
 
         for row in rows:
+            latitude, longitude, accuracy = _inspection_report_gps(row)
+            row["verifiedLatitude"] = latitude
+            row["verifiedLongitude"] = longitude
+            row["verifiedAccuracy"] = accuracy
             if row.get("irTimestamp"):
                 row["irTimestamp"] = str(row["irTimestamp"])
             if row.get("deadline"):

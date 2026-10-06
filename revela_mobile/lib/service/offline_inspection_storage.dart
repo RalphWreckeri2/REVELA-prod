@@ -16,6 +16,7 @@ class InspectionDraft {
   final int noticeLevel;
   final double? verifiedLat;
   final double? verifiedLng;
+  final double? verifiedAccuracy;
   final List<String> evidencePaths;
   final String? photoUrlPayload;
   final String createdAt;
@@ -31,6 +32,7 @@ class InspectionDraft {
     required this.noticeLevel,
     this.verifiedLat,
     this.verifiedLng,
+    this.verifiedAccuracy,
     required this.evidencePaths,
     this.photoUrlPayload,
     required this.createdAt,
@@ -48,6 +50,7 @@ class InspectionDraft {
       'noticeLevel': noticeLevel,
       'verifiedLat': verifiedLat,
       'verifiedLng': verifiedLng,
+      'verifiedAccuracy': verifiedAccuracy,
       'evidencePaths': jsonEncode(evidencePaths),
       'photoUrlPayload': photoUrlPayload,
       'createdAt': createdAt,
@@ -64,14 +67,22 @@ class InspectionDraft {
       inspectionResult: map['inspectionResult'] as String,
       notes: map['notes'] as String?,
       noticeLevel: map['noticeLevel'] as int,
-      verifiedLat: map['verifiedLat'] != null ? (map['verifiedLat'] as num).toDouble() : null,
-      verifiedLng: map['verifiedLng'] != null ? (map['verifiedLng'] as num).toDouble() : null,
+      verifiedLat: map['verifiedLat'] != null
+          ? (map['verifiedLat'] as num).toDouble()
+          : null,
+      verifiedLng: map['verifiedLng'] != null
+          ? (map['verifiedLng'] as num).toDouble()
+          : null,
+      verifiedAccuracy: map['verifiedAccuracy'] != null
+          ? (map['verifiedAccuracy'] as num).toDouble()
+          : null,
       evidencePaths: _decodePaths(map['evidencePaths'] as String?),
       photoUrlPayload: map['photoUrlPayload'] as String?,
       createdAt: map['createdAt'] as String,
       updatedAt: map['updatedAt'] as String,
       status: DraftStatus.values.firstWhere(
-        (value) => value.name == (map['status'] as String? ?? DraftStatus.draft.name),
+        (value) =>
+            value.name == (map['status'] as String? ?? DraftStatus.draft.name),
         orElse: () => DraftStatus.draft,
       ),
     );
@@ -92,9 +103,11 @@ class InspectionDraft {
 }
 
 class OfflineInspectionStorage {
-  OfflineInspectionStorage._internal({String? databasePath}) : _databasePathOverride = databasePath;
+  OfflineInspectionStorage._internal({String? databasePath})
+    : _databasePathOverride = databasePath;
 
-  static final OfflineInspectionStorage _instance = OfflineInspectionStorage._internal();
+  static final OfflineInspectionStorage _instance =
+      OfflineInspectionStorage._internal();
 
   factory OfflineInspectionStorage({String? databasePath}) {
     if (databasePath != null) {
@@ -121,7 +134,7 @@ class OfflineInspectionStorage {
     }
     _db = await openDatabase(
       normalizedDbPath,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS inspection_drafts (
@@ -133,6 +146,7 @@ class OfflineInspectionStorage {
             noticeLevel INTEGER NOT NULL DEFAULT 0,
             verifiedLat REAL,
             verifiedLng REAL,
+            verifiedAccuracy REAL,
             evidencePaths TEXT,
             photoUrlPayload TEXT,
             createdAt TEXT NOT NULL,
@@ -164,7 +178,9 @@ class OfflineInspectionStorage {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           try {
-            await db.execute('ALTER TABLE cached_tasks ADD COLUMN user_id TEXT');
+            await db.execute(
+              'ALTER TABLE cached_tasks ADD COLUMN user_id TEXT',
+            );
           } catch (_) {}
         }
         if (oldVersion < 3) {
@@ -182,6 +198,11 @@ class OfflineInspectionStorage {
               deadline TEXT
             )
           ''');
+        }
+        if (oldVersion < 4) {
+          await db.execute(
+            'ALTER TABLE inspection_drafts ADD COLUMN verifiedAccuracy REAL',
+          );
         }
       },
     );
@@ -229,10 +250,17 @@ class OfflineInspectionStorage {
     return rows.map(InspectionDraft.fromMap).toList();
   }
 
-  Future<void> saveCachedTasks(List<Map<String, dynamic>> tasks, {String? userId}) async {
+  Future<void> saveCachedTasks(
+    List<Map<String, dynamic>> tasks, {
+    String? userId,
+  }) async {
     final db = await database();
     if (userId != null && userId.isNotEmpty) {
-      await db.delete('cached_tasks', where: 'user_id = ?', whereArgs: [userId]);
+      await db.delete(
+        'cached_tasks',
+        where: 'user_id = ?',
+        whereArgs: [userId],
+      );
       await db.insert('cached_tasks', {
         'user_id': userId,
         'payload': jsonEncode(tasks),
@@ -259,7 +287,11 @@ class OfflineInspectionStorage {
         limit: 1,
       );
     } else {
-      rows = await db.query('cached_tasks', orderBy: 'updatedAt DESC', limit: 1);
+      rows = await db.query(
+        'cached_tasks',
+        orderBy: 'updatedAt DESC',
+        limit: 1,
+      );
     }
     if (rows.isEmpty) return [];
     final payload = rows.first['payload'] as String?;
@@ -283,7 +315,10 @@ class OfflineInspectionStorage {
     final db = await database();
     await db.update(
       'inspection_drafts',
-      {'status': status.name, 'updatedAt': DateTime.now().toUtc().toIso8601String()},
+      {
+        'status': status.name,
+        'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      },
       where: 'id = ?',
       whereArgs: [id],
     );
