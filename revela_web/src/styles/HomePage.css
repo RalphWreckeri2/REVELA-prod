@@ -315,13 +315,14 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding-left: 8px;
 }
 
 .hero-cards {
   flex: 1;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -330,10 +331,10 @@
   border: 1px solid rgba(86, 171, 47, 0.18);
   backdrop-filter: blur(10px);
   border-radius: 16px;
-  padding: 14px 12px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   /* Size container: lets .hero-clock / .hero-temp scale with the card itself */
   container-type: inline-size;
@@ -490,7 +491,8 @@
   border: 1px solid rgba(86, 171, 47, 0.18);
   backdrop-filter: blur(10px);
   border-radius: 16px;
-  padding: 16px 18px;
+  padding: 18px 20px;
+  margin-top: 4px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;

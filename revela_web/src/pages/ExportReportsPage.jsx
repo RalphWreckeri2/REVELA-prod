@@ -916,12 +916,12 @@ export default function ExportReportsPage() {
               </div>
             </div>
 
-            {/* Demographic Charts Grid (2 columns) */}
+            {/* Demographic Charts Grid (3 columns side by side) */}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 460px), 1fr))",
-                gap: 22
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                gap: 18
               }}
             >
               {/* ── CHART 1: Business Size Classification ── */}

@@ -118,26 +118,31 @@ function InspectorReportsModalInner({ isOpen, onClose, flags, inspectors, naviga
           </div>
           
           {/* Color filter pills */}
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {["all", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"].map(c => (
-              <button
-                key={c}
-                onClick={() => setFilterColor(c)}
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 20,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                  border: "1px solid",
-                  background: filterColor === c ? (c === "all" ? "var(--color-ink)" : FLAG_COLORS[c]?.marker ?? "var(--color-ink)") : "var(--color-hover)",
-                  color: filterColor === c ? (c === "all" ? "var(--color-surface)" : "#fff") : "var(--color-muted)",
-                  borderColor: filterColor === c ? "transparent" : "var(--color-border-soft)",
-                }}
-              >
-                {c === "all" ? "All" : (FLAG_COLORS[c]?.label ?? c)}
-              </button>
-            ))}
+          <div style={{ display: "flex", gap: 6, flexWrap: "nowrap", overflowX: "auto", paddingBottom: 4, maxWidth: "100%" }}>
+            {["all", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"].map(c => {
+              const isSelected = filterColor === c;
+              return (
+                <button
+                  key={c}
+                  onClick={() => setFilterColor(c)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 20,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    border: "1px solid",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                    background: isSelected ? (c === "all" ? "var(--color-primary)" : FLAG_COLORS[c]?.marker ?? "var(--color-primary)") : "var(--color-input-bg)",
+                    color: isSelected ? "#ffffff" : "var(--color-ink)",
+                    borderColor: isSelected ? "transparent" : "var(--color-border)",
+                  }}
+                >
+                  {c === "all" ? "All" : (FLAG_COLORS[c]?.label ?? c)}
+                </button>
+              );
+            })}
           </div>
         </div>
 

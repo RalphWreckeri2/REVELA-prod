@@ -2805,8 +2805,14 @@ export default function MapPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  padding: "0 10px",
-                  background: showAdvancedTools ? "var(--color-bg-secondary, #f1f5f9)" : "transparent"
+                  padding: "8px 12px",
+                  height: 38,
+                  borderRadius: "var(--radius-md)",
+                  background: showAdvancedTools ? "var(--color-primary-light)" : "var(--color-input-bg)",
+                  color: showAdvancedTools ? "var(--color-primary)" : "var(--color-ink)",
+                  borderColor: showAdvancedTools ? "var(--color-primary)" : "var(--color-border)",
+                  cursor: "pointer",
+                  transition: "all 0.15s ease"
                 }}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -2816,19 +2822,28 @@ export default function MapPage() {
                 </svg>
               </button>
               {showAdvancedTools && (
-                <>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
                   <button
                     className="ghost-btn"
                     type="button"
                     onClick={handleReconcile}
                     disabled={runDetectionLoading || reconcileProgress?.stage === 'running'}
                     title="Re-check Red flags against the registry and fix mis-colored pins"
-                    style={{ display: "inline-flex", alignItems: "center", gap: "6px", opacity: reconcileProgress?.stage === 'running' ? 0.55 : 1 }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      height: 38,
+                      borderRadius: "var(--radius-md)",
+                      background: "var(--color-input-bg)",
+                      color: "var(--color-ink)",
+                      borderColor: "var(--color-border)",
+                      opacity: reconcileProgress?.stage === 'running' ? 0.55 : 1
+                    }}
                   >
                     {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
                   </button>
-
-                </>
+                </div>
               )}
             </>
           )}
@@ -2866,39 +2881,42 @@ export default function MapPage() {
 
           {/* Layer toggle */}
           <div className="frosted-glass saas-card" style={styles.layerBar}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
               <Icon.Layers />
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>Layers</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", whiteSpace: "nowrap" }}>Layers</span>
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {LAYER_OPTIONS.map(l => (
-                <button
-                  key={l.id}
-                  onClick={() => {
-                    if (l.id === "base") {
-                      setSatellite(prev => !prev);
-                    } else {
-                      setLayers(prev => ({ ...prev, [l.id]: !prev[l.id] }));
-                    }
-                  }}
-                  style={{
-                    ...styles.layerToggle,
-                    background: (l.id === "base" ? satellite : layers[l.id])
-                      ? "var(--color-primary)" : "var(--color-hover)",
-                    color: (l.id === "base" ? satellite : layers[l.id])
-                      ? "#fff" : "var(--color-muted)",
-                    borderColor: (l.id === "base" ? satellite : layers[l.id])
-                      ? "var(--color-primary)" : "var(--color-border-soft)",
-                  }}
-                >
-                  {l.label}
-                  {l.id === "diagnostics" && layers.diagnostics && clustersLoading && (
-                    <span style={{ fontSize: 11, color: "var(--color-muted)", marginLeft: 4 }}>
-                      loadingâ€¦
-                    </span>
-                  )}
-                </button>
-              ))}
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflowX: "auto" }}>
+              {LAYER_OPTIONS.map(l => {
+                const isActive = l.id === "base" ? satellite : layers[l.id];
+                return (
+                  <button
+                    key={l.id}
+                    onClick={() => {
+                      if (l.id === "base") {
+                        setSatellite(prev => !prev);
+                      } else {
+                        setLayers(prev => ({ ...prev, [l.id]: !prev[l.id] }));
+                      }
+                    }}
+                    style={{
+                      ...styles.layerToggle,
+                      background: isActive ? "var(--color-primary)" : "var(--color-input-bg)",
+                      color: isActive ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-ink)",
+                      borderColor: isActive ? "var(--color-primary)" : "var(--color-border)",
+                      fontWeight: isActive ? 700 : 600,
+                      whiteSpace: "nowrap",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {l.label}
+                    {l.id === "diagnostics" && layers.diagnostics && clustersLoading && (
+                      <span style={{ fontSize: 11, color: isActive ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-muted)", marginLeft: 4 }}>
+                        loading…
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -3261,8 +3279,8 @@ const styles = {
   mapLayout: { display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "stretch" },
   mapColumn: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 },
 
-  layerBar: { display: "flex", alignItems: "center", gap: 16, padding: "12px 18px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
-  layerToggle: { padding: "6px 12px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s" },
+  layerBar: { display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", borderRadius: "var(--radius-lg)", flexWrap: "nowrap", overflowX: "auto" },
+  layerToggle: { padding: "6px 14px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s", whiteSpace: "nowrap", flexShrink: 0 },
 
   mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: 1, minHeight: 480 },
   mapCanvas: { width: "100%", height: "100%", position: "relative", background: "#e8f5e2" },
