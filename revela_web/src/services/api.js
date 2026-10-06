@@ -364,12 +364,12 @@ export async function getRegistryRequest(params = {}, token) {
 
 /**
  * Fetch a single business by ID.
- * @param {number} id
+ * @param {string|number} id
  * @param {string} token
  */
 export async function getBusinessByIdRequest(id, token) {
   try {
-    const res = await fetch(`${BASE_URL}/registry/${id}`, {
+    const res = await fetch(`${BASE_URL}/registry/${encodeURIComponent(id)}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -381,13 +381,25 @@ export async function getBusinessByIdRequest(id, token) {
 
 export async function updateBusinessRequest(businessId, payload, token) {
   try {
-    const res = await fetch(`${BASE_URL}/registry/${businessId}`, {
+    const res = await fetch(`${BASE_URL}/registry/${encodeURIComponent(businessId)}`, {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function deleteBusinessRequest(businessId, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/registry/${encodeURIComponent(businessId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
     });
     return await handleResponse(res);
   } catch (err) {

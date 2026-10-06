@@ -123,53 +123,7 @@ def get_registry():
     return jsonify(result), 200
 
 
-# ── GET /api/registry/<id> ────────────────────────────────────────────────────
-@registry_bp.route("/<int:business_id>", methods=["GET"])
-@jwt_required()
-def get_business(business_id):
-    """Return a single business record by ID."""
-    business, error = get_business_by_id(business_id)
-
-    if error:
-        return jsonify({"error": error}), 500
-    if not business:
-        return jsonify({"error": "Business not found"}), 404
-
-    return jsonify(business), 200
-
-
-# ── PUT /api/registry/<id> ────────────────────────────────────────────────────
-@registry_bp.route("/<int:business_id>", methods=["PUT"])
-@admin_required()
-def edit_business(business_id):
-    """Update a single business record by ID."""
-    data = request.get_json()
-    if not data:
-        return jsonify({"error": "No data provided"}), 400
-
-    success, error = update_business(business_id, data)
-
-    if error:
-        status_code = 404 if error == "Business not found" else 500
-        return jsonify({"error": error}), status_code
-
-    return jsonify({"message": "Business updated successfully"}), 200
-
-
-# ── DELETE /api/registry/<id> ─────────────────────────────────────────────────
-@registry_bp.route("/<int:business_id>", methods=["DELETE"])
-@admin_required()
-def delete_business_route(business_id):
-    """Delete a single business record by ID."""
-    success, error = delete_business(business_id)
-
-    if error:
-        status_code = 404 if error == "Business not found" else 500
-        return jsonify({"error": error}), status_code
-
-    return jsonify({"message": "Business deleted successfully"}), 200
-
-
+# ── GET /api/registry/barangays ───────────────────────────────────────────────
 @registry_bp.route("/barangays", methods=["GET"])
 @jwt_required()
 def get_barangays():
@@ -197,7 +151,7 @@ def review_queue():
 
 
 # ── POST /api/registry/<id>/review  body: {"action": "approve" | "reject"} ────
-@registry_bp.route("/<int:business_id>/review", methods=["POST"])
+@registry_bp.route("/<path:business_id>/review", methods=["POST"])
 @admin_required()
 def review_decide(business_id):
     data = request.get_json(silent=True) or {}
@@ -208,3 +162,50 @@ def review_decide(business_id):
     if not ok:
         return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
     return jsonify({"message": f"Pin {action}d"}), 200
+
+
+# ── GET /api/registry/<id> ────────────────────────────────────────────────────
+@registry_bp.route("/<path:business_id>", methods=["GET"])
+@jwt_required()
+def get_business(business_id):
+    """Return a single business record by ID."""
+    business, error = get_business_by_id(business_id)
+
+    if error:
+        return jsonify({"error": error}), 500
+    if not business:
+        return jsonify({"error": "Business not found"}), 404
+
+    return jsonify(business), 200
+
+
+# ── PUT /api/registry/<id> ────────────────────────────────────────────────────
+@registry_bp.route("/<path:business_id>", methods=["PUT"])
+@admin_required()
+def edit_business(business_id):
+    """Update a single business record by ID."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+
+    success, error = update_business(business_id, data)
+
+    if error:
+        status_code = 404 if error == "Business not found" else 500
+        return jsonify({"error": error}), status_code
+
+    return jsonify({"message": "Business updated successfully"}), 200
+
+
+# ── DELETE /api/registry/<id> ─────────────────────────────────────────────────
+@registry_bp.route("/<path:business_id>", methods=["DELETE"])
+@admin_required()
+def delete_business_route(business_id):
+    """Delete a single business record by ID."""
+    success, error = delete_business(business_id)
+
+    if error:
+        status_code = 404 if error == "Business not found" else 500
+        return jsonify({"error": error}), status_code
+
+    return jsonify({"message": "Business deleted successfully"}), 200

@@ -951,7 +951,7 @@ def sync_registry(file, ext: str):
         return None, str(e)
 
 
-def update_business(business_id: int, data: dict):
+def update_business(business_id, data: dict):
     """Manually update business information in the registry."""
     try:
         cursor = mysql.connection.cursor()
@@ -1043,7 +1043,7 @@ def update_business(business_id: int, data: dict):
         return False, str(e)
 
 
-def delete_business(business_id: int):
+def delete_business(business_id):
     """Delete a business from the registry."""
     try:
         cursor = mysql.connection.cursor()
@@ -1192,7 +1192,7 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         return None, str(e)
 
 
-def get_business_by_id(business_id: int):
+def get_business_by_id(business_id):
     """Return a single business record with flagColor and inspection history."""
     try:
         # check_and_expire_old_permits is now handled by the APScheduler
@@ -1261,10 +1261,10 @@ def get_business_by_id(business_id: int):
                 u.fullName AS inspectorName
             FROM inspection_reports ir
             JOIN users u ON ir.userID = u.userID
-            WHERE ir.targetID = %s AND ir.targetType = 'business'
+            WHERE CAST(ir.targetID AS CHAR) = %s AND ir.targetType = 'business'
             ORDER BY ir.irTimestamp DESC
             """,
-            (business_id,),
+            (str(business_id),),
         )
         inspections = cursor.fetchall()
         cursor.close()

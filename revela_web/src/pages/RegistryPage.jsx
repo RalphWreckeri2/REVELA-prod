@@ -16,6 +16,7 @@ import {
   getBusinessByIdRequest,
   getBarangaysRequest,
   updateBusinessRequest,
+  deleteBusinessRequest,
 } from "../services/api";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -182,14 +183,13 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
         const data = await getBusinessByIdRequest(businessId, token);
         setBusiness(data);
         setFormData({
-          businessName: data.businessName,
-          ownerName: data.ownerName,
-          address: data.address,
-          status: data.status,
-          contactEmail: data.contactEmail || "",
-          contactPhone: data.contactPhone || "",
+          businessName: data.businessName || "",
+          registrationType: data.registrationType || "",
           businessType: data.businessType || "",
-          dateRegistered: data.dateRegistered,
+          lineOfBusiness: data.lineOfBusiness || "",
+          businessSize: data.businessSize || "",
+          businessAddress: data.businessAddress || "",
+          applicationStatus: data.applicationStatus || "Pending",
         });
       } catch (err) {
         setError(err.message || "Failed to load details.");
@@ -237,15 +237,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
       setSaving(true);
       setError("");
       try {
-        const baseUrl = (import.meta.env && import.meta.env.VITE_API_ORIGIN) ? `${import.meta.env.VITE_API_ORIGIN}/api` : "http://localhost:5000/api";
-        const res = await fetch(`${baseUrl}/registry/${businessId}`, {
-          method: 'DELETE',
-          headers: { "Authorization": `Bearer ${token}` }
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || "Failed to delete business");
-        }
+        await deleteBusinessRequest(businessId, token);
         Swal.fire({ icon: 'success', title: 'Deleted', text: 'Business deleted successfully.', timer: 1500, showConfirmButton: false });
         if (onSuccess) onSuccess();
         window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { timestamp: Date.now() } }));
@@ -271,6 +263,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
         {business && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {[
+              ["Business ID", business.businessID || "—", "readonly"],
               ["Business Name", business.businessName, "title", "businessName"],
               ["Registration Type", business.registrationType || "—", "regType", "registrationType"],
               ["Business Type", business.businessType || "—", "plain", "businessType"],
@@ -378,13 +371,22 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
           ) : (
             <>
               {isAdmin && (
-                <button className="ghost-btn" style={{ color: "var(--color-danger)", marginRight: "auto" }} onClick={handleDelete} disabled={saving}>
+                <button
+                  className="ghost-btn"
+                  style={{ color: "var(--color-danger)", marginRight: "auto" }}
+                  onClick={handleDelete}
+                  disabled={saving || !business}
+                >
                   Delete
                 </button>
               )}
               <button className="ghost-btn" onClick={onClose}>Close</button>
               {isAdmin && (
-                <button className="primary-btn" onClick={() => setIsEditing(true)}>
+                <button
+                  className="primary-btn"
+                  onClick={() => setIsEditing(true)}
+                  disabled={saving || !business}
+                >
                   <Icon.Edit /> Edit Details
                 </button>
               )}
