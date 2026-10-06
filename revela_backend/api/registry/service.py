@@ -384,7 +384,10 @@ def _parse_renewal_date(raw) -> str | None:
         raw_str = str(raw).strip()
         if raw_str.isdigit() and len(raw_str) == 4:
             return f"{int(raw_str):04d}-01-01 00:00:00"
-        return pd.to_datetime(raw).strftime("%Y-%m-%d %H:%M:%S")
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return pd.to_datetime(raw, dayfirst=False).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return None
 
