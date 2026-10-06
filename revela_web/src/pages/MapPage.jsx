@@ -962,33 +962,39 @@ function MapCanvas({
   }, [geoJsonFeatureStyle]);
 
   // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
-  const buildMarkerContent = useCallback((flag, selected) => {
+  const buildMarkerContent = useCallback((flag, selected, isAdjusting = false) => {
     const fc = getFlagColor(flag.color);
     const color = selected ? "#2563eb" : fc.marker;
-    const w = selected ? 32 : 26;
-    const h = selected ? 42 : 34;
+    const w = (selected || isAdjusting) ? 34 : 26;
+    const h = (selected || isAdjusting) ? 44 : 34;
 
     const el = document.createElement("div");
     el.style.cssText = `
       width: ${w}px;
       height: ${h}px;
-      cursor: pointer;
-      filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
-      transition: transform 0.15s ease;
+      cursor: ${isAdjusting ? 'grab' : 'pointer'};
+      filter: drop-shadow(0 ${isAdjusting ? 4 : 2}px ${isAdjusting ? 8 : 5}px rgba(0,0,0,${isAdjusting ? 0.5 : 0.35}));
+      ${isAdjusting ? '' : 'transition: transform 0.15s ease;'}
       position: relative;
       user-select: none;
+      touch-action: none;
     `;
 
+    if (isAdjusting) {
+      el.addEventListener('mousedown', () => { el.style.cursor = 'grabbing'; });
+      el.addEventListener('mouseup', () => { el.style.cursor = 'grab'; });
+    }
+
     let innerHtml = `
-      <svg viewBox="0 0 24 32" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible;">
-        <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="${color}" stroke="#ffffff" stroke-width="1.2" />
+      <svg viewBox="0 0 24 32" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible; pointer-events: none;" draggable="false">
+        <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="${color}" stroke="#ffffff" stroke-width="${isAdjusting ? 2.5 : 1.2}" />
         <circle cx="12" cy="11" r="4.5" fill="white" opacity="0.95"/>
       </svg>
     `;
 
     if (flag.hasActiveInspection) {
       innerHtml += `
-        <div style="position: absolute; top: -4px; right: -4px; background: white; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 10;">
+        <div style="position: absolute; top: -4px; right: -4px; background: white; border-radius: 50%; padding: 2px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); z-index: 10; pointer-events: none;">
           <div style="background: #3b82f6; width: 14px; height: 14px; border-radius: 50%; display: flex; align-items: center; justify-content: center;">
              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
                <circle cx="11" cy="8"></circle>
@@ -1034,7 +1040,7 @@ function MapCanvas({
     );
 
     visibleFlags.forEach(flag => {
-      const isAdjusting = flag.id === adjustingFlagId;
+      const isAdjusting = String(flag.id) === String(adjustingFlagId);
       let lat = Number(flag.latitude);
       let lng = Number(flag.longitude);
 
@@ -1062,23 +1068,34 @@ function MapCanvas({
         try {
           marker = new window.google.maps.marker.AdvancedMarkerElement({
             position: { lat, lng },
-            content: buildMarkerContent(flag, isSelected),
+            content: buildMarkerContent(flag, isSelected, isAdjusting),
             gmpDraggable: isAdjusting,
             title: flag.name,
+            zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
           });
 
+          marker.gmpDraggable = Boolean(isAdjusting);
           marker._revelaFlagColor = flag.color;
           marker._revelaHasActiveInspection = flag.hasActiveInspection;
 
           if (isAdjusting) {
             marker.map = activeMap;
-            marker.addListener("dragend", (e) => {
-              const newLat = typeof marker.position?.lat === 'function' ? marker.position.lat() : (marker.position?.lat ?? e.latLng?.lat());
-              const newLng = typeof marker.position?.lng === 'function' ? marker.position.lng() : (marker.position?.lng ?? e.latLng?.lng());
-              if (newLat != null && newLng != null) {
+            marker.zIndex = 999999;
+
+            const handleDragEnd = (e) => {
+              const pos = marker.position;
+              const newLat = typeof pos?.lat === 'function' ? pos.lat() : (pos?.lat ?? e?.latLng?.lat?.() ?? e?.latLng?.lat);
+              const newLng = typeof pos?.lng === 'function' ? pos.lng() : (pos?.lng ?? e?.latLng?.lng?.() ?? e?.latLng?.lng);
+              if (newLat != null && newLng != null && !isNaN(Number(newLat)) && !isNaN(Number(newLng))) {
                 onAdjustDragEnd({ lat: Number(newLat), lng: Number(newLng) });
               }
-            });
+            };
+
+            marker.addListener("gmp-dragend", handleDragEnd);
+            marker.addListener("dragend", handleDragEnd);
+            if (marker.addEventListener) {
+              marker.addEventListener("gmp-dragend", handleDragEnd);
+            }
           } else {
             marker.addListener("gmp-click", () => onMarkerClick(flag.id));
             markers.push(marker);
@@ -1095,14 +1112,14 @@ function MapCanvas({
           position: { lat, lng },
           draggable: isAdjusting,
           title: flag.name,
-          zIndex: isSelected ? 9999 : 100,
+          zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
           icon: {
             path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
             fillColor: color,
             fillOpacity: 1,
             strokeColor: "#ffffff",
-            strokeWeight: 1.5,
-            scale: isSelected ? 1.3 : 1.0,
+            strokeWeight: isAdjusting ? 2.5 : 1.5,
+            scale: (isSelected || isAdjusting) ? 1.4 : 1.0,
             anchor: new window.google.maps.Point(12, 32),
           }
         });
@@ -1112,8 +1129,9 @@ function MapCanvas({
 
         if (isAdjusting) {
           marker.setMap(activeMap);
+          marker.setZIndex(999999);
           marker.addListener("dragend", (e) => {
-            if (e.latLng) {
+            if (e && e.latLng) {
               onAdjustDragEnd({ lat: e.latLng.lat(), lng: e.latLng.lng() });
             }
           });
@@ -2495,19 +2513,39 @@ export default function MapPage() {
   // â”€â”€ Drag & Drop Adjust Location â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleStartAdjustLocation = (flag) => {
     handleCloseDetailModal();
+    const lat = Number(flag.latitude);
+    const lng = Number(flag.longitude);
     setAdjustingFlagId(flag.id);
-    setAdjustingLatLng({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
+    setAdjustingLatLng({ lat, lng });
+    if (mapRef.current && !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+      mapRef.current.panTo({ lat, lng });
+      mapRef.current.setZoom(18);
+    }
   };
 
   const handleSaveAdjustedLocation = async () => {
+    if (!adjustingFlagId || !adjustingLatLng) return;
     setSaveAdjustLoading(true);
     try {
       await updateFlagLocationRequest(adjustingFlagId, adjustingLatLng.lat, adjustingLatLng.lng, token);
       await fetchFlags();
       setAdjustingFlagId(null);
       setAdjustingLatLng(null);
+      Swal.fire({
+        icon: 'success',
+        title: 'Location Updated',
+        text: 'The flag location has been updated successfully.',
+        timer: 2000,
+        showConfirmButton: false
+      });
     } catch (err) {
       setActionError(err.message || "Failed to update location.");
+      Swal.fire({
+        icon: 'error',
+        title: 'Update Failed',
+        text: err.message || "Failed to update location.",
+        confirmButtonColor: 'var(--color-primary)'
+      });
     } finally {
       setSaveAdjustLoading(false);
     }
@@ -2573,6 +2611,15 @@ export default function MapPage() {
   };
 
   const handleMapClick = useCallback((e) => {
+    if (adjustingFlagId) {
+      if (e && e.latLng) {
+        const lat = typeof e.latLng.lat === 'function' ? e.latLng.lat() : e.latLng.lat;
+        const lng = typeof e.latLng.lng === 'function' ? e.latLng.lng() : e.latLng.lng;
+        setAdjustingLatLng({ lat: Number(lat), lng: Number(lng) });
+      }
+      return;
+    }
+
     if (!isPickingYellowLocation) return;
 
     const lat = e.latLng.lat();
@@ -2641,9 +2688,19 @@ export default function MapPage() {
     }));
     setIsPickingYellowLocation(false);
     setShowYellowModal(true);
-  }, [isPickingYellowLocation, barangays]);
+  }, [adjustingFlagId, isPickingYellowLocation, barangays]);
 
   const handleDataClick = useCallback((e) => {
+    if (adjustingFlagId) {
+      if (e && e.latLng) {
+        if (typeof e.stop === 'function') e.stop();
+        const lat = typeof e.latLng.lat === 'function' ? e.latLng.lat() : e.latLng.lat;
+        const lng = typeof e.latLng.lng === 'function' ? e.latLng.lng() : e.latLng.lng;
+        setAdjustingLatLng({ lat: Number(lat), lng: Number(lng) });
+      }
+      return;
+    }
+
     if (isPickingYellowLocation) {
       e.stop(); // Prevent base map click
       const lat = e.latLng.lat();
@@ -2664,7 +2721,7 @@ export default function MapPage() {
       setIsPickingYellowLocation(false);
       setShowYellowModal(true);
     }
-  }, [isPickingYellowLocation, barangays]);
+  }, [adjustingFlagId, isPickingYellowLocation, barangays]);
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const visibleFlags = flags.filter(f => {
@@ -2861,7 +2918,7 @@ export default function MapPage() {
       {/* Banner showing when adjusting an existing flag */}
       {adjustingFlagId && (
         <div style={{ ...styles.pickingBanner, background: "var(--color-ink)", zIndex: 101, top: 70 }}>
-          <Icon.MapPin /> Drag the pin to its correct location.
+          <Icon.MapPin /> Drag the pin or click on the map to adjust its location.
           <div style={{ display: "flex", gap: 8, marginLeft: 16 }}>
             <button style={{ background: "none", border: "none", color: "var(--color-muted)", cursor: "pointer", fontWeight: 600, fontSize: 13 }} onClick={() => { setAdjustingFlagId(null); setAdjustingLatLng(null); }} disabled={saveAdjustLoading}>
               Cancel
@@ -2936,7 +2993,7 @@ export default function MapPage() {
               onMarkerClick={handleMarkerClick}
               onMapClick={handleMapClick}
               onDataClick={handleDataClick}
-              isPickingLocation={isPickingYellowLocation}
+              isPickingLocation={isPickingYellowLocation || Boolean(adjustingFlagId)}
               runDetectionLoading={runDetectionLoading}
               detectionProgress={detectionProgress}
               reconcileProgress={reconcileProgress}
