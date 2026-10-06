@@ -254,6 +254,7 @@ CREATE TABLE `official_registry` (
     ) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Pending',
     `lastRenewalDate` datetime DEFAULT NULL,
     `businessSize` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+    `registrationType` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
     PRIMARY KEY (`businessID`),
     KEY `fk_registry_barangay` (`barangayID`),
     CONSTRAINT `fk_registry_barangay` FOREIGN KEY (`barangayID`) REFERENCES `barangays` (`barangayID`) ON DELETE RESTRICT ON UPDATE CASCADE

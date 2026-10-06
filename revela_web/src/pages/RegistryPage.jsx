@@ -99,6 +99,7 @@ const Icon = {
 
 
 const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed"];
+const REG_TYPE_FILTERS = ["All Types", "New", "Renewal"];
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -126,7 +127,7 @@ function formatCoord(v) {
 }
 
 /** Must match table header count (including actions column). */
-const REGISTRY_TABLE_COL_COUNT = 11;
+const REGISTRY_TABLE_COL_COUNT = 12;
 
 // ── Empty State ───────────────────────────────────────────────────────────────
 function EmptyState({ hasFilters, onUpload }) {
@@ -271,6 +272,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {[
               ["Business Name", business.businessName, "title", "businessName"],
+              ["Registration Type", business.registrationType || "—", "regType", "registrationType"],
               ["Business Type", business.businessType || "—", "plain", "businessType"],
               ["Line of Business", business.lineOfBusiness || "—", "plain", "lineOfBusiness"],
               ["Business size", business.businessSize || "—", "plain", "businessSize"],
@@ -300,6 +302,16 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                       <option value="Expired">Expired</option>
                       <option value="Revoked">Revoked</option>
                       <option value="Closed">Closed</option>
+                    </select>
+                  ) : field === "registrationType" ? (
+                    <select
+                      value={formData[field] || ""}
+                      onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
+                      style={styles.editInput}
+                    >
+                      <option value="">Select type...</option>
+                      <option value="New">New</option>
+                      <option value="Renewal">Renewal</option>
                     </select>
                   ) : field === "businessSize" ? (
                     <select
@@ -331,9 +343,11 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                   >
                     {kind === "permit"
                       ? <StatusBadge variant={getStatusVariant(value)}>{value}</StatusBadge>
-                      : kind === "flag" && value !== "—"
-                        ? <StatusBadge variant={getFlagVariant(value)}>{value}</StatusBadge>
-                        : value}
+                      : kind === "regType" && value !== "—"
+                        ? <StatusBadge variant={String(value).toLowerCase() === "new" ? "blue" : "purple"}>{value}</StatusBadge>
+                        : kind === "flag" && value !== "—"
+                          ? <StatusBadge variant={getFlagVariant(value)}>{value}</StatusBadge>
+                          : value}
                   </span>
                 )}
               </div>
@@ -348,6 +362,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                 setIsEditing(false);
                 setFormData({
                   businessName: business.businessName || "",
+                  registrationType: business.registrationType || "",
                   businessType: business.businessType || "",
                   lineOfBusiness: business.lineOfBusiness || "",
                   businessSize: business.businessSize || "",
@@ -395,6 +410,7 @@ export default function RegistryPage() {
   const [search, setSearch] = useState("");
   const [barangay, setBarangay] = useState("All Barangays");
   const [status, setStatus] = useState("All Status");
+  const [regType, setRegType] = useState("All Types");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
@@ -446,6 +462,7 @@ export default function RegistryPage() {
       if (debouncedSearch) params.search = debouncedSearch;
       if (barangay !== "All Barangays") params.barangayID = barangay; // sends ID
       if (status !== "All Status") params.status = status;
+      if (regType !== "All Types") params.registrationType = regType;
 
       const result = await getRegistryRequest(params, token);
       setBusinesses(result.data ?? []);
@@ -459,7 +476,7 @@ export default function RegistryPage() {
       setLoading(false);
       setIsRefreshing(false);
     }
-  }, [page, debouncedSearch, barangay, status, pageSize, token]);
+  }, [page, debouncedSearch, barangay, status, regType, pageSize, token]);
 
   // ── Export CSV Handler ───────────────────────────────────────────────────
   const handleExport = async () => {
@@ -470,6 +487,7 @@ export default function RegistryPage() {
       const result = await getRegistryRequest({
         limit: 10000,
         status: status !== "All Status" ? status : undefined,
+        registrationType: regType !== "All Types" ? regType : undefined,
         barangayID: barangay !== "All Barangays" ? barangay : undefined,
         search: debouncedSearch
       }, token);
@@ -677,9 +695,17 @@ export default function RegistryPage() {
           <select
             style={{ ...styles.select, maxWidth: "100%" }}
             value={status}
-            onChange={e => setStatus(e.target.value)}
+            onChange={e => { setStatus(e.target.value); setPage(1); }}
           >
             {STATUS_FILTERS.map(s => <option key={s}>{s}</option>)}
+          </select>
+
+          <select
+            style={{ ...styles.select, maxWidth: "100%" }}
+            value={regType}
+            onChange={e => { setRegType(e.target.value); setPage(1); }}
+          >
+            {REG_TYPE_FILTERS.map(t => <option key={t}>{t}</option>)}
           </select>
 
           <label style={styles.pageSizeLabel}>
@@ -715,6 +741,7 @@ export default function RegistryPage() {
                   "Barangay",
                   "Address",
                   "Size",
+                  "Reg. Type",
                   "Last Renewal",
                   "Permit",
                   "Flag",
@@ -758,6 +785,15 @@ export default function RegistryPage() {
                       {b.businessAddress || "—"}
                     </td>
                     <td style={styles.td}>{b.businessSize || "—"}</td>
+                    <td style={styles.td}>
+                      {b.registrationType ? (
+                        <StatusBadge variant={String(b.registrationType).toLowerCase() === "new" ? "blue" : "purple"}>
+                          {b.registrationType}
+                        </StatusBadge>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td style={{ ...styles.td, fontSize: 12 }}>
                       {b.lastRenewalDate ? b.lastRenewalDate.slice(0, 10) : "—"}
                     </td>

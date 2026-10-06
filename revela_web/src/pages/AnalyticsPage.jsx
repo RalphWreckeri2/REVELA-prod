@@ -126,6 +126,7 @@ const createEmptyFilters = () => ({
   line_of_business: "",
   business_type: "",
   business_size: "",
+  registration_type: "",
   renewal_from: "",
   renewal_to: "",
   flag_color: "",
@@ -999,6 +1000,14 @@ export default function AnalyticsPage() {
     fill: TYPE_COLORS[i % TYPE_COLORS.length],
   }));
 
+  // ── Registration type pie (New vs Renewal) ─────────────────────────────────
+  const REG_TYPE_COLORS = ["#3b82f6", "#8b5cf6", "#64748b"];
+  const regTypeData = (desc?.registration_type_dist || []).map((r, i) => ({
+    name: r.type_label,
+    value: r.count,
+    fill: r.type_label === "New" ? "#3b82f6" : r.type_label === "Renewal" ? "#8b5cf6" : REG_TYPE_COLORS[i % REG_TYPE_COLORS.length],
+  }));
+
   // ── Compliance by size bar ────────────────────────────────────────────────
   const complianceBySizeData = (desc?.compliance_by_size || []).map((r) => ({
     name: r.size_label,
@@ -1853,6 +1862,10 @@ export default function AnalyticsPage() {
                         </div>
                       </div>
                       <div style={{ marginTop: 12 }}>
+                        <label style={filterLabelStyle}>Registration Status (Lifecycle)</label>
+                        {sel(draftFilters.registration_type, (e) => setDraftFilters((d) => ({ ...d, registration_type: e.target.value })), fm.registration_types || ["New", "Renewal"], "All registration types")}
+                      </div>
+                      <div style={{ marginTop: 12 }}>
                         <label style={filterLabelStyle}>Renewal Date Range</label>
                         <div className="date-range-pair">
                           <input type="date" value={draftFilters.renewal_from} onChange={(e) => setDraftFilters((d) => ({ ...d, renewal_from: e.target.value }))} placeholder="From" />
@@ -2135,14 +2148,14 @@ export default function AnalyticsPage() {
               <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 12 }}>
                 <KpiCard iconVariant="gold" value={kpis?.current_year_registered_count ?? kpis?.current_year_count ?? "—"} label="Registered Current Year (2026)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>} style={{ padding: "14px 12px" }} />
                 <KpiCard iconVariant="green" value={kpis?.upcoming_year_renewal_count ?? "—"} label="Scheduled Renewal (2027)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="gold" value={kpis?.total_businesses ?? "—"} label="Total Registered" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="green" value={kpis?.active_count ?? "—"} label="Active Permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "14px 12px" }} />
+                <KpiCard iconVariant="blue" value={kpis?.new_registration_count ?? "—"} label="New Registrations" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>} style={{ padding: "14px 12px" }} />
+                <KpiCard iconVariant="gold" value={kpis?.renewal_registration_count ?? "—"} label="Renewals" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>} style={{ padding: "14px 12px" }} />
               </div>
               <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 24 }}>
+                <KpiCard iconVariant="green" value={kpis?.active_count ?? "—"} label="Active Permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="red" value={kpis?.expired_count ?? "—"} label="Expired" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="gold" value={kpis?.pending_count ?? "—"} label="Pending" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="red" value={kpis?.closed_count ?? "—"} label="Closed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="red" value={kpis?.revoked_count ?? "—"} label="Revoked" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path><line x1="18" y1="9" x2="12" y2="15"></line><line x1="12" y1="9" x2="18" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
               {/* Business Demographic Profile */}
@@ -2333,6 +2346,51 @@ export default function AnalyticsPage() {
                         </ResponsiveContainer>
                         <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, flex: 1, paddingLeft: 20 }}>
                           {typeData.map((s, i) => (
+                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                              <span style={{ width: 10, height: 10, borderRadius: "50%", background: s.fill, flexShrink: 0 }} />
+                              <span style={{ color: "var(--color-muted)", flex: 1 }}>{s.name}</span>
+                              <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Registration Lifecycle (New vs Renewal) */}
+                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                      <div>
+                        <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registration Lifecycle</h3>
+                        <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>New businesses vs Renewals</p>
+                      </div>
+                    </div>
+                    {loading ? <Skeleton h={220} /> : regTypeData.length === 0 ? (
+                      <EmptyState h={220} title="No Registration Type Data" />
+                    ) : (
+                      <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center" }}>
+                        <ResponsiveContainer width="50%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={regTypeData}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={65}
+                              outerRadius={95}
+                              paddingAngle={4}
+                              isAnimationActive={false}
+                            >
+                              {regTypeData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.fill} />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<CustomTooltip />} />
+                          </PieChart>
+                        </ResponsiveContainer>
+                        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, flex: 1, paddingLeft: 20 }}>
+                          {regTypeData.map((s, i) => (
                             <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
                               <span style={{ width: 10, height: 10, borderRadius: "50%", background: s.fill, flexShrink: 0 }} />
                               <span style={{ color: "var(--color-muted)", flex: 1 }}>{s.name}</span>

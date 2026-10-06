@@ -177,6 +177,15 @@ export default function ExportReportsPage() {
   }));
   const totalByType = typeData.reduce((acc, curr) => acc + curr.value, 0);
 
+  // 2b. Registration Lifecycle (New vs Renewal)
+  const rawRegTypeData = (desc?.registration_type_dist || []).filter((r) => r.count > 0);
+  const regTypeData = rawRegTypeData.map((r) => ({
+    name: r.type_label || "Unspecified",
+    value: Number(r.count || 0),
+    fill: r.type_label === "New" ? "#3b82f6" : r.type_label === "Renewal" ? "#8b5cf6" : "#64748b"
+  }));
+  const totalByRegType = regTypeData.reduce((acc, curr) => acc + curr.value, 0);
+
   // 3. Dominant Economic Sectors (Top Lines of Business)
   const rawSectoralData = (desc?.sectoral_distribution || []).filter((r) => r.count > 0);
   const sectoralData = rawSectoralData.map((r) => ({
@@ -1261,6 +1270,146 @@ export default function ExportReportsPage() {
                   ) : (
                     typeData.map((t, idx) => {
                       const pct = Math.round((t.value / (totalByType || 1)) * 100);
+                      return (
+                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
+                          <span
+                            style={{
+                              width: 10,
+                              height: 10,
+                              borderRadius: "50%",
+                              background: t.fill,
+                              flexShrink: 0
+                            }}
+                          />
+                          <span style={{ color: "var(--color-muted)", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {t.name}
+                          </span>
+                          <strong style={{ color: "var(--color-ink)" }}>{t.value}</strong>
+                          <span style={{ fontSize: 11, color: "var(--color-muted)" }}>({pct}%)</span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* ── CHART 2B: Registration Lifecycle (New vs Renewal) ── */}
+              <div
+                id="chart-card-reg-type"
+                ref={(el) => (chartRefs.current["reg-type"] = el)}
+                className="saas-card frosted-glass"
+                style={{
+                  padding: 22,
+                  borderRadius: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  position: "relative"
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                  <div>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 3px 0" }}>
+                      Registration Lifecycle
+                    </h3>
+                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
+                      New establishments vs. renewed permits
+                    </p>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      type="button"
+                      title="Export chart as printable official PDF document"
+                      onClick={() =>
+                        exportChartAsPdf(
+                          "reg-type",
+                          "Registration Lifecycle (New vs Renewal)",
+                          "Official breakdown of registered commercial enterprises categorized by registration status",
+                          regTypeData.map((t) => ({
+                            Status: t.name,
+                            Entities: t.value,
+                            Share: `${Math.round((t.value / (totalByRegType || 1)) * 100)}%`
+                          })),
+                          regTypeData.length > 0
+                        )
+                      }
+                      disabled={exportingPdfId === "reg-type" || regTypeData.length === 0}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        background: regTypeData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
+                        color: regTypeData.length > 0 ? "#059669" : "#94a3b8",
+                        border: "1px solid rgba(16, 185, 129, 0.25)",
+                        cursor: regTypeData.length > 0 ? "pointer" : "not-allowed",
+                        opacity: regTypeData.length > 0 ? 1 : 0.6
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="12" y1="18" x2="12" y2="12" />
+                        <line x1="9" y1="15" x2="15" y2="15" />
+                      </svg>
+                      {exportingPdfId === "reg-type" ? "Generating..." : "Export PDF"}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ height: 210, width: "100%", position: "relative" }}>
+                  {loadingAnalytics ? (
+                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
+                      Loading registration type data...
+                    </div>
+                  ) : regTypeData.length === 0 ? (
+                    <ChartEmptyState
+                      title="No Registration Lifecycle Data"
+                      message="New businesses and renewals will appear here once registered."
+                    />
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={regTypeData}
+                          dataKey="value"
+                          nameKey="name"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={55}
+                          outerRadius={85}
+                          paddingAngle={3}
+                          isAnimationActive={false}
+                        >
+                          {regTypeData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                          ))}
+                        </Pie>
+                        <Tooltip content={<CustomChartTooltip />} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    marginTop: 14,
+                    paddingTop: 12,
+                    borderTop: "1px solid rgba(226, 232, 240, 0.7)",
+                    display: regTypeData.length > 0 ? "grid" : "block",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+                    gap: "8px 12px"
+                  }}
+                >
+                  {regTypeData.length === 0 ? (
+                    <div style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", textAlign: "center" }}>
+                      No registration lifecycle records available.
+                    </div>
+                  ) : (
+                    regTypeData.map((t, idx) => {
+                      const pct = Math.round((t.value / (totalByRegType || 1)) * 100);
                       return (
                         <div key={idx} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
                           <span

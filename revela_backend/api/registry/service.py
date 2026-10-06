@@ -14,13 +14,17 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 # Add more aliases here if the BPLO file uses different headers.
 COLUMN_MAP = {
     # business id
-    "business_id":         "Business ID",
-    "businessid":          "Business ID",
-    "business_id_no":      "Business ID",
-    "business_no":         "Business ID",
-    "id":                  "Business ID",
-    "permit_no":           "Business ID",
-    "permit_number":       "Business ID",
+    "business_id":                     "Business ID",
+    "businessid":                      "Business ID",
+    "business_id_no":                  "Business ID",
+    "business_no":                     "Business ID",
+    "business_identification_no":      "Business ID",
+    "business_identification_number":  "Business ID",
+    "business_identification":         "Business ID",
+    "businessidentificationno":        "Business ID",
+    "id":                              "Business ID",
+    "permit_no":                       "Business ID",
+    "permit_number":                   "Business ID",
 
     # business name
     "business_name":       "businessName",
@@ -52,13 +56,21 @@ COLUMN_MAP = {
     "barangay_name":       "barangay",
     "brgy_name":           "barangay",
 
-    # application / permit status
+    # application / permit status (license standing)
     "status":                   "applicationStatus",
     "application_status":       "applicationStatus",
     "status_of_application":    "applicationStatus",
     "statusofapplication":      "applicationStatus",
-    "status_of_registration":   "registrationStatus",
-    "statusofregistration":     "registrationStatus",
+
+    # registration type (New vs Renewal)
+    "status_of_registration":   "registrationType",
+    "statusofregistration":     "registrationType",
+    "registration_status":      "registrationType",
+    "registrationstatus":       "registrationType",
+    "registration_type":        "registrationType",
+    "registrationtype":         "registrationType",
+    "type_of_registration":     "registrationType",
+    "typeofregistration":       "registrationType",
 
     # year of registration
     "year_of_registration":     "lastRenewalDate",
@@ -80,12 +92,16 @@ COLUMN_MAP = {
     "sizeofbusiness":           "businessSize",
     "size":                     "businessSize",
 
-    # renewal date
+    # renewal date / issue date
     "last_renewal_date":   "lastRenewalDate",
     "lastrenewaldate":     "lastRenewalDate",
     "renewal_date":        "lastRenewalDate",
     "renewaldate":         "lastRenewalDate",
     "issue_date":          "lastRenewalDate",
+    "issuedate":           "lastRenewalDate",
+    "date_issued":         "lastRenewalDate",
+    "dateissued":          "lastRenewalDate",
+    "date_of_issue":       "lastRenewalDate",
     "permit_date":         "lastRenewalDate",
 
     # coordinates if provided in CSV
@@ -106,9 +122,13 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
     rename = {}
     for col in df.columns:
-        key = col.lower().replace(" ", "_").replace("-", "_")
-        if key in COLUMN_MAP:
-            rename[col] = COLUMN_MAP[key]
+        clean = col.lower().strip()
+        key_stripped = clean.replace(" ", "_").replace("-", "_").replace(".", "").replace(",", "")
+        key_raw = clean.replace(" ", "_").replace("-", "_")
+        if key_stripped in COLUMN_MAP:
+            rename[col] = COLUMN_MAP[key_stripped]
+        elif key_raw in COLUMN_MAP:
+            rename[col] = COLUMN_MAP[key_raw]
     df = df.rename(columns=rename)
     return df
 
@@ -309,6 +329,21 @@ def _get_barangay_id(barangay_name: str) -> int | None:
     return _resolve_barangay_id(barangay_name, lookup)
 
 
+def _normalise_registration_type(raw) -> str | None:
+    """Normalize registration type to 'New' or 'Renewal'."""
+    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+        return None
+    val = str(raw).strip()
+    if not val:
+        return None
+    val_lower = val.lower()
+    if "renew" in val_lower:
+        return "Renewal"
+    if "new" in val_lower.split() or val_lower.startswith("new") or val_lower == "new":
+        return "New"
+    return val.title()
+
+
 def _normalise_status(raw: str) -> str:
     mapping = {
         "active":         "Active",
@@ -320,7 +355,6 @@ def _normalise_status(raw: str) -> str:
         "lapsed":         "Expired",
         "license issued": "Active",
         "issued":         "Active",
-        "renewal":        "Pending",
         "closed":         "Closed",
     }
     return mapping.get(str(raw).strip().lower(), "Pending")
@@ -566,14 +600,16 @@ def upload_registry(file, ext: str):
             elif lat is None:
                 geocoded_failed += 1
 
-            # Status (BPLO files may use application or registration status columns)
+            # Status of Application (license/permit standing)
             # Missing/blank status → Pending (Yellow), never Active. See sync_registry.
             status_raw = (
                 row.get("applicationStatus")
-                or row.get("registrationStatus")
                 or "Pending"
             )
             status = _normalise_status(status_raw)
+
+            # Registration Type (New vs Renewal)
+            reg_type = _normalise_registration_type(row.get("registrationType"))
 
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
@@ -587,8 +623,8 @@ def upload_registry(file, ext: str):
                 INSERT IGNORE INTO official_registry
                     (businessID, barangayID, businessName, businessType, lineOfBusiness,
                     businessAddress, latitude, longitude, applicationStatus,
-                    lastRenewalDate, businessSize)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    lastRenewalDate, businessSize, registrationType)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     biz_id,
@@ -602,6 +638,7 @@ def upload_registry(file, ext: str):
                     status,
                     renewal_date,
                     str(row.get("businessSize") or "").strip() or None,
+                    reg_type,
                 ),
             )
 
@@ -686,9 +723,11 @@ def sync_registry(file, ext: str):
 
         inserted = 0
         updated = 0
+        skipped = 0
         geocoded_ok = 0
         geocoded_failed = 0
         errors = []
+        inserted_ids = []
         matched_db_ids = set()
 
         from api.notifications import hub
@@ -784,12 +823,13 @@ def sync_registry(file, ext: str):
 
             status_raw = (
                 row.get("applicationStatus")
-                or row.get("registrationStatus")
                 or "Active"
             )
             if geo_meta is None and lat is not None and not reused_existing:
                 geo_meta = {"coord_source": "csv"}   # coordinates came from the uploaded file
             status = _normalise_status(status_raw)
+
+            reg_type = _normalise_registration_type(row.get("registrationType"))
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
 
@@ -815,7 +855,8 @@ def sync_registry(file, ext: str):
                         longitude = %s,
                         applicationStatus = %s,
                         lastRenewalDate = %s,
-                        businessSize = %s
+                        businessSize = %s,
+                        registrationType = COALESCE(%s, registrationType)
                     WHERE businessID = %s
                     """,
                     (
@@ -829,6 +870,7 @@ def sync_registry(file, ext: str):
                         status,
                         renewal_date,
                         bsize,
+                        reg_type,
                         biz_id,
                     ),
                 )
@@ -843,8 +885,8 @@ def sync_registry(file, ext: str):
                     INSERT INTO official_registry
                         (businessID, barangayID, businessName, businessType, lineOfBusiness,
                         businessAddress, latitude, longitude, applicationStatus,
-                        lastRenewalDate, businessSize)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        lastRenewalDate, businessSize, registrationType)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         biz_id,
@@ -858,6 +900,7 @@ def sync_registry(file, ext: str):
                         status,
                         renewal_date,
                         bsize,
+                        reg_type,
                     ),
                 )
                 if cursor.rowcount > 0:
@@ -947,6 +990,10 @@ def update_business(business_id: int, data: dict):
             update_fields.append("businessSize = %s")
             params.append(str(data["businessSize"]).strip()
                           if data["businessSize"] else None)
+        if "registrationType" in data:
+            update_fields.append("registrationType = %s")
+            params.append(_normalise_registration_type(data["registrationType"])
+                          if data["registrationType"] else None)
 
         if update_fields:
             query = f"UPDATE official_registry SET {', '.join(update_fields)} WHERE businessID = %s"
@@ -1037,7 +1084,7 @@ def delete_business(business_id: int):
         return False, str(e)
 
 
-def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_page=10):
+def get_all_businesses(barangay_id=None, status=None, registration_type=None, search=None, page=1, per_page=10):
     """Return paginated list of businesses with optional filters."""
     try:
         # check_and_expire_old_permits is now handled by the APScheduler
@@ -1054,6 +1101,10 @@ def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_p
         if status and status in VALID_STATUSES:
             conditions.append("r.applicationStatus = %s")
             params.append(status)
+
+        if registration_type and registration_type in ("New", "Renewal"):
+            conditions.append("r.registrationType = %s")
+            params.append(registration_type)
 
         if search:
             conditions.append(
@@ -1083,6 +1134,7 @@ def get_all_businesses(barangay_id=None, status=None, search=None, page=1, per_p
                 r.businessID,
                 r.businessName,
                 r.businessSize,
+                r.registrationType,
                 r.businessType,
                 r.lineOfBusiness,
                 r.businessAddress,
@@ -1152,6 +1204,7 @@ def get_business_by_id(business_id: int):
                 r.businessID,
                 r.businessName,
                 r.businessSize,
+                r.registrationType,
                 r.businessType,
                 r.lineOfBusiness,
                 r.businessAddress,

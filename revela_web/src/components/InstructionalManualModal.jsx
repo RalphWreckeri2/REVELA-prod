@@ -263,6 +263,73 @@ const getManualSections = () => [
           <li><strong>Daily Geocoding Budget:</strong> Maximum <strong>1,500 addresses geocoded per day</strong> via Google Geocoding API.</li>
           <li><strong>Pro-Tip (Quota Bypass):</strong> Pre-filling the <code style={docStyles.code}>latitude</code> and <code style={docStyles.code}>longitude</code> columns completely bypasses the Geocoding API budget, allowing immediate instant ingestion.</li>
         </ul>
+        <h4 style={docStyles.subheading}>3.5.1 Accepted Column Names (Excel / CSV)</h4>
+        <p style={{ fontSize: "13px", color: "var(--color-muted)", marginBottom: "10px" }}>
+          REVELA automatically recognizes the following column headers from your BPLO export file. Column names are case-insensitive and punctuation is ignored.
+        </p>
+        <div style={{ overflowX: "auto", margin: "10px 0" }}>
+          <table style={docStyles.table}>
+            <thead>
+              <tr>
+                <th style={docStyles.th}>Accepted Column Header(s)</th>
+                <th style={docStyles.th}>Field</th>
+                <th style={docStyles.th}>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Business Identification No.</code><br /><code style={docStyles.code}>Business ID</code>, <code style={docStyles.code}>Permit No.</code></td>
+                <td style={docStyles.td}><strong>Business ID</strong> ⚠️ Required</td>
+                <td style={docStyles.td}>Unique permit number. Rows without this are skipped.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Business Name</code></td>
+                <td style={docStyles.td}><strong>Business Name</strong> ⚠️ Required</td>
+                <td style={docStyles.td}>Trade / establishment name.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Type of Business</code></td>
+                <td style={docStyles.td}><strong>Business Type</strong></td>
+                <td style={docStyles.td}>e.g. Sole Proprietorship, Corporation.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Status of Application</code><br /><code style={docStyles.code}>Status</code>, <code style={docStyles.code}>Application Status</code></td>
+                <td style={docStyles.td}><strong>Application Status</strong></td>
+                <td style={docStyles.td}>License / permit standing: <em>Active</em>, <em>Pending</em>, <em>Expired</em>, <em>Revoked</em>, <em>Closed</em>, <em>Issued</em>, <em>For Issuance</em>. Controls map pin color.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Status of Registration</code><br /><code style={docStyles.code}>Registration Type</code></td>
+                <td style={docStyles.td}><strong>Registration Type</strong></td>
+                <td style={docStyles.td}>Whether the business is <em>New</em> or a <em>Renewal</em>. Used for analytics (New vs. Renewal breakdown). Distinct from Application Status.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Date Issued</code><br /><code style={docStyles.code}>Issue Date</code>, <code style={docStyles.code}>Renewal Date</code></td>
+                <td style={docStyles.td}><strong>Last Renewal Date</strong></td>
+                <td style={docStyles.td}>Permit issue or last renewal date. Accepts full dates or 4-digit year (e.g. <code style={docStyles.code}>2024</code>).</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Business Address</code><br /><code style={docStyles.code}>Address</code></td>
+                <td style={docStyles.td}><strong>Business Address</strong></td>
+                <td style={docStyles.td}>Street address used for geocoding to place map pins.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Barangay Name</code><br /><code style={docStyles.code}>Barangay</code>, <code style={docStyles.code}>Brgy</code></td>
+                <td style={docStyles.td}><strong>Barangay</strong> ⚠️ Required</td>
+                <td style={docStyles.td}>Must match a barangay in Mataasnakahoy. Rows with unrecognized barangay names are skipped.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Line of Business</code></td>
+                <td style={docStyles.td}><strong>Line of Business</strong></td>
+                <td style={docStyles.td}>Business activity / industry category.</td>
+              </tr>
+              <tr>
+                <td style={docStyles.td}><code style={docStyles.code}>Size of Business</code><br /><code style={docStyles.code}>Size</code></td>
+                <td style={docStyles.td}><strong>Business Size</strong></td>
+                <td style={docStyles.td}>e.g. Micro, Small, Medium, Large.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <h4 style={docStyles.subheading}>3.6 Inspection Dispatch Kanban &amp; Redo SOP</h4>
         <p>REVELA uses a strict 4-column audit lifecycle:</p>

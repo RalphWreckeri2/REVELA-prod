@@ -103,6 +103,7 @@ def get_registry():
     barangay_id = request.args.get("barangayID",  type=int)
     # Active | Expired | Revoked | Pending
     status = request.args.get("status")
+    registration_type = request.args.get("registrationType")
     search = request.args.get("search", "").strip()
     page = request.args.get("page",  1,    type=int)
     per_page = request.args.get("limit", 10,   type=int)
@@ -110,6 +111,7 @@ def get_registry():
     result, error = get_all_businesses(
         barangay_id=barangay_id,
         status=status,
+        registration_type=registration_type,
         search=search,
         page=page,
         per_page=per_page,

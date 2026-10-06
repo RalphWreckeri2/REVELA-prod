@@ -350,6 +350,7 @@ export async function getRegistryRequest(params = {}, token) {
     if (params.search) qs.set("search", params.search);
     if (params.barangayID) qs.set("barangayID", params.barangayID);
     if (params.status) qs.set("status", params.status);
+    if (params.registrationType) qs.set("registrationType", params.registrationType);
 
     const res = await fetch(`${BASE_URL}/registry/?${qs.toString()}`, {
       method: "GET",
@@ -927,6 +928,7 @@ function analyticsFiltersToSearchParams(filters = {}) {
   set("line_of_business", filters.line_of_business);
   set("business_type", filters.business_type);
   set("business_size", filters.business_size);
+  set("registration_type", filters.registration_type);
   set("renewal_from", filters.renewal_from);
   set("renewal_to", filters.renewal_to);
   set("flag_color", filters.flag_color);

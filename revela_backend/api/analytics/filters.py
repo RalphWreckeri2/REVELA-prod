@@ -51,6 +51,7 @@ def parse_analytics_filters(args) -> Dict[str, Any]:
         "line_of_business": _strip(args.get("line_of_business")),
         "business_type": _strip(args.get("business_type")),
         "business_size": _strip(args.get("business_size")),
+        "registration_type": _strip(args.get("registration_type")),
         "renewal_from": _strip(args.get("renewal_from")),
         "renewal_to": _strip(args.get("renewal_to")),
         "flag_color": _strip(args.get("flag_color")),
@@ -76,6 +77,10 @@ def registry_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
     if F.get("application_status"):
         parts.append(f"{alias}.applicationStatus = %s")
         params.append(F["application_status"])
+
+    if F.get("registration_type"):
+        parts.append(f"{alias}.registrationType = %s")
+        params.append(F["registration_type"])
 
     if F.get("line_of_business"):
         parts.append(f"{alias}.lineOfBusiness = %s")

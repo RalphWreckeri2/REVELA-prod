@@ -240,6 +240,20 @@ def _get_all_analytics_inner(F=None):
     )
     upcoming_year_renewal_count = cur.fetchone()["n"]
 
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'New'"
+        + reg_all,
+        reg_all_p,
+    )
+    new_registration_count = cur.fetchone()["n"]
+
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'Renewal'"
+        + reg_all,
+        reg_all_p,
+    )
+    renewal_registration_count = cur.fetchone()["n"]
+
     current_year_count = current_year_registered_count
 
     cur.execute(
@@ -365,6 +379,19 @@ def _get_all_analytics_inner(F=None):
         ORDER BY count DESC
     """, reg_all_p)
     business_type_dist = [
+        {"type_label": row["type_label"], "count": row["count"]}
+        for row in cur.fetchall()
+    ]
+
+    # Registration Type (New vs Renewal)
+    cur.execute(f"""
+        SELECT COALESCE(registrationType, 'Unspecified') AS type_label, COUNT(*) AS count
+        FROM official_registry
+        WHERE 1=1 {reg_all}
+        GROUP BY registrationType
+        ORDER BY count DESC
+    """, reg_all_p)
+    registration_type_dist = [
         {"type_label": row["type_label"], "count": row["count"]}
         for row in cur.fetchall()
     ]
@@ -898,6 +925,8 @@ def _get_all_analytics_inner(F=None):
                 "closed_count":                  closed_count,
                 "pending_count":                 pending_count,
                 "revoked_count":                 revoked_count,
+                "new_registration_count":        new_registration_count,
+                "renewal_registration_count":    renewal_registration_count,
                 "current_year_count":            current_year_registered_count,
                 "current_year_registered_count": current_year_registered_count,
                 "upcoming_year_renewal_count":   upcoming_year_renewal_count,
@@ -910,6 +939,7 @@ def _get_all_analytics_inner(F=None):
             "sectoral_distribution": sectoral_distribution,
             "business_size_dist":    business_size_dist,
             "business_type_dist":    business_type_dist,
+            "registration_type_dist": registration_type_dist,
             "compliance_by_size":    compliance_by_size,
             "compliance_timeline":   compliance_timeline,
             "audit_summary": {
@@ -988,6 +1018,15 @@ def analytics_filter_metadata():
 
     cur.execute(
         """
+        SELECT DISTINCT registrationType AS v FROM official_registry
+        WHERE registrationType IS NOT NULL AND TRIM(registrationType) <> ''
+        ORDER BY registrationType
+        """
+    )
+    registration_types = [r["v"] for r in cur.fetchall()]
+
+    cur.execute(
+        """
         SELECT DISTINCT inspectionResult AS v FROM inspection_reports
         WHERE inspectionResult IS NOT NULL AND TRIM(inspectionResult) <> ''
         ORDER BY inspectionResult
@@ -1012,6 +1051,7 @@ def analytics_filter_metadata():
         "lines_of_business": lines_of_business,
         "business_types": business_types,
         "business_sizes": business_sizes,
+        "registration_types": registration_types,
         "inspection_results": inspection_results,
         "verification_statuses": verification_statuses,
     }), 200
