@@ -1414,6 +1414,54 @@ function MapCanvas({
               {/* Header section with radar and title */}
               <div style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", borderBottom: "1px solid var(--color-input-bg)", paddingBottom: 14 }}>
                 <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(86, 171, 47, 0.15)", border: "1px solid rgba(86, 171, 47, 0.3)", flexShrink: 0 }}>
+                  {/* Radar pulsing ring */}
+                  <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid var(--color-primary)", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite" }} />
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", animation: "spin 3s linear infinite" }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--color-primary)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="2" />
+                      <path d="M12 2a10 10 0 0 1 10 10" />
+                      <path d="M12 6a6 6 0 0 1 6 6" />
+                    </svg>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", color: "#f8fafc" }}>Geospatial Scan Active</span>
+                  <span style={{ fontSize: 10, color: "var(--color-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>REVELA Engine v2.0</span>
+                </div>
+              </div>
+
+              {/* Status updates */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <span style={{ fontSize: 11, color: "#a8e063", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                    {detectionProgress?.stage === "scanning" ? "🔍 Bounded Map Scan" : detectionProgress?.stage === "matching" ? "📄 Cross-Referencing" : "⚡ Initializing"}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>
+                    {detectionProgress?.percentage ?? 0}%
+                  </span>
+                </div>
+
+                {/* Progress bar */}
+                <div style={{ width: "100%", height: 8, background: "rgba(15, 23, 42, 0.6)", borderRadius: 10, overflow: "hidden", border: "1px solid var(--color-input-bg)" }}>
+                  <div
+                    style={{
+                      width: `${detectionProgress?.percentage ?? 0}%`,
+                      height: "100%",
+                      background: "linear-gradient(90deg, #56ab2f, #a8e063, #56ab2f)",
+                      backgroundSize: "200% 100%",
+                      borderRadius: 10,
+                      transition: "width 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+                      animation: "progress-shimmer 2.5s linear infinite"
+                    }}
+                  />
+                </div>
+
+                <div style={{ fontSize: 12, color: "#cbd5e1", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>
+                  {detectionProgress?.status || "Starting scan..."}
+                </div>
+              </div>
+
+              {/* Footer with clock and ETR */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", borderTop: "1px solid var(--color-input-bg)", paddingTop: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--color-muted)", fontSize: 11, fontWeight: 500 }}>
@@ -3139,54 +3187,6 @@ export default function MapPage() {
               <span style={styles.countBadge}>{visibleFlags.length}</span>
             </div>
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
-
-            {/* Map Search Input */}
-            <div style={{ position: "relative", marginBottom: 12 }}>
-              <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
-                <Icon.Search />
-              </div>
-              <input
-                type="text"
-                placeholder="Search name, ID, barangay, address..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "8px 30px 8px 32px",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px solid var(--color-border-soft)",
-                  background: "var(--color-input-bg)",
-                  color: "var(--color-ink)",
-                  fontSize: 12,
-                  outline: "none",
-                  boxSizing: "border-box",
-                  fontFamily: "var(--font-base)",
-                  transition: "border-color 0.15s ease",
-                }}
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch("")}
-                  style={{
-                    position: "absolute",
-                    right: 8,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--color-muted)",
-                    cursor: "pointer",
-                    padding: 2,
-                    display: "flex",
-                    alignItems: "center"
-                  }}
-                  title="Clear search"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-              )}
-            </div>
 
             {/* Legend / Filter List */}
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
