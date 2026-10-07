@@ -280,9 +280,23 @@ def _get_all_analytics_inner(F=None):
             SELECT
                 g.logID AS id,
                 g.barangayID,
-                g.flagColor
+                CASE
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Active'  THEN 'Green'
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Orange'
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Revoked' THEN 'Black'
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Closed'  THEN 'Purple'
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Pending' THEN 'Yellow'
+                    ELSE g.flagColor
+                END AS flagColor
             FROM geospatial_logs g
-            WHERE (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
+            LEFT JOIN LATERAL (
+                SELECT businessID, applicationStatus
+                FROM official_registry
+                WHERE barangayID = g.barangayID
+                  AND businessName = g.detectedName
+                LIMIT 1
+            ) r ON TRUE
+            WHERE (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR r.businessID IS NOT NULL OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
 
             UNION ALL
 

@@ -1156,8 +1156,6 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             reg_conditions.append("FALSE")
 
         if color:
-            geo_conditions.append("g.flagColor = %s")
-            geo_params.append(color)
             # Map the color filter back to the applicationStatus for the registry branch
             _status_for_color = {
                 "Green":  "Active",
@@ -1168,10 +1166,28 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             }
             mapped_status = _status_for_color.get(color)
             if mapped_status:
+                geo_conditions.append(
+                    "(g.flagColor = %s OR EXISTS ("
+                    "    SELECT 1 FROM official_registry r_chk"
+                    "    WHERE r_chk.barangayID = g.barangayID"
+                    "      AND r_chk.businessName = g.detectedName"
+                    "      AND r_chk.applicationStatus = %s"
+                    "))"
+                )
+                geo_params.extend([color, mapped_status])
                 reg_conditions.append("r.applicationStatus = %s")
                 reg_params.append(mapped_status)
             else:
-                # Color has no registry equivalent (e.g. Red) — exclude registry rows
+                # Color has no registry equivalent (e.g. Red for detected unregistered POIs)
+                geo_conditions.append(
+                    "(g.flagColor = %s AND NOT EXISTS ("
+                    "    SELECT 1 FROM official_registry r_chk"
+                    "    WHERE r_chk.barangayID = g.barangayID"
+                    "      AND r_chk.businessName = g.detectedName"
+                    "      AND r_chk.applicationStatus IN ('Active', 'Expired', 'Revoked', 'Closed', 'Pending')"
+                    "))"
+                )
+                geo_params.append(color)
                 reg_conditions.append("FALSE")
 
         if barangay_id:
@@ -1212,7 +1228,14 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     g.detectedName,
                     COALESCE(g.latitude, r.latitude) AS latitude,
                     COALESCE(g.longitude, r.longitude) AS longitude,
-                    g.flagColor,
+                    CASE
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Active'  THEN 'Green'
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Orange'
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Revoked' THEN 'Black'
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Closed'  THEN 'Purple'
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Pending' THEN 'Yellow'
+                        ELSE g.flagColor
+                    END AS flagColor,
                     g.detectedDate,
                     g.nearestLandmark,
                     g.notes,
@@ -1240,7 +1263,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 FROM geospatial_logs g
                 LEFT JOIN barangays b ON g.barangayID = b.barangayID
                 LEFT JOIN LATERAL (
-                    SELECT businessID, businessSize, businessAddress, latitude, longitude
+                    SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus
                     FROM official_registry
                     WHERE barangayID = g.barangayID
                       AND businessName = g.detectedName

@@ -527,17 +527,15 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     existing_pin = cursor.fetchone()
 
     if existing_pin:
-        pin_id = existing_pin["logID"] if isinstance(
-            existing_pin, dict) else existing_pin[0]
         cursor.execute(
             """
             UPDATE geospatial_logs
             SET flagColor = %s,
                 latitude = COALESCE(latitude, %s),
                 longitude = COALESCE(longitude, %s)
-            WHERE logID = %s
+            WHERE barangayID = %s AND detectedName = %s
             """,
-            (flag_color, lat, lng, pin_id),
+            (flag_color, lat, lng, barangay_id, name_clean),
         )
     elif lat is not None and lng is not None:
         cursor.execute(
