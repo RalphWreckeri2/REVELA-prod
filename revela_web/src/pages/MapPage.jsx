@@ -3049,7 +3049,7 @@ export default function MapPage() {
               <Icon.Layers />
               <span style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", whiteSpace: "nowrap" }}>Layers</span>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflowX: "auto" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflowX: "auto", flex: "1 1 300px", minWidth: 0 }}>
               {LAYER_OPTIONS.map(l => {
                 const isActive = l.id === "base" ? satellite : layers[l.id];
                 return (
@@ -3081,6 +3081,30 @@ export default function MapPage() {
                   </button>
                 );
               })}
+            </div>
+            <div style={styles.layerSearch}>
+              <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
+                <Icon.Search />
+              </div>
+              <input
+                type="text"
+                aria-label="Search businesses on the map"
+                placeholder="Search businesses, IDs, or barangays..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={styles.mapSearchInput}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  style={styles.mapSearchClear}
+                  title="Clear map search"
+                  aria-label="Clear map search"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              )}
             </div>
           </div>
 
@@ -3115,30 +3139,6 @@ export default function MapPage() {
               handleCancelDetection={handleCancelDetection}
               loadingFlags={loadingFlags}
             />
-            <div style={styles.mapSearchOverlay}>
-              <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
-                <Icon.Search />
-              </div>
-              <input
-                type="search"
-                aria-label="Search businesses on the map"
-                placeholder="Search businesses, IDs, or barangays..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                style={styles.mapSearchInput}
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch("")}
-                  style={styles.mapSearchClear}
-                  title="Clear map search"
-                  aria-label="Clear map search"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
-              )}
-            </div>
             {/* Discrete risk legend â€” matches HEATMAP_RISK_STYLE on the Data layer */}
             {layers.diagnostics && (
               <div style={{
@@ -3515,12 +3515,12 @@ const styles = {
   mapLayout: { display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "stretch" },
   mapColumn: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 },
 
-  layerBar: { display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", borderRadius: "var(--radius-lg)", flexWrap: "nowrap", overflowX: "auto" },
+  layerBar: { display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
+  layerSearch: { position: "relative", flex: "0 1 360px", width: "min(360px, 100%)", minWidth: 220, marginLeft: "auto" },
   layerToggle: { padding: "6px 14px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s", whiteSpace: "nowrap", flexShrink: 0 },
 
   mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: 1, minHeight: 480 },
-  mapSearchOverlay: { position: "absolute", top: 14, left: 14, zIndex: 30, width: "min(390px, calc(100% - 28px))" },
-  mapSearchInput: { width: "100%", padding: "11px 40px 11px 38px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)", background: "var(--color-modal-bg)", color: "var(--color-ink)", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "var(--font-base)", boxShadow: "0 4px 16px rgba(15,23,42,0.18)" },
+  mapSearchInput: { width: "100%", height: 38, padding: "8px 40px 8px 38px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)", background: "var(--color-input-bg)", color: "var(--color-ink)", fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "var(--font-base)" },
   mapSearchClear: { position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "var(--radius-sm)", background: "transparent", color: "var(--color-muted)", cursor: "pointer" },
   mapCanvas: { width: "100%", height: "100%", position: "relative", background: "#e8f5e2" },
   mapFallback: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "var(--color-ink)", fontSize: 14, textAlign: "center", padding: 24 },
