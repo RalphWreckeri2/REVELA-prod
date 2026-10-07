@@ -1528,8 +1528,11 @@ def update_flag_location(log_id: int, lat: float, lng: float):
 # ── Escalate to Black Flag ────────────────────────────────────────────────────
 
 def escalate_to_black(log_id):
-    """Update flagColor to Black. Only valid if current status is Red or Yellow."""
+    """Update flagColor to Black. Only valid if current status is Red, Yellow, or Orange."""
     try:
+        if log_id < 0:
+            return update_flag_color(log_id, "Black")
+
         cursor = mysql.connection.cursor()
 
         cursor.execute(
@@ -1542,7 +1545,7 @@ def escalate_to_black(log_id):
             cursor.close()
             return False, "Flag not found"
 
-        if row["flagColor"] not in ("Red", "Yellow"):
+        if row["flagColor"] not in ("Red", "Yellow", "Orange"):
             cursor.close()
             return False, f"Cannot escalate from '{row['flagColor']}' to Black"
 

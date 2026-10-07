@@ -182,7 +182,7 @@ def yellow_flag_route():
 
 
 # ── PATCH /api/flags/:id/black ────────────────────────────────────────────────
-@flags_bp.route("/<int:log_id>/black", methods=["PATCH"])
+@flags_bp.route("/<int(signed=True):log_id>/black", methods=["PATCH"])
 @admin_required()
 def black_flag_route(log_id):
     """Escalate a Red or Yellow flag to Black."""
