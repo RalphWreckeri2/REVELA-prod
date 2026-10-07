@@ -738,11 +738,12 @@ function ColumnFocusModal({ status, reports, isAdmin, onAssign, onVerify, onView
   const filteredReports = reports.filter(r => {
     if (filterFlag && r.flagColor !== filterFlag) return false;
     if (search) {
-      const q = search.toLowerCase();
+      const q = search.trim().toLowerCase();
+      const cleanQ = q.startsWith("#") ? q.slice(1).trim() : q;
       const hay = [
-        r.detectedName, r.barangayName, r.reportID, r.logID, r.inspectorName
-      ].join(" ").toLowerCase();
-      return hay.includes(q);
+        r.detectedName, r.barangayName, r.reportID, r.logID, r.inspectorName, r.businessAddress, r.notes, r.inspectionResult
+      ].filter(Boolean).join(" ").toLowerCase();
+      return hay.includes(q) || String(r.reportID || "").toLowerCase().includes(cleanQ) || String(r.logID || "").toLowerCase().includes(cleanQ);
     }
     return true;
   });
@@ -756,20 +757,42 @@ function ColumnFocusModal({ status, reports, isAdmin, onAssign, onVerify, onView
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ width: 12, height: 12, borderRadius: "50%", background: statusMeta.text, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }} />
-              {status} Backlog <span style={{ color: "var(--color-muted)", fontSize: 16, fontWeight: 600 }}>({reports.length})</span>
+              {status} Backlog <span style={{ color: "var(--color-muted)", fontSize: 16, fontWeight: 600 }}>({filteredReports.length})</span>
             </h2>
             
             <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
               <div style={{ position: "relative" }}>
-                <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)" }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", pointerEvents: "none" }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
                 <input 
                   type="text" 
-                  placeholder="Search name or ID..." 
+                  placeholder="Search name, ID, or area..." 
                   className="saas-input" 
-                  style={{ padding: "8px 14px 8px 36px", width: 260, borderRadius: 8, background: "transparent" }}
+                  style={{ padding: "8px 30px 8px 36px", width: 260, borderRadius: 8, background: "transparent" }}
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                 />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--color-muted)",
+                      cursor: "pointer",
+                      padding: 2,
+                      display: "flex",
+                      alignItems: "center"
+                    }}
+                    title="Clear search"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  </button>
+                )}
               </div>
               
               <button className="modal-close-btn" onClick={onClose}>
@@ -1220,14 +1243,37 @@ export default function InspectionPage() {
           )}
 
           {/* Live Search Bar */}
-          <div className="search-bar" style={{ width: 240, maxWidth: "100%", minWidth: 180, flex: "1 1 auto" }}>
+          <div className="search-bar" style={{ width: 240, maxWidth: "100%", minWidth: 180, flex: "1 1 auto", position: "relative" }}>
             <Icon.Search />
             <input
               type="text"
               placeholder="Search name, ID, or area..."
               value={search}
               onChange={e => setSearch(e.target.value)}
+              style={{ paddingRight: search ? 30 : 12 }}
             />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                style={{
+                  position: "absolute",
+                  right: 10,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--color-muted)",
+                  cursor: "pointer",
+                  padding: 2,
+                  display: "flex",
+                  alignItems: "center"
+                }}
+                title="Clear search"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1326,7 +1372,7 @@ export default function InspectionPage() {
       <AnimatePresence isVisible={!!focusColumn}>
         <ColumnFocusModal
           status={focusColumn}
-          reports={byStatus(focusColumn)}
+          reports={reports.filter(r => r.verificationStatus === focusColumn)}
           isAdmin={isAdmin}
           onAssign={r => setAssignTarget(r)}
           onVerify={r => setVerifyTarget(r)}

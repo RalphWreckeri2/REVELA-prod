@@ -468,7 +468,8 @@ export default function RegistryPage() {
     setError("");
     try {
       const params = { page, limit: pageSize };
-      if (debouncedSearch) params.search = debouncedSearch;
+      const cleanSearch = debouncedSearch.trim();
+      if (cleanSearch) params.search = cleanSearch;
       if (barangay !== "All Barangays") params.barangayID = barangay; // sends ID
       if (status !== "All Status") params.status = status;
       if (regType !== "All Types") params.registrationType = regType;
@@ -498,7 +499,7 @@ export default function RegistryPage() {
         status: status !== "All Status" ? status : undefined,
         registrationType: regType !== "All Types" ? regType : undefined,
         barangayID: barangay !== "All Barangays" ? barangay : undefined,
-        search: debouncedSearch
+        search: debouncedSearch.trim() || undefined
       }, token);
 
       // 2. Convert the JSON results to CSV
@@ -543,10 +544,10 @@ export default function RegistryPage() {
     setShowImport(true);
   };
 
-  // Reset page to 1 whenever filters change (search, barangay, status, pageSize)
+  // Reset page to 1 whenever filters change (search, barangay, status, regType, pageSize)
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, barangay, status, pageSize]);
+  }, [debouncedSearch, barangay, status, regType, pageSize]);
 
   // Fetch whenever page or filters change
   useEffect(() => {
@@ -594,7 +595,7 @@ export default function RegistryPage() {
   // ── Summary counts (derived from the full total, not just current page) ───
   // These come from a dedicated summary endpoint in later sprints.
   // For now we show the total returned.
-  const hasFilters = debouncedSearch || barangay !== "All Barangays" || status !== "All Status";
+  const hasFilters = Boolean(debouncedSearch.trim()) || barangay !== "All Barangays" || status !== "All Status" || regType !== "All Types";
 
   return (
     <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
@@ -675,14 +676,37 @@ export default function RegistryPage() {
 
       {/* Filters Bar */}
       <div className="frosted-glass saas-card" style={styles.filtersBar}>
-        <div className="search-bar" style={{ width: 280, maxWidth: "100%", minWidth: 200, flex: "1 1 auto" }}>
+        <div className="search-bar" style={{ width: 280, maxWidth: "100%", minWidth: 200, flex: "1 1 auto", position: "relative" }}>
           <Icon.Search />
           <input
             type="text"
-            placeholder="Search name, type, address…"
+            placeholder="Search name, ID, type, address…"
             value={search}
             onChange={e => setSearch(e.target.value)}
+            style={{ paddingRight: search ? 30 : 12 }}
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              style={{
+                position: "absolute",
+                right: 10,
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "transparent",
+                border: "none",
+                color: "var(--color-muted)",
+                cursor: "pointer",
+                padding: 2,
+                display: "flex",
+                alignItems: "center"
+              }}
+              title="Clear search"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", marginLeft: "auto" }}>

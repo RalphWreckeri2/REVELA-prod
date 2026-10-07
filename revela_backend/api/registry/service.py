@@ -1241,17 +1241,28 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
             params.append(registration_type.upper())
 
         if search:
+            clean_search = search.strip()
+            clean_id = clean_search.lstrip("#").strip()
             conditions.append(
-                "(r.businessName LIKE %s OR r.businessType LIKE %s OR r.businessAddress LIKE %s)"
+                "("
+                "r.businessID LIKE %s OR "
+                "r.businessID LIKE %s OR "
+                "r.businessName LIKE %s OR "
+                "r.businessType LIKE %s OR "
+                "r.lineOfBusiness LIKE %s OR "
+                "r.businessAddress LIKE %s OR "
+                "b.barangayName LIKE %s"
+                ")"
             )
-            like = f"%{search}%"
-            params.extend([like, like, like])
+            like = f"%{clean_search}%"
+            like_id = f"%{clean_id}%" if clean_id else like
+            params.extend([like, like_id, like, like, like, like, like])
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
-        # Total count
+        # Total count — LEFT JOIN barangays b ensures b.barangayName is searchable
         cursor.execute(
-            f"SELECT COUNT(*) AS total FROM official_registry r {where}",
+            f"SELECT COUNT(*) AS total FROM official_registry r LEFT JOIN barangays b ON r.barangayID = b.barangayID {where}",
             params,
         )
         total = cursor.fetchone()["total"]

@@ -2794,11 +2794,50 @@ export default function MapPage() {
         ['Assigned', 'Reassigned', 'In Progress', 'Submitted'].includes(f.verificationStatus)
       );
     }
-    const matchSearch = (f.name || "").toLowerCase().includes(search.toLowerCase()) ||
-      (f.barangay || "").toLowerCase().includes(search.toLowerCase());
+    const q = search.trim().toLowerCase();
+    const cleanQ = q.startsWith("#") ? q.slice(1).trim() : q;
+    const matchSearch = !q || (
+      (f.name || "").toLowerCase().includes(q) ||
+      (f.barangay || "").toLowerCase().includes(q) ||
+      (f.address || "").toLowerCase().includes(q) ||
+      (f.notes || "").toLowerCase().includes(q) ||
+      (f.businessType || "").toLowerCase().includes(q) ||
+      String(f.id || "").toLowerCase().includes(cleanQ) ||
+      String(f.logID || "").toLowerCase().includes(cleanQ)
+    );
     const matchSource = filterSource === "all" || f.source === filterSource;
     return matchColor && matchSearch && matchSource;
   });
+
+  // Pan / fit bounds to search results (debounced)
+  useEffect(() => {
+    const q = search.trim();
+    if (!q || !mapRef.current) return;
+
+    const timer = setTimeout(() => {
+      const bCentroid = getBarangayCentroid(q);
+      if (bCentroid && mapRef.current) {
+        mapRef.current.panTo(bCentroid);
+        mapRef.current.setZoom(15);
+        return;
+      }
+
+      const matches = visibleFlags.filter(
+        f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
+      );
+      if (matches.length === 1 && mapRef.current) {
+        mapRef.current.panTo({ lat: Number(matches[0].latitude), lng: Number(matches[0].longitude) });
+        mapRef.current.setZoom(18);
+      } else if (matches.length > 1 && mapRef.current && window.google?.maps?.LatLngBounds) {
+        const bounds = new window.google.maps.LatLngBounds();
+        matches.forEach(m => bounds.extend({ lat: Number(m.latitude), lng: Number(m.longitude) }));
+        mapRef.current.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const mapCenter = selectedFlag
     ? (() => {
@@ -3076,6 +3115,30 @@ export default function MapPage() {
               handleCancelDetection={handleCancelDetection}
               loadingFlags={loadingFlags}
             />
+            <div style={styles.mapSearchOverlay}>
+              <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
+                <Icon.Search />
+              </div>
+              <input
+                type="search"
+                aria-label="Search businesses on the map"
+                placeholder="Search businesses, IDs, or barangays..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={styles.mapSearchInput}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  style={styles.mapSearchClear}
+                  title="Clear map search"
+                  aria-label="Clear map search"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              )}
+            </div>
             {/* Discrete risk legend â€” matches HEATMAP_RISK_STYLE on the Data layer */}
             {layers.diagnostics && (
               <div style={{
@@ -3171,7 +3234,55 @@ export default function MapPage() {
               )}
               <span style={styles.countBadge}>{visibleFlags.length}</span>
             </div>
-            <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 14px 0" }} />
+            <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
+
+            {/* Map Search Input */}
+            <div style={{ position: "relative", marginBottom: 12 }}>
+              <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
+                <Icon.Search />
+              </div>
+              <input
+                type="text"
+                placeholder="Search name, ID, barangay, address..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "8px 30px 8px 32px",
+                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--color-border-soft)",
+                  background: "var(--color-input-bg)",
+                  color: "var(--color-ink)",
+                  fontSize: 12,
+                  outline: "none",
+                  boxSizing: "border-box",
+                  fontFamily: "var(--font-base)",
+                  transition: "border-color 0.15s ease",
+                }}
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-muted)",
+                    cursor: "pointer",
+                    padding: 2,
+                    display: "flex",
+                    alignItems: "center"
+                  }}
+                  title="Clear search"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              )}
+            </div>
 
             {/* Legend / Filter List */}
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -3408,6 +3519,9 @@ const styles = {
   layerToggle: { padding: "6px 14px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s", whiteSpace: "nowrap", flexShrink: 0 },
 
   mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: 1, minHeight: 480 },
+  mapSearchOverlay: { position: "absolute", top: 14, left: 14, zIndex: 30, width: "min(390px, calc(100% - 28px))" },
+  mapSearchInput: { width: "100%", padding: "11px 40px 11px 38px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)", background: "var(--color-modal-bg)", color: "var(--color-ink)", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "var(--font-base)", boxShadow: "0 4px 16px rgba(15,23,42,0.18)" },
+  mapSearchClear: { position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "var(--radius-sm)", background: "transparent", color: "var(--color-muted)", cursor: "pointer" },
   mapCanvas: { width: "100%", height: "100%", position: "relative", background: "#e8f5e2" },
   mapFallback: { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "var(--color-ink)", fontSize: 14, textAlign: "center", padding: 24 },
 

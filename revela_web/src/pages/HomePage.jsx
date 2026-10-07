@@ -663,7 +663,14 @@ function InspectorReportsModal({ isOpen, onClose, flags, inspectors, navigate })
   const filteredFlags = flags.filter(f => {
     // Show only flags reported by an inspector that are not verified as compliant (Green)
     if (!f.reportedByUserID || parseColor(f) === 'Green') return false;
-    if (searchTerm && !f.detectedName?.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    if (searchTerm) {
+      const q = searchTerm.trim().toLowerCase();
+      const cleanQ = q.startsWith("#") ? q.slice(1).trim() : q;
+      const hay = [
+        f.detectedName, f.name, f.barangayName, f.barangay, f.resolvedAddress, f.notes, f.inspectorName
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!hay.includes(q) && !String(f.logID || f.id || "").toLowerCase().includes(cleanQ)) return false;
+    }
     if (filterInspector && f.reportedByUserID !== Number(filterInspector)) return false;
     return true;
   });
@@ -693,15 +700,37 @@ function InspectorReportsModal({ isOpen, onClose, flags, inspectors, navigate })
             </select>
 
             <div style={{ position: "relative" }}>
-              <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)" }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <svg style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", pointerEvents: "none" }} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
               <input
                 type="text"
-                placeholder="Search..."
+                placeholder="Search name, ID, barangay..."
                 className="saas-input"
-                style={{ padding: "8px 14px 8px 36px", width: 220, borderRadius: 8, background: "transparent" }}
+                style={{ padding: "8px 30px 8px 36px", width: 220, borderRadius: 8, background: "transparent" }}
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--color-muted)",
+                    cursor: "pointer",
+                    padding: 2,
+                    display: "flex",
+                    alignItems: "center"
+                  }}
+                  title="Clear search"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              )}
             </div>
 
             <button className="modal-close-btn" onClick={onClose} style={{ marginLeft: 12 }}>
