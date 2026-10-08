@@ -1607,7 +1607,7 @@ function MapCanvas({
               </div>
               <button
                 type="button"
-                onClick={() => onCloseSnapProgress && onCloseSnapProgress()}
+                onClick={() => setSnapProgress(null)}
                 style={{
                   marginLeft: "auto",
                   background: "rgba(255,255,255,0.08)",
@@ -1651,7 +1651,7 @@ function MapCanvas({
               {snapProgress.stage === 'completed' && (
                 <button
                   type="button"
-                  onClick={() => onCloseSnapProgress && onCloseSnapProgress()}
+                  onClick={() => setSnapProgress(null)}
                   style={{
                     marginTop: 6,
                     padding: "8px 16px",

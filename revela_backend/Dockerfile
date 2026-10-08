@@ -23,5 +23,5 @@ COPY . .
 
 EXPOSE 5000
 
-# Run with Gunicorn on port 5000 with multiple threads to prevent SSE blocking
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "4", "app:create_app()"]
+# Run with Gunicorn on port 5000 with 1 worker and multiple threads so in-process SSE pub/sub works across all connections
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "8", "app:create_app()"]

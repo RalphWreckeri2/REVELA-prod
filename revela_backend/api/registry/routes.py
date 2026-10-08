@@ -59,9 +59,16 @@ def snap_unresolved():
     # hard cap at 1000/run
     limit = max(1, min(int(body.get("limit", 200)), 1000))
 
+    app_instance = current_app._get_current_object()
+
     def _run():
-        with current_app.app_context():
-            snap_unresolved_pins(limit=limit)
+        with app_instance.app_context():
+            try:
+                snap_unresolved_pins(limit=limit)
+            except Exception as e:
+                import traceback
+                print(f"[snap_unresolved] background thread error: {e}")
+                traceback.print_exc()
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()

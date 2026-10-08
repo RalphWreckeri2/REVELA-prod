@@ -1251,7 +1251,8 @@ def snap_unresolved_pins(limit: int = 200):
     from api.notifications import hub
     from api.models.geospatial import insert_green_flag
 
-    if not GOOGLE_MAPS_API_KEY:
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
+    if not api_key:
         err = "GOOGLE_MAPS_API_KEY is not configured on the server."
         hub.publish_to_admins({
             "type": "snap_progress",
@@ -1493,8 +1494,8 @@ def snap_unresolved_pins(limit: int = 200):
                 failed += 1
             cur2.close()
 
-            # Progress update every 10 businesses
-            if (idx + 1) % 10 == 0 or idx == total - 1:
+            # Progress update: immediately for early items, then every 5 businesses, and on the last one
+            if (idx + 1) % 5 == 0 or idx < 5 or idx == total - 1:
                 pct = min(99, int(((idx + 1) / max(total, 1)) * 95))
                 hub.publish_to_admins({
                     "type": "snap_progress",
