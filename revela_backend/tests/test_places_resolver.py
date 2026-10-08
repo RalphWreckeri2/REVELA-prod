@@ -1,0 +1,202 @@
+import os
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from api.registry.places_resolver import (
+    compute_resolve_key,
+    _is_within_municipal_bounds,
+    _text_search,
+    resolve_location,
+    decide_review,
+)
+
+
+class PlacesResolverHardeningTests(unittest.TestCase):
+
+    def test_compute_resolve_key_deterministic(self):
+        """compute_resolve_key must return a 40-char SHA-1 hex digest normalized across case and spacing."""
+        key1 = compute_resolve_key("Silva's Pharmacy", "  Poblacion  ", 1)
+        key2 = compute_resolve_key("silva's pharmacy", "poblacion", "1")
+        self.assertEqual(len(key1), 40)
+        self.assertEqual(key1, key2)
+
+        key3 = compute_resolve_key("Silva's Pharmacy", "Barangay II", 2)
+        self.assertNotEqual(key1, key3)
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    def test_text_search_field_mask_excludes_enterprise(self):
+        """Text Search must request only Pro-tier fields and exclude all Enterprise tier fields."""
+        mock_post = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"places": []}
+        mock_post.return_value = mock_resp
+
+        _text_search("Silva Pharmacy", "Poblacion", "Barangay I", post=mock_post)
+
+        self.assertTrue(mock_post.called)
+        headers = mock_post.call_args[1].get("headers", {})
+        mask = headers.get("X-Goog-FieldMask", "")
+
+        # Verify allowed pro fields
+        self.assertIn("places.id", mask)
+        self.assertIn("places.displayName", mask)
+        self.assertIn("places.location", mask)
+        self.assertIn("places.primaryType", mask)
+        self.assertIn("places.types", mask)
+
+        # Strictly verify Enterprise tier fields are NOT present
+        enterprise_fields = [
+            "rating",
+            "userRatingCount",
+            "regularOpeningHours",
+            "websiteUri",
+            "reviews",
+            "photos",
+        ]
+        for ef in enterprise_fields:
+            self.assertNotIn(ef, mask)
+
+    def test_municipal_bounds_screening(self):
+        """Screening must accept Mataasnakahoy coordinates and reject out-of-town POIs."""
+        # Inside Mataasnakahoy center & Poblacion
+        self.assertTrue(_is_within_municipal_bounds(13.9667, 121.1167))
+        self.assertTrue(_is_within_municipal_bounds(13.9610, 121.1110))
+
+        # Outside: Calaca (~35km away)
+        self.assertFalse(_is_within_municipal_bounds(13.9300, 120.8100))
+
+        # Outside: Manila (~75km away)
+        self.assertFalse(_is_within_municipal_bounds(14.5995, 120.9842))
+
+        # Edge cases: None or invalid
+        self.assertFalse(_is_within_municipal_bounds(None, None))
+        self.assertFalse(_is_within_municipal_bounds("invalid", "coords"))
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.mysql")
+    def test_resolve_key_cache_consumes_zero_api_calls(self, mock_mysql):
+        """When resolveKey in DB matches computed hash, resolver must return cached coordinates without calling API."""
+        curr_key = compute_resolve_key("Silva Pharmacy", "Poblacion", 1)
+
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = {
+            "resolveKey": curr_key,
+            "latitude": 13.9620,
+            "longitude": 121.1120,
+            "coordSource": "places",
+            "placeID": "place_cached_123",
+            "placeIDKind": "poi",
+            "matchScore": 0.95,
+            "matchStatus": "auto"
+        }
+
+        mock_post = MagicMock()
+        lat, lng, meta = resolve_location(
+            "Silva Pharmacy", "Poblacion", "Barangay I",
+            business_id="BIZ-CACHE-01", barangay_id=1,
+            _post=mock_post
+        )
+
+        # HTTP request must NEVER be made
+        mock_post.assert_not_called()
+        self.assertEqual(lat, 13.9620)
+        self.assertEqual(lng, 121.1120)
+        self.assertEqual(meta["match_type"], "cached_resolve_key")
+        self.assertEqual(meta["place_id"], "place_cached_123")
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call")
+    @patch("api.registry.places_resolver.mysql")
+    def test_quota_guard_fails_closed(self, mock_mysql, mock_reserve):
+        """When quota is exhausted, resolver must fail closed without making HTTP calls."""
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None  # No cache hit
+        mock_cursor.fetchall.return_value = []   # No rejected places
+
+        mock_reserve.return_value = False  # Quota exhausted
+        mock_post = MagicMock()
+
+        lat, lng, meta = resolve_location(
+            "New Store", "Poblacion", "Barangay I",
+            business_id="BIZ-NEW-01", barangay_id=1,
+            _post=mock_post
+        )
+
+        mock_post.assert_not_called()
+        self.assertIsNone(lat)
+        self.assertIsNone(lng)
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call")
+    @patch("api.registry.places_resolver.mysql")
+    def test_rejected_place_candidate_discarded(self, mock_mysql, mock_reserve):
+        """Candidate present in registry_rejected_places must be discarded and flagged for review."""
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None  # No resolveKey cache hit
+        # registry_rejected_places returns bad_place_xyz for this business
+        mock_cursor.fetchall.return_value = [{"placeID": "bad_place_xyz"}]
+
+        mock_reserve.return_value = True
+
+        mock_post = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "places": [
+                {
+                    "id": "bad_place_xyz",
+                    "displayName": {"text": "Silva Pharmacy"},
+                    "location": {"latitude": 13.9620, "longitude": 121.1120},
+                    "types": ["pharmacy"]
+                }
+            ]
+        }
+        mock_post.return_value = mock_resp
+
+        lat, lng, meta = resolve_location(
+            "Silva Pharmacy", "Poblacion", "Barangay I",
+            business_id="BIZ-REJ-01", barangay_id=1,
+            _post=mock_post
+        )
+
+        # The candidate was rejected, so coordinates must not be snapped
+        self.assertIsNone(lat)
+        self.assertIsNone(lng)
+        self.assertEqual(meta["match_status"], "review")
+        self.assertEqual(meta["match_type"], "rejected_place_discarded")
+
+    @patch("api.registry.places_resolver.mysql")
+    def test_decide_review_rejection_records_into_rejected_places(self, mock_mysql):
+        """When an admin rejects a review candidate, the placeID must be inserted into registry_rejected_places."""
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = {
+            "barangayID": 1,
+            "businessName": "Silva Pharmacy",
+            "latitude": 13.9620,
+            "longitude": 121.1120,
+            "placeID": "bad_place_abc"
+        }
+
+        ok, err = decide_review("BIZ-REV-01", approve=False)
+        self.assertTrue(ok)
+        self.assertIsNone(err)
+
+        insert_calls = [
+            c for c in mock_cursor.execute.call_args_list
+            if "INSERT IGNORE INTO registry_rejected_places" in c[0][0]
+        ]
+        self.assertEqual(len(insert_calls), 1)
+        sql, params = insert_calls[0][0][0], insert_calls[0][0][1]
+        self.assertEqual(params, ("BIZ-REV-01", "bad_place_abc"))
+
+
+if __name__ == "__main__":
+    unittest.main()

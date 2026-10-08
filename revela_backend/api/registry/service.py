@@ -339,17 +339,21 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     return None, None
 
 
-def _resolve_location(business_name, address, barangay):
+def _resolve_location(business_name, address, barangay, business_id=None, barangay_id=None, line_of_business=None):
     """Returns (lat, lng, meta).
     PLACES_RESOLVER_ENABLED=1 -> Places Text Search (+ quality-gated geocode fallback), meta describes provenance.
     Otherwise -> legacy _geocode behaviour unchanged, meta=None."""
     name_str = _clean_str(business_name) or ""
     addr_str = _clean_str(address) or ""
     brgy_str = _clean_str(barangay) or ""
+    lob_str = _clean_str(line_of_business) or ""
 
     if places_resolver.enabled():
         return places_resolver.resolve_location(
             name_str, addr_str, brgy_str,
+            business_id=business_id,
+            barangay_id=barangay_id,
+            line_of_business=lob_str,
             reserve_geocode=_reserve_geocode_call)
 
     # Local BPLO data often contains only vague location labels such as "District IV"
@@ -504,11 +508,10 @@ def _parse_renewal_date(raw) -> str | None:
         return None
 
 
-def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None):
+def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None):
     """
     Propagate a registry permit-status change to the business's map pin
-    (its most recent geospatial_logs entry, matched case-insensitively on
-    name + barangay — the same linkage the Registry page uses).
+    (preferring exact businessID match, then name + barangay).
     If no map pin exists yet and coordinates are provided, auto-seed a new pin.
     """
     flag_color = _status_to_flag_color(status)
@@ -518,11 +521,12 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
         """
         SELECT logID, flagColor, latitude, longitude
         FROM geospatial_logs
-        WHERE barangayID = %s AND detectedName = %s
-        ORDER BY detectedDate DESC
+        WHERE (businessID IS NOT NULL AND businessID = %s)
+           OR (businessID IS NULL AND barangayID = %s AND detectedName = %s)
+        ORDER BY (businessID = %s) DESC, detectedDate DESC
         LIMIT 1
         """,
-        (barangay_id, name_clean),
+        (business_id, barangay_id, name_clean, business_id),
     )
     existing_pin = cursor.fetchone()
 
@@ -531,20 +535,21 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
             """
             UPDATE geospatial_logs
             SET flagColor = %s,
+                businessID = COALESCE(businessID, %s),
                 latitude = COALESCE(latitude, %s),
                 longitude = COALESCE(longitude, %s)
-            WHERE barangayID = %s AND detectedName = %s
+            WHERE logID = %s
             """,
-            (flag_color, lat, lng, barangay_id, name_clean),
+            (flag_color, business_id, lat, lng, existing_pin["logID"]),
         )
     elif lat is not None and lng is not None:
         cursor.execute(
             """
             INSERT INTO geospatial_logs
-                (barangayID, detectedName, latitude, longitude, flagColor, nearestLandmark)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (barangayID, businessID, detectedName, latitude, longitude, flagColor, nearestLandmark)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
-            (barangay_id, name_clean, lat, lng, flag_color, address),
+            (barangay_id, business_id, name_clean, lat, lng, flag_color, address),
         )
 
 
@@ -714,10 +719,14 @@ def upload_registry(file, ext: str):
                 except Exception:
                     lat, lng = None, None
 
-            geo_meta = {"coord_source": "csv"} if lat is not None else None
+            curr_resolve_key = places_resolver.compute_resolve_key(name_key, address_raw, barangay_id)
+            geo_meta = {"coord_source": "csv", "resolve_key": curr_resolve_key} if lat is not None else None
+            lob = _clean_upper(row.get("lineOfBusiness"))
             if lat is None and address_raw:
                 lat, lng, geo_meta = _resolve_location(
-                    name_key, address_raw, barangay_raw)
+                    name_key, address_raw, barangay_raw,
+                    business_id=biz_id, barangay_id=barangay_id,
+                    line_of_business=lob)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -748,8 +757,8 @@ def upload_registry(file, ext: str):
                 INSERT IGNORE INTO official_registry
                     (businessID, barangayID, businessName, businessType, lineOfBusiness,
                     businessAddress, latitude, longitude, applicationStatus,
-                    lastRenewalDate, businessSize, registrationType)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    lastRenewalDate, businessSize, registrationType, resolveKey)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     biz_id,
@@ -764,6 +773,7 @@ def upload_registry(file, ext: str):
                     renewal_date,
                     _clean_upper(row.get("businessSize")),
                     reg_type,
+                    curr_resolve_key,
                 ),
             )
 
@@ -779,7 +789,8 @@ def upload_registry(file, ext: str):
                     lat,
                     lng,
                     address_raw,
-                    color=flag_color
+                    color=flag_color,
+                    business_id=biz_id
                 )
             else:
                 skipped += 1
@@ -918,32 +929,77 @@ def sync_registry(file, ext: str):
             # Check if this business already exists in the database
             cursor.execute(
                 """
-                SELECT businessID, latitude, longitude FROM official_registry
+                SELECT businessID, latitude, longitude, coordSource, matchStatus, resolveKey FROM official_registry
                 WHERE businessID = %s
                 """,
                 (biz_id,),
             )
             existing = cursor.fetchone()
 
+            is_locked = False
+            is_rejected = False
+            if existing:
+                src = (existing.get("coordSource") or "").strip().lower()
+                m_stat = (existing.get("matchStatus") or "").strip().lower()
+                if src == "manual" or m_stat == "approved":
+                    is_locked = True
+                if m_stat == "rejected":
+                    is_rejected = True
+
+            curr_resolve_key = places_resolver.compute_resolve_key(name_key, address_raw, barangay_id)
+            lob = _clean_upper(row.get("lineOfBusiness"))
             lat, lng = None, None
+            reused_existing = False
+            geo_meta = None
 
             raw_lat = row.get("latitude")
             raw_lng = row.get("longitude")
+            csv_has_coords = False
             if raw_lat is not None and raw_lng is not None and str(raw_lat).strip().lower() != "nan" and str(raw_lng).strip().lower() != "nan":
                 try:
                     lat, lng = float(raw_lat), float(raw_lng)
-                    geocoded_ok += 1
+                    csv_has_coords = True
                 except Exception:
+                    csv_has_coords = False
                     lat, lng = None, None
+
+            if is_locked:
+                # Locked records (manual or approved) strictly preserve existing coordinates.
+                # CSV or automated sweeps cannot overwrite them.
+                if existing.get("latitude") is not None and existing.get("longitude") is not None:
+                    lat = float(existing["latitude"])
+                    lng = float(existing["longitude"])
+                    reused_existing = True
+                    geocoded_ok += 1
+            elif csv_has_coords:
+                # Unlocked row with valid CSV coordinates
+                geo_meta = {"coord_source": "csv", "resolve_key": curr_resolve_key}
+                geocoded_ok += 1
+            elif existing and existing.get("resolveKey") == curr_resolve_key:
+                # Unchanged record according to SHA-1 resolveKey: consumes zero Google API calls!
+                if existing.get("latitude") is not None and existing.get("longitude") is not None:
+                    lat = float(existing["latitude"])
+                    lng = float(existing["longitude"])
+                    reused_existing = True
+                    geocoded_ok += 1
+                else:
+                    # Previously evaluated with identical key as unlocatable
+                    geocoded_failed += 1
             elif existing and existing.get("latitude") is not None and existing.get("longitude") is not None:
-                # Existing business already has valid coordinates — reuse them (consumes 0 Google quota!)
-                lat, lng = float(existing["latitude"]), float(
-                    existing["longitude"])
+                # Unlocked existing business already has valid coordinates — reuse them (consumes 0 Google quota!)
+                lat = float(existing["latitude"])
+                lng = float(existing["longitude"])
                 reused_existing = True
                 geocoded_ok += 1
+            elif is_rejected:
+                # Rejected match: do not re-send to automated resolver
+                lat, lng = None, None
+                geocoded_failed += 1
             elif address_raw:
                 lat, lng, geo_meta = _resolve_location(
-                    name_key, address_raw, barangay_raw)
+                    name_key, address_raw, barangay_raw,
+                    business_id=biz_id, barangay_id=barangay_id,
+                    line_of_business=lob)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -957,7 +1013,7 @@ def sync_registry(file, ext: str):
             )
             if geo_meta is None and lat is not None and not reused_existing:
                 # coordinates came from the uploaded file
-                geo_meta = {"coord_source": "csv"}
+                geo_meta = {"coord_source": "csv", "resolve_key": curr_resolve_key}
             status = _normalise_status(status_raw)
 
             reg_type = _normalise_registration_type(
@@ -971,58 +1027,128 @@ def sync_registry(file, ext: str):
             bsize = _clean_upper(row.get("businessSize"))
 
             if existing:
-                # Preserve existing coordinates to avoid overwriting exact pins from detection scan with generic geocoded ones
-                final_lat = existing.get("latitude") if existing.get(
-                    "latitude") is not None else lat
-                final_lng = existing.get("longitude") if existing.get(
-                    "longitude") is not None else lng
+                if is_locked:
+                    final_lat = existing.get("latitude")
+                    final_lng = existing.get("longitude")
+                else:
+                    final_lat = lat if lat is not None else existing.get("latitude")
+                    final_lng = lng if lng is not None else existing.get("longitude")
 
-                cursor.execute(
-                    """
-                    UPDATE official_registry SET
-                        barangayID = %s,
-                        businessName = %s,
-                        businessType = %s,
-                        lineOfBusiness = %s,
-                        businessAddress = %s,
-                        latitude = %s,
-                        longitude = %s,
-                        applicationStatus = %s,
-                        lastRenewalDate = %s,
-                        businessSize = %s,
-                        registrationType = COALESCE(%s, registrationType)
-                    WHERE businessID = %s
-                    """,
-                    (
-                        barangay_id,
-                        name_key,
-                        btype,
-                        lob,
-                        addr,
-                        final_lat,
-                        final_lng,
-                        status,
-                        renewal_date,
-                        bsize,
-                        reg_type,
-                        biz_id,
-                    ),
-                )
+                if not is_locked and not reused_existing and lat is not None:
+                    coord_source_val = geo_meta.get("coord_source", "csv") if geo_meta else "csv"
+                    place_id_val = geo_meta.get("place_id") if geo_meta else None
+                    place_id_kind_val = geo_meta.get("place_id_kind") if geo_meta else None
+                    score_val = geo_meta.get("score") if geo_meta else None
+                    match_status_val = geo_meta.get("match_status", "auto" if coord_source_val == "places" else None) if geo_meta else None
+
+                    cursor.execute(
+                        """
+                        UPDATE official_registry SET
+                            barangayID = %s,
+                            businessName = %s,
+                            businessType = %s,
+                            lineOfBusiness = %s,
+                            businessAddress = %s,
+                            latitude = %s,
+                            longitude = %s,
+                            applicationStatus = %s,
+                            lastRenewalDate = %s,
+                            businessSize = %s,
+                            registrationType = COALESCE(%s, registrationType),
+                            coordSource = %s,
+                            placeID = %s,
+                            placeIDKind = %s,
+                            coordFetchedAt = NOW(),
+                            matchScore = %s,
+                            matchStatus = %s,
+                            resolveKey = %s
+                        WHERE businessID = %s
+                        """,
+                        (
+                            barangay_id,
+                            name_key,
+                            btype,
+                            lob,
+                            addr,
+                            final_lat,
+                            final_lng,
+                            status,
+                            renewal_date,
+                            bsize,
+                            reg_type,
+                            coord_source_val,
+                            place_id_val,
+                            place_id_kind_val,
+                            score_val,
+                            match_status_val,
+                            curr_resolve_key,
+                            biz_id,
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        UPDATE official_registry SET
+                            barangayID = %s,
+                            businessName = %s,
+                            businessType = %s,
+                            lineOfBusiness = %s,
+                            businessAddress = %s,
+                            latitude = %s,
+                            longitude = %s,
+                            applicationStatus = %s,
+                            lastRenewalDate = %s,
+                            businessSize = %s,
+                            registrationType = COALESCE(%s, registrationType),
+                            resolveKey = COALESCE(%s, resolveKey)
+                        WHERE businessID = %s
+                        """,
+                        (
+                            barangay_id,
+                            name_key,
+                            btype,
+                            lob,
+                            addr,
+                            final_lat,
+                            final_lng,
+                            status,
+                            renewal_date,
+                            bsize,
+                            reg_type,
+                            curr_resolve_key,
+                            biz_id,
+                        ),
+                    )
                 updated += 1
-                # we actually wrote new coordinates
-                if existing.get("latitude") is None:
+                if not is_locked and not reused_existing and lat is not None:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 # Propagate status → flag color on the map pin (auto-seed if missing)
                 _sync_flag_color(cursor, barangay_id, name_key,
-                                 status, final_lat, final_lng, addr)
+                                 status, final_lat, final_lng, addr, business_id=biz_id)
             else:
+                coord_src = None
+                if lat is not None:
+                    if geo_meta and geo_meta.get("coord_source"):
+                        coord_src = geo_meta["coord_source"]
+                    else:
+                        coord_src = "csv"
+
+                place_id_val = geo_meta.get("place_id") if geo_meta else None
+                place_id_kind_val = geo_meta.get("place_id_kind") if geo_meta else None
+                score_val = geo_meta.get("score") if geo_meta else None
+                match_status_val = geo_meta.get("match_status") if geo_meta else None
+                if coord_src == "places" and not match_status_val:
+                    match_status_val = "auto"
+
                 cursor.execute(
                     """
                     INSERT INTO official_registry
                         (businessID, barangayID, businessName, businessType, lineOfBusiness,
                         businessAddress, latitude, longitude, applicationStatus,
-                        lastRenewalDate, businessSize, registrationType)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        lastRenewalDate, businessSize, registrationType,
+                        coordSource, placeID, placeIDKind, coordFetchedAt, matchScore, matchStatus, resolveKey)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            CASE WHEN %s IS NOT NULL THEN NOW() ELSE NULL END, %s, %s, %s)
                     """,
                     (
                         biz_id,
@@ -1037,6 +1163,13 @@ def sync_registry(file, ext: str):
                         renewal_date,
                         bsize,
                         reg_type,
+                        coord_src,
+                        place_id_val,
+                        place_id_kind_val,
+                        coord_src,
+                        score_val,
+                        match_status_val,
+                        curr_resolve_key,
                     ),
                 )
                 if cursor.rowcount > 0:
@@ -1050,7 +1183,8 @@ def sync_registry(file, ext: str):
                         lat,
                         lng,
                         addr,
-                        color=flag_color
+                        color=flag_color,
+                        business_id=biz_id
                     )
 
         mysql.connection.commit()
@@ -1178,24 +1312,40 @@ def delete_business(business_id):
         cursor = mysql.connection.cursor()
 
         cursor.execute(
-            "SELECT businessID, businessName, barangayID FROM official_registry WHERE businessID = %s", (business_id,))
+            """SELECT businessID, businessName, barangayID, latitude, longitude, placeID
+               FROM official_registry WHERE businessID = %s""",
+            (business_id,)
+        )
         row = cursor.fetchone()
         if not row:
             cursor.close()
             return False, "Business not found"
 
-        # Find associated geospatial logs mapped to this business
-        cursor.execute(
-            "SELECT logID FROM geospatial_logs WHERE LOWER(detectedName) = LOWER(%s) AND barangayID = %s",
-            (row["businessName"], row["barangayID"])
-        )
-        logs = cursor.fetchall()
+        # Identify logs strictly tied to THIS business (avoid broad delete across same-named branches)
+        target_log_ids = set()
 
-        for log in logs:
+        # Check if businessID column exists in geospatial_logs (post-migration)
+        try:
+            cursor.execute("SELECT logID FROM geospatial_logs WHERE businessID = %s", (business_id,))
+            for l in cursor.fetchall():
+                target_log_ids.add(l["logID"])
+        except Exception:
+            pass
+
+        # If not matched by businessID, match by placeID (if present)
+        if not target_log_ids and row.get("placeID"):
             cursor.execute(
-                "DELETE FROM inspection_reports WHERE targetID = %s", (log["logID"],))
-            cursor.execute(
-                "DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
+                "SELECT logID FROM geospatial_logs WHERE placeID = %s AND barangayID = %s",
+                (row["placeID"], row["barangayID"])
+            )
+            for l in cursor.fetchall():
+                target_log_ids.add(l["logID"])
+
+
+        # Delete only inspection reports and geospatial logs specifically tied to this business
+        for target_id in target_log_ids:
+            cursor.execute("DELETE FROM inspection_reports WHERE targetID = %s", (target_id,))
+            cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (target_id,))
 
         cursor.execute(
             "DELETE FROM official_registry WHERE businessID = %s", (business_id,))
@@ -1283,6 +1433,10 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                 r.businessAddress,
                 r.latitude,
                 r.longitude,
+                r.coordSource,
+                r.matchStatus,
+                r.matchScore,
+                r.placeID,
                 r.applicationStatus,
                 r.lastRenewalDate,
                 b.barangayID,
@@ -1298,9 +1452,9 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
             LEFT JOIN LATERAL (
                 SELECT logID, placeID, flagColor
                 FROM geospatial_logs
-                WHERE barangayID = r.barangayID
-                  AND detectedName = r.businessName
-                ORDER BY detectedDate DESC
+                WHERE (businessID IS NOT NULL AND businessID = r.businessID)
+                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName)
+                ORDER BY (businessID = r.businessID) DESC, detectedDate DESC
                 LIMIT 1
             ) g ON TRUE
             {where}
@@ -1312,10 +1466,16 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         rows = cursor.fetchall()
         cursor.close()
 
-        # Serialise dates
+        # Serialise dates and floats
         for row in rows:
             if row.get("lastRenewalDate"):
                 row["lastRenewalDate"] = str(row["lastRenewalDate"])
+            if row.get("latitude") is not None:
+                row["latitude"] = float(row["latitude"])
+            if row.get("longitude") is not None:
+                row["longitude"] = float(row["longitude"])
+            if row.get("matchScore") is not None:
+                row["matchScore"] = float(row["matchScore"])
 
         return {
             "data":      rows,
@@ -1353,6 +1513,10 @@ def get_business_by_id(business_id):
                 r.businessAddress,
                 r.latitude,
                 r.longitude,
+                r.coordSource,
+                r.matchStatus,
+                r.matchScore,
+                r.placeID,
                 r.applicationStatus,
                 r.lastRenewalDate,
                 b.barangayID,
@@ -1368,9 +1532,9 @@ def get_business_by_id(business_id):
             LEFT JOIN LATERAL (
                 SELECT logID, placeID, flagColor
                 FROM geospatial_logs
-                WHERE barangayID = r.barangayID
-                  AND detectedName = r.businessName
-                ORDER BY detectedDate DESC
+                WHERE (businessID IS NOT NULL AND businessID = r.businessID)
+                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName)
+                ORDER BY (businessID = r.businessID) DESC, detectedDate DESC
                 LIMIT 1
             ) g ON TRUE
             WHERE r.businessID = %s
@@ -1385,6 +1549,12 @@ def get_business_by_id(business_id):
 
         if row.get("lastRenewalDate"):
             row["lastRenewalDate"] = str(row["lastRenewalDate"])
+        if row.get("latitude") is not None:
+            row["latitude"] = float(row["latitude"])
+        if row.get("longitude") is not None:
+            row["longitude"] = float(row["longitude"])
+        if row.get("matchScore") is not None:
+            row["matchScore"] = float(row["matchScore"])
 
         # Inspection history
         cursor.execute(

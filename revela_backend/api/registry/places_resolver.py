@@ -26,6 +26,8 @@ Scheduled maintenance (cron / task scheduler), inside an app context:
     refresh_expired_coords()              # ~ daily; renews coords older than 20 days
     purge_expired_coords(dry_run=False)   # safety net; clears Google coords older than 28 days
 """
+import hashlib
+import math
 import os
 import re
 from difflib import SequenceMatcher
@@ -33,6 +35,7 @@ from difflib import SequenceMatcher
 import requests
 
 from app import mysql
+from api.utils.name_match import name_match, parse_name
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places/{pid}"
@@ -40,6 +43,8 @@ GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 MUNICIPALITY = os.getenv("GEO_MUNICIPALITY", "Mataasnakahoy")
 PROVINCE = os.getenv("GEO_PROVINCE", "Batangas")
+DEFAULT_CENTER = (13.9667, 121.1167)
+DEFAULT_BIAS_RADIUS_M = 8000.0
 BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
 REVIEW_MIN = float(os.getenv("PLACES_REVIEW_MIN", "0.55"))
@@ -57,6 +62,18 @@ def enabled():
     return os.getenv("PLACES_RESOLVER_ENABLED", "0") == "1"
 
 
+def compute_resolve_key(name, address, barangay_id):
+    """
+    Computes a deterministic SHA-1 hash of businessName, businessAddress, and barangayID.
+    Used for caching so re-running the resolver on unchanged datasets consumes zero API calls.
+    """
+    n = str(name or "").strip().lower()
+    a = str(address or "").strip().lower()
+    b = str(barangay_id or "").strip().lower()
+    raw = f"{n}|{a}|{b}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
 def _floats(env, n):
     raw = os.getenv(env, "").strip()
     if not raw:
@@ -68,36 +85,61 @@ def _floats(env, n):
     return vals if len(vals) == n else None
 
 
-def _in_bbox(lat, lng):
+def _is_within_municipal_bounds(lat, lng):
+    """
+    Screens candidate coordinates against Mataasnakahoy geographic bounds.
+    Replaces unconstrained bounding box with Mataasnakahoy municipal polygon boundary screening
+    and center bias radius (8,000m from center: 13.9667, 121.1167).
+    """
+    if lat is None or lng is None:
+        return False
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (ValueError, TypeError):
+        return False
+
+    # Polygon boundary screening (primary)
+    try:
+        from api.flags.service import _within_municipality
+        return _within_municipality(lat, lng)
+    except Exception:
+        pass
+
     box = _floats("PLACES_BBOX", 4)
-    if not box:
-        return True  # no verified bounding box configured: rely on query + location bias
-    return box[0] <= lat <= box[1] and box[2] <= lng <= box[3]
+    if box:
+        return box[0] <= lat <= box[1] and box[2] <= lng <= box[3]
+
+    # Center bias radius check (8,000m)
+    center = _floats("PLACES_CENTER", 2) or DEFAULT_CENTER
+    radius_m = BIAS_RADIUS_M or DEFAULT_BIAS_RADIUS_M
+    try:
+        lat1, lon1 = math.radians(center[0]), math.radians(center[1])
+        lat2, lon2 = math.radians(lat), math.radians(lng)
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        dist_m = 6371000.0 * c
+        return dist_m <= radius_m
+    except Exception:
+        return False
+
+
+def _in_bbox(lat, lng):
+    """Backwards-compatible alias for municipal bounds screening."""
+    return _is_within_municipal_bounds(lat, lng)
 
 
 # ------------------------------ matching ------------------------------------
-_STOP = {"inc", "corp", "corporation", "co", "company", "ltd", "enterprises",
-         "enterprise", "trading", "services", "service", "the", "and", "of", "opc"}
-
-
 def normalize(s):
-    s = (s or "").lower().replace("&", " and ")
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-    return " ".join(t for t in s.split() if t not in _STOP)
+    tokens, _ = parse_name(s)
+    return " ".join(tokens)
 
 
-def similarity(a, b):
-    ta, tb = normalize(a).split(), normalize(b).split()
-    if not ta or not tb:
-        return 0.0
-    seq = SequenceMatcher(None, " ".join(sorted(ta)), " ".join(sorted(tb))).ratio()
-    sa, sb = set(ta), set(tb)
-    overlap = len(sa & sb) / min(len(sa), len(sb))
-    # Containment is only strong evidence for longer names; short names (often just a surname)
-    # must not auto-accept, so they cap below AUTO_ACCEPT and go to human review.
-    m = min(len(sa), len(sb))
-    weight = 0.9 if m >= 3 else (0.75 if m == 2 else 0.6)
-    return max(seq, overlap * weight)
+def similarity(a, b, reg_line='', poi_types=()):
+    score, _ = name_match(a, b, reg_line=reg_line, poi_types=poi_types)
+    return score
 
 
 # ------------------------------ budget guard ---------------------------------
@@ -164,15 +206,16 @@ def _text_search(name, address, barangay, post=requests.post):
     parts = [str(p).strip() for p in (name, address, barangay, MUNICIPALITY, PROVINCE)
              if p is not None and str(p).strip() and str(p).strip().lower() != "nan"]
     body = {"textQuery": ", ".join(parts), "regionCode": "PH", "pageSize": 5}
-    center = _floats("PLACES_CENTER", 2)
-    if center:
-        body["locationBias"] = {"circle": {
-            "center": {"latitude": center[0], "longitude": center[1]}, "radius": BIAS_RADIUS_M}}
+    center = _floats("PLACES_CENTER", 2) or DEFAULT_CENTER
+    body["locationBias"] = {"circle": {
+        "center": {"latitude": center[0], "longitude": center[1]},
+        "radius": BIAS_RADIUS_M or DEFAULT_BIAS_RADIUS_M,
+    }}
     headers = {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
-        # Pro-tier fields only. Do NOT add Enterprise fields (rating, phone, website, hours, reviews).
-        "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.businessStatus",
+        # Pro-tier fields only. Strictly do NOT add Enterprise fields (rating, userRatingCount, regularOpeningHours, websiteUri).
+        "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.primaryType,places.types",
     }
     try:
         return _api_get_json(post(PLACES_SEARCH_URL, headers=headers, json=body, timeout=10), "TextSearch") or {}
@@ -202,7 +245,7 @@ def _geocode_fallback(address, barangay, get=requests.get):
     loc = top["geometry"]["location"]
     lt = top["geometry"].get("location_type", "")
     lat, lng = loc["lat"], loc["lng"]
-    if not _in_bbox(lat, lng):
+    if not _is_within_municipal_bounds(lat, lng):
         return None
     partial = bool(top.get("partial_match"))
     if lt in ("ROOFTOP", "RANGE_INTERPOLATED") and not partial:
@@ -216,38 +259,126 @@ def _geocode_fallback(address, barangay, get=requests.get):
         "score": None, "match_status": status, "match_type": f"geocode_{lt.lower()}"}}
 
 
-def resolve_location(name, address, barangay, reserve_geocode=None,
-                     _post=requests.post, _get=requests.get):
+def resolve_location(name, address, barangay, business_id=None, barangay_id=None,
+                     line_of_business='', reserve_geocode=None, _post=requests.post, _get=requests.get):
     """Returns (lat, lng, meta). (None, None, None) when unresolved/over budget (row still saved)."""
     if not os.getenv("GOOGLE_MAPS_API_KEY") or _halted:
         return None, None, None
 
+    # 1. Compute resolveKey for caching
+    b_ref = barangay_id if barangay_id is not None else barangay
+    current_key = compute_resolve_key(name, address, b_ref)
+
+    # 2. Check if resolveKey in DB matches: skip API call if unchanged
+    if business_id:
+        cur = mysql.connection.cursor()
+        try:
+            cur.execute(
+                """SELECT resolveKey, latitude, longitude, coordSource, placeID,
+                          placeIDKind, matchScore, matchStatus, lineOfBusiness
+                   FROM official_registry
+                   WHERE businessID = %s""",
+                (business_id,),
+            )
+            stored = cur.fetchone()
+            if stored:
+                if not line_of_business:
+                    line_of_business = (stored.get("lineOfBusiness") if isinstance(stored, dict) else (stored[8] if len(stored) > 8 else "")) or ""
+                stored_key = stored.get("resolveKey") if isinstance(stored, dict) else stored[0]
+                if stored_key and stored_key == current_key:
+                    stored_lat = stored.get("latitude") if isinstance(stored, dict) else stored[1]
+                    stored_lng = stored.get("longitude") if isinstance(stored, dict) else stored[2]
+                    if stored_lat is not None and stored_lng is not None:
+                        return float(stored_lat), float(stored_lng), {
+                            "coord_source": stored.get("coordSource"),
+                            "place_id": stored.get("placeID"),
+                            "place_id_kind": stored.get("placeIDKind"),
+                            "score": float(stored.get("matchScore")) if stored.get("matchScore") is not None else None,
+                            "match_status": stored.get("matchStatus"),
+                            "match_type": "cached_resolve_key",
+                            "resolve_key": current_key,
+                        }
+                    else:
+                        # Previously resolved with identical key as unlocatable
+                        return None, None, {"resolve_key": current_key, "match_status": stored.get("matchStatus")}
+        except Exception as e:
+            print(f"[places_resolver] resolveKey lookup error: {e}")
+        finally:
+            cur.close()
+
+    # 3. Check registry_rejected_places for this businessID
+    rejected_pids = set()
+    if business_id:
+        cur = mysql.connection.cursor()
+        try:
+            cur.execute(
+                "SELECT placeID FROM registry_rejected_places WHERE businessID = %s",
+                (business_id,),
+            )
+            rows = cur.fetchall()
+            rejected_pids = {r["placeID"] if isinstance(r, dict) else r[0] for r in rows}
+        except Exception as e:
+            print(f"[places_resolver] registry_rejected_places error: {e}")
+        finally:
+            cur.close()
+
+    # 4. Quota Pre-check & Text Search
     if reserve_call("imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP):
         data = _text_search(name, address, barangay, post=_post)
         best, best_score = None, 0.0
+        discarded_rejected = False
+
         for p in data.get("places", []):
             loc = p.get("location") or {}
             lat, lng = loc.get("latitude"), loc.get("longitude")
-            if lat is None or lng is None or not _in_bbox(lat, lng):
+            if lat is None or lng is None or not _is_within_municipal_bounds(lat, lng):
                 continue
-            if p.get("businessStatus") == "CLOSED_PERMANENTLY":
+
+            pid = p.get("id")
+            if pid and pid in rejected_pids:
+                discarded_rejected = True
                 continue
-            s = similarity(name, (p.get("displayName") or {}).get("text", ""))
+
+            poi_types = p.get("types", []) or []
+            if p.get("primaryType"):
+                poi_types = list(poi_types) + [p.get("primaryType")]
+            s = similarity(name, (p.get("displayName") or {}).get("text", ""), reg_line=line_of_business, poi_types=poi_types)
             if s > best_score:
                 best, best_score = p, s
+
         if best and best_score >= REVIEW_MIN:
-            status = "auto" if best_score >= AUTO_ACCEPT else "review"
+            status = "review" if discarded_rejected else ("auto" if best_score >= AUTO_ACCEPT else "review")
             return best["location"]["latitude"], best["location"]["longitude"], {
-                "coord_source": "places", "place_id": best["id"], "place_id_kind": "poi",
-                "score": round(best_score, 3), "match_status": status, "match_type": "places_poi"}
+                "coord_source": "places",
+                "place_id": best["id"],
+                "place_id_kind": "poi",
+                "score": round(best_score, 3),
+                "match_status": status,
+                "match_type": "places_poi",
+                "resolve_key": current_key,
+            }
+        elif discarded_rejected:
+            return None, None, {
+                "coord_source": None,
+                "place_id": None,
+                "place_id_kind": None,
+                "score": None,
+                "match_status": "review",
+                "match_type": "rejected_place_discarded",
+                "resolve_key": current_key,
+            }
+
     if _halted:
         return None, None, None
 
+    # 5. Geocode Fallback
     if address and reserve_geocode and reserve_geocode():
         g = _geocode_fallback(address, barangay, get=_get)
         if g:
+            g["meta"]["resolve_key"] = current_key
             return g["lat"], g["lng"], g["meta"]
-    return None, None, None
+
+    return None, None, {"resolve_key": current_key}
 
 
 def record_coord_meta(cursor, business_id, meta):
@@ -255,26 +386,38 @@ def record_coord_meta(cursor, business_id, meta):
     (so the new columns are never touched before the migration is applied)."""
     if not enabled() or not meta:
         return
-    if meta["coord_source"] == "csv":
-        cursor.execute("UPDATE official_registry SET coordSource='csv' WHERE businessID=%s", (business_id,))
+    resolve_key = meta.get("resolve_key")
+    if meta.get("coord_source") == "csv":
+        if resolve_key:
+            cursor.execute("UPDATE official_registry SET coordSource='csv', resolveKey=%s WHERE businessID=%s", (resolve_key, business_id))
+        else:
+            cursor.execute("UPDATE official_registry SET coordSource='csv' WHERE businessID=%s", (business_id,))
         return
     cursor.execute(
         """UPDATE official_registry SET coordSource=%s, placeID=%s, placeIDKind=%s,
-           coordFetchedAt=NOW(), matchScore=%s, matchStatus=%s WHERE businessID=%s""",
-        (meta["coord_source"], meta["place_id"], meta["place_id_kind"],
-         meta["score"], meta["match_status"], business_id))
+           coordFetchedAt=NOW(), matchScore=%s, matchStatus=%s,
+           resolveKey=COALESCE(%s, resolveKey) WHERE businessID=%s""",
+        (meta.get("coord_source"), meta.get("place_id"), meta.get("place_id_kind"),
+         meta.get("score"), meta.get("match_status"), resolve_key, business_id))
 
 
 # ------------------------------ pins (geospatial_logs) -----------------------
-def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng):
+def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, business_id=None):
     """Update the map pin only if it is still a copy of the registry coordinate being replaced."""
     if old_lat is None or old_lng is None:
         return
-    cursor.execute(
-        """UPDATE geospatial_logs SET latitude=%s, longitude=%s
-           WHERE barangayID=%s AND detectedName=%s
-             AND ABS(latitude-%s) < 0.000001 AND ABS(longitude-%s) < 0.000001""",
-        (new_lat, new_lng, barangay_id, name, float(old_lat), float(old_lng)))
+    if business_id:
+        cursor.execute(
+            """UPDATE geospatial_logs SET latitude=%s, longitude=%s
+               WHERE ((businessID = %s) OR (businessID IS NULL AND barangayID=%s AND detectedName=%s))
+                 AND ABS(latitude-%s) < 0.000001 AND ABS(longitude-%s) < 0.000001""",
+            (new_lat, new_lng, business_id, barangay_id, name, float(old_lat), float(old_lng)))
+    else:
+        cursor.execute(
+            """UPDATE geospatial_logs SET latitude=%s, longitude=%s
+               WHERE barangayID=%s AND detectedName=%s
+                 AND ABS(latitude-%s) < 0.000001 AND ABS(longitude-%s) < 0.000001""",
+            (new_lat, new_lng, barangay_id, name, float(old_lat), float(old_lng)))
 
 
 def _g(row, key, idx):
@@ -293,7 +436,7 @@ def refresh_expired_coords(limit=500):
         """SELECT businessID, barangayID, businessName, latitude, longitude, placeID
            FROM official_registry
            WHERE coordSource IN ('places','geocode') AND placeID IS NOT NULL
-             AND matchStatus IS NOT NULL AND matchStatus <> 'rejected'
+             AND matchStatus IS NOT NULL AND matchStatus NOT IN ('rejected', 'approved')
              AND (coordFetchedAt IS NULL OR coordFetchedAt < NOW() - INTERVAL %s DAY)
            ORDER BY coordFetchedAt IS NULL DESC, coordFetchedAt ASC LIMIT %s""",
         (REFRESH_AFTER_DAYS, int(limit)))
@@ -317,7 +460,7 @@ def refresh_expired_coords(limit=500):
             continue
         cur.execute("UPDATE official_registry SET latitude=%s, longitude=%s, coordFetchedAt=NOW() "
                     "WHERE businessID=%s", (loc["latitude"], loc["longitude"], bid))
-        _update_pin(cur, brgy, name, olat, olng, loc["latitude"], loc["longitude"])
+        _update_pin(cur, brgy, name, olat, olng, loc["latitude"], loc["longitude"], business_id=bid)
         mysql.connection.commit()
         done += 1
     cur.close()
@@ -336,7 +479,7 @@ def purge_expired_coords(dry_run=True):
     if not dry_run:
         for r in rows:
             bid, brgy, name = _g(r, "businessID", 0), _g(r, "barangayID", 1), _g(r, "businessName", 2)
-            _update_pin(cur, brgy, name, _g(r, "latitude", 3), _g(r, "longitude", 4), None, None)
+            _update_pin(cur, brgy, name, _g(r, "latitude", 3), _g(r, "longitude", 4), None, None, business_id=bid)
             cur.execute("UPDATE official_registry SET latitude=NULL, longitude=NULL WHERE businessID=%s", (bid,))
         mysql.connection.commit()
     cur.close()
@@ -351,15 +494,17 @@ def list_review_queue(page=1, per_page=20):
         row = cur.fetchone()
         total = int(_g(row, "c", 0))
         cur.execute(
-            """SELECT businessID, barangayID, businessName, businessAddress, latitude, longitude,
-                      placeID, coordSource, matchScore FROM official_registry
-               WHERE matchStatus='review' ORDER BY businessID LIMIT %s OFFSET %s""",
+            """SELECT r.businessID, r.barangayID, b.barangayName, r.businessName, r.businessAddress,
+                      r.latitude, r.longitude, r.placeID, r.coordSource, r.matchScore, r.matchStatus
+               FROM official_registry r
+               LEFT JOIN barangays b ON r.barangayID = b.barangayID
+               WHERE r.matchStatus='review' ORDER BY r.businessID LIMIT %s OFFSET %s""",
             (per_page, max(0, (page - 1) * per_page)))
         items = []
         for r in cur.fetchall():
             d = dict(r) if isinstance(r, dict) else dict(zip(
-                ["businessID", "barangayID", "businessName", "businessAddress", "latitude",
-                 "longitude", "placeID", "coordSource", "matchScore"], r))
+                ["businessID", "barangayID", "barangayName", "businessName", "businessAddress", "latitude",
+                 "longitude", "placeID", "coordSource", "matchScore", "matchStatus"], r))
             for k in ("latitude", "longitude", "matchScore"):
                 d[k] = float(d[k]) if d.get(k) is not None else None
             d["mapsUrl"] = (f"https://www.google.com/maps/search/?api=1&query=x&query_place_id={d['placeID']}"
@@ -375,16 +520,22 @@ def list_review_queue(page=1, per_page=20):
 def decide_review(business_id, approve):
     cur = mysql.connection.cursor()
     try:
-        cur.execute("SELECT barangayID, businessName, latitude, longitude FROM official_registry "
+        cur.execute("SELECT barangayID, businessName, latitude, longitude, placeID FROM official_registry "
                     "WHERE businessID=%s AND matchStatus='review'", (business_id,))
         r = cur.fetchone()
         if not r:
             return False, "Not found or not awaiting review"
         if approve:
-            cur.execute("UPDATE official_registry SET matchStatus='approved' WHERE businessID=%s", (business_id,))
+            cur.execute("UPDATE official_registry SET matchStatus='approved', coordSource='manual' WHERE businessID=%s", (business_id,))
         else:
+            pid = _g(r, "placeID", 4)
+            if pid:
+                cur.execute(
+                    "INSERT IGNORE INTO registry_rejected_places (businessID, placeID) VALUES (%s, %s)",
+                    (business_id, pid)
+                )
             _update_pin(cur, _g(r, "barangayID", 0), _g(r, "businessName", 1),
-                        _g(r, "latitude", 2), _g(r, "longitude", 3), None, None)
+                        _g(r, "latitude", 2), _g(r, "longitude", 3), None, None, business_id=business_id)
             cur.execute("""UPDATE official_registry SET matchStatus='rejected', latitude=NULL, longitude=NULL,
                            placeID=NULL, placeIDKind=NULL, coordSource=NULL, coordFetchedAt=NULL
                            WHERE businessID=%s""", (business_id,))

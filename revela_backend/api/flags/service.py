@@ -18,6 +18,7 @@ from app import mysql
 from shapely.geometry import shape, Point
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.notifications import hub
+from api.utils.name_match import name_match, parse_name
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -303,94 +304,38 @@ def _within_municipality(lat: float, lng: float) -> bool:
 
 
 def _normalize_business_name(name: str) -> str:
-    if not name:
-        return ""
-    s = name.lower()
-    noise = [
-        r'\binc\.?\b', r'\bcorp\.?\b', r'\bcorporation\b', r'\bco\.?\b', r'\bltd\.?\b',
-        r'\bsari[- ]*sari\b', r'\bstore\b', r'\btindahan\b', r'\bgrocery\b', r'\bmini[- ]*mart\b',
-        r'\bmart\b', r'\bsupermarket\b', r'\bshop\b', r'\benterprises?\b', r'\btradings?\b',
-        r'\bcommercial\b', r'\bphilippines?\b', r'\bph\b', r'\bbranch\b', r'\boutlet\b',
-        r'\brefilling\s*station\b', r'\bwater\s*refilling\b', r'\bwater\s*station\b',
-        r'\bdrinking\s*water\b', r'\bbakery\b', r'\bbake\s*shop\b', r'\bpanaderia\b',
-        r'\beatery\b', r'\bcarinderia\b', r'\bkarinderya\b', r'\brestaurant\b', r'\bgrill\b',
-        r'\bcanteen\b', r'\bfood\s*house\b', r'\bpharmacy\b', r'\bdrugstore\b',
-        r'\bsalon\b', r'\bbeauty\s*lounge\b', r'\bspa\b', r'\bbarbershop\b',
-        r'\bhardware\b', r'\bauto\s*supply\b', r'\bmotor\s*parts\b', r'\bvulcanizing\b',
-        r'\bcoffee\s*shop\b', r'\bgeneral\s*merchandise\b', r'\bservices?\b',
-        r'\bcenter\b', r'\bcentre\b', r'\bhub\b', r'\bkitchen\b',
-        r'\blomi\b', r'\blomihan\b', r'\bgotohan\b'
-    ]
-    for n in noise:
-        s = re.sub(n, ' ', s)
-    s = re.sub(r'[^a-z0-9\s]', ' ', s)
-    return re.sub(r'\s+', ' ', s).strip()
+    tokens, _ = parse_name(name)
+    return " ".join(tokens)
 
 
-def _name_similarity(name1: str, name2: str) -> float:
-    n1 = _normalize_business_name(name1)
-    n2 = _normalize_business_name(name2)
-    if not n1 or not n2:
-        return 0.0
-    if n1 == n2:
-        return 1.0
-    if n1 in n2 or n2 in n1:
-        return 0.95
-
-    # 1. Spaceless comparison (catches compound words like "dosbastardos" vs "dos bastardos")
-    s1 = n1.replace(" ", "")
-    s2 = n2.replace(" ", "")
-    if s1 and s2:
-        if s1 == s2:
-            return 0.95
-        if s1 in s2 or s2 in s1:
-            ratio = min(len(s1), len(s2)) / max(len(s1), len(s2))
-            if ratio >= 0.65:
-                return max(0.85, ratio)
-            return max(0.60, ratio)
-        spaceless_sim = difflib.SequenceMatcher(None, s1, s2).ratio()
-        if spaceless_sim >= 0.75:
-            return spaceless_sim
-
-    # 2. Token overlap (Jaccard + Containment)
-    words1 = [w for w in n1.split() if len(w) > 1]
-    words2 = [w for w in n2.split() if len(w) > 1]
-    if not words1 or not words2:
-        return difflib.SequenceMatcher(None, n1, n2).ratio()
-
-    set1 = set(words1)
-    set2 = set(words2)
-    overlap = len(set1.intersection(set2))
-    if overlap > 0:
-        jaccard = overlap / len(set1.union(set2))
-        containment = overlap / min(len(set1), len(set2))
-
-        if containment >= 0.75 and overlap >= 2:
-            return max(jaccard, 0.85)
-        elif containment == 1.0:
-            return max(jaccard, 0.80)
-        return max(jaccard, containment * 0.5)
-
-    # 3. Fuzzy character-level fallback if token overlap is zero
-    seq_sim = difflib.SequenceMatcher(None, n1, n2).ratio()
-    return seq_sim if seq_sim >= 0.60 else 0.0
+def _name_similarity(name1: str, name2: str, reg_line: str = '', poi_types: tuple = ()) -> float:
+    score, _ = name_match(name1, name2, reg_line=reg_line, poi_types=poi_types)
+    return score
 
 
-def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id=None):
+def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id=None, poi_types=()):
     """
-    Finds matching registry entry for a POI using smart combination of:
-    1. High name similarity (>= 0.65) regardless of distance (breaks free from generic centroids).
-    2. Proximity match (within 25m) even if name differs.
-    3. Medium name similarity with close distance or same barangay.
-    Returns (matched_entry, distance_meters, similarity_score)
+    Tiered Decision Matrix for matching a candidate POI to official registry entries:
+    - Auto (score >= 0.80 AND (same barangay OR dist <= 300m)): Safe automatic snap.
+    - Review (0.55 <= score < 0.80, OR score >= 0.80 with different barangay AND dist > 300m):
+      Held in review queue for human confirmation.
+    - No Match (score < 0.55): Rejected candidate; proximity alone never overrides low score.
+    Returns (matched_entry, distance_meters, similarity_score, match_status)
     """
     best_match = None
     best_dist = float("inf")
     best_score = 0.0
+    best_status = "no_match"
 
     for entry in registry:
-        sim = _name_similarity(poi_name, entry.get("businessName", ""))
-        if sim < 0.35:
+        sim = _name_similarity(
+            entry.get("businessName", ""),
+            poi_name,
+            reg_line=entry.get("businessLine", ""),
+            poi_types=poi_types
+        )
+        # Strict cutoff: under 0.55 is rejected regardless of proximity
+        if sim < 0.55:
             continue
 
         reg_lat = entry.get("latitude")
@@ -399,106 +344,179 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
         same_barangay = (reg_b_id is None) or (
             poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
 
-        # Case A: Registry entry has coordinates
-        if reg_lat and reg_lng:
-            dist = geodesic((poi_lat, poi_lng),
-                            (float(reg_lat), float(reg_lng))).meters
+        dist = None
+        if reg_lat is not None and reg_lng is not None:
+            try:
+                dist = geodesic((poi_lat, poi_lng), (float(reg_lat), float(reg_lng))).meters
+            except Exception:
+                dist = None
 
-            # Proximity match (within 25m) with basic name overlap
-            if dist <= 25 and sim >= 0.4:
-                effective_score = sim + 0.35
-                if effective_score > best_score:
-                    best_score = effective_score
-                    best_dist = dist
-                    best_match = entry
-
-            # Close distance (within 150m) and good name match
-            elif dist <= 150 and sim >= 0.5:
-                effective_score = sim + (0.2 if same_barangay else 0.1)
-                if effective_score > best_score:
-                    best_score = effective_score
-                    best_dist = dist
-                    best_match = entry
-
-            # Strong name match (>= 0.65) regardless of distance (breaks free from centroid coordinates)
-            elif sim >= 0.65:
-                effective_score = sim + (0.1 if same_barangay else 0.0)
-                if effective_score > best_score:
-                    best_score = effective_score
-                    best_dist = dist
-                    best_match = entry
-
-        # Case B: Registry entry lacks GPS coordinates — match by name!
+        if sim >= 0.80:
+            if dist is not None:
+                if same_barangay or dist <= 300.0:
+                    status = "auto"
+                else:
+                    status = "review"
+            else:
+                status = "auto" if same_barangay else "review"
         else:
-            if sim >= 0.6:
-                effective_score = sim + (0.1 if same_barangay else 0.0)
-                if effective_score > best_score:
-                    best_score = effective_score
-                    best_dist = 0.0
-                    best_match = entry
+            status = "review"
 
-    return best_match, best_dist, best_score
+        # Candidate selection priority:
+        # 1. Prefer 'auto' over 'review'
+        # 2. Prefer higher similarity score
+        # 3. Prefer smaller geographical distance
+        is_better = False
+        if best_match is None:
+            is_better = True
+        elif status == "auto" and best_status != "auto":
+            is_better = True
+        elif status == best_status:
+            if sim > best_score + 0.01:
+                is_better = True
+            elif abs(sim - best_score) <= 0.01:
+                cur_dist = dist if dist is not None else float("inf")
+                if cur_dist < best_dist:
+                    is_better = True
+
+        if is_better:
+            best_match = entry
+            best_dist = dist if dist is not None else 0.0
+            best_score = sim
+            best_status = status
+
+    return best_match, best_dist, best_score, best_status
 
 
-def _match_registry_to_google(place_id, business_id, detected_name, target_color='Green', lat=None, lng=None, barangay_id=None):
+def _match_registry_to_google(place_id, business_id, detected_name, target_color='Green', lat=None, lng=None, barangay_id=None, match_score=None, match_status=None):
     """
     Updates or inserts the geospatial log for an existing registry business 
     with its official Google Maps Place ID and dynamic status-based flag color.
-    Also backfills discovered GPS coordinates into official_registry.
+    Also backfills discovered GPS coordinates into official_registry if unlocked.
     Cleans up any redundant unpositioned baseline logs for this business.
     """
     cursor = mysql.connection.cursor()
 
-    # 1. Backfill discovered GPS coordinates into official_registry
-    if business_id and lat and lng:
-        cursor.execute("""
-            UPDATE official_registry
-            SET latitude = %s,
-                longitude = %s
-            WHERE businessID = %s
-        """, (lat, lng, business_id))
+    if match_status is None:
+        if match_score is not None:
+            match_status = "auto" if float(match_score) >= 0.80 else "review"
+        else:
+            match_status = "auto"
 
-    # 2. Check all geospatial_logs matching placeID OR (detectedName + barangayID)
+    # 1. Query current official_registry metadata before updating
+    is_locked = False
+    reg_lat = None
+    reg_lng = None
+    if business_id:
+        cursor.execute("""
+            SELECT coordSource, matchStatus, latitude, longitude
+            FROM official_registry
+            WHERE businessID = %s
+        """, (business_id,))
+        reg_row = cursor.fetchone()
+        if reg_row:
+            src = (reg_row.get("coordSource") or "").strip().lower()
+            m_stat = (reg_row.get("matchStatus") or "").strip().lower()
+            if src == "manual" or m_stat == "approved":
+                is_locked = True
+                reg_lat = reg_row.get("latitude")
+                reg_lng = reg_row.get("longitude")
+            elif m_stat == "auto" and match_status == "review":
+                # Guard: Do not downgrade an already confident auto match with a lower-confidence review candidate
+                is_locked = True
+                reg_lat = reg_row.get("latitude")
+                reg_lng = reg_row.get("longitude")
+
+    # 2. Backfill discovered GPS coordinates into official_registry IF NOT LOCKED
+    if business_id and not is_locked:
+        if lat and lng:
+            stat_sql = "review" if match_status == "review" else "auto"
+            cursor.execute(f"""
+                UPDATE official_registry
+                SET latitude = %s,
+                    longitude = %s,
+                    placeID = %s,
+                    placeIDKind = 'poi',
+                    coordSource = 'places',
+                    coordFetchedAt = NOW(),
+                    matchScore = %s,
+                    matchStatus = '{stat_sql}'
+                WHERE businessID = %s
+            """, (
+                lat,
+                lng,
+                place_id,
+                round(float(match_score), 3) if match_score is not None else None,
+                business_id
+            ))
+
+    # 3. Check all geospatial_logs matching businessID, placeID OR (businessID IS NULL AND detectedName + barangayID)
     cursor.execute("""
-        SELECT logID, placeID, flagColor, latitude, longitude
+        SELECT logID, businessID, placeID, flagColor, latitude, longitude
         FROM geospatial_logs
-        WHERE placeID = %s OR (detectedName = %s AND barangayID = %s)
-    """, (place_id, detected_name, barangay_id))
+        WHERE (businessID IS NOT NULL AND businessID = %s)
+           OR (placeID IS NOT NULL AND placeID = %s)
+           OR (businessID IS NULL AND detectedName = %s AND barangayID = %s)
+        ORDER BY (businessID = %s) DESC, (placeID = %s) DESC
+    """, (business_id, place_id, detected_name, barangay_id, business_id, place_id))
     matched_logs = cursor.fetchall()
 
     if matched_logs:
-        # Keep primary log (prefer the one with placeID)
+        # Keep primary log (prefer the one with matching businessID, then placeID)
         primary_log = None
         for log in matched_logs:
-            if log.get("placeID") == place_id:
+            if log.get("businessID") == business_id:
                 primary_log = log
                 break
         if not primary_log:
+            for log in matched_logs:
+                if log.get("placeID") == place_id:
+                    primary_log = log
+                    break
+        if not primary_log:
             primary_log = matched_logs[0]
+
+        # If locked, DO NOT overwrite existing verified coordinates with Google's lat/lng!
+        final_lat = (reg_lat if reg_lat is not None else primary_log.get("latitude")) if is_locked else lat
+        final_lng = (reg_lng if reg_lng is not None else primary_log.get("longitude")) if is_locked else lng
 
         cursor.execute("""
             UPDATE geospatial_logs 
-            SET placeID = %s, flagColor = %s,
+            SET businessID = %s,
+                placeID = %s, flagColor = %s,
                 detectedName = %s,
                 latitude = %s,
                 longitude = %s,
                 barangayID = COALESCE(%s, barangayID)
             WHERE logID = %s
-        """, (place_id, target_color, detected_name, lat, lng, barangay_id, primary_log["logID"]))
+        """, (business_id, place_id, target_color, detected_name, final_lat, final_lng, barangay_id, primary_log["logID"]))
 
-        # Remove redundant duplicate unpositioned logs
+        # Remove redundant duplicate unpositioned logs, repointing inspections first
         for log in matched_logs:
             if log["logID"] != primary_log["logID"]:
+                cursor.execute(
+                    "UPDATE inspection_reports SET targetID = %s WHERE targetID = %s",
+                    (primary_log["logID"], log["logID"])
+                )
+                try:
+                    cursor.execute(
+                        "UPDATE inspection_lifecycle_events SET targetLogID = %s WHERE targetLogID = %s",
+                        (primary_log["logID"], log["logID"])
+                    )
+                except Exception:
+                    pass
                 cursor.execute(
                     "DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
 
     elif lat and lng and barangay_id:
+        final_lat = reg_lat if (is_locked and reg_lat is not None) else lat
+        final_lng = reg_lng if (is_locked and reg_lng is not None) else lng
         cursor.execute("""
             INSERT INTO geospatial_logs
-                (barangayID, reportID, detectedName, latitude, longitude,
+                (barangayID, businessID, reportID, detectedName, latitude, longitude,
                  flagColor, placeID, nearestLandmark)
-            VALUES (%s, NULL, %s, %s, %s, %s, %s, NULL)
-        """, (barangay_id, detected_name, lat, lng, target_color, place_id))
+            VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, NULL)
+        """, (barangay_id, business_id, detected_name, final_lat, final_lng, target_color, place_id))
 
     mysql.connection.commit()
     cursor.close()
@@ -535,7 +553,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
 
         cursor = mysql.connection.cursor()
         cursor.execute("""
-            SELECT logID, placeID, detectedName, latitude, longitude, barangayID
+            SELECT logID, businessID, placeID, detectedName, latitude, longitude, barangayID
             FROM geospatial_logs
             WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL
         """)
@@ -574,10 +592,37 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             lng = flag.get("longitude")
             b_id = flag.get("barangayID")
             place_id = flag.get("placeID")
+            biz_id = flag.get("businessID")
 
-            matched, dist, score = _match_poi_to_registry(
-                name, lat, lng, registry, poi_barangay_id=b_id)
-            if matched:
+            matched_by_id = None
+            if biz_id:
+                for entry in registry:
+                    if entry.get("businessID") == biz_id:
+                        matched_by_id = entry
+                        break
+
+            matched_by_place = None
+            if not matched_by_id and place_id:
+                for entry in registry:
+                    if entry.get("placeID") == place_id:
+                        matched_by_place = entry
+                        break
+
+            if matched_by_id:
+                matched = matched_by_id
+                dist = 0.0
+                score = 1.0
+                status = "auto"
+            elif matched_by_place:
+                matched = matched_by_place
+                dist = 0.0
+                score = 1.0
+                status = "auto"
+            else:
+                matched, dist, score, status = _match_poi_to_registry(
+                    name, lat, lng, registry, poi_barangay_id=b_id)
+
+            if matched and status != "no_match":
                 app_status = (matched.get('applicationStatus')
                               or 'Active').strip()
                 target_color = 'Green' if app_status == 'Active' else (
@@ -587,10 +632,14 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                         )
                     )
                 )
+                if status == 'review':
+                    target_color = 'Yellow'
+
                 target_b_id = matched.get('barangayID') or b_id
                 _match_registry_to_google(
                     place_id, matched['businessID'], matched['businessName'],
-                    target_color=target_color, lat=lat, lng=lng, barangay_id=target_b_id
+                    target_color=target_color, lat=lat, lng=lng, barangay_id=target_b_id,
+                    match_score=score
                 )
                 converted_count += 1
 
@@ -749,6 +798,8 @@ def _load_registry():
     cursor = mysql.connection.cursor()
     cursor.execute("""
         SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
+               r.lineOfBusiness AS businessLine,
+               r.placeID, r.coordSource, r.matchStatus,
                COALESCE(r.latitude, g.latitude) AS latitude,
                COALESCE(r.longitude, g.longitude) AS longitude
         FROM official_registry r
@@ -757,8 +808,8 @@ def _load_registry():
             FROM geospatial_logs
             WHERE flagColor = 'Green'
               AND latitude IS NOT NULL
-              AND detectedName = r.businessName
-              AND barangayID = r.barangayID
+              AND ((businessID IS NOT NULL AND businessID = r.businessID) OR (businessID IS NULL AND detectedName = r.businessName AND barangayID = r.barangayID))
+            ORDER BY (businessID = r.businessID) DESC
             LIMIT 1
         ) g ON TRUE
     """)
@@ -1043,11 +1094,49 @@ def run_detection(user_id=None):
                         cursor.close()
                     continue
 
-                nearest, dist, sim_score = _match_poi_to_registry(
-                    place_name, lat, lng, registry, poi_barangay_id=barangay_id
-                )
+                matching_by_place = None
+                if place_id:
+                    for entry in registry:
+                        if entry.get("placeID") == place_id:
+                            matching_by_place = entry
+                            break
 
-                if nearest is None:
+                p_types = place.get("types") or []
+                if place.get("primaryType"):
+                    p_types = list(p_types) + [place.get("primaryType")]
+                poi_types = tuple(p_types)
+
+                if matching_by_place:
+                    nearest = matching_by_place
+                    dist = 0.0
+                    sim_score = 1.0
+                    match_status = "auto"
+                else:
+                    nearest, dist, sim_score, match_status = _match_poi_to_registry(
+                        place_name, lat, lng, registry, poi_barangay_id=barangay_id, poi_types=poi_types
+                    )
+
+                if nearest is None or match_status == "no_match":
+                    # Guard: Detection skips creating a Red flag for any Google POI whose
+                    # placeID is already held by an official registry business
+                    is_held = False
+                    if place_id:
+                        if any(e.get("placeID") == place_id for e in registry):
+                            is_held = True
+                        else:
+                            cursor = mysql.connection.cursor()
+                            cursor.execute(
+                                "SELECT businessID FROM official_registry WHERE placeID = %s LIMIT 1",
+                                (place_id,)
+                            )
+                            held_row = cursor.fetchone()
+                            cursor.close()
+                            if held_row:
+                                is_held = True
+
+                    if is_held:
+                        continue
+
                     if not existing_flag:
                         flag_id = _insert_red_flag(
                             place_id, place_name, lat, lng, barangay_id, address)
@@ -1062,11 +1151,15 @@ def run_detection(user_id=None):
                         "Black" if app_status == "Revoked" else
                         "Purple" if app_status == "Closed" else "Yellow"
                     )
+                    if match_status == "review":
+                        target_color = "Yellow"
+
                     target_barangay_id = nearest.get(
                         "barangayID") or barangay_id
                     _match_registry_to_google(
                         place_id, nearest["businessID"], nearest["businessName"],
-                        target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id
+                        target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id,
+                        match_score=sim_score, match_status=match_status
                     )
 
         _scan_grid(process_places, progress_callback, state)
@@ -1166,8 +1259,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             """
             NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
-                WHERE g2.detectedName = r.businessName
-                  AND g2.barangayID = r.barangayID
+                WHERE (g2.businessID IS NOT NULL AND g2.businessID = r.businessID)
+                   OR (g2.businessID IS NULL AND g2.detectedName = r.businessName AND g2.barangayID = r.barangayID)
             )
             """,
         ]
@@ -1194,8 +1287,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 geo_conditions.append(
                     "(g.flagColor = %s OR EXISTS ("
                     "    SELECT 1 FROM official_registry r_chk"
-                    "    WHERE r_chk.barangayID = g.barangayID"
-                    "      AND r_chk.businessName = g.detectedName"
+                    "    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)"
+                    "           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID AND r_chk.businessName = g.detectedName))"
                     "      AND r_chk.applicationStatus = %s"
                     "))"
                 )
@@ -1207,8 +1300,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 geo_conditions.append(
                     "(g.flagColor = %s AND NOT EXISTS ("
                     "    SELECT 1 FROM official_registry r_chk"
-                    "    WHERE r_chk.barangayID = g.barangayID"
-                    "      AND r_chk.businessName = g.detectedName"
+                    "    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)"
+                    "           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID AND r_chk.businessName = g.detectedName))"
                     "      AND r_chk.applicationStatus IN ('Active', 'Expired', 'Revoked', 'Closed', 'Pending')"
                     "))"
                 )
@@ -1252,6 +1345,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 -- Branch 1: existing geospatial_logs entries
                 SELECT
                     g.logID,
+                    COALESCE(g.businessID, r.businessID) AS businessID,
                     g.detectedName,
                     COALESCE(g.latitude, r.latitude) AS latitude,
                     COALESCE(g.longitude, r.longitude) AS longitude,
@@ -1286,14 +1380,19 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                           AND targetType = 'geospatial_log'
                         ORDER BY irTimestamp DESC
                         LIMIT 1
-                    ) AS verificationStatus
+                    ) AS verificationStatus,
+                    r.matchStatus,
+                    r.coordSource,
+                    r.matchScore
                 FROM geospatial_logs g
                 LEFT JOIN barangays b ON g.barangayID = b.barangayID
                 LEFT JOIN LATERAL (
-                    SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus
+                    SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus,
+                           matchStatus, coordSource, matchScore
                     FROM official_registry
-                    WHERE barangayID = g.barangayID
-                      AND businessName = g.detectedName
+                    WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
+                       OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
+                    ORDER BY (businessID = g.businessID) DESC
                     LIMIT 1
                 ) r ON TRUE
                 {geo_where}
@@ -1303,6 +1402,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 -- Branch 2: registry-only businesses (have coordinates, no geospatial_log yet)
                 SELECT
                     r.businessID * -1          AS logID,
+                    r.businessID               AS businessID,
                     r.businessName             AS detectedName,
                     r.latitude                 AS latitude,
                     r.longitude                AS longitude,
@@ -1324,7 +1424,10 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     r.businessSize             AS businessSize,
                     r.businessAddress          AS resolvedAddress,
                     'registry_only'            AS flagSource,
-                    NULL                       AS verificationStatus
+                    NULL                       AS verificationStatus,
+                    r.matchStatus              AS matchStatus,
+                    r.coordSource              AS coordSource,
+                    r.matchScore               AS matchScore
                 FROM official_registry r
                 LEFT JOIN barangays b ON r.barangayID = b.barangayID
                 {reg_where}
@@ -1340,6 +1443,12 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         for row in rows:
             if row.get("detectedDate"):
                 row["detectedDate"] = str(row["detectedDate"])
+            if row.get("latitude") is not None:
+                row["latitude"] = float(row["latitude"])
+            if row.get("longitude") is not None:
+                row["longitude"] = float(row["longitude"])
+            if row.get("matchScore") is not None:
+                row["matchScore"] = float(row["matchScore"])
 
         return {
             "data":     rows,
@@ -1492,7 +1601,12 @@ def update_flag_location(log_id: int, lat: float, lng: float):
                 UPDATE official_registry
                 SET latitude = %s,
                     longitude = %s,
-                    barangayID = COALESCE(%s, barangayID)
+                    barangayID = COALESCE(%s, barangayID),
+                    coordSource = 'manual',
+                    matchStatus = 'approved',
+                    coordFetchedAt = NOW(),
+                    placeID = NULL,
+                    placeIDKind = NULL
                 WHERE businessID = %s
             """, (lat, lng, new_barangay_id, biz_id))
             mysql.connection.commit()
@@ -1513,30 +1627,58 @@ def update_flag_location(log_id: int, lat: float, lng: float):
 
         # Real flag in geospatial_logs
         cursor.execute(
-            "SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
+            "SELECT detectedName, barangayID, placeID, latitude, longitude FROM geospatial_logs WHERE logID = %s", (log_id,))
         row = cursor.fetchone()
         if not row:
             cursor.close()
             return False, "Flag not found"
 
         detected_name = row["detectedName"]
+        old_place_id = row.get("placeID")
+
+        # Admin physically moved the pin: clear placeID on geospatial_logs
         cursor.execute("""
             UPDATE geospatial_logs
             SET latitude = %s,
                 longitude = %s,
-                barangayID = COALESCE(%s, barangayID)
+                barangayID = COALESCE(%s, barangayID),
+                placeID = NULL
             WHERE logID = %s
         """, (lat, lng, new_barangay_id, log_id))
 
-        # Also backfill official_registry if matching business exists
-        if detected_name:
+        # Also backfill official_registry strictly by businessID
+        target_biz_id = None
+        if old_place_id:
+            cursor.execute("SELECT businessID FROM official_registry WHERE placeID = %s LIMIT 1", (old_place_id,))
+            reg_match = cursor.fetchone()
+            if reg_match:
+                target_biz_id = reg_match["businessID"]
+
+        if not target_biz_id and detected_name:
+            orig_barangay_id = row.get("barangayID")
+            cursor.execute("""
+                SELECT businessID FROM official_registry
+                WHERE LOWER(businessName) = LOWER(%s)
+                  AND (barangayID = %s OR barangayID = %s)
+                LIMIT 1
+            """, (detected_name, orig_barangay_id, new_barangay_id))
+            reg_match = cursor.fetchone()
+            if reg_match:
+                target_biz_id = reg_match["businessID"]
+
+        if target_biz_id:
             cursor.execute("""
                 UPDATE official_registry
                 SET latitude = %s,
                     longitude = %s,
-                    barangayID = COALESCE(%s, barangayID)
-                WHERE businessName = %s
-            """, (lat, lng, new_barangay_id, detected_name))
+                    barangayID = COALESCE(%s, barangayID),
+                    coordSource = 'manual',
+                    matchStatus = 'approved',
+                    coordFetchedAt = NOW(),
+                    placeID = NULL,
+                    placeIDKind = NULL
+                WHERE businessID = %s
+            """, (lat, lng, new_barangay_id, target_biz_id))
 
         mysql.connection.commit()
         cursor.close()
@@ -1616,7 +1758,14 @@ def escalate_to_black(log_id):
 # ── Delete Flag ───────────────────────────────────────────────────────────────
 
 def delete_flag(log_id):
-    """Delete a flag. If it has a corresponding registry entry, delete that too."""
+    """
+    Delete a single flag.
+    - If log_id < 0: virtual registry entry (businessID = -log_id). Removes official_registry entry.
+    - If log_id > 0: isolates deletion strictly to log_id.
+      Does NOT perform broad delete across all same-named businesses or logs.
+      Before deleting geospatial_logs, repoints any inspection_reports / lifecycle events
+      to a primary surviving duplicate log if one exists, otherwise removes them.
+    """
     try:
         cursor = mysql.connection.cursor()
 
@@ -1637,9 +1786,10 @@ def delete_flag(log_id):
                 pass
             return True, None
 
-        # Find the flag
+        # Find the specific flag
         cursor.execute(
-            "SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s",
+            """SELECT logID, businessID, reportID, detectedName, barangayID, placeID, latitude, longitude
+               FROM geospatial_logs WHERE logID = %s""",
             (log_id,)
         )
         flag = cursor.fetchone()
@@ -1648,31 +1798,54 @@ def delete_flag(log_id):
             cursor.close()
             return False, "Flag not found"
 
-        # Check if there is an associated registry entry
-        cursor.execute("""
-            SELECT businessID FROM official_registry
-            WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
-        """, (flag["detectedName"], flag["barangayID"]))
-        business = cursor.fetchone()
+        # Check if there is an explicit surviving duplicate log for this establishment
+        surviving_log = None
+        if flag.get("businessID"):
+            cursor.execute(
+                """SELECT logID, reportID FROM geospatial_logs
+                   WHERE businessID = %s AND logID <> %s
+                   ORDER BY (reportID IS NOT NULL) DESC, logID ASC LIMIT 1""",
+                (flag["businessID"], log_id)
+            )
+            surviving_log = cursor.fetchone()
 
-        if business:
-            # Delete all logs and inspection reports for this business
-            cursor.execute("SELECT logID FROM geospatial_logs WHERE LOWER(detectedName) = LOWER(%s) AND barangayID = %s",
-                           (flag["detectedName"], flag["barangayID"]))
-            logs = cursor.fetchall()
-            for log in logs:
+        if not surviving_log and flag.get("placeID"):
+            cursor.execute(
+                """SELECT logID, reportID FROM geospatial_logs
+                   WHERE placeID = %s AND logID <> %s
+                   ORDER BY (reportID IS NOT NULL) DESC, logID ASC LIMIT 1""",
+                (flag["placeID"], log_id)
+            )
+            surviving_log = cursor.fetchone()
+
+        # Check if this flag has inspection reports
+        cursor.execute("SELECT reportID FROM inspection_reports WHERE targetID = %s", (log_id,))
+        reports = cursor.fetchall()
+
+        if reports:
+            if surviving_log:
+                surv_id = surviving_log["logID"]
                 cursor.execute(
-                    "DELETE FROM inspection_reports WHERE targetID = %s", (log["logID"],))
-                cursor.execute(
-                    "DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
-            cursor.execute(
-                "DELETE FROM official_registry WHERE businessID = %s", (business["businessID"],))
-        else:
-            # Just delete this specific flag and its inspections
-            cursor.execute(
-                "DELETE FROM inspection_reports WHERE targetID = %s", (log_id,))
-            cursor.execute(
-                "DELETE FROM geospatial_logs WHERE logID = %s", (log_id,))
+                    "UPDATE inspection_reports SET targetID = %s WHERE targetID = %s",
+                    (surv_id, log_id)
+                )
+                try:
+                    cursor.execute(
+                        "UPDATE inspection_lifecycle_events SET targetLogID = %s WHERE targetLogID = %s",
+                        (surv_id, log_id)
+                    )
+                except Exception:
+                    pass
+                if flag.get("reportID") and not surviving_log.get("reportID"):
+                    cursor.execute(
+                        "UPDATE geospatial_logs SET reportID = %s WHERE logID = %s AND reportID IS NULL",
+                        (flag["reportID"], surv_id)
+                    )
+            else:
+                cursor.execute("DELETE FROM inspection_reports WHERE targetID = %s", (log_id,))
+
+        # Strictly delete ONLY this logID
+        cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (log_id,))
 
         mysql.connection.commit()
         cursor.close()

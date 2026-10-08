@@ -1,14 +1,14 @@
 from app import mysql
 
 
-def insert_green_flag(barangay_id, business_name, lat, lng, address=None, color='Green'):
+def insert_green_flag(barangay_id, business_name, lat, lng, address=None, color='Green', business_id=None):
     cursor = mysql.connection.cursor()
     cursor.execute("""
         INSERT INTO geospatial_logs
-            (barangayID, detectedName, latitude, longitude,
+            (barangayID, businessID, detectedName, latitude, longitude,
              flagColor, nearestLandmark)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (barangay_id, business_name, lat, lng, color, address))
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+    """, (barangay_id, business_id, business_name, lat, lng, color, address))
     cursor.close()
 
 

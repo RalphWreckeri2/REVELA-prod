@@ -554,3 +554,13 @@ ADD INDEX idx_ir_target_report (targetID, reportID);
 -- revela_notifications: queried by recipient + type + readAt on analytics load
 ALTER TABLE revela_notifications
 ADD INDEX idx_notif_recipient_type (recipientUserId, type, readAt);
+
+ALTER TABLE inspection_reports
+ADD COLUMN verifiedLatitude DECIMAL(10, 8) DEFAULT NULL AFTER nearestLandmark,
+ADD COLUMN verifiedLongitude DECIMAL(11, 8) DEFAULT NULL AFTER verifiedLatitude,
+ADD COLUMN verifiedAccuracy DECIMAL(8, 2) DEFAULT NULL AFTER verifiedLongitude;
+
+
+DELETE FROM places_api_usage WHERE usageDate = CURDATE();
+
+DROP TABLE IF EXISTS `snap_lookup_log`;

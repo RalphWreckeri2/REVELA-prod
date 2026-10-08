@@ -162,6 +162,36 @@ def review_queue():
     return jsonify(result), 200
 
 
+# ── POST /api/registry/review/accept ──────────────────────────────────────────
+@registry_bp.route("/review/accept", methods=["POST"])
+@admin_required()
+def review_accept():
+    """Admin endpoint to approve low-confidence map pin candidate."""
+    data = request.get_json(silent=True) or {}
+    business_id = data.get("businessID") or data.get("business_id")
+    if not business_id:
+        return jsonify({"error": "businessID is required"}), 400
+    ok, error = places_resolver.decide_review(business_id, approve=True)
+    if not ok:
+        return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
+    return jsonify({"message": "Pin approved", "businessID": business_id, "matchStatus": "approved"}), 200
+
+
+# ── POST /api/registry/review/reject ──────────────────────────────────────────
+@registry_bp.route("/review/reject", methods=["POST"])
+@admin_required()
+def review_reject():
+    """Admin endpoint to reject candidate, insert into registry_rejected_places, and detach coords."""
+    data = request.get_json(silent=True) or {}
+    business_id = data.get("businessID") or data.get("business_id")
+    if not business_id:
+        return jsonify({"error": "businessID is required"}), 400
+    ok, error = places_resolver.decide_review(business_id, approve=False)
+    if not ok:
+        return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
+    return jsonify({"message": "Pin rejected and candidate place discarded", "businessID": business_id, "matchStatus": "rejected"}), 200
+
+
 # ── POST /api/registry/<id>/review  body: {"action": "approve" | "reject"} ────
 @registry_bp.route("/<path:business_id>/review", methods=["POST"])
 @admin_required()

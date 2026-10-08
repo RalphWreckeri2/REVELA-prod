@@ -292,8 +292,9 @@ def _get_all_analytics_inner(F=None):
             LEFT JOIN LATERAL (
                 SELECT businessID, applicationStatus
                 FROM official_registry
-                WHERE barangayID = g.barangayID
-                  AND businessName = g.detectedName
+                WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
+                   OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
+                ORDER BY (businessID = g.businessID) DESC
                 LIMIT 1
             ) r ON TRUE
             WHERE (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR r.businessID IS NOT NULL OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
@@ -313,8 +314,8 @@ def _get_all_analytics_inner(F=None):
             FROM official_registry r
             WHERE NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
-                WHERE g2.detectedName = r.businessName
-                  AND g2.barangayID = r.barangayID
+                WHERE (g2.businessID IS NOT NULL AND g2.businessID = r.businessID)
+                   OR (g2.businessID IS NULL AND g2.detectedName = r.businessName AND g2.barangayID = r.barangayID)
             ){reg_r}
         ) AS combined ON combined.barangayID = b.barangayID
         WHERE 1=1 {brgy_b}
@@ -524,11 +525,12 @@ def _get_all_analytics_inner(F=None):
             COALESCE(NULLIF(TRIM(o.lineOfBusiness), ''), 'Unspecified sector') AS category,
             COUNT(DISTINCT o.businessID) AS flagged_count
         FROM geospatial_logs g
-        JOIN ({registry_match_sql}) rm
-            ON rm.normalized_name = TRIM(g.detectedName)
+        LEFT JOIN ({registry_match_sql}) rm
+            ON g.businessID IS NULL
+           AND rm.normalized_name = TRIM(g.detectedName)
            AND rm.barangayID = g.barangayID
            AND rm.match_count = 1
-        JOIN official_registry o ON o.businessID = rm.businessID
+        JOIN official_registry o ON o.businessID = COALESCE(g.businessID, rm.businessID)
         WHERE 1=1 AND g.flagColor != 'Green' 
           AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g} {reg_o}
         GROUP BY category
