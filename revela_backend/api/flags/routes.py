@@ -1,3 +1,5 @@
+from api.utils.cancellation import set_cancel
+from api.models.detection_runs import get_detection_quota_info
 import os
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity
@@ -16,10 +18,10 @@ from api.middleware.decorators import jwt_required, admin_required
 
 flags_bp = Blueprint("flags", __name__)
 
-from api.utils.cancellation import set_cancel 
-from api.models.detection_runs import get_detection_quota_info
 
 # ── GET /api/flags/places-usage ───────────────────────────────────────────────
+
+
 @flags_bp.route("/places-usage", methods=["GET"])
 @admin_required()
 def places_usage_route():
@@ -27,6 +29,8 @@ def places_usage_route():
     return jsonify(get_places_usage_today()), 200
 
 # ── GET /api/flags/detection-quota ────────────────────────────────────────────
+
+
 @flags_bp.route("/detection-quota", methods=["GET"])
 @jwt_required()
 def get_detection_quota_route():
@@ -35,6 +39,8 @@ def get_detection_quota_route():
     return jsonify(quota), 200
 
 # ── POST /api/flags/reset-quota ───────────────────────────────────────────────
+
+
 @flags_bp.route("/reset-quota", methods=["POST"])
 @admin_required()
 def reset_detection_quota_route():
@@ -47,6 +53,8 @@ def reset_detection_quota_route():
     return jsonify({"message": "Monthly detection limit reset successfully.", "quota": updated_quota}), 200
 
 # ── POST /api/flags/cancel-detection ──────────────────────────────────────────
+
+
 @flags_bp.route("/cancel-detection", methods=["POST"])
 @admin_required()
 def cancel_detection_route():
@@ -55,6 +63,8 @@ def cancel_detection_route():
     return jsonify({"message": "Cancellation requested"}), 200
 
 # ── POST /api/flags/run-detection ─────────────────────────────────────────────
+
+
 @flags_bp.route("/run-detection", methods=["POST"])
 @admin_required()
 def run_detection_route():
@@ -88,11 +98,14 @@ def reconcile_flags_route():
         cursor = mysql.connection.cursor()
         cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
         reg_row = cursor.fetchone()
-        reg_count = (reg_row.get("total") if isinstance(reg_row, dict) else reg_row[0]) if reg_row else 0
+        reg_count = (reg_row.get("total") if isinstance(
+            reg_row, dict) else reg_row[0]) if reg_row else 0
 
-        cursor.execute("SELECT COUNT(*) AS total FROM geospatial_logs WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL")
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM geospatial_logs WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL")
         red_row = cursor.fetchone()
-        red_count = (red_row.get("total") if isinstance(red_row, dict) else red_row[0]) if red_row else 0
+        red_count = (red_row.get("total") if isinstance(
+            red_row, dict) else red_row[0]) if red_row else 0
         cursor.close()
 
         if reg_count == 0:
@@ -154,7 +167,7 @@ def get_my_flags_route():
 @flags_bp.route("/yellow", methods=["POST"])
 @jwt_required()  # inspectors and admins both allowed
 def yellow_flag_route():
-    """Manually insert a Yellow or Orange Flag. Open to Inspectors and Admins."""
+    """Manually insert a Yellow Flag. Open to Inspectors and Admins."""
     data = request.get_json()
 
     required = ["businessName", "lat", "lng", "barangayID"]
@@ -162,8 +175,8 @@ def yellow_flag_route():
         return jsonify({"error": f"Required fields: {required}"}), 400
 
     flag_color = data.get("flagColor", "Yellow")
-    if flag_color not in ("Yellow", "Orange"):
-        return jsonify({"error": "Invalid flag color for manual creation"}), 400
+    if flag_color != "Yellow":
+        return jsonify({"error": "Only Yellow flags can be manually created"}), 400
 
     reporter_user_id = int(get_jwt_identity())
 

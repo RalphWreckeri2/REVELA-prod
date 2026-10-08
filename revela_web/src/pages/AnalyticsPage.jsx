@@ -2658,7 +2658,7 @@ export default function AnalyticsPage() {
             <div style={{ marginBottom: 40 }}>
               <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D1. Location Patterns</h3>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24, alignItems: "start" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
                     <div style={{ color: "#8b5cf6" }}>
@@ -2702,7 +2702,7 @@ export default function AnalyticsPage() {
 
                           return (
                             <>
-                              <div style={{ height: 220, width: "100%", marginTop: 16 }}>
+                              <div style={{ height: 260, width: "100%", marginTop: 16 }}>
                                 <ResponsiveContainer width="100%" height="100%">
                                   <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
@@ -2894,11 +2894,11 @@ export default function AnalyticsPage() {
                       </p>
 
                       {diag?.morans_data?.points && diag.morans_data.points.length > 0 && (
-                        <div style={{ height: 230, width: "100%", marginTop: 16 }}>
+                        <div style={{ height: 260, width: "100%", marginTop: 16 }}>
                           <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={diag.morans_data.points} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
-                              <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 9, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
+                              <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
                               <YAxis tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
                               <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }} />
                               <ReferenceLine y={diag.morans_data.threshold} stroke="#6366f1" strokeDasharray="3 3" label={{ position: 'top', value: 'Upper-quartile benchmark', fill: "#6366f1", fontSize: 9 }} />

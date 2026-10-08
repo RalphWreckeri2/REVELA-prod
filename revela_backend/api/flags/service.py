@@ -1,3 +1,11 @@
+from api.models.detection_runs import (
+    get_monthly_detection_count,
+    create_detection_run,
+    update_detection_run_status,
+    get_detection_quota_info,
+)
+import re
+import difflib
 import numpy as np
 from sklearn.cluster import DBSCAN
 import os
@@ -18,10 +26,9 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 # Tune via env vars on Railway without redeploying code.
 #
 
-PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "2000")) 
-PLACES_DAILY_CAP   = int(os.getenv("PLACES_DAILY_CAP", "1000"))  
+PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "2000"))
+PLACES_DAILY_CAP = int(os.getenv("PLACES_DAILY_CAP", "1000"))
 PLACES_KINDS = ("nearby",)
-
 
 
 class PlacesBudgetExceeded(Exception):
@@ -78,8 +85,10 @@ def _reserve_places_call(kind):
     month_ok = day_ok = False
     cur = mysql.connection.cursor()
     try:
-        cur.execute(f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_MONTH_KEY}, 'month', 0)")
-        cur.execute("INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'day', 0)")
+        cur.execute(
+            f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_MONTH_KEY}, 'month', 0)")
+        cur.execute(
+            "INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'day', 0)")
 
         cur.execute(f"""
             UPDATE places_api_usage SET requestCount = requestCount + 1
@@ -118,8 +127,10 @@ def _refund_places_call():
     """Refund one Places API slot when Google denies the request or fails without returning data."""
     try:
         cur = mysql.connection.cursor()
-        cur.execute(f"UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
-        cur.execute("UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = CURDATE() AND kind = 'day'")
+        cur.execute(
+            f"UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
+        cur.execute(
+            "UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = CURDATE() AND kind = 'day'")
         mysql.connection.commit()
         cur.close()
     except Exception as e:
@@ -136,22 +147,29 @@ def get_places_usage_today():
     _ensure_budget_tables()
     cur = mysql.connection.cursor()
     try:
-        cur.execute(f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
+        cur.execute(
+            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
         m = cur.fetchone()
-        cur.execute("SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'day'")
+        cur.execute(
+            "SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'day'")
         d = cur.fetchone()
-        
-        cur.execute(f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_ts_month'")
+
+        cur.execute(
+            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_ts_month'")
         ts_m = cur.fetchone()
-        cur.execute(f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_pd_month'")
+        cur.execute(
+            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_pd_month'")
         pd_m = cur.fetchone()
 
-        m_used = int((m.get("c") if isinstance(m, dict) else m[0]) or 0) if m else 0
-        d_used = int((d.get("c") if isinstance(d, dict) else d[0]) or 0) if d else 0
-        
-        ts_m_used = int((ts_m.get("c") if isinstance(ts_m, dict) else ts_m[0]) or 0) if ts_m else 0
-        pd_m_used = int((pd_m.get("c") if isinstance(pd_m, dict) else pd_m[0]) or 0) if pd_m else 0
+        m_used = int((m.get("c") if isinstance(
+            m, dict) else m[0]) or 0) if m else 0
+        d_used = int((d.get("c") if isinstance(
+            d, dict) else d[0]) or 0) if d else 0
 
+        ts_m_used = int((ts_m.get("c") if isinstance(
+            ts_m, dict) else ts_m[0]) or 0) if ts_m else 0
+        pd_m_used = int((pd_m.get("c") if isinstance(
+            pd_m, dict) else pd_m[0]) or 0) if pd_m else 0
 
         geo_info = {"cap": 1500, "remaining": 1500, "used": 0}
         try:
@@ -199,9 +217,6 @@ def get_places_usage_today():
         cur.close()
 
 
-
-
-
 def _completed_points_this_cycle():
     """
     Grid points already finished since the last COMPLETED scan (so a scan interrupted by the
@@ -239,14 +254,16 @@ def _unmark_points(point_keys):
     cur = mysql.connection.cursor()
     try:
         marks = ",".join(["%s"] * len(point_keys))
-        cur.execute(f"DELETE FROM scan_point_log WHERE pointKey IN ({marks})", tuple(point_keys))
+        cur.execute(
+            f"DELETE FROM scan_point_log WHERE pointKey IN ({marks})", tuple(point_keys))
         mysql.connection.commit()
     finally:
         cur.close()
 
 
 # ── GeoJSON Loading ───────────────────────────────────────────────────────────
-MATAASNAKAHOY_GEOJSON_PATH = os.path.join(os.path.dirname(__file__), '..', 'utils', 'mataasnakahoy.json')
+MATAASNAKAHOY_GEOJSON_PATH = os.path.join(
+    os.path.dirname(__file__), '..', 'utils', 'mataasnakahoy.json')
 _BARANGAY_POLYGONS = {}
 
 if os.path.exists(MATAASNAKAHOY_GEOJSON_PATH):
@@ -284,10 +301,6 @@ def _within_municipality(lat: float, lng: float) -> bool:
         return False
     return _MUNICIPALITY_BOUNDARY.buffer(0.0005).contains(Point(lng, lat))
 
-
-
-import difflib
-import re
 
 def _normalize_business_name(name: str) -> str:
     if not name:
@@ -383,11 +396,13 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
         reg_lat = entry.get("latitude")
         reg_lng = entry.get("longitude")
         reg_b_id = entry.get("barangayID")
-        same_barangay = (reg_b_id is None) or (poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
+        same_barangay = (reg_b_id is None) or (
+            poi_barangay_id is None) or (reg_b_id == poi_barangay_id)
 
         # Case A: Registry entry has coordinates
         if reg_lat and reg_lng:
-            dist = geodesic((poi_lat, poi_lng), (float(reg_lat), float(reg_lng))).meters
+            dist = geodesic((poi_lat, poi_lng),
+                            (float(reg_lat), float(reg_lng))).meters
 
             # Proximity match (within 25m) with basic name overlap
             if dist <= 25 and sim >= 0.4:
@@ -474,7 +489,8 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
         # Remove redundant duplicate unpositioned logs
         for log in matched_logs:
             if log["logID"] != primary_log["logID"]:
-                cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
+                cursor.execute(
+                    "DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
 
     elif lat and lng and barangay_id:
         cursor.execute("""
@@ -528,17 +544,20 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
 
         if not red_flags:
             if not silent:
-                hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
+                hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100,
+                                      "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
             return 0
 
         cursor = mysql.connection.cursor()
         cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
         r_row = cursor.fetchone()
         cursor.close()
-        reg_count = (r_row.get("total") if isinstance(r_row, dict) else r_row[0]) if r_row else 0
+        reg_count = (r_row.get("total") if isinstance(
+            r_row, dict) else r_row[0]) if r_row else 0
         if reg_count == 0:
             if not silent:
-                hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100, "status": "Official registry is empty. No records to reconcile against.", "converted": 0, "total": len(red_flags), "stage": "completed"})
+                hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100,
+                                      "status": "Official registry is empty. No records to reconcile against.", "converted": 0, "total": len(red_flags), "stage": "completed"})
             return 0
 
         registry = _load_registry()
@@ -546,7 +565,8 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
         total = len(red_flags)
 
         if not silent:
-            hub.publish_to_admins({"type": "reconcile_progress", "percentage": 0, "status": f"Checking {total} Red flag(s) against the registry...", "converted": 0, "total": total, "stage": "running"})
+            hub.publish_to_admins({"type": "reconcile_progress", "percentage": 0,
+                                  "status": f"Checking {total} Red flag(s) against the registry...", "converted": 0, "total": total, "stage": "running"})
 
         for idx, flag in enumerate(red_flags):
             name = flag.get("detectedName") or ""
@@ -555,9 +575,11 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             b_id = flag.get("barangayID")
             place_id = flag.get("placeID")
 
-            matched, dist, score = _match_poi_to_registry(name, lat, lng, registry, poi_barangay_id=b_id)
+            matched, dist, score = _match_poi_to_registry(
+                name, lat, lng, registry, poi_barangay_id=b_id)
             if matched:
-                app_status = (matched.get('applicationStatus') or 'Active').strip()
+                app_status = (matched.get('applicationStatus')
+                              or 'Active').strip()
                 target_color = 'Green' if app_status == 'Active' else (
                     'Orange' if app_status == 'Expired' else (
                         'Black' if app_status == 'Revoked' else (
@@ -598,10 +620,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
         _reconcile_lock.release()
 
 
-
-
 # ── Google Places fetch & checkpointed grid scan ───────────────────────────────
-
 DETECTION_RADIUS_M = 850
 
 
@@ -633,7 +652,8 @@ def _fetch_point_results(lat, lng, radius_m):
         or os.getenv("VITE_GOOGLE_MAPS_API_KEY")
     )
     if not api_key:
-        raise RuntimeError("GOOGLE_MAPS_API_KEY environment variable is not configured.")
+        raise RuntimeError(
+            "GOOGLE_MAPS_API_KEY environment variable is not configured.")
 
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     params = {"location": f"{lat},{lng}", "radius": radius_m, "key": api_key}
@@ -646,12 +666,14 @@ def _fetch_point_results(lat, lng, radius_m):
 
     while True:
         try:
-            resp = _places_get("nearby", url, params=params, headers=headers, timeout=10)
+            resp = _places_get("nearby", url, params=params,
+                               headers=headers, timeout=10)
             data = resp.json()
         except PlacesBudgetExceeded:
             raise
         except Exception as he:
-            print(f"[Run Detection] HTTP error querying point ({lat}, {lng}): {he}")
+            print(
+                f"[Run Detection] HTTP error querying point ({lat}, {lng}): {he}")
             return results, False
 
         status = data.get("status")
@@ -668,7 +690,8 @@ def _fetch_point_results(lat, lng, radius_m):
                 "is enabled, billing is active, and the API key has no incompatible HTTP referrer restrictions."
             )
         if status not in ("OK", "ZERO_RESULTS"):
-            print(f"[Run Detection] Places API status: {status}, message: {err_msg}")
+            print(
+                f"[Run Detection] Places API status: {status}, message: {err_msg}")
             return results, False
 
         results.extend(data.get("results", []))
@@ -744,7 +767,6 @@ def _load_registry():
     return rows
 
 
-
 # ── 20-meter threshold check ──────────────────────────────────────────────────
 
 def _find_nearest(poi_lat, poi_lng, registry):
@@ -783,19 +805,19 @@ def _get_barangay_id_by_coords(lat, lng):
         if poly.contains(pt):
             matched_geojson_name = name
             break
-            
+
     if not matched_geojson_name:
         for name, poly in _BARANGAY_POLYGONS.items():
             if poly.buffer(0.001).contains(pt):
                 matched_geojson_name = name
                 break
-            
+
     cursor = mysql.connection.cursor()
-    
+
     if matched_geojson_name:
         cursor.execute("SELECT barangayID, barangayName FROM barangays")
         barangs = cursor.fetchall()
-        
+
         mapping = {
             "District I (Pob.)": "Barangay I",
             "District II (Pob.)": "Barangay II",
@@ -804,15 +826,15 @@ def _get_barangay_id_by_coords(lat, lng):
             "Barangay II-A (Pob.)": "Barangay II-A",
             "Lumang Lipa": "Barangay Lumanglipa"
         }
-        
+
         for b in barangs:
             b_name = b['barangayName']
             target_name = mapping.get(matched_geojson_name)
-            
+
             if target_name and target_name == b_name:
                 cursor.close()
                 return b["barangayID"]
-                
+
             if not target_name and matched_geojson_name.lower() in b_name.lower():
                 cursor.close()
                 return b["barangayID"]
@@ -922,14 +944,8 @@ def _is_non_business_place(place):
     return False
 
 
-from api.models.detection_runs import (
-    get_monthly_detection_count,
-    create_detection_run,
-    update_detection_run_status,
-    get_detection_quota_info,
-)
-
 # ── Main detection runner ─────────────────────────────────────────────────────
+
 
 def run_detection(user_id=None):
     """
@@ -951,14 +967,16 @@ def run_detection(user_id=None):
     try:
         cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
         row = cursor.fetchone()
-        reg_count = (row.get("total") if isinstance(row, dict) else row[0]) if row else 0
+        reg_count = (row.get("total") if isinstance(
+            row, dict) else row[0]) if row else 0
         if reg_count == 0:
             return None, "Cannot run detection: The official business registry is empty. Please import official business records first so REVELA has a baseline to cross-reference against."
     finally:
         cursor.close()
 
     run_id = create_detection_run(user_id)
-    state = {"done_keys": [], "total_points": 0, "skipped_points": 0, "outside": 0}
+    state = {"done_keys": [], "total_points": 0,
+             "skipped_points": 0, "outside": 0}
     inserted_flag_ids = []
     seen_place_ids = set()
     counters = {"new_flags": 0, "total_checked": 0}
@@ -1019,7 +1037,8 @@ def run_detection(user_id=None):
                 if _is_non_business_place(place):
                     if existing_flag and existing_flag["flagColor"] == "Red":
                         cursor = mysql.connection.cursor()
-                        cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (existing_flag["logID"],))
+                        cursor.execute(
+                            "DELETE FROM geospatial_logs WHERE logID = %s", (existing_flag["logID"],))
                         mysql.connection.commit()
                         cursor.close()
                     continue
@@ -1030,18 +1049,21 @@ def run_detection(user_id=None):
 
                 if nearest is None:
                     if not existing_flag:
-                        flag_id = _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address)
+                        flag_id = _insert_red_flag(
+                            place_id, place_name, lat, lng, barangay_id, address)
                         inserted_flag_ids.append(flag_id)
                         counters["new_flags"] += 1
                 else:
-                    app_status = (nearest.get("applicationStatus") or "Active").strip()
+                    app_status = (nearest.get("applicationStatus")
+                                  or "Active").strip()
                     target_color = (
                         "Green" if app_status == "Active" else
                         "Orange" if app_status == "Expired" else
                         "Black" if app_status == "Revoked" else
                         "Purple" if app_status == "Closed" else "Yellow"
                     )
-                    target_barangay_id = nearest.get("barangayID") or barangay_id
+                    target_barangay_id = nearest.get(
+                        "barangayID") or barangay_id
                     _match_registry_to_google(
                         place_id, nearest["businessID"], nearest["businessName"],
                         target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id
@@ -1055,7 +1077,8 @@ def run_detection(user_id=None):
             if inserted_flag_ids:
                 cursor = mysql.connection.cursor()
                 format_strings = ",".join(["%s"] * len(inserted_flag_ids))
-                cursor.execute(f"DELETE FROM geospatial_logs WHERE logID IN ({format_strings})", tuple(inserted_flag_ids))
+                cursor.execute(f"DELETE FROM geospatial_logs WHERE logID IN ({format_strings})", tuple(
+                    inserted_flag_ids))
                 mysql.connection.commit()
                 cursor.close()
             _unmark_points(state["done_keys"])
@@ -1071,14 +1094,16 @@ def run_detection(user_id=None):
         done_total = state["skipped_points"] + len(state["done_keys"])
 
         if done_total < state["total_points"]:
-            update_detection_run_status(run_id, "partial", new_flags=new_flags, total_checked=total_checked)
+            update_detection_run_status(
+                run_id, "partial", new_flags=new_flags, total_checked=total_checked)
             msg = f"Scan partial: {done_total} of {state['total_points']} grid points completed. {new_flags} new flags recorded. Run again to finish."
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": msg
             })
         else:
-            update_detection_run_status(run_id, "completed", new_flags=new_flags, total_checked=total_checked)
+            update_detection_run_status(
+                run_id, "completed", new_flags=new_flags, total_checked=total_checked)
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
@@ -1196,8 +1221,10 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             reg_conditions.append("r.barangayID = %s")
             reg_params.append(barangay_id)
 
-        geo_where = ("WHERE " + " AND ".join(geo_conditions)) if geo_conditions else ""
-        reg_where = "WHERE " + " AND ".join(reg_conditions)  # always has at least 3 conditions
+        geo_where = ("WHERE " + " AND ".join(geo_conditions)
+                     ) if geo_conditions else ""
+        # always has at least 3 conditions
+        reg_where = "WHERE " + " AND ".join(reg_conditions)
 
         offset = (page - 1) * per_page
 
@@ -1329,7 +1356,10 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 # ── Insert Yellow Flag ────────────────────────────────────────────────────────
 
 def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_color='Yellow', reported_by_user_id=None):
-    """Manually insert a Yellow or Orange Flag."""
+    """Manually insert a Yellow Flag."""
+    if flag_color != 'Yellow':
+        return None, "Only Yellow flags can be manually created."
+
     try:
         # Validate that the manual pin falls within the municipality
         if lat and lng and not _within_municipality(float(lat), float(lng)):
@@ -1365,7 +1395,6 @@ def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_co
         return None, str(e)
 
 
-
 def update_flag_color(log_id, color):
     """Update a flag's color manually (e.g. to Purple, Orange, Yellow, Red, Black, Green).
     Supports both real geospatial_logs (log_id > 0) and virtual registry flags (log_id < 0).
@@ -1383,7 +1412,8 @@ def update_flag_color(log_id, color):
                 "Yellow": "Pending"
             }
             app_status = status_map.get(color, "Pending")
-            cursor.execute("UPDATE official_registry SET applicationStatus = %s WHERE businessID = %s", (app_status, biz_id))
+            cursor.execute(
+                "UPDATE official_registry SET applicationStatus = %s WHERE businessID = %s", (app_status, biz_id))
             mysql.connection.commit()
             cursor.close()
 
@@ -1398,7 +1428,8 @@ def update_flag_color(log_id, color):
                 pass
             return True, None
 
-        cursor.execute("SELECT flagColor, detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
+        cursor.execute(
+            "SELECT flagColor, detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
         row = cursor.fetchone()
         if not row:
             cursor.close()
@@ -1409,7 +1440,7 @@ def update_flag_color(log_id, color):
             SET flagColor = %s
             WHERE logID = %s
         """, (color, log_id))
-        
+
         # Propagate changes: if marked Purple, set registry status to Closed
         if color == 'Purple':
             cursor.execute("""
@@ -1481,7 +1512,8 @@ def update_flag_location(log_id: int, lat: float, lng: float):
             return True, None
 
         # Real flag in geospatial_logs
-        cursor.execute("SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
+        cursor.execute(
+            "SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
         row = cursor.fetchone()
         if not row:
             cursor.close()
@@ -1554,14 +1586,14 @@ def escalate_to_black(log_id):
             SET flagColor = 'Black'
             WHERE logID = %s
         """, (log_id,))
-        
+
         # Propagate changes: if marked Black, set registry status to Revoked
         cursor.execute("""
             UPDATE official_registry
             SET applicationStatus = 'Revoked'
             WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
         """, (row["detectedName"], row["barangayID"]))
-        
+
         mysql.connection.commit()
         cursor.close()
 
@@ -1590,7 +1622,8 @@ def delete_flag(log_id):
 
         if log_id < 0:
             biz_id = -log_id
-            cursor.execute("DELETE FROM official_registry WHERE businessID = %s", (biz_id,))
+            cursor.execute(
+                "DELETE FROM official_registry WHERE businessID = %s", (biz_id,))
             mysql.connection.commit()
             cursor.close()
 
