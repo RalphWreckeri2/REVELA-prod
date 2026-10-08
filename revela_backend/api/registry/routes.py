@@ -1,3 +1,4 @@
+from api.utils.cancellation import set_cancel
 import os
 import threading
 from flask import Blueprint, request, jsonify, current_app
@@ -16,9 +17,9 @@ from api.registry import places_resolver
 
 registry_bp = Blueprint("registry", __name__)
 
-from api.utils.cancellation import set_cancel
 
 # ── POST /api/registry/cancel ─────────────────────────────────────────────────
+
 @registry_bp.route("/cancel", methods=["POST"])
 @admin_required()
 def cancel_import():
@@ -27,6 +28,8 @@ def cancel_import():
     return jsonify({"message": "Cancellation requested"}), 200
 
 # ── POST /api/registry/reset-quota ────────────────────────────────────────────
+
+
 @registry_bp.route("/reset-quota", methods=["POST"])
 @admin_required()
 def reset_quota():
@@ -44,13 +47,17 @@ def reset_quota():
 def snap_unresolved():
     """
     Cost-optimized batch pin snapping.
-    Resolves NULL-coordinate registry entries using Geocoding API first
-    (free-tier), then Places Text Search only if PLACES_RESOLVER_ENABLED=1.
+    Resolves eligible entries using Places Text Search first, then Geocoding
+    fallbacks. Existing Geocoding pins are rechecked against Places once.
     Accepts optional JSON body: { "limit": 200 }  (default 200 per run).
     Runs asynchronously — progress is streamed via SSE (type: 'snap_progress').
     """
+    if not os.getenv("GOOGLE_MAPS_API_KEY"):
+        return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
+
     body = request.get_json(silent=True) or {}
-    limit = max(1, min(int(body.get("limit", 200)), 1000))  # hard cap at 1000/run
+    # hard cap at 1000/run
+    limit = max(1, min(int(body.get("limit", 200)), 1000))
 
     def _run():
         with current_app.app_context():
@@ -180,7 +187,8 @@ def review_queue():
     """Businesses whose map pin was matched with low confidence and awaits admin review."""
     page = request.args.get("page", 1, type=int)
     per_page = min(request.args.get("limit", 20, type=int), 100)
-    result, error = places_resolver.list_review_queue(page=page, per_page=per_page)
+    result, error = places_resolver.list_review_queue(
+        page=page, per_page=per_page)
     if error:
         return jsonify({"error": error}), 500
     return jsonify(result), 200
@@ -224,7 +232,8 @@ def review_decide(business_id):
     action = data.get("action")
     if action not in ("approve", "reject"):
         return jsonify({"error": "action must be 'approve' or 'reject'"}), 400
-    ok, error = places_resolver.decide_review(business_id, approve=(action == "approve"))
+    ok, error = places_resolver.decide_review(
+        business_id, approve=(action == "approve"))
     if not ok:
         return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
     return jsonify({"message": f"Pin {action}d"}), 200

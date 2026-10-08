@@ -5,10 +5,10 @@ Resolve a BPLO business to a map pin using Google Places API (New) Text Search, 
 back to the Geocoding API. Designed to stay inside Google's free monthly SKU thresholds
 and to respect the 30-day cache limit on Google-derived lat/lng.
 
-Everything is OFF by default: set PLACES_RESOLVER_ENABLED=1 to turn it on.
+Places resolution is enabled by default; set PLACES_RESOLVER_ENABLED=0 to turn it off.
 
 Environment variables (all optional unless noted)
-  PLACES_RESOLVER_ENABLED   "1" to enable (default "0" => legacy geocode behaviour)
+    PLACES_RESOLVER_ENABLED   "0" to disable (default "1" => Places-first resolution)
   GOOGLE_MAPS_API_KEY       required (already used by service.py)
   GEO_MUNICIPALITY / GEO_PROVINCE      default Mataasnakahoy / Batangas
   PLACES_CENTER             "lat,lng"  -> adds a location bias to Text Search (unset = no bias)
@@ -59,7 +59,7 @@ _halted = None  # set to a message after a 401/403 so we stop spending calls unt
 
 
 def enabled():
-    return os.getenv("PLACES_RESOLVER_ENABLED", "0") == "1"
+    return os.getenv("PLACES_RESOLVER_ENABLED", "1") == "1"
 
 
 def compute_resolve_key(name, address, barangay_id):
@@ -71,6 +71,15 @@ def compute_resolve_key(name, address, barangay_id):
     a = str(address or "").strip().lower()
     b = str(barangay_id or "").strip().lower()
     raw = f"{n}|{a}|{b}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def compute_places_refresh_key(name, address, barangay_id):
+    """Use a separate cache key for one-time Places rechecks of old geocode pins."""
+    n = str(name or "").strip().lower()
+    a = str(address or "").strip().lower()
+    b = str(barangay_id or "").strip().lower()
+    raw = f"{n}|{a}|{b}|places-refresh-v1"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
@@ -118,7 +127,8 @@ def _is_within_municipal_bounds(lat, lng):
         lat2, lon2 = math.radians(lat), math.radians(lng)
         dlat = lat2 - lat1
         dlon = lon2 - lon1
-        a = math.sin(dlat / 2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2)**2
+        a = math.sin(dlat / 2)**2 + math.cos(lat1) * \
+            math.cos(lat2) * math.sin(dlon / 2)**2
         c = 2 * math.asin(math.sqrt(a))
         dist_m = 6371000.0 * c
         return dist_m <= radius_m
@@ -230,7 +240,8 @@ def _geocode_fallback(address, barangay, get=requests.get):
     params = {"address": ", ".join(parts), "components": "country:PH",
               "key": os.getenv("GOOGLE_MAPS_API_KEY", "")}
     try:
-        data = _api_get_json(get(GEOCODE_URL, params=params, timeout=10), "Geocode") or {}
+        data = _api_get_json(
+            get(GEOCODE_URL, params=params, timeout=10), "Geocode") or {}
     except requests.RequestException as e:
         print(f"[places_resolver] Geocode network error: {e}")
         return None
@@ -260,14 +271,18 @@ def _geocode_fallback(address, barangay, get=requests.get):
 
 
 def resolve_location(name, address, barangay, business_id=None, barangay_id=None,
-                     line_of_business='', reserve_geocode=None, _post=requests.post, _get=requests.get):
+                     line_of_business='', reserve_geocode=None, refresh_geocode=False,
+                     _post=requests.post, _get=requests.get):
     """Returns (lat, lng, meta). (None, None, None) when unresolved/over budget (row still saved)."""
     if not os.getenv("GOOGLE_MAPS_API_KEY") or _halted:
         return None, None, None
 
     # 1. Compute resolveKey for caching
     b_ref = barangay_id if barangay_id is not None else barangay
-    current_key = compute_resolve_key(name, address, b_ref)
+    current_key = (
+        compute_places_refresh_key(name, address, b_ref)
+        if refresh_geocode else compute_resolve_key(name, address, b_ref)
+    )
 
     # 2. Check if resolveKey in DB matches: skip API call if unchanged
     if business_id:
@@ -283,11 +298,15 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
             stored = cur.fetchone()
             if stored:
                 if not line_of_business:
-                    line_of_business = (stored.get("lineOfBusiness") if isinstance(stored, dict) else (stored[8] if len(stored) > 8 else "")) or ""
-                stored_key = stored.get("resolveKey") if isinstance(stored, dict) else stored[0]
+                    line_of_business = (stored.get("lineOfBusiness") if isinstance(
+                        stored, dict) else (stored[8] if len(stored) > 8 else "")) or ""
+                stored_key = stored.get("resolveKey") if isinstance(
+                    stored, dict) else stored[0]
                 if stored_key and stored_key == current_key:
-                    stored_lat = stored.get("latitude") if isinstance(stored, dict) else stored[1]
-                    stored_lng = stored.get("longitude") if isinstance(stored, dict) else stored[2]
+                    stored_lat = stored.get("latitude") if isinstance(
+                        stored, dict) else stored[1]
+                    stored_lng = stored.get("longitude") if isinstance(
+                        stored, dict) else stored[2]
                     if stored_lat is not None and stored_lng is not None:
                         return float(stored_lat), float(stored_lng), {
                             "coord_source": stored.get("coordSource"),
@@ -316,14 +335,17 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
                 (business_id,),
             )
             rows = cur.fetchall()
-            rejected_pids = {r["placeID"] if isinstance(r, dict) else r[0] for r in rows}
+            rejected_pids = {r["placeID"] if isinstance(
+                r, dict) else r[0] for r in rows}
         except Exception as e:
             print(f"[places_resolver] registry_rejected_places error: {e}")
         finally:
             cur.close()
 
     # 4. Quota Pre-check & Text Search
-    if reserve_call("imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP):
+    places_budget_exhausted = not reserve_call(
+        "imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP)
+    if not places_budget_exhausted:
         data = _text_search(name, address, barangay, post=_post)
         best, best_score = None, 0.0
         discarded_rejected = False
@@ -342,12 +364,14 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
             poi_types = p.get("types", []) or []
             if p.get("primaryType"):
                 poi_types = list(poi_types) + [p.get("primaryType")]
-            s = similarity(name, (p.get("displayName") or {}).get("text", ""), reg_line=line_of_business, poi_types=poi_types)
+            s = similarity(name, (p.get("displayName") or {}).get(
+                "text", ""), reg_line=line_of_business, poi_types=poi_types)
             if s > best_score:
                 best, best_score = p, s
 
         if best and best_score >= REVIEW_MIN:
-            status = "review" if discarded_rejected else ("auto" if best_score >= AUTO_ACCEPT else "review")
+            status = "review" if discarded_rejected else (
+                "auto" if best_score >= AUTO_ACCEPT else "review")
             return best["location"]["latitude"], best["location"]["longitude"], {
                 "coord_source": "places",
                 "place_id": best["id"],
@@ -372,13 +396,20 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         return None, None, None
 
     # 5. Geocode Fallback
-    if address and reserve_geocode and reserve_geocode():
-        g = _geocode_fallback(address, barangay, get=_get)
-        if g:
-            g["meta"]["resolve_key"] = current_key
-            return g["lat"], g["lng"], g["meta"]
+    geocode_budget_exhausted = False
+    if not refresh_geocode and address and reserve_geocode:
+        if reserve_geocode():
+            g = _geocode_fallback(address, barangay, get=_get)
+            if g:
+                g["meta"]["resolve_key"] = current_key
+                return g["lat"], g["lng"], g["meta"]
+        else:
+            geocode_budget_exhausted = True
 
-    return None, None, {"resolve_key": current_key}
+    meta = {"resolve_key": current_key}
+    if places_budget_exhausted or geocode_budget_exhausted:
+        meta["budget_exhausted"] = True
+    return None, None, meta
 
 
 def record_coord_meta(cursor, business_id, meta):
@@ -389,9 +420,11 @@ def record_coord_meta(cursor, business_id, meta):
     resolve_key = meta.get("resolve_key")
     if meta.get("coord_source") == "csv":
         if resolve_key:
-            cursor.execute("UPDATE official_registry SET coordSource='csv', resolveKey=%s WHERE businessID=%s", (resolve_key, business_id))
+            cursor.execute(
+                "UPDATE official_registry SET coordSource='csv', resolveKey=%s WHERE businessID=%s", (resolve_key, business_id))
         else:
-            cursor.execute("UPDATE official_registry SET coordSource='csv' WHERE businessID=%s", (business_id,))
+            cursor.execute(
+                "UPDATE official_registry SET coordSource='csv' WHERE businessID=%s", (business_id,))
         return
     cursor.execute(
         """UPDATE official_registry SET coordSource=%s, placeID=%s, placeIDKind=%s,
@@ -445,8 +478,10 @@ def refresh_expired_coords(limit=500):
     for r in rows:
         if _halted or not reserve_call("imp_pd", PD_MONTHLY_CAP, PD_DAILY_CAP):
             break
-        bid, brgy, name = _g(r, "businessID", 0), _g(r, "barangayID", 1), _g(r, "businessName", 2)
-        olat, olng, pid = _g(r, "latitude", 3), _g(r, "longitude", 4), _g(r, "placeID", 5)
+        bid, brgy, name = _g(r, "businessID", 0), _g(
+            r, "barangayID", 1), _g(r, "businessName", 2)
+        olat, olng, pid = _g(r, "latitude", 3), _g(
+            r, "longitude", 4), _g(r, "placeID", 5)
         try:
             resp = requests.get(PLACE_DETAILS_URL.format(pid=pid), timeout=10, headers={
                 "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
@@ -460,7 +495,8 @@ def refresh_expired_coords(limit=500):
             continue
         cur.execute("UPDATE official_registry SET latitude=%s, longitude=%s, coordFetchedAt=NOW() "
                     "WHERE businessID=%s", (loc["latitude"], loc["longitude"], bid))
-        _update_pin(cur, brgy, name, olat, olng, loc["latitude"], loc["longitude"], business_id=bid)
+        _update_pin(cur, brgy, name, olat, olng,
+                    loc["latitude"], loc["longitude"], business_id=bid)
         mysql.connection.commit()
         done += 1
     cur.close()
@@ -478,9 +514,12 @@ def purge_expired_coords(dry_run=True):
     rows = cur.fetchall()
     if not dry_run:
         for r in rows:
-            bid, brgy, name = _g(r, "businessID", 0), _g(r, "barangayID", 1), _g(r, "businessName", 2)
-            _update_pin(cur, brgy, name, _g(r, "latitude", 3), _g(r, "longitude", 4), None, None, business_id=bid)
-            cur.execute("UPDATE official_registry SET latitude=NULL, longitude=NULL WHERE businessID=%s", (bid,))
+            bid, brgy, name = _g(r, "businessID", 0), _g(
+                r, "barangayID", 1), _g(r, "businessName", 2)
+            _update_pin(cur, brgy, name, _g(r, "latitude", 3), _g(
+                r, "longitude", 4), None, None, business_id=bid)
+            cur.execute(
+                "UPDATE official_registry SET latitude=NULL, longitude=NULL WHERE businessID=%s", (bid,))
         mysql.connection.commit()
     cur.close()
     return {"expired": len(rows), "dry_run": dry_run}
@@ -490,7 +529,8 @@ def purge_expired_coords(dry_run=True):
 def list_review_queue(page=1, per_page=20):
     cur = mysql.connection.cursor()
     try:
-        cur.execute("SELECT COUNT(*) AS c FROM official_registry WHERE matchStatus='review'")
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM official_registry WHERE matchStatus='review'")
         row = cur.fetchone()
         total = int(_g(row, "c", 0))
         cur.execute(
@@ -526,7 +566,8 @@ def decide_review(business_id, approve):
         if not r:
             return False, "Not found or not awaiting review"
         if approve:
-            cur.execute("UPDATE official_registry SET matchStatus='approved', coordSource='manual' WHERE businessID=%s", (business_id,))
+            cur.execute(
+                "UPDATE official_registry SET matchStatus='approved', coordSource='manual' WHERE businessID=%s", (business_id,))
         else:
             pid = _g(r, "placeID", 4)
             if pid:

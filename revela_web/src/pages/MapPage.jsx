@@ -743,6 +743,7 @@ function MapCanvas({
   detectionProgress,
   reconcileProgress,
   snapProgress,
+  onCloseSnapProgress,
   elapsedTime,
   satellite,
   clusters,
@@ -1585,28 +1586,54 @@ function MapCanvas({
       )}
 
       {/* Snap Pins progress overlay */}
-      {snapProgress && snapProgress.stage === 'running' && (
+      {snapProgress && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", zIndex: 200 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: "linear-gradient(135deg, rgba(5, 46, 22, 0.96), rgba(15, 23, 42, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: "1px solid rgba(5,150,105,0.3)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
               <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(5,150,105,0.2)", border: "1px solid rgba(5,150,105,0.4)", flexShrink: 0 }}>
-                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #059669", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
-                <span style={{ fontSize: 20 }}>📍</span>
+                {snapProgress.stage === 'running' && (
+                  <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #059669", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
+                )}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
               </div>
               <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Snapping Pins</span>
-                <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Cost-Optimized Geocoding</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>
+                  {snapProgress.stage === 'completed' ? 'Snapping Complete' : 'Snapping Pins'}
+                </span>
+                <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Business Name Matching</span>
               </div>
+              <button
+                type="button"
+                onClick={() => onCloseSnapProgress && onCloseSnapProgress()}
+                style={{
+                  marginLeft: "auto",
+                  background: "rgba(255,255,255,0.08)",
+                  border: "none",
+                  color: "#94a3b8",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  lineHeight: 1,
+                  padding: "6px 9px",
+                  borderRadius: "50%",
+                  transition: "all 0.2s"
+                }}
+                title="Close"
+              >
+                ✕
+              </button>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: 11, color: "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Geocoding Progress</span>
+                <span style={{ fontSize: 11, color: "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Location Match Progress</span>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.percentage ?? 0}%</span>
               </div>
               <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(5,150,105,0.2)" }}>
                 <div style={{ width: `${snapProgress?.percentage ?? 0}%`, height: "100%", background: "linear-gradient(90deg, #065f46, #059669, #34d399, #059669)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: "progress-shimmer 2.5s linear infinite" }} />
               </div>
-              <div style={{ fontSize: 12, color: "#a7f3d0", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Starting geocoding..."}</div>
+              <div style={{ fontSize: 12, color: "#a7f3d0", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Starting Places name search..."}</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 4 }}>
                 <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
                   <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Snapped</div>
@@ -1621,6 +1648,26 @@ function MapCanvas({
                   <div style={{ fontSize: 18, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.total ?? 0}</div>
                 </div>
               </div>
+              {snapProgress.stage === 'completed' && (
+                <button
+                  type="button"
+                  onClick={() => onCloseSnapProgress && onCloseSnapProgress()}
+                  style={{
+                    marginTop: 6,
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    background: "rgba(5, 150, 105, 0.4)",
+                    border: "1px solid rgba(5, 150, 105, 0.7)",
+                    color: "#f8fafc",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  Done
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2209,17 +2256,22 @@ export default function MapPage() {
   }, [fetchFlags]);
 
   useEffect(() => {
+    let dismissTimer = null;
     const handleSnap = (e) => {
       const d = e.detail;
       setSnapProgress(d);
       if (d?.stage === "completed") {
         fetchFlags(true);
         fetchPlacesUsage();
-        setTimeout(() => setSnapProgress(null), 5000);
+        if (dismissTimer) clearTimeout(dismissTimer);
+        dismissTimer = setTimeout(() => setSnapProgress(null), 4000);
       }
     };
     window.addEventListener("revela:snap-progress", handleSnap);
-    return () => window.removeEventListener("revela:snap-progress", handleSnap);
+    return () => {
+      window.removeEventListener("revela:snap-progress", handleSnap);
+      if (dismissTimer) clearTimeout(dismissTimer);
+    };
   }, [fetchFlags, fetchPlacesUsage]);
 
   // Real-time flag and inspection event listeners + 20s background polling
@@ -2617,15 +2669,70 @@ export default function MapPage() {
     }
   };
 
+  const isSnapMonthlyMaxed = Boolean(
+    (placesUsage?.text_search_month && placesUsage.text_search_month.remaining <= 0) ||
+    (placesUsage?.month && placesUsage.month.remaining <= 0)
+  );
+  const isSnapDailyMaxed = Boolean(
+    placesUsage?.today && placesUsage.today.remaining <= 0
+  );
+
   const handleSnapUnresolved = async () => {
-    const unsnappedCount = flags.filter(f => !f.hasExactCoords && f.color !== 'Red').length;
+    if (isSnapMonthlyMaxed) {
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Monthly Quota Reached',
+        html: `
+          <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+            <p style="margin-bottom:8px;">You have reached the monthly free quota limit for Google Places (<strong>${placesUsage?.text_search_month?.used ?? placesUsage?.month?.used ?? 2500} / ${placesUsage?.text_search_month?.cap ?? placesUsage?.month?.cap ?? 2500}</strong> used).</p>
+            <p style="color:var(--color-muted, #64748b); font-size:12.5px;">Snap Pins is temporarily disabled to prevent any Google Cloud billing charges. It will automatically re-enable on the 1st of next month.</p>
+          </div>
+        `,
+        confirmButtonColor: '#6366f1',
+      });
+      return;
+    }
+
+    if (isSnapDailyMaxed) {
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Daily Budget Reached',
+        html: `
+          <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+            <p style="margin-bottom:8px;">You have reached the daily safety limit for Google Places requests (<strong>${placesUsage?.today?.cap || 500} / ${placesUsage?.today?.cap || 500}</strong> used today).</p>
+            <p style="color:var(--color-muted, #64748b); font-size:12.5px;">To protect your billing account, please try again tomorrow after midnight.</p>
+          </div>
+        `,
+        confirmButtonColor: '#6366f1',
+      });
+      return;
+    }
+
+    const unsnappedCount = flags.filter(f =>
+      f.color !== 'Red' &&
+      (!f.hasExactCoords || f.coordSource === 'geocode' || !f.coordSource) &&
+      f.coordSource !== 'manual' &&
+      f.coordSource !== 'csv' &&
+      f.matchStatus !== 'approved' &&
+      f.matchStatus !== 'rejected'
+    ).length;
+    if (unsnappedCount === 0) {
+      await Swal.fire({
+        icon: 'info',
+        title: 'All Pins Placed',
+        text: 'All registered businesses already have precise coordinates on the map. There are no unresolved pins to snap!',
+        confirmButtonColor: '#059669',
+      });
+      return;
+    }
+
     const confirm = await Swal.fire({
       title: 'Snap Unresolved Pins?',
       html: `
         <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-          <p style="margin-bottom:12px;">This will geocode registry businesses that are showing on barangay centroids instead of their real addresses.</p>
+          <p style="margin-bottom:12px;">Found <strong>${unsnappedCount}</strong> registered business(es) without precise map coordinates. This will geocode them to their street address.</p>
           <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#059669; margin-bottom:10px;">
-            <strong>Cost-Optimized:</strong> Uses the free Geocoding API first. Places Text Search is only used if enabled in server settings.
+            <strong>Places-first:</strong> Matches business names to Google Maps listings, then uses Geocoding as a fallback.
           </div>
           <div style="background:rgba(99,102,241,0.07); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#6366f1;">
             <strong>Smart Cache:</strong> Businesses with unchanged data are skipped — zero API calls for cached entries.
@@ -2640,7 +2747,7 @@ export default function MapPage() {
     });
     if (!confirm.isConfirmed) return;
     try {
-      setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting geocoding...', snapped: 0, failed: 0, cached: 0, total: 0 });
+      setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting Places name search...', snapped: 0, failed: 0, cached: 0, total: unsnappedCount });
       await snapUnresolvedPinsRequest(token, 200);
     } catch (err) {
       setSnapProgress(null);
@@ -3070,7 +3177,13 @@ export default function MapPage() {
               <button
                 className={`ghost-btn ${showAdvancedTools ? 'active' : ''}`}
                 type="button"
-                onClick={() => setShowAdvancedTools(prev => !prev)}
+                onClick={() => {
+                  setShowAdvancedTools(prev => {
+                    const next = !prev;
+                    if (next) fetchPlacesUsage();
+                    return next;
+                  });
+                }}
                 title="Advanced Tools"
                 style={{
                   display: "inline-flex",
@@ -3124,8 +3237,20 @@ export default function MapPage() {
                     className="ghost-btn"
                     type="button"
                     onClick={handleSnapUnresolved}
-                    disabled={runDetectionLoading || reconcileProgress?.stage === 'running' || snapProgress?.stage === 'running'}
-                    title="Geocode registry businesses that have no map coordinates yet"
+                    disabled={
+                      runDetectionLoading ||
+                      reconcileProgress?.stage === 'running' ||
+                      snapProgress?.stage === 'running' ||
+                      isSnapMonthlyMaxed ||
+                      isSnapDailyMaxed
+                    }
+                    title={
+                      isSnapMonthlyMaxed
+                        ? `Monthly Places quota reached (${placesUsage?.text_search_month?.used ?? 2500}/${placesUsage?.text_search_month?.cap ?? 2500} used). Resets on the 1st of next month.`
+                        : isSnapDailyMaxed
+                          ? `Daily Places safety budget reached (0 remaining today). Resets at midnight.`
+                          : "Geocode registry businesses that have no map coordinates yet"
+                    }
                     style={{
                       display: "inline-flex",
                       alignItems: "center",
@@ -3133,13 +3258,20 @@ export default function MapPage() {
                       height: 38,
                       borderRadius: "var(--radius-md)",
                       background: snapProgress?.stage === 'running' ? "rgba(5,150,105,0.12)" : "var(--color-input-bg)",
-                      color: snapProgress?.stage === 'running' ? "#059669" : "var(--color-ink)",
-                      borderColor: snapProgress?.stage === 'running' ? "#059669" : "var(--color-border)",
-                      opacity: snapProgress?.stage === 'running' ? 0.85 : 1,
+                      color: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "var(--color-muted)" : (snapProgress?.stage === 'running' ? "#059669" : "var(--color-ink)"),
+                      borderColor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "var(--color-border)" : (snapProgress?.stage === 'running' ? "#059669" : "var(--color-border)"),
+                      opacity: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? 0.5 : (snapProgress?.stage === 'running' ? 0.85 : 1),
+                      cursor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "not-allowed" : "pointer",
                       transition: "all 0.2s"
                     }}
                   >
-                    {snapProgress?.stage === 'running' ? `Snapping... (${snapProgress.snapped ?? 0}✓)` : 'Snap Pins'}
+                    {snapProgress?.stage === 'running'
+                      ? `Snapping... (${snapProgress.snapped ?? 0}✓)`
+                      : isSnapMonthlyMaxed
+                        ? 'Snap Pins (Month Cap)'
+                        : isSnapDailyMaxed
+                          ? 'Snap Pins (Daily Cap)'
+                          : 'Snap Pins'}
                   </button>
                 </div>
               )}
@@ -3263,6 +3395,7 @@ export default function MapPage() {
               detectionProgress={detectionProgress}
               reconcileProgress={reconcileProgress}
               snapProgress={snapProgress}
+              onCloseSnapProgress={() => setSnapProgress(null)}
               elapsedTime={elapsedTime}
               satellite={satellite}
               clusters={clusters}

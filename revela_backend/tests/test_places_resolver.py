@@ -1,17 +1,18 @@
-import os
-import sys
-import unittest
-from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from api.registry.places_resolver import (
     compute_resolve_key,
+    compute_places_refresh_key,
     _is_within_municipal_bounds,
     _text_search,
     resolve_location,
     decide_review,
 )
+import os
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")))
 
 
 class PlacesResolverHardeningTests(unittest.TestCase):
@@ -35,7 +36,8 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         mock_resp.json.return_value = {"places": []}
         mock_post.return_value = mock_resp
 
-        _text_search("Silva Pharmacy", "Poblacion", "Barangay I", post=mock_post)
+        _text_search("Silva Pharmacy", "Poblacion",
+                     "Barangay I", post=mock_post)
 
         self.assertTrue(mock_post.called)
         headers = mock_post.call_args[1].get("headers", {})
@@ -108,6 +110,58 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         self.assertEqual(lng, 121.1120)
         self.assertEqual(meta["match_type"], "cached_resolve_key")
         self.assertEqual(meta["place_id"], "place_cached_123")
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call", return_value=True)
+    @patch("api.registry.places_resolver.mysql")
+    def test_places_refresh_rechecks_cached_geocode_without_geocode_fallback(
+        self, mock_mysql, mock_reserve
+    ):
+        """A prior geocode key must not suppress a Places lookup during pin refresh."""
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = {
+            "resolveKey": compute_resolve_key("Silva Pharmacy", "Poblacion", 1),
+            "latitude": 13.9620,
+            "longitude": 121.1120,
+            "coordSource": "geocode",
+            "placeID": None,
+            "placeIDKind": "address",
+            "matchScore": None,
+            "matchStatus": "auto",
+            "lineOfBusiness": "Pharmacy",
+        }
+        mock_cursor.fetchall.return_value = []
+
+        mock_post = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "places": [{
+                "id": "place_silva_pharmacy",
+                "displayName": {"text": "Silva Pharmacy"},
+                "location": {"latitude": 13.9667, "longitude": 121.1167},
+                "types": ["pharmacy"],
+            }]
+        }
+        mock_post.return_value = mock_resp
+        mock_geocode_reservation = MagicMock(return_value=True)
+
+        lat, lng, meta = resolve_location(
+            "Silva Pharmacy", "Poblacion", "Barangay I",
+            business_id="BIZ-GEOCODE-01", barangay_id=1,
+            line_of_business="Pharmacy", refresh_geocode=True,
+            reserve_geocode=mock_geocode_reservation, _post=mock_post,
+        )
+
+        self.assertEqual((lat, lng), (13.9667, 121.1167))
+        self.assertEqual(meta["coord_source"], "places")
+        self.assertEqual(meta["resolve_key"], compute_places_refresh_key(
+            "Silva Pharmacy", "Poblacion", 1
+        ))
+        mock_post.assert_called_once()
+        mock_geocode_reservation.assert_not_called()
+        mock_reserve.assert_called_once()
 
     @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
     @patch("api.registry.places_resolver.reserve_call")

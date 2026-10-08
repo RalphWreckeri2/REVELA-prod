@@ -297,7 +297,8 @@ def reset_geocode_daily_quota() -> bool:
     """Reset the daily geocoding usage counter for CURDATE() to allow re-testing."""
     cur = mysql.connection.cursor()
     try:
-        cur.execute("DELETE FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
+        cur.execute(
+            "DELETE FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
         mysql.connection.commit()
         return True
     except Exception as e:
@@ -719,8 +720,10 @@ def upload_registry(file, ext: str):
                 except Exception:
                     lat, lng = None, None
 
-            curr_resolve_key = places_resolver.compute_resolve_key(name_key, address_raw, barangay_id)
-            geo_meta = {"coord_source": "csv", "resolve_key": curr_resolve_key} if lat is not None else None
+            curr_resolve_key = places_resolver.compute_resolve_key(
+                name_key, address_raw, barangay_id)
+            geo_meta = {"coord_source": "csv",
+                        "resolve_key": curr_resolve_key} if lat is not None else None
             lob = _clean_upper(row.get("lineOfBusiness"))
             if lat is None and address_raw:
                 lat, lng, geo_meta = _resolve_location(
@@ -946,7 +949,8 @@ def sync_registry(file, ext: str):
                 if m_stat == "rejected":
                     is_rejected = True
 
-            curr_resolve_key = places_resolver.compute_resolve_key(name_key, address_raw, barangay_id)
+            curr_resolve_key = places_resolver.compute_resolve_key(
+                name_key, address_raw, barangay_id)
             lob = _clean_upper(row.get("lineOfBusiness"))
             lat, lng = None, None
             reused_existing = False
@@ -973,7 +977,8 @@ def sync_registry(file, ext: str):
                     geocoded_ok += 1
             elif csv_has_coords:
                 # Unlocked row with valid CSV coordinates
-                geo_meta = {"coord_source": "csv", "resolve_key": curr_resolve_key}
+                geo_meta = {"coord_source": "csv",
+                            "resolve_key": curr_resolve_key}
                 geocoded_ok += 1
             elif existing and existing.get("resolveKey") == curr_resolve_key:
                 # Unchanged record according to SHA-1 resolveKey: consumes zero Google API calls!
@@ -1013,7 +1018,8 @@ def sync_registry(file, ext: str):
             )
             if geo_meta is None and lat is not None and not reused_existing:
                 # coordinates came from the uploaded file
-                geo_meta = {"coord_source": "csv", "resolve_key": curr_resolve_key}
+                geo_meta = {"coord_source": "csv",
+                            "resolve_key": curr_resolve_key}
             status = _normalise_status(status_raw)
 
             reg_type = _normalise_registration_type(
@@ -1031,15 +1037,21 @@ def sync_registry(file, ext: str):
                     final_lat = existing.get("latitude")
                     final_lng = existing.get("longitude")
                 else:
-                    final_lat = lat if lat is not None else existing.get("latitude")
-                    final_lng = lng if lng is not None else existing.get("longitude")
+                    final_lat = lat if lat is not None else existing.get(
+                        "latitude")
+                    final_lng = lng if lng is not None else existing.get(
+                        "longitude")
 
                 if not is_locked and not reused_existing and lat is not None:
-                    coord_source_val = geo_meta.get("coord_source", "csv") if geo_meta else "csv"
-                    place_id_val = geo_meta.get("place_id") if geo_meta else None
-                    place_id_kind_val = geo_meta.get("place_id_kind") if geo_meta else None
+                    coord_source_val = geo_meta.get(
+                        "coord_source", "csv") if geo_meta else "csv"
+                    place_id_val = geo_meta.get(
+                        "place_id") if geo_meta else None
+                    place_id_kind_val = geo_meta.get(
+                        "place_id_kind") if geo_meta else None
                     score_val = geo_meta.get("score") if geo_meta else None
-                    match_status_val = geo_meta.get("match_status", "auto" if coord_source_val == "places" else None) if geo_meta else None
+                    match_status_val = geo_meta.get(
+                        "match_status", "auto" if coord_source_val == "places" else None) if geo_meta else None
 
                     cursor.execute(
                         """
@@ -1134,9 +1146,11 @@ def sync_registry(file, ext: str):
                         coord_src = "csv"
 
                 place_id_val = geo_meta.get("place_id") if geo_meta else None
-                place_id_kind_val = geo_meta.get("place_id_kind") if geo_meta else None
+                place_id_kind_val = geo_meta.get(
+                    "place_id_kind") if geo_meta else None
                 score_val = geo_meta.get("score") if geo_meta else None
-                match_status_val = geo_meta.get("match_status") if geo_meta else None
+                match_status_val = geo_meta.get(
+                    "match_status") if geo_meta else None
                 if coord_src == "places" and not match_status_val:
                     match_status_val = "auto"
 
@@ -1224,12 +1238,9 @@ def snap_unresolved_pins(limit: int = 200):
     """
     Cost-Optimized Batch Pin Snapper.
 
-    Scans official_registry for businesses with NULL coordinates that are
-    not already locked (manual/approved) or rejected, then resolves their
-    location using:
-      1. Geocoding API FIRST (free-tier up to 40k/month) — fast and cheap.
-      2. Places Text Search ONLY if PLACES_RESOLVER_ENABLED=1 (expensive,
-         uses Text Search Pro SKU). Off by default to protect the budget.
+        Scans eligible businesses without coordinates and prior Geocoding pins
+        that have not yet been checked against Places. Places Text Search is tried
+        first when enabled, followed by Geocoding fallbacks for unresolved pins.
 
     Uses resolveKey caching: if the business name/address/barangay are
     unchanged from a previous attempt, zero API calls are made.
@@ -1241,7 +1252,19 @@ def snap_unresolved_pins(limit: int = 200):
     from api.models.geospatial import insert_green_flag
 
     if not GOOGLE_MAPS_API_KEY:
-        return None, "GOOGLE_MAPS_API_KEY is not configured on the server."
+        err = "GOOGLE_MAPS_API_KEY is not configured on the server."
+        hub.publish_to_admins({
+            "type": "snap_progress",
+            "stage": "completed",
+            "percentage": 100,
+            "snapped": 0,
+            "failed": 0,
+            "cached": 0,
+            "total": 0,
+            "status": err,
+            "error": err
+        })
+        return None, err
 
     try:
         cursor = mysql.connection.cursor()
@@ -1249,9 +1272,25 @@ def snap_unresolved_pins(limit: int = 200):
         # Load all businesses without coordinates that are eligible for snapping
         cursor.execute("""
             SELECT businessID, barangayID, businessName, businessAddress,
-                   lineOfBusiness, applicationStatus, coordSource, matchStatus, resolveKey
+                   lineOfBusiness, applicationStatus, coordSource, matchStatus,
+                   resolveKey, latitude, longitude
             FROM official_registry
-            WHERE latitude IS NULL
+            WHERE (
+                    latitude IS NULL
+                    OR (
+                        coordSource = 'geocode'
+                        AND longitude IS NOT NULL
+                        AND (
+                            resolveKey IS NULL
+                            OR resolveKey <> SHA1(CONCAT(
+                                LOWER(TRIM(COALESCE(businessName, ''))), '|',
+                                LOWER(TRIM(COALESCE(businessAddress, ''))), '|',
+                                LOWER(TRIM(COALESCE(CAST(barangayID AS CHAR), ''))),
+                                '|places-refresh-v1'
+                            ))
+                        )
+                    )
+                  )
               AND matchStatus NOT IN ('approved', 'rejected')
               AND (coordSource IS NULL OR coordSource NOT IN ('manual', 'csv'))
             ORDER BY businessID
@@ -1262,12 +1301,24 @@ def snap_unresolved_pins(limit: int = 200):
 
         total = len(candidates)
         if total == 0:
+            msg = "All registry businesses already have coordinates — nothing to snap!"
+            hub.publish_to_admins({
+                "type": "snap_progress",
+                "stage": "completed",
+                "percentage": 100,
+                "snapped": 0,
+                "failed": 0,
+                "cached": 0,
+                "total": 0,
+                "status": msg
+            })
+            hub.publish_to_admins({"type": "registry_updated"})
             return {
                 "total_candidates": 0,
                 "snapped": 0,
                 "failed": 0,
                 "cached": 0,
-                "message": "All registry businesses already have coordinates — nothing to snap!"
+                "message": msg
             }, None
 
         hub.publish_to_admins({
@@ -1278,7 +1329,7 @@ def snap_unresolved_pins(limit: int = 200):
             "failed": 0,
             "cached": 0,
             "total": total,
-            "status": f"Found {total} businesses without map coordinates. Starting geocoding..."
+            "status": f"Found {total} businesses to resolve. Starting Places name search..."
         })
 
         # Load barangay lookup for name→ID resolution
@@ -1291,12 +1342,28 @@ def snap_unresolved_pins(limit: int = 200):
 
         for idx, biz in enumerate(candidates):
             bid = biz.get("businessID") if isinstance(biz, dict) else biz[0]
-            brgy_id = biz.get("barangayID") if isinstance(biz, dict) else biz[1]
+            brgy_id = biz.get("barangayID") if isinstance(
+                biz, dict) else biz[1]
             name = biz.get("businessName") if isinstance(biz, dict) else biz[2]
-            address = biz.get("businessAddress") if isinstance(biz, dict) else biz[3]
-            lob = biz.get("lineOfBusiness") if isinstance(biz, dict) else biz[4]
-            app_status = (biz.get("applicationStatus") if isinstance(biz, dict) else biz[5]) or "Active"
-            stored_key = (biz.get("resolveKey") if isinstance(biz, dict) else biz[8])
+            address = biz.get("businessAddress") if isinstance(
+                biz, dict) else biz[3]
+            lob = biz.get("lineOfBusiness") if isinstance(
+                biz, dict) else biz[4]
+            app_status = (biz.get("applicationStatus") if isinstance(
+                biz, dict) else biz[5]) or "Active"
+            stored_key = (biz.get("resolveKey")
+                          if isinstance(biz, dict) else biz[8])
+            coord_source = (biz.get("coordSource")
+                            if isinstance(biz, dict) else biz[6])
+            existing_lat = (biz.get("latitude")
+                            if isinstance(biz, dict) else biz[9])
+            existing_lng = (biz.get("longitude")
+                            if isinstance(biz, dict) else biz[10])
+            refresh_geocode = (
+                coord_source == "geocode"
+                and existing_lat is not None
+                and existing_lng is not None
+            )
 
             # Resolve the barangay name for geocoding
             brgy_name = None
@@ -1306,23 +1373,45 @@ def snap_unresolved_pins(limit: int = 200):
                     break
 
             # Compute resolve key: skip if name/address hasn't changed and was previously unresolvable
-            curr_key = places_resolver.compute_resolve_key(name or "", address or "", brgy_id)
+            curr_key = (
+                places_resolver.compute_places_refresh_key(
+                    name or "", address or "", brgy_id)
+                if refresh_geocode else
+                places_resolver.compute_resolve_key(
+                    name or "", address or "", brgy_id)
+            )
             if stored_key and stored_key == curr_key:
                 # Previously attempted with exact same data → cached failure, skip
                 cached += 1
                 continue
 
-            # ── Check if we've run out of geocode budget ───────────────────────
-            remaining_geo_day = get_geocode_remaining_today()
-            remaining_geo_month = get_geocode_remaining_month()
-            if remaining_geo_day <= 0 or remaining_geo_month <= 0:
+            # Places can still resolve pins after the Geocoding budget is exhausted.
+            if not places_resolver.enabled() and (
+                get_geocode_remaining_today() <= 0
+                or get_geocode_remaining_month() <= 0
+            ):
                 budget_hit = True
                 # Break before attempting API calls so we don't save a budget failure as unresolvable
                 break
 
-            # ── STRATEGY: Geocode API first (cheapest) ─────────────────────────
             lat, lng, geo_meta = None, None, None
-            if address:
+            if places_resolver.enabled():
+                lat, lng, geo_meta = places_resolver.resolve_location(
+                    name or "", address or "", brgy_name or "",
+                    business_id=bid,
+                    barangay_id=brgy_id,
+                    line_of_business=lob or "",
+                    reserve_geocode=_reserve_geocode_call,
+                    refresh_geocode=refresh_geocode
+                )
+                if geo_meta and geo_meta.get("resolve_key") is None:
+                    geo_meta["resolve_key"] = curr_key
+
+                if lat is None and geo_meta and geo_meta.get("budget_exhausted"):
+                    budget_hit = True
+                    break
+
+            elif address:
                 lat, lng = _geocode(address, brgy_name or "")
                 if lat is not None:
                     geo_meta = {
@@ -1334,21 +1423,8 @@ def snap_unresolved_pins(limit: int = 200):
                         "resolve_key": curr_key,
                     }
 
-            # ── FALLBACK: Places Text Search (only if resolver enabled) ─────────
-            if lat is None and places_resolver.enabled():
-                lat, lng, geo_meta = places_resolver.resolve_location(
-                    name or "", address or "", brgy_name or "",
-                    business_id=bid,
-                    barangay_id=brgy_id,
-                    line_of_business=lob or "",
-                    reserve_geocode=_reserve_geocode_call
-                )
-                if geo_meta and geo_meta.get("resolve_key") is None:
-                    if geo_meta:
-                        geo_meta["resolve_key"] = curr_key
-
             # ── Try name-only geocode as last resort ───────────────────────────
-            if lat is None and name and brgy_name:
+            if lat is None and name and brgy_name and not refresh_geocode:
                 lat, lng = _geocode(f"{name}, {brgy_name}", brgy_name)
                 if lat is not None:
                     geo_meta = {
@@ -1381,9 +1457,11 @@ def snap_unresolved_pins(limit: int = 200):
                         matchStatus = %s,
                         resolveKey = %s
                     WHERE businessID = %s
-                      AND latitude IS NULL
+                                            AND (latitude IS NULL OR (%s = 1 AND coordSource = 'geocode'))
+                                            AND (coordSource IS NULL OR coordSource NOT IN ('manual', 'csv'))
+                                            AND matchStatus NOT IN ('approved', 'rejected')
                 """, (lat, lng, coord_src, place_id, place_id_kind,
-                      match_score, match_status, curr_key, bid))
+                      match_score, match_status, curr_key, bid, int(refresh_geocode)))
 
                 if cur2.rowcount > 0:
                     # Seed or update the map pin
@@ -1395,6 +1473,11 @@ def snap_unresolved_pins(limit: int = 200):
                 else:
                     mysql.connection.rollback()
             else:
+                if geo_meta and geo_meta.get("budget_exhausted"):
+                    budget_hit = True
+                    cur2.close()
+                    break
+
                 # Did we fail because a concurrent worker exhausted the budget?
                 if get_geocode_remaining_today() <= 0 or get_geocode_remaining_month() <= 0:
                     budget_hit = True
@@ -1454,6 +1537,18 @@ def snap_unresolved_pins(limit: int = 200):
         }, None
 
     except Exception as e:
+        err_msg = f"Snapping failed: {str(e)}"
+        hub.publish_to_admins({
+            "type": "snap_progress",
+            "stage": "completed",
+            "percentage": 100,
+            "snapped": 0,
+            "failed": 0,
+            "cached": 0,
+            "total": 0,
+            "status": err_msg,
+            "error": err_msg
+        })
         return None, str(e)
 
 
@@ -1488,7 +1583,8 @@ def update_business(business_id, data: dict):
             params.append(_clean_upper(data["lineOfBusiness"]))
         if "businessAddress" in data:
             update_fields.append("businessAddress = %s")
-            params.append(normalize_business_address(data["businessAddress"]) if data["businessAddress"] else None)
+            params.append(normalize_business_address(
+                data["businessAddress"]) if data["businessAddress"] else None)
         if "applicationStatus" in data:
             update_fields.append("applicationStatus = %s")
             params.append(_normalise_status(data["applicationStatus"]))
@@ -1565,7 +1661,8 @@ def delete_business(business_id):
 
         # Check if businessID column exists in geospatial_logs (post-migration)
         try:
-            cursor.execute("SELECT logID FROM geospatial_logs WHERE businessID = %s", (business_id,))
+            cursor.execute(
+                "SELECT logID FROM geospatial_logs WHERE businessID = %s", (business_id,))
             for l in cursor.fetchall():
                 target_log_ids.add(l["logID"])
         except Exception:
@@ -1580,11 +1677,12 @@ def delete_business(business_id):
             for l in cursor.fetchall():
                 target_log_ids.add(l["logID"])
 
-
         # Delete only inspection reports and geospatial logs specifically tied to this business
         for target_id in target_log_ids:
-            cursor.execute("DELETE FROM inspection_reports WHERE targetID = %s", (target_id,))
-            cursor.execute("DELETE FROM geospatial_logs WHERE logID = %s", (target_id,))
+            cursor.execute(
+                "DELETE FROM inspection_reports WHERE targetID = %s", (target_id,))
+            cursor.execute(
+                "DELETE FROM geospatial_logs WHERE logID = %s", (target_id,))
 
         cursor.execute(
             "DELETE FROM official_registry WHERE businessID = %s", (business_id,))

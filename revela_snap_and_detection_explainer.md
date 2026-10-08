@@ -16,19 +16,19 @@ There were **two distinct problems**:
 
 ## Solution 1 — Cost-Optimized Pin Snapping
 
-### How it works (3-tier, cheapest first)
+### How it works (Places-first for better business-level matches)
 
 | Tier | API Used | Free Quota | List Price |
 |---|---|---|---|
-| 1st | **Geocoding API** (address → coords) | 10,000/month free | $5 per 1,000 after |
-| 2nd | **Places Text Search (Pro)** (if `PLACES_RESOLVER_ENABLED=1`) | 5,000/month free | $32 per 1,000 after |
-| 3rd | Name-only Geocode fallback | Same as Tier 1 | Same as Tier 1 |
+| 1st | **Places Text Search (Pro)** (business name + location) | 5,000/month free | $32 per 1,000 after |
+| 2nd | **Geocoding API** (address → coords fallback) | 10,000/month free | $5 per 1,000 after |
+| 3rd | Name-only Geocode fallback | Same as Tier 2 | Same as Tier 2 |
 
-> Geocoding is **6.4× cheaper** than Text Search. The system defaults to processing up to 200 businesses per run, attempting Tier 1 first to maximize free tier usage.
+> Places Text Search prioritizes business-name matching for more precise pins. Geocoding remains the fallback. The system processes up to 200 businesses per run by default, and the Text Search budget is capped at 2,500 requests/month.
 
 ### Smart Cache (`resolveKey`)
 Each business has a SHA-1 hash of `businessName | businessAddress | barangayID` stored in the database. If the data hasn't changed since the last attempt, **zero API calls** are made. This means:
-- Running "Snap Pins" a second time skips already-snapped or previously unresolvable identical entries.
+- Running "Snap Pins" skips unchanged entries already checked with Places. Existing `geocode` pins receive one Places recheck; a separate cache key prevents repeating that request.
 - Only genuinely new or updated businesses consume quota.
 
 ### Budget Guards
@@ -79,8 +79,9 @@ Detection scans are hard-coded to a limit of **2 per month** to prevent accident
 
 ## Architecture Decisions (Panel Questions)
 
-**Q: Why Geocoding API instead of Places Text Search?**  
-A: Geocoding is 6.4× cheaper per call and sufficient for addresses. Places Text Search (Pro SKU) is only activated when an address alone can't locate a business — controlled by `PLACES_RESOLVER_ENABLED` env var.
+**Q: Why Places Text Search before Geocoding?**
+
+A: BPLO addresses can be only a barangay name. Text Search puts the business name first and can match a listed establishment; Geocoding remains a fallback for businesses that Places cannot locate. The Text Search budget is capped separately.
 
 **Q: Why store coordinates in the database instead of calling Google every time?**  
 A: Storing coordinates reduces API costs and means the map loads instantly on every page view. Our app schedule runs coordinate refreshes to comply with Google’s terms. Note: Place IDs are exempt from caching restrictions, but coordinate caching remains subject to the applicable Google Maps terms of service. Our stale coordinate purge aims to manage this.
