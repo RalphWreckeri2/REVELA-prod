@@ -86,7 +86,7 @@ A: Geocoding is 6.4× cheaper per call and sufficient for addresses. Places Text
 A: Storing coordinates reduces API costs and means the map loads instantly on every page view. Our app schedule runs coordinate refreshes to comply with Google’s terms. Note: Place IDs are exempt from caching restrictions, but coordinate caching remains subject to the applicable Google Maps terms of service. Our stale coordinate purge aims to manage this.
 
 **Q: What happens if two admins run detection simultaneously?**  
-A: The budget guard uses atomic SQL updates (`UPDATE ... WHERE requestCount < cap`). The database constraint prevents the counter from exceeding the cap concurrently.
+A: The budget guard uses atomic conditional SQL updates (`UPDATE ... WHERE requestCount < cap`). This atomic conditional ensures that concurrent workers cannot increment the counter beyond the enforced cap.
 
 **Q: How do you know a detected business isn't in the registry?**  
 A: Name similarity < 0.55 means no name match. The system also checks `placeID` (Google's unique identifier). If a business in the registry was previously matched to a specific `placeID`, that exact `placeID` is linked to the official registry record rather than becoming a Red Flag.
@@ -105,4 +105,4 @@ Core components implemented for this workflow include:
 - `revela_web/src/components/DashboardLayout.jsx`: SSE event dispatch bridge.
 - `api/flags/service.py`: Checkpointed grid scanning and bounded polygon detection.
 - `api/registry/places_resolver.py`: `resolveKey` hashing and caching logic.
-- `api/flags/name_match.py`: Fuzzy matching algorithms based on `difflib.SequenceMatcher`.
+- `api/utils/name_match.py`: Fuzzy matching algorithms based on `difflib.SequenceMatcher`.

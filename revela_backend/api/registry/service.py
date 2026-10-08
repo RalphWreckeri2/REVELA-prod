@@ -1313,8 +1313,9 @@ def snap_unresolved_pins(limit: int = 200):
                 continue
 
             # ── Check if we've run out of geocode budget ───────────────────────
-            remaining_geo = get_geocode_remaining_today()
-            if remaining_geo <= 0:
+            remaining_geo_day = get_geocode_remaining_today()
+            remaining_geo_month = get_geocode_remaining_month()
+            if remaining_geo_day <= 0 or remaining_geo_month <= 0:
                 budget_hit = True
                 # Break before attempting API calls so we don't save a budget failure as unresolvable
                 break
@@ -1394,6 +1395,12 @@ def snap_unresolved_pins(limit: int = 200):
                 else:
                     mysql.connection.rollback()
             else:
+                # Did we fail because a concurrent worker exhausted the budget?
+                if get_geocode_remaining_today() <= 0 or get_geocode_remaining_month() <= 0:
+                    budget_hit = True
+                    cur2.close()
+                    break
+
                 # Store the resolveKey even on failure so we don't retry identical data next time
                 cur2.execute(
                     "UPDATE official_registry SET resolveKey = %s WHERE businessID = %s",
