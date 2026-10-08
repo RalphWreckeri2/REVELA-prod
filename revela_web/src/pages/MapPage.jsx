@@ -3139,7 +3139,7 @@ export default function MapPage() {
                       transition: "all 0.2s"
                     }}
                   >
-                    📍 {snapProgress?.stage === 'running' ? `Snapping... (${snapProgress.snapped ?? 0}✓)` : 'Snap Pins'}
+                    {snapProgress?.stage === 'running' ? `Snapping... (${snapProgress.snapped ?? 0}✓)` : 'Snap Pins'}
                   </button>
                 </div>
               )}
