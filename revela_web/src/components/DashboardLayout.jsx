@@ -320,7 +320,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
           setIsLiveConnected(true);
           setLastSyncTime(new Date());
 
-          if (data.type !== "detection_progress" && data.type !== "reconcile_progress") {
+          if (data.type !== "detection_progress" && data.type !== "reconcile_progress" && data.type !== "snap_progress") {
             refreshNotifications();
           }
 
@@ -344,6 +344,10 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
           } else if (data.type === "reconcile_progress") {
             window.dispatchEvent(
               new CustomEvent("revela:reconcile-progress", { detail: data }),
+            );
+          } else if (data.type === "snap_progress") {
+            window.dispatchEvent(
+              new CustomEvent("revela:snap-progress", { detail: data }),
             );
           } else if (data.type === "registry_progress") {
             window.dispatchEvent(

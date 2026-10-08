@@ -9,6 +9,7 @@ from api.registry.service import (
     get_business_by_id,
     update_business,
     delete_business,
+    snap_unresolved_pins,
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.registry import places_resolver
@@ -35,6 +36,29 @@ def reset_quota():
     if success:
         return jsonify({"message": "Daily geocoding quota has been reset for today."}), 200
     return jsonify({"error": "Failed to reset quota"}), 500
+
+
+# ── POST /api/registry/snap-unresolved ───────────────────────────────────────
+@registry_bp.route("/snap-unresolved", methods=["POST"])
+@admin_required()
+def snap_unresolved():
+    """
+    Cost-optimized batch pin snapping.
+    Resolves NULL-coordinate registry entries using Geocoding API first
+    (free-tier), then Places Text Search only if PLACES_RESOLVER_ENABLED=1.
+    Accepts optional JSON body: { "limit": 200 }  (default 200 per run).
+    Runs asynchronously — progress is streamed via SSE (type: 'snap_progress').
+    """
+    body = request.get_json(silent=True) or {}
+    limit = max(1, min(int(body.get("limit", 200)), 1000))  # hard cap at 1000/run
+
+    def _run():
+        with current_app.app_context():
+            snap_unresolved_pins(limit=limit)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return jsonify({"message": f"Snap started for up to {limit} businesses. Watch SSE for progress."}), 202
 
 
 # ── POST /api/registry/upload ─────────────────────────────────────────────────

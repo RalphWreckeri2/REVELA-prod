@@ -33,6 +33,7 @@ import {
   getDetectionQuotaRequest,
   getPlacesUsageRequest,
   reconcileFlagsRequest,
+  snapUnresolvedPinsRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -1582,6 +1583,48 @@ function MapCanvas({
         </div>
       )}
 
+      {/* Snap Pins progress overlay */}
+      {snapProgress && snapProgress.stage === 'running' && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", zIndex: 200 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: "linear-gradient(135deg, rgba(5, 46, 22, 0.96), rgba(15, 23, 42, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: "1px solid rgba(5,150,105,0.3)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
+              <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(5,150,105,0.2)", border: "1px solid rgba(5,150,105,0.4)", flexShrink: 0 }}>
+                <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #059669", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
+                <span style={{ fontSize: 20 }}>📍</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>Snapping Pins</span>
+                <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Cost-Optimized Geocoding</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <span style={{ fontSize: 11, color: "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Geocoding Progress</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.percentage ?? 0}%</span>
+              </div>
+              <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(5,150,105,0.2)" }}>
+                <div style={{ width: `${snapProgress?.percentage ?? 0}%`, height: "100%", background: "linear-gradient(90deg, #065f46, #059669, #34d399, #059669)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: "progress-shimmer 2.5s linear infinite" }} />
+              </div>
+              <div style={{ fontSize: 12, color: "#a7f3d0", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Starting geocoding..."}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 4 }}>
+                <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Snapped</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#10b981" }}>{snapProgress?.snapped ?? 0}</div>
+                </div>
+                <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Cached</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#818cf8" }}>{snapProgress?.cached ?? 0}</div>
+                </div>
+                <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Total</div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.total ?? 0}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -1928,6 +1971,7 @@ export default function MapPage() {
 
   const [reconcileProgress, setReconcileProgress] = useState(null);
   const reconcileProgressRef = useRef(null);
+  const [snapProgress, setSnapProgress] = useState(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [placesUsage, setPlacesUsage] = useState(null);
@@ -2162,6 +2206,20 @@ export default function MapPage() {
     window.addEventListener("revela:reconcile-progress", handleRec);
     return () => window.removeEventListener("revela:reconcile-progress", handleRec);
   }, [fetchFlags]);
+
+  useEffect(() => {
+    const handleSnap = (e) => {
+      const d = e.detail;
+      setSnapProgress(d);
+      if (d?.stage === "completed") {
+        fetchFlags(true);
+        fetchPlacesUsage();
+        setTimeout(() => setSnapProgress(null), 5000);
+      }
+    };
+    window.addEventListener("revela:snap-progress", handleSnap);
+    return () => window.removeEventListener("revela:snap-progress", handleSnap);
+  }, [fetchFlags, fetchPlacesUsage]);
 
   // Real-time flag and inspection event listeners + 20s background polling
   useEffect(() => {
@@ -2555,6 +2613,37 @@ export default function MapPage() {
       setReconcileProgress(null);
       reconcileProgressRef.current = null;
       Swal.fire({ icon: 'error', title: 'Reconcile Failed', text: err.message, confirmButtonColor: '#ef4444' });
+    }
+  };
+
+  const handleSnapUnresolved = async () => {
+    const unsnappedCount = flags.filter(f => !f.hasExactCoords && f.color !== 'Red').length;
+    const confirm = await Swal.fire({
+      title: 'Snap Unresolved Pins?',
+      html: `
+        <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+          <p style="margin-bottom:12px;">This will geocode registry businesses that are showing on barangay centroids instead of their real addresses.</p>
+          <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#059669; margin-bottom:10px;">
+            💡 <strong>Cost-Optimized:</strong> Uses the free Geocoding API first. Places Text Search is only used if enabled in server settings.
+          </div>
+          <div style="background:rgba(99,102,241,0.07); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#6366f1;">
+            ⚡ <strong>Smart Cache:</strong> Businesses with unchanged data are skipped — zero API calls for cached entries.
+          </div>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#059669',
+      cancelButtonColor: 'var(--color-muted, #64748b)',
+      confirmButtonText: '📍 Start Snapping'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+      setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting geocoding...', snapped: 0, failed: 0, cached: 0, total: 0 });
+      await snapUnresolvedPinsRequest(token, 200);
+    } catch (err) {
+      setSnapProgress(null);
+      Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
   };
 
@@ -3008,7 +3097,7 @@ export default function MapPage() {
                     className="ghost-btn"
                     type="button"
                     onClick={handleReconcile}
-                    disabled={runDetectionLoading || reconcileProgress?.stage === 'running'}
+                    disabled={runDetectionLoading || reconcileProgress?.stage === 'running' || snapProgress?.stage === 'running'}
                     title={
                       detectionQuota && detectionQuota.registry_count === 0
                         ? "Official registry is empty. Import business permits first before reconciling."
@@ -3029,6 +3118,27 @@ export default function MapPage() {
                     }}
                   >
                     {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
+                  </button>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    onClick={handleSnapUnresolved}
+                    disabled={runDetectionLoading || reconcileProgress?.stage === 'running' || snapProgress?.stage === 'running'}
+                    title="Geocode registry businesses that have no map coordinates yet"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      height: 38,
+                      borderRadius: "var(--radius-md)",
+                      background: snapProgress?.stage === 'running' ? "rgba(5,150,105,0.12)" : "var(--color-input-bg)",
+                      color: snapProgress?.stage === 'running' ? "#059669" : "var(--color-ink)",
+                      borderColor: snapProgress?.stage === 'running' ? "#059669" : "var(--color-border)",
+                      opacity: snapProgress?.stage === 'running' ? 0.85 : 1,
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    📍 {snapProgress?.stage === 'running' ? `Snapping... (${snapProgress.snapped ?? 0}✓)` : 'Snap Pins'}
                   </button>
                 </div>
               )}

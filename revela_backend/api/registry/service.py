@@ -1218,6 +1218,238 @@ def sync_registry(file, ext: str):
         return None, str(e)
 
 
+# ── Batch Pin Snapping ────────────────────────────────────────────────────────
+
+def snap_unresolved_pins(limit: int = 200):
+    """
+    Cost-Optimized Batch Pin Snapper.
+
+    Scans official_registry for businesses with NULL coordinates that are
+    not already locked (manual/approved) or rejected, then resolves their
+    location using:
+      1. Geocoding API FIRST (free-tier up to 40k/month) — fast and cheap.
+      2. Places Text Search ONLY if PLACES_RESOLVER_ENABLED=1 (expensive,
+         uses Text Search Pro SKU). Off by default to protect the budget.
+
+    Uses resolveKey caching: if the business name/address/barangay are
+    unchanged from a previous attempt, zero API calls are made.
+    Respects GEOCODE_DAILY_CAP and GEOCODE_MONTHLY_CAP budget guards.
+
+    Returns (summary_dict, error_string).
+    """
+    from api.notifications import hub
+    from api.models.geospatial import insert_green_flag
+
+    if not GOOGLE_MAPS_API_KEY:
+        return None, "GOOGLE_MAPS_API_KEY is not configured on the server."
+
+    try:
+        cursor = mysql.connection.cursor()
+
+        # Load all businesses without coordinates that are eligible for snapping
+        cursor.execute("""
+            SELECT businessID, barangayID, businessName, businessAddress,
+                   lineOfBusiness, applicationStatus, coordSource, matchStatus, resolveKey
+            FROM official_registry
+            WHERE latitude IS NULL
+              AND matchStatus NOT IN ('approved', 'rejected')
+              AND (coordSource IS NULL OR coordSource NOT IN ('manual', 'csv'))
+            ORDER BY businessID
+            LIMIT %s
+        """, (int(limit),))
+        candidates = cursor.fetchall()
+        cursor.close()
+
+        total = len(candidates)
+        if total == 0:
+            return {
+                "total_candidates": 0,
+                "snapped": 0,
+                "failed": 0,
+                "cached": 0,
+                "message": "All registry businesses already have coordinates — nothing to snap!"
+            }, None
+
+        hub.publish_to_admins({
+            "type": "snap_progress",
+            "stage": "running",
+            "percentage": 0,
+            "snapped": 0,
+            "failed": 0,
+            "cached": 0,
+            "total": total,
+            "status": f"Found {total} businesses without map coordinates. Starting geocoding..."
+        })
+
+        # Load barangay lookup for name→ID resolution
+        barangay_lookup = _load_barangay_lookup()
+
+        snapped = 0
+        failed = 0
+        cached = 0
+        budget_hit = False
+
+        for idx, biz in enumerate(candidates):
+            bid = biz.get("businessID") if isinstance(biz, dict) else biz[0]
+            brgy_id = biz.get("barangayID") if isinstance(biz, dict) else biz[1]
+            name = biz.get("businessName") if isinstance(biz, dict) else biz[2]
+            address = biz.get("businessAddress") if isinstance(biz, dict) else biz[3]
+            lob = biz.get("lineOfBusiness") if isinstance(biz, dict) else biz[4]
+            app_status = (biz.get("applicationStatus") if isinstance(biz, dict) else biz[5]) or "Active"
+            stored_key = (biz.get("resolveKey") if isinstance(biz, dict) else biz[8])
+
+            # Resolve the barangay name for geocoding
+            brgy_name = None
+            for k, v in barangay_lookup.items():
+                if v == brgy_id:
+                    brgy_name = k
+                    break
+
+            # Compute resolve key: skip if name/address hasn't changed and was previously unresolvable
+            curr_key = places_resolver.compute_resolve_key(name or "", address or "", brgy_id)
+            if stored_key and stored_key == curr_key:
+                # Previously attempted with exact same data → cached failure, skip
+                cached += 1
+                continue
+
+            # ── STRATEGY: Geocode API first (cheapest) ─────────────────────────
+            lat, lng, geo_meta = None, None, None
+            if address:
+                lat, lng = _geocode(address, brgy_name or "")
+                if lat is not None:
+                    geo_meta = {
+                        "coord_source": "geocode",
+                        "place_id": None,
+                        "place_id_kind": "address",
+                        "score": None,
+                        "match_status": "auto",
+                        "resolve_key": curr_key,
+                    }
+
+            # ── FALLBACK: Places Text Search (only if resolver enabled) ─────────
+            if lat is None and places_resolver.enabled():
+                lat, lng, geo_meta = places_resolver.resolve_location(
+                    name or "", address or "", brgy_name or "",
+                    business_id=bid,
+                    barangay_id=brgy_id,
+                    line_of_business=lob or "",
+                    reserve_geocode=_reserve_geocode_call
+                )
+                if geo_meta and geo_meta.get("resolve_key") is None:
+                    if geo_meta:
+                        geo_meta["resolve_key"] = curr_key
+
+            # ── Try name-only geocode as last resort ───────────────────────────
+            if lat is None and name and brgy_name:
+                lat, lng = _geocode(f"{name}, {brgy_name}", brgy_name)
+                if lat is not None:
+                    geo_meta = {
+                        "coord_source": "geocode",
+                        "place_id": None,
+                        "place_id_kind": "address",
+                        "score": None,
+                        "match_status": "review",  # name-only = less precise
+                        "resolve_key": curr_key,
+                    }
+
+            # ── Check if we've run out of geocode budget ───────────────────────
+            remaining_geo = get_geocode_remaining_today()
+            if remaining_geo <= 0:
+                budget_hit = True
+                # Save progress up to here
+                break
+
+            # ── Persist result ─────────────────────────────────────────────────
+            cur2 = mysql.connection.cursor()
+            if lat is not None and lng is not None:
+                coord_src = (geo_meta or {}).get("coord_source", "geocode")
+                place_id = (geo_meta or {}).get("place_id")
+                place_id_kind = (geo_meta or {}).get("place_id_kind")
+                match_score = (geo_meta or {}).get("score")
+                match_status = (geo_meta or {}).get("match_status", "auto")
+
+                cur2.execute("""
+                    UPDATE official_registry SET
+                        latitude = %s,
+                        longitude = %s,
+                        coordSource = %s,
+                        placeID = COALESCE(%s, placeID),
+                        placeIDKind = COALESCE(%s, placeIDKind),
+                        coordFetchedAt = NOW(),
+                        matchScore = %s,
+                        matchStatus = %s,
+                        resolveKey = %s
+                    WHERE businessID = %s
+                      AND latitude IS NULL
+                """, (lat, lng, coord_src, place_id, place_id_kind,
+                      match_score, match_status, curr_key, bid))
+
+                if cur2.rowcount > 0:
+                    # Seed or update the map pin
+                    flag_color = _status_to_flag_color(app_status)
+                    _sync_flag_color(cur2, brgy_id, name, app_status, lat, lng,
+                                     address, business_id=bid)
+                    mysql.connection.commit()
+                    snapped += 1
+                else:
+                    mysql.connection.rollback()
+            else:
+                # Store the resolveKey even on failure so we don't retry identical data next time
+                cur2.execute(
+                    "UPDATE official_registry SET resolveKey = %s WHERE businessID = %s",
+                    (curr_key, bid)
+                )
+                mysql.connection.commit()
+                failed += 1
+            cur2.close()
+
+            # Progress update every 10 businesses
+            if (idx + 1) % 10 == 0 or idx == total - 1:
+                pct = min(99, int(((idx + 1) / max(total, 1)) * 95))
+                hub.publish_to_admins({
+                    "type": "snap_progress",
+                    "stage": "running",
+                    "percentage": pct,
+                    "snapped": snapped,
+                    "failed": failed,
+                    "cached": cached,
+                    "total": total,
+                    "status": f"Processing {idx + 1}/{total}... ({snapped} snapped, {failed} unresolvable, {cached} cached)"
+                })
+
+        msg = (
+            f"Snap complete! {snapped} pins placed, {failed} could not be resolved"
+            f"{', ' + str(cached) + ' already cached' if cached else ''}."
+        )
+        if budget_hit:
+            msg += f" Daily geocoding budget reached — run again tomorrow to continue (progress is saved)."
+
+        hub.publish_to_admins({
+            "type": "snap_progress",
+            "stage": "completed",
+            "percentage": 100,
+            "snapped": snapped,
+            "failed": failed,
+            "cached": cached,
+            "total": total,
+            "status": msg,
+            "budget_hit": budget_hit
+        })
+        hub.publish_to_admins({"type": "registry_updated"})
+
+        return {
+            "total_candidates": total,
+            "snapped": snapped,
+            "failed": failed,
+            "cached": cached,
+            "budget_hit": budget_hit,
+            "message": msg
+        }, None
+
+    except Exception as e:
+        return None, str(e)
+
+
 def update_business(business_id, data: dict):
     """Manually update business information in the registry."""
     try:

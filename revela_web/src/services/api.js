@@ -1125,3 +1125,20 @@ export async function cleanupEvidenceStorageRequest(filter, token) {
     connectionGuard(err);
   }
 }
+
+/** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
+export async function snapUnresolvedPinsRequest(token, limit = 200) {
+  try {
+    const res = await fetch(`${BASE_URL}/registry/snap-unresolved`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ limit }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
