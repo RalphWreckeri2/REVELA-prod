@@ -742,6 +742,7 @@ function MapCanvas({
   runDetectionLoading,
   detectionProgress,
   reconcileProgress,
+  snapProgress,
   elapsedTime,
   satellite,
   clusters,
@@ -3261,6 +3262,7 @@ export default function MapPage() {
               runDetectionLoading={runDetectionLoading}
               detectionProgress={detectionProgress}
               reconcileProgress={reconcileProgress}
+              snapProgress={snapProgress}
               elapsedTime={elapsedTime}
               satellite={satellite}
               clusters={clusters}
