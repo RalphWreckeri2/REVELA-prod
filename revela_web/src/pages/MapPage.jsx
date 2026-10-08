@@ -2625,10 +2625,10 @@ export default function MapPage() {
         <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
           <p style="margin-bottom:12px;">This will geocode registry businesses that are showing on barangay centroids instead of their real addresses.</p>
           <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#059669; margin-bottom:10px;">
-            💡 <strong>Cost-Optimized:</strong> Uses the free Geocoding API first. Places Text Search is only used if enabled in server settings.
+            <strong>Cost-Optimized:</strong> Uses the free Geocoding API first. Places Text Search is only used if enabled in server settings.
           </div>
           <div style="background:rgba(99,102,241,0.07); border-radius:8px; padding:10px 14px; font-size:12.5px; color:#6366f1;">
-            ⚡ <strong>Smart Cache:</strong> Businesses with unchanged data are skipped — zero API calls for cached entries.
+            <strong>Smart Cache:</strong> Businesses with unchanged data are skipped — zero API calls for cached entries.
           </div>
         </div>
       `,
@@ -2636,7 +2636,7 @@ export default function MapPage() {
       showCancelButton: true,
       confirmButtonColor: '#059669',
       cancelButtonColor: 'var(--color-muted, #64748b)',
-      confirmButtonText: '📍 Start Snapping'
+      confirmButtonText: 'Start Snapping'
     });
     if (!confirm.isConfirmed) return;
     try {
