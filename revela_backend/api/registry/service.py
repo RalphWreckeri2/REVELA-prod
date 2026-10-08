@@ -297,7 +297,7 @@ def reset_geocode_daily_quota() -> bool:
     """Reset the daily geocoding usage counter for CURDATE() to allow re-testing."""
     cur = mysql.connection.cursor()
     try:
-        cur.execute("DELETE FROM places_api_usage WHERE usageDate = CURDATE()")
+        cur.execute("DELETE FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
         mysql.connection.commit()
         return True
     except Exception as e:
@@ -1312,6 +1312,13 @@ def snap_unresolved_pins(limit: int = 200):
                 cached += 1
                 continue
 
+            # ── Check if we've run out of geocode budget ───────────────────────
+            remaining_geo = get_geocode_remaining_today()
+            if remaining_geo <= 0:
+                budget_hit = True
+                # Break before attempting API calls so we don't save a budget failure as unresolvable
+                break
+
             # ── STRATEGY: Geocode API first (cheapest) ─────────────────────────
             lat, lng, geo_meta = None, None, None
             if address:
@@ -1351,13 +1358,6 @@ def snap_unresolved_pins(limit: int = 200):
                         "match_status": "review",  # name-only = less precise
                         "resolve_key": curr_key,
                     }
-
-            # ── Check if we've run out of geocode budget ───────────────────────
-            remaining_geo = get_geocode_remaining_today()
-            if remaining_geo <= 0:
-                budget_hit = True
-                # Save progress up to here
-                break
 
             # ── Persist result ─────────────────────────────────────────────────
             cur2 = mysql.connection.cursor()
