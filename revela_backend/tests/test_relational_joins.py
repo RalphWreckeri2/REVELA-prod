@@ -99,7 +99,13 @@ class RelationalJoinsTests(unittest.TestCase):
 
         count_sql = mock_cursor.execute.call_args_list[0][0][0]
         self.assertIn("g2.businessID IS NOT NULL AND g2.businessID = r.businessID", count_sql)
+        self.assertIn("g2.placeID IS NOT NULL AND g2.placeID = r.placeID", count_sql)
         self.assertIn("g.businessID IS NOT NULL AND r_chk.businessID = g.businessID", count_sql)
+        self.assertIn("g.placeID IS NOT NULL AND r_chk.placeID = g.placeID", count_sql)
+
+        fetch_sql = mock_cursor.execute.call_args_list[1][0][0]
+        self.assertIn("g.placeID IS NOT NULL AND placeID = g.placeID", fetch_sql)
+        self.assertIn("r.matchStatus", fetch_sql)
 
     @patch("api.flags.service._match_registry_to_google")
     @patch("api.flags.service._load_registry")

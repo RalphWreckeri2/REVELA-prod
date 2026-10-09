@@ -1777,6 +1777,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
                 WHERE (g2.businessID IS NOT NULL AND g2.businessID = r.businessID)
+                   OR (g2.placeID IS NOT NULL AND g2.placeID = r.placeID
+                       AND (g2.businessID IS NULL OR g2.businessID = r.businessID))
                    OR (g2.businessID IS NULL AND g2.detectedName = r.businessName AND g2.barangayID = r.barangayID)
             )
             """,
@@ -1805,6 +1807,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     "(g.flagColor = %s OR EXISTS ("
                     "    SELECT 1 FROM official_registry r_chk"
                     "    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)"
+                    "           OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID"
+                    "               AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))"
                     "           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID AND r_chk.businessName = g.detectedName))"
                     "      AND r_chk.applicationStatus = %s"
                     "))"
@@ -1818,6 +1822,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     "(g.flagColor = %s AND NOT EXISTS ("
                     "    SELECT 1 FROM official_registry r_chk"
                     "    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)"
+                    "           OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID"
+                    "               AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))"
                     "           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID AND r_chk.businessName = g.detectedName))"
                     "      AND r_chk.applicationStatus IN ('Active', 'Expired', 'Revoked', 'Closed', 'Pending')"
                     "))"
@@ -1908,8 +1914,11 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                            matchStatus, coordSource, matchScore
                     FROM official_registry
                     WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
+                       OR (g.placeID IS NOT NULL AND placeID = g.placeID
+                           AND (g.businessID IS NULL OR businessID = g.businessID))
                        OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
-                    ORDER BY (businessID = g.businessID) DESC
+                    ORDER BY (g.businessID IS NOT NULL AND businessID = g.businessID) DESC,
+                             (g.placeID IS NOT NULL AND placeID = g.placeID) DESC
                     LIMIT 1
                 ) r ON TRUE
                 {geo_where}

@@ -496,7 +496,7 @@ function normalizeFlag(flag) {
 }
 
 // â”€â”€ Flag Detail Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, isAdmin, actionLoading, isClosing }) {
+function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, onReviewLocation, isAdmin, actionLoading, isClosing }) {
   const [showMoreActions, setShowMoreActions] = useState(false);
   const fc = getFlagColor(flag.color);
 
@@ -604,6 +604,29 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             <div>{sourceLabel} <span style={{ color: "var(--color-muted)" }}>&bull; {flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
           </div>
         </div>
+
+        {isAdmin && flag.matchStatus === "review" && flag.businessID != null && (
+          <button
+            type="button"
+            className="primary-btn"
+            disabled={actionLoading}
+            onClick={() => onReviewLocation(flag)}
+            style={{
+              width: "100%",
+              minHeight: 46,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              background: "#facc15",
+              color: "#713f12",
+              border: "1px solid #eab308",
+              fontWeight: 700,
+            }}
+          >
+            <Icon.MapPin size={17} /> Review suggested location
+          </button>
+        )}
 
         {canShowDispatchButton && (
           <button
@@ -2028,6 +2051,7 @@ export default function MapPage() {
   const { isLoaded, loadError } = useGoogleMapsScript();
 
   const mapRef = useRef(null);
+  const detailModalCameraRef = useRef(null);
 
   const [flags, setFlags] = useState([]);
   const [barangayRiskLevels, setBarangayRiskLevels] = useState({});
@@ -2064,10 +2088,27 @@ export default function MapPage() {
   const location = useLocation();
   const handledUrlFlagRef = useRef(null);
 
+  const rememberMapCamera = useCallback(() => {
+    if (detailModalCameraRef.current || !mapRef.current) return;
+    const center = mapRef.current.getCenter?.();
+    const zoom = mapRef.current.getZoom?.();
+    if (!center || zoom == null) return;
+    detailModalCameraRef.current = {
+      center: { lat: center.lat(), lng: center.lng() },
+      zoom,
+    };
+  }, []);
+
   const handleCloseDetailModal = useCallback(() => {
+    const previousCamera = detailModalCameraRef.current;
+    detailModalCameraRef.current = null;
     setModalFlag(null);
     setSelectedFlag(null);
     handledUrlFlagRef.current = null;
+    if (previousCamera && mapRef.current) {
+      mapRef.current.setCenter(previousCamera.center);
+      mapRef.current.setZoom(previousCamera.zoom);
+    }
     // Clear ?flag= from URL so background polling/sync does not reopen it
     if (location.search && location.search.includes("flag=")) {
       navigate(location.pathname, { replace: true });
@@ -2087,6 +2128,7 @@ export default function MapPage() {
       const found = flags.find(f => String(f.logID || f.id) === flagId);
       if (found) {
         handledUrlFlagRef.current = flagId;
+        rememberMapCamera();
         setSelectedFlag(found.id);
         setModalFlag(found);
         if (mapRef.current && found.latitude && found.longitude) {
@@ -2095,7 +2137,7 @@ export default function MapPage() {
         }
       }
     }
-  }, [location.search, flags]);
+  }, [location.search, flags, rememberMapCamera]);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [dispatchTarget, setDispatchTarget] = useState(null);
   const [filterColor, setFilterColor] = useState("all");
@@ -3106,16 +3148,7 @@ export default function MapPage() {
   const handleMarkerClick = useCallback((id) => {
     const flag = flags.find(f => f.id === id);
     if (!flag) return;
-
-    if (flag.matchStatus === "review" && flag.businessID != null) {
-      const businessId = String(flag.businessID);
-      setSelectedFlag(id);
-      setShowReviewQueue(true);
-      setReviewQueueSearch(businessId);
-      setReviewQueueNotice("");
-      loadRegistryReviewQueue(1, businessId);
-      return;
-    }
+    rememberMapCamera();
 
     if (location.search && location.search.includes("flag=")) {
       navigate(location.pathname, { replace: true });
@@ -3129,10 +3162,21 @@ export default function MapPage() {
       mapRef.current.panTo({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
       mapRef.current.setZoom(18);
     }
-  }, [flags, location.search, location.pathname, navigate, loadRegistryReviewQueue]);
+  }, [flags, location.search, location.pathname, navigate, rememberMapCamera]);
+
+  const handleReviewLocation = (flag) => {
+    if (flag?.businessID == null) return;
+    const businessId = String(flag.businessID);
+    handleCloseDetailModal();
+    setShowReviewQueue(true);
+    setReviewQueueSearch(businessId);
+    setReviewQueueNotice("");
+    loadRegistryReviewQueue(1, businessId);
+  };
 
   // â”€â”€ When user clicks a flag in the side panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleSidePanelClick = (flag) => {
+    rememberMapCamera();
     if (location.search && location.search.includes("flag=")) {
       navigate(location.pathname, { replace: true });
     }
@@ -3987,6 +4031,7 @@ export default function MapPage() {
           onDispatch={(flag) => setDispatchTarget(flag)}
           onDelete={handleDeleteFlag}
           onUpdateColor={handleUpdateFlagColor}
+          onReviewLocation={handleReviewLocation}
           isAdmin={isAdmin}
           actionLoading={actionLoading}
         />
