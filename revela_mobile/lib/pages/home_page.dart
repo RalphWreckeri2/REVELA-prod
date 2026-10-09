@@ -16,7 +16,6 @@ import '../component/inspection_modal.dart';
 import '../service/assignment_notifications.dart';
 import '../service/flag_service.dart';
 import '../service/boundary_service.dart';
-import '../utils/street_view_launcher.dart';
 
 import '../service/inspection_service.dart';
 import '../theme/app_theme.dart';
@@ -381,31 +380,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   }
 
   // ── Open inspection modal ─────────────────────────────────────────────────
-  Future<void> _openStreetView(double? latitude, double? longitude) async {
-    if (latitude == null || longitude == null ||
-        !latitude.isFinite || !longitude.isFinite) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('This pin does not have a valid location.')),
-      );
-      return;
-    }
-
-    try {
-      final opened = await launchGoogleStreetView(latitude, longitude);
-      if (!opened && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open Street View in Google Maps.')),
-        );
-      }
-    } catch (error) {
-      debugPrint('Could not open Google Maps Street View: $error');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open Street View in Google Maps.')),
-      );
-    }
-  }
-
   void _onTaskTap(InspectionTask task) async {
     if (_isDrawerOpen) return;
     setState(() => _isDrawerOpen = true);
@@ -461,15 +435,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   _buildDetailRow('Status', flag.verificationStatus ?? 'Pending'),
                   if (flag.notes != null && flag.notes!.isNotEmpty)
                     _buildDetailRow('Notes', flag.notes!),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _openStreetView(flag.lat, flag.lng),
-                      icon: const Icon(Icons.streetview_rounded),
-                      label: const Text('Open Street View in Google Maps'),
-                    ),
-                  ),
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
