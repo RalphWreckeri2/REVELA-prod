@@ -277,7 +277,7 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
 
 **Review UI enhancement:** Existing business pins with `matchStatus='review'` display a yellow exclamation indicator on the map (including clustered markers). Clicking the pin retains the normal business-information modal; its "Review suggested location" button opens the Re-verify Pin Suggestions modal filtered to that business, where admins can inspect current/proposed coordinates and approve or reject. Review metadata is joined to an existing geospatial pin by business ID, then exact place ID, then the legacy exact name/barangay association, preventing a duplicate registry-only marker when an existing POI pin matches by place ID. The modal also supports server-side search by business name, business ID, address, and barangay; approve/reject refreshes map flags to clear the review indicator when the decision is complete.
 
-**Map modal camera behavior:** Opening a pin remembers the previous map center and zoom. Closing its business-information modal restores that camera position rather than leaving the map zoomed in on the selected pin.
+**Map modal camera behavior:** Opening a pin remembers the previous map center and zoom. Closing its business-information modal restores that camera position. The map's React `GoogleMap` props remain at their initial center/zoom rather than being derived from `selectedFlag`; marker selection pans/zooms imperatively, so clearing selection on close cannot reset the controlled map props and override camera restoration.
 
 ### Phase 3 — Implement Nearby Search (New) behind a feature switch
 

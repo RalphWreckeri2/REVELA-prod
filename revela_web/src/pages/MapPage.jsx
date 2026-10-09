@@ -3357,15 +3357,6 @@ export default function MapPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  const mapCenter = selectedFlag
-    ? (() => {
-      const f = flags.find(x => x.id === selectedFlag);
-      return f?.latitude ? { lat: Number(f.latitude), lng: Number(f.longitude) } : DEFAULT_MAP_CENTER;
-    })()
-    : DEFAULT_MAP_CENTER;
-
-  const mapZoom = selectedFlag ? 18 : 13;
-
   // Flag counts
   const counts = {
     all: flags.length,
@@ -3726,8 +3717,8 @@ export default function MapPage() {
               isDark={isDark}
               isLoaded={isLoaded}
               loadError={loadError}
-              center={mapCenter}
-              zoom={mapZoom}
+              center={DEFAULT_MAP_CENTER}
+              zoom={13}
               mapRef={mapRef}
               layers={layers}
               flags={visibleFlags}
