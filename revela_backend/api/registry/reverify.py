@@ -30,8 +30,7 @@ import threading
 import traceback
 from collections import Counter
 
-# businesses on one point (to ~1 m) before it counts as a stack
-STACK_MIN = 3
+STACK_MIN = 3               # businesses on one point (to ~1 m) before it counts as a stack
 SKIP_RECENT_DAYS = 30       # do not re-check a business attempted within this many days
 VERIFIED_WITHIN_M = 5       # Google place this close to the old pin = old pin was right
 MAX_CONSECUTIVE_ERRORS = 5
@@ -66,10 +65,8 @@ def stack_key(lat, lng):
 
 def distance_m(a, b):
     """Haversine distance in metres between two (lat, lng) pairs."""
-    lat1, lon1, lat2, lon2 = map(math.radians, (float(
-        a[0]), float(a[1]), float(b[0]), float(b[1])))
-    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * \
-        math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    lat1, lon1, lat2, lon2 = map(math.radians, (float(a[0]), float(a[1]), float(b[0]), float(b[1])))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
     return 2 * 6371000.0 * math.asin(math.sqrt(h))
 
 
@@ -94,8 +91,7 @@ def classify_suspect(row, stack_size):
 def build_suspects(rows):
     """rows: iterable of dicts/tuples (SUSPECT_COLS). Returns (suspects, stack_sizes)."""
     rows = [_as_dict(r) for r in rows]
-    sizes = Counter(stack_key(r["latitude"], r["longitude"])
-                    for r in rows if _has_coords(r))
+    sizes = Counter(stack_key(r["latitude"], r["longitude"]) for r in rows if _has_coords(r))
     suspects = []
     for r in rows:
         if not _has_coords(r):
@@ -104,8 +100,7 @@ def build_suspects(rows):
         reason = classify_suspect(r, n)
         if reason:
             suspects.append({**r, "reason": reason, "stackSize": n})
-    # biggest stacks first
-    suspects.sort(key=lambda r: (-r["stackSize"], str(r["businessID"])))
+    suspects.sort(key=lambda r: (-r["stackSize"], str(r["businessID"])))   # biggest stacks first
     return suspects, sizes
 
 
@@ -122,6 +117,20 @@ def summarize(suspects, sizes, skipped_recent=0):
         "skippedRecentlyChecked": skipped_recent,
         "estimatedPlacesCalls": len(suspects),
     }
+
+
+REASON_TEXT = {
+    "no_text_results": "not found on Google",
+    "below_threshold": "Google result name too different",
+    "out_of_bounds": "result outside the municipality",
+    "unknown": "no reason recorded",
+}
+
+
+def format_reasons(reasons):
+    """{'below_threshold': 3, 'no_text_results': 1} -> '3 Google result name too different, 1 not found on Google'."""
+    parts = [f"{n} {REASON_TEXT.get(k, k)}" for k, n in Counter(reasons).most_common() if n]
+    return ", ".join(parts)
 
 
 def plan_outcome(old, new, meta, conflict=False, barangay_ok=True):
@@ -159,13 +168,32 @@ CREATE TABLE IF NOT EXISTS registry_pin_history (
   newLat DECIMAL(10,8) NULL, newLng DECIMAL(11,8) NULL,
   placeID VARCHAR(255) COLLATE utf8mb4_unicode_ci NULL,
   score DECIMAL(4,3) NULL,
+  failReason VARCHAR(30) NULL,
+  bestName VARCHAR(120) NULL,
+  bestScore DECIMAL(4,3) NULL,
   KEY idx_pinhist_business (businessID, attemptedAt)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """
+_EXTRA_COLUMNS = (
+    ("failReason", "VARCHAR(30) NULL"),
+    ("bestName", "VARCHAR(120) NULL"),
+    ("bestScore", "DECIMAL(4,3) NULL"),
+)
 
 
 def _ensure_history_table(cur):
     cur.execute(_HISTORY_DDL)
+    # A table created by an earlier version lacks the diagnostic columns: add them.
+    cur.execute(
+        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'registry_pin_history'"
+    )
+    have = set()
+    for r in cur.fetchall():
+        have.add((r.get("COLUMN_NAME") or r.get("column_name")) if isinstance(r, dict) else r[0])
+    for col, ddl in _EXTRA_COLUMNS:
+        if col not in have:
+            cur.execute(f"ALTER TABLE registry_pin_history ADD COLUMN {col} {ddl}")
 
 
 def _load_rows(cur):
@@ -218,14 +246,20 @@ def _barangay_ok(lat, lng, expected_barangay_id):
     return found is None or int(found) == int(expected_barangay_id)
 
 
-def _log_attempt(cur, biz, outcome, new=None, place_id=None, score=None):
+def _log_attempt(cur, biz, outcome, new=None, place_id=None, score=None, meta=None):
+    meta = meta or {}
+    best_name = meta.get("best_name")
     cur.execute(
         """INSERT INTO registry_pin_history
-           (businessID, outcome, reason, stackSize, oldLat, oldLng, newLat, newLng, placeID, score)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+           (businessID, outcome, reason, stackSize, oldLat, oldLng, newLat, newLng, placeID, score,
+            failReason, bestName, bestScore)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (biz["businessID"], outcome, biz.get("reason"), biz.get("stackSize"),
          biz.get("latitude"), biz.get("longitude"),
-         new[0] if new else None, new[1] if new else None, place_id, score),
+         new[0] if new else None, new[1] if new else None, place_id, score,
+         meta.get("reason") if outcome == "unresolved" else None,
+         best_name[:120] if best_name else None,
+         meta.get("best_score") if outcome == "unresolved" else None),
     )
 
 
@@ -240,8 +274,7 @@ def _update_registry(cur, biz, lat, lng, meta, status):
              AND (coordSource IS NULL OR coordSource <> 'manual')
              AND (matchStatus IS NULL OR matchStatus NOT IN ('approved', 'rejected'))""",
         (lat, lng, meta.get("coord_source") or "places", meta.get("place_id"),
-         meta.get("place_id_kind"), meta.get(
-             "score"), status, meta.get("resolve_key"),
+         meta.get("place_id_kind"), meta.get("score"), status, meta.get("resolve_key"),
          biz["businessID"]),
     )
     return cur.rowcount
@@ -269,13 +302,11 @@ def _move_pin(cur, service, biz, lat, lng):
             """UPDATE geospatial_logs SET latitude = %s, longitude = %s, businessID = %s
                WHERE businessID IS NULL AND barangayID = %s AND detectedName = %s
                  AND flagColor <> 'Red'""",
-            (lat, lng, biz["businessID"], biz["barangayID"],
-             str(biz["businessName"]).strip()),
+            (lat, lng, biz["businessID"], biz["barangayID"], str(biz["businessName"]).strip()),
         )
     # Keeps colour in sync and seeds a pin if the business has none yet
     service._sync_flag_color(
-        cur, biz["barangayID"], biz["businessName"], biz.get(
-            "applicationStatus") or "Active",
+        cur, biz["barangayID"], biz["businessName"], biz.get("applicationStatus") or "Active",
         lat, lng, biz.get("businessAddress"), business_id=biz["businessID"],
     )
 
@@ -291,12 +322,8 @@ def preview():
         _ensure_history_table(cur)
         rows = _load_rows(cur)
         recent = _recent_ids(cur)
-        registry_count = _count(
-            cur, "SELECT COUNT(*) AS n FROM official_registry")
-        pin_count = _count(
-            cur,
-            "SELECT COUNT(*) AS n FROM geospatial_logs WHERE latitude IS NOT NULL AND longitude IS NOT NULL",
-        )
+        registry_count = _count(cur, "SELECT COUNT(*) AS n FROM official_registry")
+        pin_count = _count(cur, "SELECT COUNT(*) AS n FROM geospatial_logs WHERE latitude IS NOT NULL")
         mysql.connection.commit()
     finally:
         cur.close()
@@ -335,6 +362,12 @@ def _run(limit):
     from api.registry import places_resolver, service
 
     try:
+        halted = getattr(places_resolver, "_halted", None)
+        if halted:
+            err = f"Google Places is blocked until the server restarts: {halted}"
+            _emit(hub, "completed", 100, 0, 0, 0, 0, err, error=err)
+            return None, err
+
         cur = mysql.connection.cursor()
         try:
             _ensure_history_table(cur)
@@ -345,8 +378,7 @@ def _run(limit):
             cur.close()
 
         suspects, _sizes = build_suspects(rows)
-        todo = [s for s in suspects if s["businessID"]
-                not in recent][: int(limit)]
+        todo = [s for s in suspects if s["businessID"] not in recent][: int(limit)]
         total = len(todo)
         if total == 0:
             msg = (
@@ -356,14 +388,16 @@ def _run(limit):
             _emit(hub, "completed", 100, 0, 0, 0, 0, msg)
             return {"total": 0, "message": msg}, None
 
-        _emit(hub, "running", 0, 0, 0, 0, total,
-              f"Re-verifying {total} pins against Google Places...")
-        brgy_name_by_id = {v: k for k,
-                           v in service._load_barangay_lookup().items()}
+        _emit(hub, "running", 0, 0, 0, 0, total, f"Re-verifying {total} pins against Google Places...")
+        brgy_name_by_id = {v: k for k, v in service._load_barangay_lookup().items()}
 
         counts = Counter()
+        reasons = Counter()           # why unresolved rows were not matched
         consecutive_errors = 0
+        consecutive_api_errors = 0
         budget_hit = False
+        abort_msg = None
+        printed_examples = 0
 
         for idx, biz in enumerate(todo):
             try:
@@ -376,37 +410,55 @@ def _run(limit):
                     refresh_geocode=False, force=True,
                 )
                 meta = meta or {}
+
+                # Google refused the key: nothing after this can work, and nothing was learned
+                # about the business, so do NOT record it as checked.
+                halted = getattr(places_resolver, "_halted", None)
+                if halted:
+                    abort_msg = f"Google Places is blocked: {halted}"
+                    break
                 if lat is None and meta.get("budget_exhausted"):
                     budget_hit = True
                     break
+                # Temporary API trouble (HTTP 4xx/5xx, network): not a "no match" -> retry next run.
+                if lat is None and meta.get("reason") == "api_error":
+                    counts["api_error"] += 1
+                    consecutive_api_errors += 1
+                    if consecutive_api_errors >= 3:
+                        abort_msg = f"Google Places keeps failing ({meta.get('api_error')}). See the server log."
+                        break
+                    continue
+                consecutive_api_errors = 0
 
                 old = (biz["latitude"], biz["longitude"])
-                new = (float(lat), float(lng)
-                       ) if lat is not None and lng is not None else None
+                new = (float(lat), float(lng)) if lat is not None and lng is not None else None
                 cur = mysql.connection.cursor()
                 try:
-                    conflict = _claimed_by_other(cur, meta.get(
-                        "place_id"), biz["businessID"]) if new else False
-                    ok_brgy = _barangay_ok(
-                        lat, lng, biz["barangayID"]) if new else True
-                    outcome = plan_outcome(
-                        old, new, meta, conflict=conflict, barangay_ok=ok_brgy)
+                    conflict = _claimed_by_other(cur, meta.get("place_id"), biz["businessID"]) if new else False
+                    ok_brgy = _barangay_ok(lat, lng, biz["barangayID"]) if new else True
+                    outcome = plan_outcome(old, new, meta, conflict=conflict, barangay_ok=ok_brgy)
 
                     if outcome == "verified":
-                        _update_registry(cur, biz, lat, lng, meta, meta.get(
-                            "match_status") or "auto")  # old pin was right
+                        _update_registry(cur, biz, lat, lng, meta, meta.get("match_status") or "auto")  # old pin was right
                     elif outcome in ("moved", "review"):
                         status = "auto" if outcome == "moved" else "review"
                         if _update_registry(cur, biz, lat, lng, meta, status):
                             _move_pin(cur, service, biz, lat, lng)
                         else:
                             outcome = "unresolved"                                # locked meanwhile
-                    _log_attempt(cur, biz, outcome, new=new, place_id=meta.get(
-                        "place_id"), score=meta.get("score"))
+                    _log_attempt(cur, biz, outcome, new=new, place_id=meta.get("place_id"),
+                                 score=meta.get("score"), meta=meta)
                     mysql.connection.commit()
                 finally:
                     cur.close()
                 counts[outcome] += 1
+                if outcome == "unresolved":
+                    reasons[meta.get("reason") or "unknown"] += 1
+                    if printed_examples < 15:       # lets you see WHY names did not match
+                        printed_examples += 1
+                        print(f"[reverify] no match: {biz['businessName']!r} "
+                              f"reason={meta.get('reason')} best={meta.get('best_name')!r} "
+                              f"score={meta.get('best_score')}")
                 consecutive_errors = 0
             except Exception:
                 traceback.print_exc()
@@ -417,29 +469,35 @@ def _run(limit):
                 counts["error"] += 1
                 consecutive_errors += 1
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                    raise RuntimeError(
-                        "Too many consecutive errors; see server log.")
+                    raise RuntimeError("Too many consecutive errors; see server log.")
 
             if (idx + 1) % 5 == 0 or idx < 5 or idx == total - 1:
                 moved = counts["moved"] + counts["review"]
-                failed = counts["unresolved"] + \
-                    counts["conflict"] + counts["error"]
+                failed = counts["unresolved"] + counts["conflict"] + counts["error"] + counts["api_error"]
                 _emit(hub, "running", min(99, int((idx + 1) / total * 95)), moved, failed,
                       counts["verified"], total,
                       f"Checked {idx + 1}/{total}: {counts['moved']} moved, {counts['review']} to review, "
-                      f"{counts['verified']} already right, {failed} not found")
+                      f"{counts['verified']} already right, {failed} not matched")
+
+        if abort_msg:
+            _emit(hub, "completed", 100, 0, 0, 0, total, abort_msg, error=abort_msg)
+            return {"total": total, **dict(counts)}, abort_msg
 
         moved_total = counts["moved"] + counts["review"]
-        failed_total = counts["unresolved"] + \
-            counts["conflict"] + counts["error"]
+        failed_total = counts["unresolved"] + counts["conflict"] + counts["error"] + counts["api_error"]
         msg = (f"Re-verify done: {counts['moved']} pins moved, {counts['review']} sent to review, "
-               f"{counts['verified']} already correct, {failed_total} could not be matched.")
+               f"{counts['verified']} already correct, {failed_total} not matched.")
+        if reasons:
+            msg += f" Not matched: {format_reasons(reasons)}."
+        if counts["conflict"]:
+            msg += f" {counts['conflict']} Google places were already claimed by another business."
+        if counts["api_error"]:
+            msg += f" {counts['api_error']} had Google errors and will be retried next run."
         if budget_hit:
             msg += " Google Places budget reached; run again later to continue (progress is saved)."
-        _emit(hub, "completed", 100, moved_total, failed_total,
-              counts["verified"], total, msg, budget_hit=budget_hit)
+        _emit(hub, "completed", 100, moved_total, failed_total, counts["verified"], total, msg, budget_hit=budget_hit)
         hub.publish_to_admins({"type": "registry_updated"})
-        return {"total": total, **dict(counts), "budget_hit": budget_hit, "message": msg}, None
+        return {"total": total, **dict(counts), "reasons": dict(reasons), "budget_hit": budget_hit, "message": msg}, None
 
     except Exception as e:
         traceback.print_exc()

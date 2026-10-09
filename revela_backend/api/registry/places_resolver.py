@@ -56,6 +56,7 @@ REFRESH_AFTER_DAYS = 20
 PURGE_AFTER_DAYS = 28
 
 _halted = None  # set to a message after a 401/403 so we stop spending calls until restart
+_api_state = {"last_error": None}  # last non-200 / network error, read by resolve_location
 
 
 def enabled():
@@ -208,6 +209,7 @@ def _api_get_json(resp, label):
         print(f"[places_resolver] HALTED until restart -> {_halted}")
     else:
         print(f"[places_resolver] {label} HTTP {resp.status_code}")
+    _api_state["last_error"] = f"{label} HTTP {resp.status_code}"
     return None
 
 
@@ -231,6 +233,7 @@ def _text_search(name, address, barangay, post=requests.post):
         return _api_get_json(post(PLACES_SEARCH_URL, headers=headers, json=body, timeout=10), "TextSearch") or {}
     except requests.RequestException as e:
         print(f"[places_resolver] TextSearch network error: {e}")
+        _api_state["last_error"] = "TextSearch network error"
         return {}
 
 
@@ -349,16 +352,23 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     # 4. Quota Pre-check & Text Search
     places_budget_exhausted = not reserve_call(
         "imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP)
+    seen_places = in_bounds_places = api_error = None
+    best, best_score = None, 0.0
     if not places_budget_exhausted:
+        _api_state["last_error"] = None
         data = _text_search(name, address, barangay, post=_post)
+        api_error = _api_state["last_error"]
         best, best_score = None, 0.0
         discarded_rejected = False
+        seen_places = len(data.get("places", []) or [])
+        in_bounds_places = 0
 
         for p in data.get("places", []):
             loc = p.get("location") or {}
             lat, lng = loc.get("latitude"), loc.get("longitude")
             if lat is None or lng is None or not _is_within_municipal_bounds(lat, lng):
                 continue
+            in_bounds_places += 1
 
             pid = p.get("id")
             if pid and pid in rejected_pids:
@@ -413,6 +423,19 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     meta = {"resolve_key": current_key}
     if places_budget_exhausted or geocode_budget_exhausted:
         meta["budget_exhausted"] = True
+    # Why nothing was resolved (read by api.registry.reverify; harmless for other callers)
+    if api_error:
+        meta["reason"] = "api_error"
+        meta["api_error"] = api_error
+    elif seen_places is not None:
+        if seen_places == 0:
+            meta["reason"] = "no_text_results"
+        elif not in_bounds_places:
+            meta["reason"] = "out_of_bounds"
+        else:
+            meta["reason"] = "below_threshold"
+            meta["best_score"] = round(best_score, 3)
+            meta["best_name"] = ((best or {}).get("displayName") or {}).get("text")
     return None, None, meta
 
 
