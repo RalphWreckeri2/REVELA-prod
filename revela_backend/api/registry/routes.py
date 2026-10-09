@@ -271,9 +271,10 @@ def get_barangays():
 def review_queue():
     """Businesses whose map pin was matched with low confidence and awaits admin review."""
     page = request.args.get("page", 1, type=int)
-    per_page = min(request.args.get("limit", 20, type=int), 100)
+    per_page = max(1, min(request.args.get("limit", 20, type=int), 100))
+    search = request.args.get("search", "").strip()
     result, error = places_resolver.list_review_queue(
-        page=page, per_page=per_page)
+        page=page, per_page=per_page, search=search)
     if error:
         return jsonify({"error": error}), 500
     return jsonify(result), 200

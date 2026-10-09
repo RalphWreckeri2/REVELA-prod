@@ -708,13 +708,24 @@ def purge_expired_coords(dry_run=True):
 
 
 # ------------------------------ review queue ---------------------------------
-def list_review_queue(page=1, per_page=20):
+def list_review_queue(page=1, per_page=20, search=""):
     cur = mysql.connection.cursor()
     try:
         from api.registry.reverify import _ensure_history_table
         _ensure_history_table(cur)
+        search_term = str(search or "").strip()
+        search_pattern = f"%{search_term}%"
         cur.execute(
-            "SELECT COUNT(*) AS c FROM official_registry WHERE matchStatus='review'")
+            """SELECT COUNT(*) AS c
+               FROM official_registry r
+               LEFT JOIN barangays b ON r.barangayID = b.barangayID
+               WHERE r.matchStatus='review'
+                 AND (%s = '' OR r.businessName LIKE %s
+                      OR CAST(r.businessID AS CHAR) LIKE %s
+                      OR r.businessAddress LIKE %s
+                      OR b.barangayName LIKE %s)""",
+            (search_term, search_pattern, search_pattern, search_pattern, search_pattern),
+        )
         row = cur.fetchone()
         total = int(_g(row, "c", 0))
         cur.execute(
@@ -732,8 +743,16 @@ def list_review_queue(page=1, per_page=20):
                      SELECT MAX(h2.id) FROM registry_pin_history h2
                      WHERE h2.businessID = r.businessID AND h2.outcome = 'review'
                  )
-               WHERE r.matchStatus='review' ORDER BY r.businessID LIMIT %s OFFSET %s""",
-            (per_page, max(0, (page - 1) * per_page)))
+               WHERE r.matchStatus='review'
+                 AND (%s = '' OR r.businessName LIKE %s
+                      OR CAST(r.businessID AS CHAR) LIKE %s
+                      OR r.businessAddress LIKE %s
+                      OR b.barangayName LIKE %s)
+               ORDER BY r.businessID LIMIT %s OFFSET %s""",
+            (
+                search_term, search_pattern, search_pattern, search_pattern,
+                search_pattern, per_page, max(0, (page - 1) * per_page),
+            ))
         items = []
         for r in cur.fetchall():
             d = dict(r) if isinstance(r, dict) else dict(zip(

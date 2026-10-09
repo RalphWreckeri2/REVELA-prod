@@ -1156,9 +1156,13 @@ export async function reverifyPinsRequest(token, limit = 50) {
 }
 
 /** GET /api/registry/review - low-confidence re-verify proposals awaiting admin review */
-export async function getRegistryReviewQueueRequest(token, page = 1, limit = 20) {
+export async function getRegistryReviewQueueRequest(token, page = 1, limit = 20, search = "") {
   try {
-    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+      search: String(search || "").trim(),
+    });
     const res = await fetch(`${BASE_URL}/registry/review?${params}`, {
       headers: { Authorization: `Bearer ${token}` },
     });

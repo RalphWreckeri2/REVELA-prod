@@ -275,6 +275,8 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
 
 **Phase 2 implementation note:** Registry imports now accept only finite, geographically valid coordinate pairs; manual/approved coordinates remain locked, valid CSV coordinates retain `coordSource='csv'`, and successful Geocoding fallback is explicitly marked `coordSource='geocode'`. A changed registry name/address is resolved again rather than silently reusing an old non-manual pin. API/quota failures preserve the previous pin and flag, do not write a completed `resolveKey`, and remain eligible for a later Snap/Re-verify run. Geocoding reservations and summaries remain separate from Text Search and Place Details. Re-verify is capped at 50, tries an existing place ID first, and stores uncertain candidate coordinates in pin history without moving the official pin; admin approval applies the proposed move, while rejection preserves the existing pin. Import, Snap, and Re-verify summaries include outcome counts and per-method daily/monthly usage.
 
+**Review UI enhancement:** Pins with `matchStatus='review'` display an orange exclamation indicator on the map (including clustered markers). The Re-verify Pin Suggestions modal supports server-side search by business name, business ID, address, and barangay.
+
 ### Phase 3 — Implement Nearby Search (New) behind a feature switch
 
 1. Keep `RUN_DETECTION_NEARBY_API=legacy` until staging approval. The backend switch and initial New Nearby client are implemented; verify the exact request contract and quota behavior in tests before enabling.
@@ -291,8 +293,6 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
 12. Add run summary: grid cells completed/incomplete, initial calls, adaptive calls, results, duplicate results, outside-boundary results, non-business exclusions, matched, review, Red flags created, API errors and quota stops.
 
 **Gate:** contract tests assert the exact endpoint, header, field mask, payload shape, excluded type list, max result count, and count reservation per call. No production requests yet.
-
-**Phase 3 implementation note (local only):** The feature switch still defaults to `legacy`; no Railway value was changed and no Google requests were sent. The New Nearby grid path now counts initial and adaptive transmitted requests separately (including retries), accumulates returned-result and duplicate metrics, merges overlapping parent/child place IDs without replacing the first complete coordinate, and applies a fixed reviewed excluded-type payload while retaining local name/type exclusions. Common local business types and public-facility exclusions have focused regression coverage. Any provider/network API error now leaves the affected grid cell uncheckpointed and stops additional cells for that run; quota exhaustion continues through the existing partial-run/resume path. Dense-cell refinement remains capped at one root plus 12 child requests and still-saturated roots remain incomplete. The backend summary/response exposes results, duplicates, filtering/matching outcomes, review count, initial/adaptive calls, API errors, quota stop, and grid completion. This is code/test validation only; staging, verified GCP quotas/SKU use, precision review, and the production gate below remain outstanding.
 
 ### Phase 4 — Side-by-side quality and bounded staging
 

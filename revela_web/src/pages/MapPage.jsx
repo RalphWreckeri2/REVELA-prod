@@ -1014,8 +1014,16 @@ function MapCanvas({
       `;
     }
 
+    if (flag.matchStatus === "review") {
+      innerHtml += `
+        <div style="position: absolute; top: -5px; left: -5px; min-width: 15px; height: 15px; padding: 0 2px; box-sizing: border-box; border: 2px solid white; border-radius: 50%; background: #facc15; color: #713f12; display: flex; align-items: center; justify-content: center; font: 800 10px/1 system-ui, sans-serif; box-shadow: 0 1px 4px rgba(0,0,0,0.35); z-index: 11; pointer-events: none;">!</div>
+      `;
+    }
+
     el.innerHTML = innerHtml;
-    el.title = flag.name;
+    el.title = flag.matchStatus === "review"
+      ? `${flag.name} — Pin suggestion needs review`
+      : flag.name;
     return el;
   }, []);
 
@@ -1086,6 +1094,7 @@ function MapCanvas({
           marker.gmpDraggable = Boolean(isAdjusting);
           marker._revelaFlagColor = flag.color;
           marker._revelaHasActiveInspection = flag.hasActiveInspection;
+          marker._revelaNeedsReview = flag.matchStatus === "review";
 
           if (isAdjusting) {
             marker.map = activeMap;
@@ -1126,8 +1135,8 @@ function MapCanvas({
             path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
             fillColor: color,
             fillOpacity: 1,
-            strokeColor: "#ffffff",
-            strokeWeight: isAdjusting ? 2.5 : 1.5,
+            strokeColor: flag.matchStatus === "review" ? "#facc15" : "#ffffff",
+            strokeWeight: flag.matchStatus === "review" ? 4 : (isAdjusting ? 2.5 : 1.5),
             scale: (isSelected || isAdjusting) ? 1.4 : 1.0,
             anchor: new window.google.maps.Point(12, 32),
           }
@@ -1135,6 +1144,7 @@ function MapCanvas({
 
         marker._revelaFlagColor = flag.color;
         marker._revelaHasActiveInspection = flag.hasActiveInspection;
+        marker._revelaNeedsReview = flag.matchStatus === "review";
 
         if (isAdjusting) {
           marker.setMap(activeMap);
@@ -1167,6 +1177,7 @@ function MapCanvas({
           render: (cluster) => {
             const { count, position, markers: clusterMarkers } = cluster;
             const hasInspection = clusterMarkers.some(m => m._revelaHasActiveInspection);
+            const hasReview = clusterMarkers.some(m => m._revelaNeedsReview);
             const dominant = getDominantFlagColorFromMarkers(clusterMarkers);
             const fc = getFlagColor(dominant);
             const sev = flagSeverityRank(dominant);
@@ -1205,6 +1216,11 @@ function MapCanvas({
                      </svg>
                   </div>
                 </div>
+              `;
+            }
+            if (hasReview) {
+              html += `
+                <div title="Contains pin suggestions awaiting review" style="position: absolute; top: -5px; left: -5px; width: 18px; height: 18px; background: #facc15; border: 2px solid white; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #713f12; font: 800 11px/1 system-ui, sans-serif; box-shadow: 0 2px 5px rgba(0,0,0,0.3); z-index: 11;">!</div>
               `;
             }
 
@@ -2029,6 +2045,7 @@ export default function MapPage() {
   const [showReviewQueue, setShowReviewQueue] = useState(false);
   const [reviewQueue, setReviewQueue] = useState(null);
   const [reviewQueuePage, setReviewQueuePage] = useState(1);
+  const [reviewQueueSearch, setReviewQueueSearch] = useState("");
   const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
   const [reviewQueueError, setReviewQueueError] = useState("");
   const [reviewQueueNotice, setReviewQueueNotice] = useState("");
@@ -2183,7 +2200,7 @@ export default function MapPage() {
     }
   }, [token, isAdmin]);
 
-  const loadRegistryReviewQueue = async (page = 1) => {
+  const loadRegistryReviewQueue = async (page = 1, search = reviewQueueSearch) => {
     if (!token || !isAdmin) return;
     setReviewQueueLoading(true);
     setReviewQueueError("");
@@ -2192,6 +2209,7 @@ export default function MapPage() {
         token,
         page,
         REVIEW_QUEUE_PAGE_SIZE,
+        search,
       );
       setReviewQueue(result);
       setReviewQueuePage(result?.page ?? page);
@@ -2837,8 +2855,14 @@ export default function MapPage() {
 
   const handleOpenReviewQueue = () => {
     setShowReviewQueue(true);
+    setReviewQueueSearch("");
     setReviewQueueNotice("");
-    loadRegistryReviewQueue(1);
+    loadRegistryReviewQueue(1, "");
+  };
+
+  const handleReviewQueueSearch = (event) => {
+    event.preventDefault();
+    loadRegistryReviewQueue(1, reviewQueueSearch);
   };
 
   const handleReviewQueueDecision = async (candidate, action) => {
@@ -4085,6 +4109,55 @@ export default function MapPage() {
               </div>
             )}
 
+            <form
+              onSubmit={handleReviewQueueSearch}
+              style={{
+                display: "flex",
+                gap: 8,
+                padding: "14px 20px 0",
+              }}
+            >
+              <input
+                type="search"
+                value={reviewQueueSearch}
+                onChange={(event) => setReviewQueueSearch(event.target.value)}
+                placeholder="Search business, ID, address, or barangay"
+                aria-label="Search pin suggestions"
+                style={{
+                  minWidth: 0,
+                  flex: 1,
+                  height: 40,
+                  padding: "0 12px",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: 9,
+                  background: "var(--color-input-bg)",
+                  color: "var(--color-ink)",
+                  font: "inherit",
+                  fontSize: 13,
+                }}
+              />
+              <button
+                type="submit"
+                className="primary-btn"
+                disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+              >
+                Search
+              </button>
+              {reviewQueueSearch && (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setReviewQueueSearch("");
+                    loadRegistryReviewQueue(1, "");
+                  }}
+                  disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+                >
+                  Clear
+                </button>
+              )}
+            </form>
+
             <div style={{ overflowY: "auto", padding: 20 }}>
               {reviewQueueLoading && !reviewQueue?.data?.length ? (
                 <p style={{ margin: 0, color: "var(--color-muted)", textAlign: "center", padding: 30 }}>
@@ -4175,9 +4248,11 @@ export default function MapPage() {
               ) : !reviewQueueLoading && !reviewQueueError ? (
                 <div style={{ padding: 32, textAlign: "center", color: "var(--color-muted)" }}>
                   <strong style={{ display: "block", color: "var(--color-ink)", marginBottom: 6 }}>
-                    No pending pin suggestions
+                    {reviewQueueSearch ? "No matching pin suggestions" : "No pending pin suggestions"}
                   </strong>
-                  Uncertain Re-verify matches will appear here for admin review.
+                  {reviewQueueSearch
+                    ? "Try a different business name, ID, address, or barangay."
+                    : "Uncertain Re-verify matches will appear here for admin review."}
                 </div>
               ) : null}
             </div>
