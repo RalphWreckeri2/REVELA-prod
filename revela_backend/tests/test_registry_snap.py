@@ -20,13 +20,31 @@ class RegistrySnapTests(unittest.TestCase):
             "lineOfBusiness": "Pharmacy",
             "applicationStatus": "Active",
             "coordSource": "geocode",
-            "matchStatus": "auto",
+            "matchStatus": None,
             "resolveKey": "old-geocode-key",
             "latitude": 13.9620,
             "longitude": 121.1120,
         }
+        cached_unresolved = {
+            **candidate,
+            "businessID": "BIZ-CACHED-UNRESOLVED",
+            "coordSource": None,
+            "latitude": None,
+            "longitude": None,
+            "resolveKey": service.places_resolver.compute_resolve_key(
+                "Silva Pharmacy", "Poblacion", 1
+            ),
+        }
+        cached_candidate = {
+            **candidate,
+            "businessID": "BIZ-GEOCODE-CACHED",
+            "resolveKey": compute_places_refresh_key(
+                "Silva Pharmacy", "Poblacion", 1
+            ),
+        }
         select_cursor = MagicMock()
-        select_cursor.fetchall.return_value = [candidate]
+        select_cursor.fetchall.return_value = [
+            cached_unresolved, cached_candidate, candidate]
         update_cursor = MagicMock()
         update_cursor.rowcount = 1
         mock_mysql = MagicMock()
@@ -58,10 +76,11 @@ class RegistrySnapTests(unittest.TestCase):
             patch.object(service, "_geocode") as geocode,
             patch("api.notifications.hub.publish_to_admins"),
         ):
-            summary, error = service.snap_unresolved_pins()
+            summary, error = service.snap_unresolved_pins(limit=1)
 
         self.assertIsNone(error)
         self.assertEqual(summary["snapped"], 1)
+        self.assertEqual(summary["cached"], 2)
         resolve_location.assert_called_once()
         self.assertTrue(resolve_location.call_args.kwargs["refresh_geocode"])
         geocode.assert_not_called()
@@ -69,8 +88,11 @@ class RegistrySnapTests(unittest.TestCase):
 
         select_sql = select_cursor.execute.call_args.args[0]
         self.assertIn("coordSource = 'geocode'", select_sql)
+        self.assertNotIn("SHA1(", select_sql)
+        self.assertIn("matchStatus IS NULL", select_sql)
         update_sql = update_cursor.execute.call_args.args[0]
         self.assertIn("coordSource = 'geocode'", update_sql)
+        self.assertIn("matchStatus IS NULL", update_sql)
         self.assertEqual(update_cursor.execute.call_args.args[1][-1], 1)
 
 

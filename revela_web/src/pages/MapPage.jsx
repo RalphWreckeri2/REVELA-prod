@@ -755,6 +755,7 @@ function MapCanvas({
   handleCancelDetection,
   loadingFlags,
 }) {
+  const snapFailed = Boolean(snapProgress?.error);
   const [mapInstance, setMapInstance] = useState(null);
   const [currentZoom, setCurrentZoom] = useState(zoom || 13);
   const markerRefs = useRef(new Map());
@@ -1588,22 +1589,22 @@ function MapCanvas({
       {/* Snap Pins progress overlay */}
       {snapProgress && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15, 23, 42, 0.45)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", zIndex: 200 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: "linear-gradient(135deg, rgba(5, 46, 22, 0.96), rgba(15, 23, 42, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: "1px solid rgba(5,150,105,0.3)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16, color: "#fff", background: snapFailed ? "linear-gradient(135deg, rgba(69, 10, 10, 0.96), rgba(15, 23, 42, 0.98))" : "linear-gradient(135deg, rgba(5, 46, 22, 0.96), rgba(15, 23, 42, 0.98))", borderRadius: 24, padding: "24px 28px", width: "min(92%, 400px)", boxShadow: "0 24px 60px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.12)", border: snapFailed ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(5,150,105,0.3)", fontFamily: "var(--font-base)", boxSizing: "border-box" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 14, borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: 14 }}>
-              <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: "rgba(5,150,105,0.2)", border: "1px solid rgba(5,150,105,0.4)", flexShrink: 0 }}>
+              <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", background: snapFailed ? "rgba(239,68,68,0.18)" : "rgba(5,150,105,0.2)", border: snapFailed ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(5,150,105,0.4)", flexShrink: 0 }}>
                 {snapProgress.stage === 'running' && (
                   <div style={{ position: "absolute", inset: -4, borderRadius: "50%", border: "2px solid #059669", opacity: 0.6, animation: "ping 1.5s cubic-bezier(0,0,0.2,1) infinite" }} />
                 )}
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={snapFailed ? "#f87171" : "#34d399"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
                   <circle cx="12" cy="10" r="3" />
                 </svg>
               </div>
               <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#f8fafc" }}>
-                  {snapProgress.stage === 'completed' ? 'Snapping Complete' : 'Snapping Pins'}
+                  {snapFailed ? 'Snapping Failed' : snapProgress.stage === 'completed' ? 'Snapping Complete' : 'Snapping Pins'}
                 </span>
-                <span style={{ fontSize: 10, color: "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Business Name Matching</span>
+                <span style={{ fontSize: 10, color: snapFailed ? "#fca5a5" : "#6ee7b7", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>{snapFailed ? "SNAP JOB ERROR" : "Business Name Matching"}</span>
               </div>
               <button
                 type="button"
@@ -1627,13 +1628,13 @@ function MapCanvas({
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontSize: 11, color: "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>Location Match Progress</span>
+                <span style={{ fontSize: 11, color: snapFailed ? "#fca5a5" : "#6ee7b7", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.03em" }}>{snapFailed ? "Snap job failed" : "Location Match Progress"}</span>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "#f1f5f9" }}>{snapProgress?.percentage ?? 0}%</span>
               </div>
-              <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: "1px solid rgba(5,150,105,0.2)" }}>
-                <div style={{ width: `${snapProgress?.percentage ?? 0}%`, height: "100%", background: "linear-gradient(90deg, #065f46, #059669, #34d399, #059669)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: "progress-shimmer 2.5s linear infinite" }} />
+              <div style={{ width: "100%", height: 8, background: "rgba(0,0,0,0.4)", borderRadius: 10, overflow: "hidden", border: snapFailed ? "1px solid rgba(239,68,68,0.25)" : "1px solid rgba(5,150,105,0.2)" }}>
+                <div style={{ width: `${snapProgress?.percentage ?? 0}%`, height: "100%", background: snapFailed ? "#dc2626" : "linear-gradient(90deg, #065f46, #059669, #34d399, #059669)", backgroundSize: "200% 100%", borderRadius: 10, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)", animation: snapFailed ? "none" : "progress-shimmer 2.5s linear infinite" }} />
               </div>
-              <div style={{ fontSize: 12, color: "#a7f3d0", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Starting Places name search..."}</div>
+              <div style={{ fontSize: 12, color: snapFailed ? "#fecaca" : "#a7f3d0", lineHeight: "1.4", minHeight: 34, marginTop: 4 }}>{snapProgress?.status || "Starting Places name search..."}</div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginTop: 4 }}>
                 <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 10px", textAlign: "center" }}>
                   <div style={{ fontSize: 10, color: "#94a3b8", fontWeight: 600, textTransform: "uppercase" }}>Snapped</div>
@@ -1656,8 +1657,8 @@ function MapCanvas({
                     marginTop: 6,
                     padding: "8px 16px",
                     borderRadius: 8,
-                    background: "rgba(5, 150, 105, 0.4)",
-                    border: "1px solid rgba(5, 150, 105, 0.7)",
+                    background: snapFailed ? "rgba(185, 28, 28, 0.4)" : "rgba(5, 150, 105, 0.4)",
+                    border: snapFailed ? "1px solid rgba(239, 68, 68, 0.7)" : "1px solid rgba(5, 150, 105, 0.7)",
                     color: "#f8fafc",
                     fontSize: 12,
                     fontWeight: 700,
@@ -2272,7 +2273,9 @@ export default function MapPage() {
         fetchFlags(true);
         fetchPlacesUsage();
         if (dismissTimer) clearTimeout(dismissTimer);
-        dismissTimer = setTimeout(() => setSnapProgress(null), 4000);
+        dismissTimer = d?.error
+          ? null
+          : setTimeout(() => setSnapProgress(null), 4000);
       }
     };
     window.addEventListener("revela:snap-progress", handleSnap);

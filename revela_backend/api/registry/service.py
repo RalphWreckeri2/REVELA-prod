@@ -1270,7 +1270,7 @@ def snap_unresolved_pins(limit: int = 200):
     try:
         cursor = mysql.connection.cursor()
 
-        # Load all businesses without coordinates that are eligible for snapping
+        # Filter cached pins in Python before applying the per-run candidate limit.
         cursor.execute("""
             SELECT businessID, barangayID, businessName, businessAddress,
                    lineOfBusiness, applicationStatus, coordSource, matchStatus,
@@ -1281,35 +1281,71 @@ def snap_unresolved_pins(limit: int = 200):
                     OR (
                         coordSource = 'geocode'
                         AND longitude IS NOT NULL
-                        AND (
-                            resolveKey IS NULL
-                            OR resolveKey <> SHA1(CONCAT(
-                                LOWER(TRIM(COALESCE(businessName, ''))), '|',
-                                LOWER(TRIM(COALESCE(businessAddress, ''))), '|',
-                                LOWER(TRIM(COALESCE(CAST(barangayID AS CHAR), ''))),
-                                '|places-refresh-v1'
-                            ))
-                        )
                     )
                   )
-              AND matchStatus NOT IN ('approved', 'rejected')
+              AND (matchStatus IS NULL OR matchStatus NOT IN ('approved', 'rejected'))
               AND (coordSource IS NULL OR coordSource NOT IN ('manual', 'csv'))
             ORDER BY businessID
-            LIMIT %s
-        """, (int(limit),))
-        candidates = cursor.fetchall()
+        """)
+        rows = cursor.fetchall()
         cursor.close()
+
+        candidates = []
+        cached = 0
+        for biz in rows:
+            if isinstance(biz, dict):
+                stored_key = biz.get("resolveKey")
+                coord_source = biz.get("coordSource")
+                latitude = biz.get("latitude")
+                longitude = biz.get("longitude")
+                name = biz.get("businessName")
+                address = biz.get("businessAddress")
+                barangay_id = biz.get("barangayID")
+            else:
+                stored_key = biz[8]
+                coord_source = biz[6]
+                latitude = biz[9]
+                longitude = biz[10]
+                name = biz[2]
+                address = biz[3]
+                barangay_id = biz[1]
+
+            refresh_geocode = (
+                coord_source == "geocode"
+                and latitude is not None
+                and longitude is not None
+            )
+            current_key = (
+                places_resolver.compute_places_refresh_key(
+                    name or "", address or "", barangay_id
+                )
+                if refresh_geocode
+                else places_resolver.compute_resolve_key(
+                    name or "", address or "", barangay_id
+                )
+            )
+            if stored_key and stored_key == current_key:
+                cached += 1
+                continue
+
+            candidates.append(biz)
+            if len(candidates) >= int(limit):
+                break
 
         total = len(candidates)
         if total == 0:
-            msg = "All registry businesses already have coordinates — nothing to snap!"
+            msg = (
+                f"No new pins to resolve — {cached} businesses are already cached."
+                if cached
+                else "All registry businesses already have coordinates — nothing to snap!"
+            )
             hub.publish_to_admins({
                 "type": "snap_progress",
                 "stage": "completed",
                 "percentage": 100,
                 "snapped": 0,
                 "failed": 0,
-                "cached": 0,
+                "cached": cached,
                 "total": 0,
                 "status": msg
             })
@@ -1318,7 +1354,7 @@ def snap_unresolved_pins(limit: int = 200):
                 "total_candidates": 0,
                 "snapped": 0,
                 "failed": 0,
-                "cached": 0,
+                "cached": cached,
                 "message": msg
             }, None
 
@@ -1328,7 +1364,7 @@ def snap_unresolved_pins(limit: int = 200):
             "percentage": 0,
             "snapped": 0,
             "failed": 0,
-            "cached": 0,
+            "cached": cached,
             "total": total,
             "status": f"Found {total} businesses to resolve. Starting Places name search..."
         })
@@ -1338,7 +1374,6 @@ def snap_unresolved_pins(limit: int = 200):
 
         snapped = 0
         failed = 0
-        cached = 0
         budget_hit = False
 
         for idx, biz in enumerate(candidates):
@@ -1473,7 +1508,7 @@ def snap_unresolved_pins(limit: int = 200):
                     WHERE businessID = %s
                                             AND (latitude IS NULL OR (%s = 1 AND coordSource = 'geocode'))
                                             AND (coordSource IS NULL OR coordSource NOT IN ('manual', 'csv'))
-                                            AND matchStatus NOT IN ('approved', 'rejected')
+                                            AND (matchStatus IS NULL OR matchStatus NOT IN ('approved', 'rejected'))
                 """, (lat, lng, coord_src, place_id, place_id_kind,
                       match_score, match_status, curr_key, bid, int(refresh_geocode)))
 
@@ -1551,6 +1586,8 @@ def snap_unresolved_pins(limit: int = 200):
         }, None
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         err_msg = f"Snapping failed: {str(e)}"
         hub.publish_to_admins({
             "type": "snap_progress",
