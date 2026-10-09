@@ -26,6 +26,7 @@ Cost: one Places Text Search per checked business (plus an optional quality-gate
 geocode fallback inside the resolver). The resolver's own daily/monthly caps still apply.
 """
 import math
+import os
 import threading
 import traceback
 from collections import Counter
@@ -34,6 +35,7 @@ STACK_MIN = 3               # businesses on one point (to ~1 m) before it counts
 SKIP_RECENT_DAYS = 30       # do not re-check a business attempted within this many days
 VERIFIED_WITHIN_M = 5       # Google place this close to the old pin = old pin was right
 MAX_CONSECUTIVE_ERRORS = 5
+BATCH_LIMIT = int(os.getenv("BATCH_LIMIT", "50"))
 
 SUSPECT_COLS = (
     "businessID", "barangayID", "businessName", "businessAddress", "lineOfBusiness",
@@ -223,6 +225,14 @@ def _recent_ids(cur):
     return out
 
 
+def _attempted_ids(cur):
+    cur.execute("SELECT DISTINCT businessID FROM registry_pin_history")
+    return {
+        r["businessID"] if isinstance(r, dict) else r[0]
+        for r in cur.fetchall()
+    }
+
+
 def _claimed_by_other(cur, place_id, business_id):
     if not place_id:
         return False
@@ -346,7 +356,25 @@ def _emit(hub, stage, pct, moved, failed, same, total, status, error=None, **ext
     hub.publish_to_admins(payload)
 
 
-def run(limit=200):
+def _log_run_summary(places_resolver, counts):
+    verified = counts["verified"] + counts["moved"] + counts["review"]
+    no_match = counts["unresolved"] + counts["conflict"]
+    try:
+        usage = places_resolver.get_places_call_usage()
+        text_search = usage["text_search"]
+        details = usage["details"]
+        print(
+            "[reverify] summary "
+            f"verified={verified} no_match={no_match} "
+            f"skipped_quota={counts['skipped_quota']} api_error={counts['api_error']} "
+            f"TextSearch calls today={text_search['day']} month={text_search['month']}; "
+            f"PlaceDetails calls today={details['day']} month={details['month']}"
+        )
+    except Exception as e:
+        print(f"[reverify] summary usage lookup failed: {e}")
+
+
+def run(limit=50):
     """Re-verify up to `limit` suspect pins. Returns (summary, error)."""
     if not _run_lock.acquire(blocking=False):
         return None, "A re-verify run is already in progress."
@@ -362,9 +390,11 @@ def _run(limit):
     from api.registry import places_resolver, service
 
     try:
+        places_resolver.reset_run_state()
         halted = getattr(places_resolver, "_halted", None)
         if halted:
             err = f"Google Places is blocked until the server restarts: {halted}"
+            _log_run_summary(places_resolver, Counter())
             _emit(hub, "completed", 100, 0, 0, 0, 0, err, error=err)
             return None, err
 
@@ -373,12 +403,16 @@ def _run(limit):
             _ensure_history_table(cur)
             rows = _load_rows(cur)
             recent = _recent_ids(cur)
+            attempted = _attempted_ids(cur)
             mysql.connection.commit()
         finally:
             cur.close()
 
         suspects, _sizes = build_suspects(rows)
-        todo = [s for s in suspects if s["businessID"] not in recent][: int(limit)]
+        eligible = [s for s in suspects if s["businessID"] not in recent]
+        eligible.sort(key=lambda s: s["businessID"] in attempted)
+        run_limit = max(1, min(int(limit), max(1, BATCH_LIMIT)))
+        todo = eligible[:run_limit]
         total = len(todo)
         if total == 0:
             msg = (
@@ -386,6 +420,7 @@ def _run(limit):
                 if not rows else "No unreliable pins left to re-verify."
             )
             _emit(hub, "completed", 100, 0, 0, 0, 0, msg)
+            _log_run_summary(places_resolver, Counter())
             return {"total": 0, "message": msg}, None
 
         _emit(hub, "running", 0, 0, 0, 0, total, f"Re-verifying {total} pins against Google Places...")
@@ -415,10 +450,12 @@ def _run(limit):
                 # about the business, so do NOT record it as checked.
                 halted = getattr(places_resolver, "_halted", None)
                 if halted:
+                    counts["api_error"] += 1
                     abort_msg = f"Google Places is blocked: {halted}"
                     break
-                if lat is None and meta.get("budget_exhausted"):
+                if lat is None and meta.get("reason") == "skipped_quota":
                     budget_hit = True
+                    counts["skipped_quota"] += total - idx
                     break
                 # Temporary API trouble (HTTP 4xx/5xx, network): not a "no match" -> retry next run.
                 if lat is None and meta.get("reason") == "api_error":
@@ -466,25 +503,27 @@ def _run(limit):
                     mysql.connection.rollback()
                 except Exception:
                     pass
-                counts["error"] += 1
+                counts["api_error"] += 1
                 consecutive_errors += 1
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     raise RuntimeError("Too many consecutive errors; see server log.")
 
             if (idx + 1) % 5 == 0 or idx < 5 or idx == total - 1:
                 moved = counts["moved"] + counts["review"]
-                failed = counts["unresolved"] + counts["conflict"] + counts["error"] + counts["api_error"]
+                failed = counts["unresolved"] + counts["conflict"] + counts["api_error"]
                 _emit(hub, "running", min(99, int((idx + 1) / total * 95)), moved, failed,
                       counts["verified"], total,
                       f"Checked {idx + 1}/{total}: {counts['moved']} moved, {counts['review']} to review, "
                       f"{counts['verified']} already right, {failed} not matched")
 
         if abort_msg:
+            _log_run_summary(places_resolver, counts)
             _emit(hub, "completed", 100, 0, 0, 0, total, abort_msg, error=abort_msg)
             return {"total": total, **dict(counts)}, abort_msg
 
         moved_total = counts["moved"] + counts["review"]
-        failed_total = counts["unresolved"] + counts["conflict"] + counts["error"] + counts["api_error"]
+        failed_total = counts["unresolved"] + counts["conflict"] + counts["api_error"]
+        _log_run_summary(places_resolver, counts)
         msg = (f"Re-verify done: {counts['moved']} pins moved, {counts['review']} sent to review, "
                f"{counts['verified']} already correct, {failed_total} not matched.")
         if reasons:
@@ -497,12 +536,16 @@ def _run(limit):
             msg += " Google Places budget reached; run again later to continue (progress is saved)."
         _emit(hub, "completed", 100, moved_total, failed_total, counts["verified"], total, msg, budget_hit=budget_hit)
         hub.publish_to_admins({"type": "registry_updated"})
-        return {"total": total, **dict(counts), "reasons": dict(reasons), "budget_hit": budget_hit, "message": msg}, None
+        return {
+            "total": total, **dict(counts), "reasons": dict(reasons),
+            "budget_hit": budget_hit, "message": msg,
+        }, None
 
     except Exception as e:
         traceback.print_exc()
         err = f"Re-verify failed: {e}"
         try:
+            _log_run_summary(places_resolver, Counter())
             _emit(hub, "completed", 100, 0, 0, 0, 0, err, error=err)
         except Exception:
             pass

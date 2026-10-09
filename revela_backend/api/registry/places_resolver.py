@@ -16,10 +16,10 @@ Environment variables (all optional unless noted)
   PLACES_BIAS_RADIUS_M      default 8000
   PLACES_AUTO_ACCEPT        default 0.80   name-similarity >= this: accept as 'auto'
   PLACES_REVIEW_MIN         default 0.55   between REVIEW_MIN and AUTO_ACCEPT: 'review'
-  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search Pro budget (default 2500 / 500). Free cap is 5,000/mo
+  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search Pro budget (default 2500 / 75). Free cap is 5,000/mo
                                   PER SKU: if api/flags/service.py also calls Text Search, the SUM of both
                                   caps must stay below 5,000.
-  PD_MONTHLY_CAP / PD_DAILY_CAP   Place Details (refresh) budget (default 3000 / 500)
+  PD_MONTHLY_CAP / PD_DAILY_CAP   Place Details (refresh) budget (default 3000 / 90)
 
 Scheduled maintenance (cron / task scheduler), inside an app context:
     from api.registry.places_resolver import refresh_expired_coords, purge_expired_coords
@@ -29,7 +29,10 @@ Scheduled maintenance (cron / task scheduler), inside an app context:
 import hashlib
 import math
 import os
+import random
 import re
+import threading
+import time
 from difflib import SequenceMatcher
 
 import requests
@@ -49,18 +52,64 @@ BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
 REVIEW_MIN = float(os.getenv("PLACES_REVIEW_MIN", "0.55"))
 TS_MONTHLY_CAP = int(os.getenv("TS_MONTHLY_CAP", "2500"))
-TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "500"))
+TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "75"))
 PD_MONTHLY_CAP = int(os.getenv("PD_MONTHLY_CAP", "3000"))
-PD_DAILY_CAP = int(os.getenv("PD_DAILY_CAP", "500"))
+PD_DAILY_CAP = int(os.getenv("PD_DAILY_CAP", "90"))
 REFRESH_AFTER_DAYS = 20
 PURGE_AFTER_DAYS = 28
 
 _halted = None  # set to a message after a 401/403 so we stop spending calls until restart
-_api_state = {"last_error": None}  # last non-200 / network error, read by resolve_location
+_api_state = threading.local()
+_places_request_lock = threading.Lock()
+_last_places_request_at = 0.0
 
 
 def enabled():
     return os.getenv("PLACES_RESOLVER_ENABLED", "1") == "1"
+
+
+def reset_run_state():
+    """Clear run-scoped quota state before starting a new resolver run."""
+    _api_state.quota_halted = False
+    _api_state.last_error = None
+    _api_state.outcome = None
+
+
+def get_places_call_usage():
+    """Return persistent Text Search and Place Details usage for today and this month."""
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS places_api_usage (
+                usageDate DATE NOT NULL, kind VARCHAR(20) NOT NULL,
+                requestCount INT NOT NULL DEFAULT 0, PRIMARY KEY (usageDate, kind)
+            ) ENGINE=InnoDB
+        """)
+        usage = {}
+        for label, prefix in (("text_search", "imp_ts"), ("details", "imp_pd")):
+            cur.execute(
+                f"SELECT requestCount FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = %s",
+                (f"{prefix}_month",),
+            )
+            month_row = cur.fetchone()
+            cur.execute(
+                "SELECT requestCount FROM places_api_usage WHERE usageDate = CURDATE() AND kind = %s",
+                (f"{prefix}_day",),
+            )
+            day_row = cur.fetchone()
+            usage[label] = {
+                "month": _usage_count(month_row),
+                "day": _usage_count(day_row),
+            }
+        return usage
+    finally:
+        cur.close()
+
+
+def _usage_count(row):
+    if not row:
+        return 0
+    return int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0)
 
 
 def compute_resolve_key(name, address, barangay_id):
@@ -190,6 +239,10 @@ def reserve_call(prefix, monthly_cap, daily_cap):
                 cur.execute(f"UPDATE places_api_usage SET requestCount = requestCount - 1 "
                             f"WHERE usageDate = {_MONTH_KEY} AND kind = %s", (mk,))
         mysql.connection.commit()
+        if not month_ok:
+            print(f"[places_resolver budget] monthly cap reached for {prefix} ({monthly_cap})")
+        elif not day_ok:
+            print(f"[places_resolver budget] daily cap reached for {prefix} ({daily_cap})")
         return month_ok and day_ok
     except Exception as e:
         mysql.connection.rollback()
@@ -200,21 +253,106 @@ def reserve_call(prefix, monthly_cap, daily_cap):
 
 
 def _api_get_json(resp, label):
-    """Return parsed JSON for 200; halt the resolver on 401/403; None otherwise."""
+    """Return parsed JSON for 200; record HTTP errors without treating them as empty results."""
     global _halted
     if resp.status_code == 200:
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError as e:
+            _api_state.last_error = f"{label} invalid JSON response: {e}"
+            _api_state.outcome = "api_error"
+            print(f"[places_resolver] {_api_state.last_error}")
+            return None
+    body = getattr(resp, "text", "") or ""
     if resp.status_code in (401, 403):
-        _halted = f"{label} {resp.status_code}: {resp.text[:200]}"
+        _halted = f"{label} {resp.status_code}: {body[:200]}"
         print(f"[places_resolver] HALTED until restart -> {_halted}")
     else:
-        print(f"[places_resolver] {label} HTTP {resp.status_code}")
-    _api_state["last_error"] = f"{label} HTTP {resp.status_code}"
+        print(f"[places_resolver] {label} HTTP {resp.status_code}: {body[:2000]}")
+    _api_state.last_error = f"{label} HTTP {resp.status_code}"
+    _api_state.outcome = "api_error"
+    return None
+
+
+def _429_is_per_minute(body):
+    text = str(body or "").lower()
+    return any(marker in text for marker in (
+        "perminute", "per_minute", "per minute", "requestsperminute",
+        "rate_limit_exceeded", "rate limit", "per-minute",
+    ))
+
+
+def _429_is_daily_quota(body):
+    text = str(body or "").lower()
+    return any(marker in text for marker in (
+        "resource_exhausted", "perday", "per_day", "per day",
+        "requestsperday", "daily quota", "quota exceeded",
+    ))
+
+
+def _places_request(label, request, reserve):
+    """Send a budgeted, serialized Places API request with bounded minute-limit retries."""
+    global _last_places_request_at
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        if getattr(_api_state, "quota_halted", False):
+            _api_state.outcome = "skipped_quota"
+            _api_state.last_error = "Places quota exhausted for this run"
+            return None
+        with _places_request_lock:
+            elapsed = time.monotonic() - _last_places_request_at
+            if _last_places_request_at and elapsed < 0.3:
+                time.sleep(random.uniform(0.3, 0.5) - elapsed)
+            if not reserve():
+                _api_state.quota_halted = True
+                _api_state.outcome = "skipped_quota"
+                _api_state.last_error = f"{label} daily/monthly app quota reached"
+                print(f"[places_resolver] {label} not sent: daily/monthly app quota reached")
+                return None
+            try:
+                resp = request()
+                _last_places_request_at = time.monotonic()
+            except requests.RequestException as e:
+                _api_state.last_error = f"{label} network error: {e}"
+                _api_state.outcome = "api_error"
+                print(f"[places_resolver] {label} network error: {e}")
+                return None
+
+        if resp.status_code == 429:
+            body = getattr(resp, "text", "") or ""
+            print(f"[places_resolver] {label} HTTP 429 body: {body[:2000]}")
+            if _429_is_per_minute(body):
+                if attempt < max_retries:
+                    delay = (2 ** attempt) * random.uniform(0.8, 1.2)
+                    print(f"[places_resolver] {label} per-minute quota; retry "
+                          f"{attempt + 1}/{max_retries} in {delay:.2f}s")
+                    time.sleep(delay)
+                    continue
+                _api_state.last_error = f"{label} per-minute quota retries exhausted (HTTP 429)"
+                _api_state.outcome = "api_error"
+                return None
+            if _429_is_daily_quota(body) or not _429_is_per_minute(body):
+                _api_state.quota_halted = True
+                _api_state.outcome = "skipped_quota"
+                _api_state.last_error = f"{label} daily quota exhausted (HTTP 429)"
+                print(f"[places_resolver] {label} daily quota exhausted; stopping Places calls for this run")
+                return None
+
+        data = _api_get_json(resp, label)
+        if data is None and resp.status_code in (401, 403):
+            _api_state.quota_halted = True
+        elif data is not None:
+            _api_state.last_error = None
+            _api_state.outcome = None
+        return data
     return None
 
 
 # ------------------------------ resolution -----------------------------------
-def _text_search(name, address, barangay, post=requests.post):
+def _text_search(name, address, barangay, post=requests.post, reserve=None):
+    _api_state.last_error = None
+    _api_state.outcome = None
+    _api_state.quota_halted = False
     parts = [str(p).strip() for p in (name, address, barangay, MUNICIPALITY, PROVINCE)
              if p is not None and str(p).strip() and str(p).strip().lower() != "nan"]
     body = {"textQuery": ", ".join(parts), "regionCode": "PH", "pageSize": 5}
@@ -229,12 +367,12 @@ def _text_search(name, address, barangay, post=requests.post):
         # Pro-tier fields only. Strictly do NOT add Enterprise fields (rating, userRatingCount, regularOpeningHours, websiteUri).
         "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.primaryType,places.types",
     }
-    try:
-        return _api_get_json(post(PLACES_SEARCH_URL, headers=headers, json=body, timeout=10), "TextSearch") or {}
-    except requests.RequestException as e:
-        print(f"[places_resolver] TextSearch network error: {e}")
-        _api_state["last_error"] = "TextSearch network error"
-        return {}
+    data = _places_request(
+        "TextSearch",
+        lambda: post(PLACES_SEARCH_URL, headers=headers, json=body, timeout=10),
+        reserve or (lambda: True),
+    )
+    return data if data is not None else {}
 
 
 def _geocode_fallback(address, barangay, get=requests.get):
@@ -276,14 +414,18 @@ def _geocode_fallback(address, barangay, get=requests.get):
 def resolve_location(name, address, barangay, business_id=None, barangay_id=None,
                      line_of_business='', reserve_geocode=None, refresh_geocode=False,
                      force=False, _post=requests.post, _get=requests.get):
-    """Returns (lat, lng, meta). (None, None, None) when unresolved/over budget (row still saved).
+    """Returns (lat, lng, meta); API/quota failures are distinguished from no-match results.
 
     force=True skips the resolveKey cache so an already-attempted record is looked up again
     (used by api.registry.reverify).
     """
-    if not os.getenv("GOOGLE_MAPS_API_KEY") or _halted:
-        return None, None, None
-
+    _api_state.last_error = None
+    _api_state.outcome = None
+    _api_state.quota_halted = False
+    if not os.getenv("GOOGLE_MAPS_API_KEY"):
+        return None, None, {"reason": "api_error", "api_error": "Google Maps API key is not configured"}
+    if _halted:
+        return None, None, {"reason": "api_error", "api_error": str(_halted)}
     # 1. Compute resolveKey for caching
     b_ref = barangay_id if barangay_id is not None else barangay
     current_key = (
@@ -349,65 +491,69 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         finally:
             cur.close()
 
-    # 4. Quota Pre-check & Text Search
-    places_budget_exhausted = not reserve_call(
-        "imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP)
-    seen_places = in_bounds_places = api_error = None
+    # 4. Reserve immediately before every Text Search attempt (including retries).
+    seen_places = in_bounds_places = None
     best, best_score = None, 0.0
-    if not places_budget_exhausted:
-        _api_state["last_error"] = None
-        data = _text_search(name, address, barangay, post=_post)
-        api_error = _api_state["last_error"]
-        best, best_score = None, 0.0
-        discarded_rejected = False
-        seen_places = len(data.get("places", []) or [])
-        in_bounds_places = 0
+    data = _text_search(
+        name, address, barangay, post=_post,
+        reserve=lambda: reserve_call("imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP),
+    )
+    call_outcome = getattr(_api_state, "outcome", None)
+    if call_outcome in ("skipped_quota", "api_error"):
+        return None, None, {
+            "reason": call_outcome,
+            "api_error": getattr(_api_state, "last_error", None),
+            "budget_exhausted": call_outcome == "skipped_quota",
+        }
+    discarded_rejected = False
+    seen_places = len(data.get("places", []) or [])
+    in_bounds_places = 0
 
-        for p in data.get("places", []):
-            loc = p.get("location") or {}
-            lat, lng = loc.get("latitude"), loc.get("longitude")
-            if lat is None or lng is None or not _is_within_municipal_bounds(lat, lng):
-                continue
-            in_bounds_places += 1
+    for p in data.get("places", []):
+        loc = p.get("location") or {}
+        lat, lng = loc.get("latitude"), loc.get("longitude")
+        if lat is None or lng is None or not _is_within_municipal_bounds(lat, lng):
+            continue
+        in_bounds_places += 1
 
-            pid = p.get("id")
-            if pid and pid in rejected_pids:
-                discarded_rejected = True
-                continue
+        pid = p.get("id")
+        if pid and pid in rejected_pids:
+            discarded_rejected = True
+            continue
 
-            poi_types = p.get("types", []) or []
-            if p.get("primaryType"):
-                poi_types = list(poi_types) + [p.get("primaryType")]
-            s = similarity(name, (p.get("displayName") or {}).get(
-                "text", ""), reg_line=line_of_business, poi_types=poi_types)
-            if s > best_score:
-                best, best_score = p, s
+        poi_types = p.get("types", []) or []
+        if p.get("primaryType"):
+            poi_types = list(poi_types) + [p.get("primaryType")]
+        s = similarity(name, (p.get("displayName") or {}).get(
+            "text", ""), reg_line=line_of_business, poi_types=poi_types)
+        if s > best_score:
+            best, best_score = p, s
 
-        if best and best_score >= REVIEW_MIN:
-            status = "review" if discarded_rejected else (
-                "auto" if best_score >= AUTO_ACCEPT else "review")
-            return best["location"]["latitude"], best["location"]["longitude"], {
-                "coord_source": "places",
-                "place_id": best["id"],
-                "place_id_kind": "poi",
-                "score": round(best_score, 3),
-                "match_status": status,
-                "match_type": "places_poi",
-                "resolve_key": current_key,
-            }
-        elif discarded_rejected:
-            return None, None, {
-                "coord_source": None,
-                "place_id": None,
-                "place_id_kind": None,
-                "score": None,
-                "match_status": "review",
-                "match_type": "rejected_place_discarded",
-                "resolve_key": current_key,
-            }
+    if best and best_score >= REVIEW_MIN:
+        status = "review" if discarded_rejected else (
+            "auto" if best_score >= AUTO_ACCEPT else "review")
+        return best["location"]["latitude"], best["location"]["longitude"], {
+            "coord_source": "places",
+            "place_id": best["id"],
+            "place_id_kind": "poi",
+            "score": round(best_score, 3),
+            "match_status": status,
+            "match_type": "places_poi",
+            "resolve_key": current_key,
+        }
+    elif discarded_rejected:
+        return None, None, {
+            "coord_source": None,
+            "place_id": None,
+            "place_id_kind": None,
+            "score": None,
+            "match_status": "review",
+            "match_type": "rejected_place_discarded",
+            "resolve_key": current_key,
+        }
 
     if _halted:
-        return None, None, None
+        return None, None, {"reason": "api_error", "api_error": str(_halted)}
 
     # 5. Geocode Fallback
     geocode_budget_exhausted = False
@@ -419,15 +565,22 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
                 return g["lat"], g["lng"], g["meta"]
         else:
             geocode_budget_exhausted = True
+            print("[places_resolver budget] Geocode daily/monthly cap reached; skipping fallback")
+
+    if _halted:
+        return None, None, {"reason": "api_error", "api_error": str(_halted)}
+    if getattr(_api_state, "outcome", None) == "api_error":
+        return None, None, {
+            "reason": "api_error",
+            "api_error": getattr(_api_state, "last_error", None),
+        }
 
     meta = {"resolve_key": current_key}
-    if places_budget_exhausted or geocode_budget_exhausted:
+    if geocode_budget_exhausted:
         meta["budget_exhausted"] = True
-    # Why nothing was resolved (read by api.registry.reverify; harmless for other callers)
-    if api_error:
-        meta["reason"] = "api_error"
-        meta["api_error"] = api_error
-    elif seen_places is not None:
+        meta["reason"] = "skipped_quota"
+        meta["quota_kind"] = "geocode"
+    if seen_places is not None:
         if seen_places == 0:
             meta["reason"] = "no_text_results"
         elif not in_bounds_places:
@@ -491,6 +644,7 @@ def refresh_expired_coords(limit=500):
         return {"refreshed": 0, "skipped": "resolver disabled"}
     if not os.getenv("GOOGLE_MAPS_API_KEY") or _halted:
         return {"refreshed": 0, "skipped": "no key or halted"}
+    reset_run_state()
     cur = mysql.connection.cursor()
     cur.execute(
         """SELECT businessID, barangayID, businessName, latitude, longitude, placeID
@@ -503,19 +657,22 @@ def refresh_expired_coords(limit=500):
     rows = cur.fetchall()
     done = failed = 0
     for r in rows:
-        if _halted or not reserve_call("imp_pd", PD_MONTHLY_CAP, PD_DAILY_CAP):
+        if _halted or getattr(_api_state, "quota_halted", False):
             break
         bid, brgy, name = _g(r, "businessID", 0), _g(
             r, "barangayID", 1), _g(r, "businessName", 2)
         olat, olng, pid = _g(r, "latitude", 3), _g(
             r, "longitude", 4), _g(r, "placeID", 5)
-        try:
-            resp = requests.get(PLACE_DETAILS_URL.format(pid=pid), timeout=10, headers={
+        data = _places_request(
+            "PlaceDetails",
+            lambda: requests.get(PLACE_DETAILS_URL.format(pid=pid), timeout=10, headers={
                 "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
-                "X-Goog-FieldMask": "id,location"})
-            data = _api_get_json(resp, "PlaceDetails")
-        except requests.RequestException:
-            data = None
+                "X-Goog-FieldMask": "location",
+            }),
+            lambda: reserve_call("imp_pd", PD_MONTHLY_CAP, PD_DAILY_CAP),
+        )
+        if data is None and getattr(_api_state, "outcome", None) == "skipped_quota":
+            break
         loc = (data or {}).get("location")
         if not loc:
             failed += 1

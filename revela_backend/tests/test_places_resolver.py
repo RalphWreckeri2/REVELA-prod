@@ -2,7 +2,9 @@ from api.registry.places_resolver import (
     compute_resolve_key,
     compute_places_refresh_key,
     _is_within_municipal_bounds,
+    _places_request,
     _text_search,
+    reset_run_state,
     resolve_location,
     decide_review,
 )
@@ -16,6 +18,105 @@ sys.path.insert(0, os.path.abspath(
 
 
 class PlacesResolverHardeningTests(unittest.TestCase):
+
+    @patch("api.registry.places_resolver.time.sleep")
+    def test_resource_exhausted_429_stops_without_retry(self, mock_sleep):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        places_resolver._last_places_request_at = 0
+        response = MagicMock()
+        response.status_code = 429
+        response.text = '{"error":{"status":"RESOURCE_EXHAUSTED"}}'
+        request = MagicMock(return_value=response)
+        reserve = MagicMock(return_value=True)
+
+        result = _places_request("TextSearch", request, reserve)
+
+        self.assertIsNone(result)
+        request.assert_called_once()
+        reserve.assert_called_once()
+        self.assertEqual(places_resolver._api_state.outcome, "skipped_quota")
+        mock_sleep.assert_not_called()
+
+    @patch("api.registry.places_resolver.random.uniform", return_value=1.0)
+    @patch("api.registry.places_resolver.time.sleep")
+    def test_per_minute_429_retries_three_times_and_counts_each_attempt(
+        self, mock_sleep, _mock_uniform
+    ):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        places_resolver._last_places_request_at = 0
+        limited = MagicMock()
+        limited.status_code = 429
+        limited.text = '{"error":{"status":"RESOURCE_EXHAUSTED","quotaId":"RequestsPerMinute"}}'
+        success = MagicMock()
+        success.status_code = 200
+        success.json.return_value = {"places": []}
+        request = MagicMock(side_effect=[limited, limited, limited, success])
+        reserve = MagicMock(return_value=True)
+
+        result = _places_request("TextSearch", request, reserve)
+
+        self.assertEqual(result, {"places": []})
+        self.assertEqual(request.call_count, 4)
+        self.assertEqual(reserve.call_count, 4)
+        self.assertIsNone(places_resolver._api_state.outcome)
+        self.assertGreaterEqual(mock_sleep.call_count, 3)
+
+    @patch("api.registry.places_resolver.random.uniform", return_value=1.0)
+    @patch("api.registry.places_resolver.time.sleep")
+    def test_per_minute_429_exhaustion_is_api_error_not_daily_quota(
+        self, _mock_sleep, _mock_uniform
+    ):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        places_resolver._last_places_request_at = 0
+        response = MagicMock()
+        response.status_code = 429
+        response.text = '{"error":{"status":"RESOURCE_EXHAUSTED","quotaId":"RequestsPerMinute"}}'
+        request = MagicMock(return_value=response)
+        reserve = MagicMock(return_value=True)
+
+        result = _places_request("TextSearch", request, reserve)
+
+        self.assertIsNone(result)
+        self.assertEqual(request.call_count, 4)
+        self.assertEqual(reserve.call_count, 4)
+        self.assertEqual(places_resolver._api_state.outcome, "api_error")
+        self.assertFalse(places_resolver._api_state.quota_halted)
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.time.sleep")
+    @patch("api.registry.places_resolver.reserve_call", return_value=True)
+    @patch("api.registry.places_resolver.mysql")
+    def test_quota_429_is_not_a_no_match_or_geocode_fallback(
+        self, mock_mysql, _mock_reserve, _mock_sleep
+    ):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+        mock_cursor.fetchall.return_value = []
+
+        response = MagicMock()
+        response.status_code = 429
+        response.text = '{"error":{"status":"RESOURCE_EXHAUSTED"}}'
+        post = MagicMock(return_value=response)
+        geocode_reservation = MagicMock(return_value=True)
+
+        lat, lng, meta = resolve_location(
+            "No Match Store", "Poblacion", "Barangay I",
+            business_id="BIZ-429", barangay_id=1, _post=post,
+            reserve_geocode=geocode_reservation,
+        )
+
+        self.assertIsNone(lat)
+        self.assertIsNone(lng)
+        self.assertEqual(meta["reason"], "skipped_quota")
+        post.assert_called_once()
+        geocode_reservation.assert_not_called()
 
     def test_compute_resolve_key_deterministic(self):
         """compute_resolve_key must return a 40-char SHA-1 hex digest normalized across case and spacing."""

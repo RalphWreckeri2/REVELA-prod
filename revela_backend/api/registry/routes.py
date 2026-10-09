@@ -104,7 +104,7 @@ def reverify_preview():
         return jsonify({"error": str(e)}), 500
 
 
-# ── POST /api/registry/reverify  body: {"limit": 200} ────────────────────────
+# ── POST /api/registry/reverify  body: {"limit": 50} ─────────────────────────
 @registry_bp.route("/reverify", methods=["POST"])
 @admin_required()
 def reverify_run():
@@ -118,7 +118,7 @@ def reverify_run():
         return jsonify({"error": "A re-verify run is already in progress."}), 409
 
     body = request.get_json(silent=True) or {}
-    limit = max(1, min(int(body.get("limit", 200)), 500))
+    limit = max(1, min(int(body.get("limit", reverify.BATCH_LIMIT)), reverify.BATCH_LIMIT))
     app_instance = current_app._get_current_object()
 
     def _go():

@@ -1139,7 +1139,7 @@ export async function reverifyPreviewRequest(token) {
 }
 
 /** POST /api/registry/reverify - re-check existing pins against Google Places (background job) */
-export async function reverifyPinsRequest(token, limit = 200) {
+export async function reverifyPinsRequest(token, limit = 50) {
   try {
     const res = await fetch(`${BASE_URL}/registry/reverify`, {
       method: "POST",

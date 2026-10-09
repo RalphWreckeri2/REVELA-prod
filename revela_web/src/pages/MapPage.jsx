@@ -2750,7 +2750,7 @@ export default function MapPage() {
     const stacks = (preview.largestStacks || [])
       .map((x) => `${x.businesses} businesses on one point`)
       .join(', ');
-    const batch = Math.min(total, 200);
+    const batch = Math.min(total, 50);
     const confirm = await Swal.fire({
       title: 'Re-verify existing pins?',
       html: `
@@ -2771,7 +2771,7 @@ export default function MapPage() {
     try {
       snapDismissedRef.current = false;
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Re-verifying pins against Google Places...', snapped: 0, failed: 0, cached: 0, total: batch });
-      await reverifyPinsRequest(token, 200);
+      await reverifyPinsRequest(token, batch);
     } catch (err) {
       setSnapProgress(null);
       Swal.fire({ icon: 'error', title: 'Re-verify Failed', text: err.message, confirmButtonColor: '#ef4444' });
