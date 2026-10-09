@@ -363,6 +363,46 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         self.assertIsNone(lng)
 
     @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call", return_value=True)
+    @patch("api.registry.places_resolver.mysql")
+    def test_category_conflict_is_not_geocoded_as_a_business_match(
+        self, mock_mysql, _mock_reserve
+    ):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+        mock_cursor.fetchall.return_value = []
+
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {
+            "places": [{
+                "id": "place_event_venue",
+                "displayName": {"text": "Jardín del Eden"},
+                "formattedAddress": "Poblacion, Mataasnakahoy",
+                "location": {"latitude": 13.9667, "longitude": 121.1167},
+                "primaryType": "event_venue",
+                "types": ["event_venue"],
+            }]
+        }
+        post = MagicMock(return_value=response)
+        geocode = MagicMock(return_value=True)
+
+        lat, lng, meta = resolve_location(
+            "Eden Store",
+            "Poblacion, Mataasnakahoy",
+            "Barangay I",
+            line_of_business="Supermarket",
+            _post=post,
+            reserve_geocode=geocode,
+        )
+
+        self.assertIsNone(lat)
+        self.assertIsNone(lng)
+        self.assertEqual(meta["reason"], "category_conflict")
+        geocode.assert_not_called()
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
     @patch("api.registry.places_resolver.reserve_call")
     @patch("api.registry.places_resolver.mysql")
     def test_rejected_place_candidate_discarded(self, mock_mysql, mock_reserve):

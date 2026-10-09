@@ -40,6 +40,7 @@ SUSPECT_COLS = (
     "businessID", "barangayID", "businessName", "businessAddress", "lineOfBusiness",
     "applicationStatus", "coordSource", "matchStatus", "latitude", "longitude",
     "placeID", "placeIDKind",
+    "businessType",
 )
 
 _run_lock = threading.Lock()
@@ -501,9 +502,12 @@ def _run(limit):
                     brgy_name_by_id.get(biz["barangayID"], ""),
                     business_id=biz["businessID"], barangay_id=biz["barangayID"],
                     line_of_business=biz["lineOfBusiness"] or "",
+                    business_type=biz.get("businessType") or "",
                     reserve_geocode=service._reserve_geocode_call,
                     refresh_geocode=False, force=True,
                     preferred_place_id=biz.get("placeID"),
+                    current_lat=biz.get("latitude"),
+                    current_lng=biz.get("longitude"),
                 )
                 meta = meta or {}
 

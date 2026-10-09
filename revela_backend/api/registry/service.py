@@ -392,7 +392,15 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     return None, None
 
 
-def _resolve_location(business_name, address, barangay, business_id=None, barangay_id=None, line_of_business=None):
+def _resolve_location(
+    business_name,
+    address,
+    barangay,
+    business_id=None,
+    barangay_id=None,
+    line_of_business=None,
+    business_type=None,
+):
     """Returns (lat, lng, meta).
     PLACES_RESOLVER_ENABLED=1 -> Places Text Search (+ quality-gated geocode fallback), meta describes provenance.
     Otherwise -> legacy Geocoding, with the same explicit provenance metadata."""
@@ -400,6 +408,7 @@ def _resolve_location(business_name, address, barangay, business_id=None, barang
     addr_str = _clean_str(address) or ""
     brgy_str = _clean_str(barangay) or ""
     lob_str = _clean_str(line_of_business) or ""
+    type_str = _clean_str(business_type) or ""
 
     if places_resolver.enabled():
         return places_resolver.resolve_location(
@@ -407,6 +416,7 @@ def _resolve_location(business_name, address, barangay, business_id=None, barang
             business_id=business_id,
             barangay_id=barangay_id,
             line_of_business=lob_str,
+            business_type=type_str,
             reserve_geocode=_reserve_geocode_call)
 
     # Local BPLO data often contains only vague location labels such as "District IV"
@@ -814,10 +824,11 @@ def upload_registry(file, ext: str):
                         "resolve_key": curr_resolve_key} if lat is not None else None
             lob = _clean_upper(row.get("lineOfBusiness"))
             if lat is None and (address_raw or name_key):
+                business_type = _clean_upper(row.get("businessType"))
                 lat, lng, geo_meta = _resolve_location(
                     name_key, address_raw, barangay_raw,
                     business_id=biz_id, barangay_id=barangay_id,
-                    line_of_business=lob)
+                    line_of_business=lob, business_type=business_type)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -1113,10 +1124,11 @@ def sync_registry(file, ext: str):
                     geocoded_failed += 1
                     no_match_count += 1
             elif address_raw or name_key:
+                business_type = _clean_upper(row.get("businessType"))
                 lat, lng, geo_meta = _resolve_location(
                     name_key, address_raw, barangay_raw,
                     business_id=biz_id, barangay_id=barangay_id,
-                    line_of_business=lob)
+                    line_of_business=lob, business_type=business_type)
                 if lat is not None:
                     geocoded_ok += 1
                 else:
@@ -1423,7 +1435,7 @@ def snap_unresolved_pins(limit: int = 200):
         cursor.execute("""
             SELECT businessID, barangayID, businessName, businessAddress,
                    lineOfBusiness, applicationStatus, coordSource, matchStatus,
-                   resolveKey, latitude, longitude
+                   resolveKey, latitude, longitude, businessType
             FROM official_registry
             WHERE (
                     latitude IS NULL
@@ -1544,6 +1556,8 @@ def snap_unresolved_pins(limit: int = 200):
                 biz, dict) else biz[3]
             lob = biz.get("lineOfBusiness") if isinstance(
                 biz, dict) else biz[4]
+            business_type = biz.get("businessType") if isinstance(
+                biz, dict) else biz[11]
             app_status = (biz.get("applicationStatus") if isinstance(
                 biz, dict) else biz[5]) or "Active"
             stored_key = (biz.get("resolveKey")
@@ -1611,6 +1625,7 @@ def snap_unresolved_pins(limit: int = 200):
                     business_id=bid,
                     barangay_id=brgy_id,
                     line_of_business=lob or "",
+                    business_type=business_type or "",
                     reserve_geocode=_reserve_geocode_call,
                     refresh_geocode=refresh_geocode
                 )

@@ -31,12 +31,10 @@ import random
 import re
 import threading
 import time
-from difflib import SequenceMatcher
-
 import requests
 
 from app import mysql
-from api.utils.name_match import name_match, parse_name
+from api.utils.name_match import address_similarity, name_match, parse_name
 from api.utils.places_quota import read_usage, reserve_usage_slot
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -188,6 +186,20 @@ def similarity(a, b, reg_line='', poi_types=()):
     return score
 
 
+def _distance_m(lat_a, lng_a, lat_b, lng_b):
+    if None in (lat_a, lng_a, lat_b, lng_b):
+        return None
+    try:
+        lat_a, lng_a, lat_b, lng_b = map(
+            math.radians, map(float, (lat_a, lng_a, lat_b, lng_b))
+        )
+    except (TypeError, ValueError):
+        return None
+    dlat, dlng = lat_b - lat_a, lng_b - lng_a
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat_a) * math.cos(lat_b) * math.sin(dlng / 2) ** 2
+    return 6_371_000 * 2 * math.asin(math.sqrt(a))
+
+
 # ------------------------------ budget guard ---------------------------------
 _MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
 def reserve_call(prefix, monthly_cap, daily_cap=None):
@@ -329,7 +341,7 @@ def _text_search(name, address, barangay, post=requests.post, reserve=None):
         "Content-Type": "application/json",
         "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
         # Pro-tier fields only. Strictly do NOT add Enterprise fields (rating, userRatingCount, regularOpeningHours, websiteUri).
-        "X-Goog-FieldMask": "places.id,places.displayName,places.location,places.primaryType,places.types",
+        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.primaryType,places.types",
     }
     data = _places_request(
         "TextSearch",
@@ -390,8 +402,9 @@ def _geocode_fallback(address, barangay, get=requests.get):
 
 
 def resolve_location(name, address, barangay, business_id=None, barangay_id=None,
-                     line_of_business='', reserve_geocode=None, refresh_geocode=False,
+                     line_of_business='', business_type='', reserve_geocode=None, refresh_geocode=False,
                      force=False, preferred_place_id=None,
+                     current_lat=None, current_lng=None,
                      _post=requests.post, _get=requests.get):
     """Returns (lat, lng, meta); API/quota failures are distinguished from no-match results.
 
@@ -423,7 +436,7 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         try:
             cur.execute(
                 """SELECT resolveKey, latitude, longitude, coordSource, placeID,
-                          placeIDKind, matchScore, matchStatus, lineOfBusiness
+                          placeIDKind, matchScore, matchStatus, lineOfBusiness, businessType
                    FROM official_registry
                    WHERE businessID = %s""",
                 (business_id,),
@@ -433,6 +446,9 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
                 if not line_of_business:
                     line_of_business = (stored.get("lineOfBusiness") if isinstance(
                         stored, dict) else (stored[8] if len(stored) > 8 else "")) or ""
+                if not business_type:
+                    business_type = (stored.get("businessType") if isinstance(
+                        stored, dict) else (stored[9] if len(stored) > 9 else "")) or ""
                 stored_key = stored.get("resolveKey") if isinstance(
                     stored, dict) else stored[0]
                 if stored_key and stored_key == current_key:
@@ -478,6 +494,8 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     # 4. Reserve immediately before every Text Search attempt (including retries).
     seen_places = in_bounds_places = None
     best, best_score = None, 0.0
+    best_reason = None
+    category_conflict_seen = False
     data = _text_search(
         name, address, barangay, post=_post,
         reserve=lambda: reserve_call("imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP),
@@ -514,14 +532,41 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         poi_types = p.get("types", []) or []
         if p.get("primaryType"):
             poi_types = list(poi_types) + [p.get("primaryType")]
-        s = similarity(name, (p.get("displayName") or {}).get(
-            "text", ""), reg_line=line_of_business, poi_types=poi_types)
+        name_score, reason = name_match(
+            name,
+            (p.get("displayName") or {}).get("text", ""),
+            reg_line=line_of_business,
+            reg_type=business_type,
+            poi_types=poi_types,
+        )
+        if reason == "category_conflict":
+            category_conflict_seen = True
+            continue
+        if reason in ("weak_name", "no_shared_name"):
+            continue
+
+        poi_address = p.get("formattedAddress") or ""
+        address_score = address_similarity(address or "", poi_address)
+        s = min(1.0, name_score + (0.05 if address_score >= 0.6 else 0.0))
+        if name_score < REVIEW_MIN:
+            continue
         if s > best_score:
-            best, best_score = p, s
+            best, best_score, best_reason = p, s, reason
 
     if best and best_score >= REVIEW_MIN:
+        current_distance = _distance_m(
+            current_lat,
+            current_lng,
+            best["location"]["latitude"],
+            best["location"]["longitude"],
+        )
         status = "review" if discarded_rejected else (
-            "auto" if best_score >= AUTO_ACCEPT else "review")
+            "auto"
+            if best_score >= AUTO_ACCEPT
+            and best_reason != "soft_category_conflict"
+            and (current_distance is None or current_distance <= 300)
+            else "review"
+        )
         return best["location"]["latitude"], best["location"]["longitude"], {
             "coord_source": "places",
             "place_id": best["id"],
@@ -530,6 +575,8 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
             "match_status": status,
             "match_type": "places_poi",
             "resolve_key": current_key,
+            "category_decision": best_reason,
+            "distance_from_existing_m": current_distance,
         }
     elif discarded_rejected:
         return None, None, {
@@ -539,6 +586,13 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
             "score": None,
             "match_status": "review",
             "match_type": "rejected_place_discarded",
+            "resolve_key": current_key,
+        }
+    elif category_conflict_seen:
+        return None, None, {
+            "reason": "category_conflict",
+            "match_status": "no_match",
+            "match_type": "category_conflict",
             "resolve_key": current_key,
         }
 

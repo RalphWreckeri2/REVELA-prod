@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from api.flags.service import _name_similarity
+from api.flags.service import _match_poi_to_registry, _name_similarity
 from api.utils.name_match import name_match, parse_name
 
 
@@ -128,6 +128,68 @@ class NameMatchRegressionTests(unittest.TestCase):
         self.assertEqual(score1, 0.0)
         self.assertEqual(score2, 0.0)
         self.assertEqual(score3, 0.0)
+
+    def test_accents_are_normalized_without_splitting_words(self):
+        tokens, _ = parse_name("Jardín del Edén Event Venue")
+        self.assertEqual(tokens, ["jardin", "eden"])
+
+    def test_eden_store_and_jardin_del_eden_are_category_conflict(self):
+        score, decision = name_match(
+            "Eden Store",
+            "Jardín del Eden",
+            reg_line="Supermarket",
+            poi_types=("event_venue",),
+        )
+        self.assertEqual(decision, "category_conflict")
+        self.assertLessEqual(score, 0.45)
+
+        registry = [{
+            "businessID": "BIZ-EDEN",
+            "businessName": "Eden Store",
+            "businessLine": "Supermarket",
+            "businessType": "Supermarket",
+            "businessAddress": "Poblacion, Mataasnakahoy",
+            "barangayID": 1,
+            "latitude": 13.9667,
+            "longitude": 121.1167,
+        }]
+        matched, _, _, status = _match_poi_to_registry(
+            "Jardín del Eden",
+            13.96671,
+            121.11671,
+            registry,
+            poi_barangay_id=1,
+            poi_types=("event_venue",),
+            poi_address="Poblacion, Mataasnakahoy",
+        )
+        self.assertIsNone(matched)
+        self.assertEqual(status, "no_match")
+
+    def test_single_shared_token_without_category_agreement_is_weak(self):
+        score, decision = name_match("Eden Store", "Jardín del Eden")
+        self.assertEqual(decision, "weak_name")
+        self.assertLessEqual(score, 0.45)
+
+    def test_single_brand_token_can_match_with_category_agreement(self):
+        score, decision = name_match(
+            "Eden Supermarket",
+            "Eden Store",
+            reg_line="Supermarket",
+            poi_types=("supermarket",),
+        )
+        self.assertEqual(decision, "ok")
+        self.assertGreaterEqual(score, 0.80)
+
+    def test_address_similarity_is_supporting_evidence(self):
+        from api.utils.name_match import address_similarity
+
+        self.assertGreaterEqual(
+            address_similarity(
+                "Poblacion, Main Street, Mataasnakahoy",
+                "Main St., Poblacion, Mataasnakahoy, Batangas",
+            ),
+            0.75,
+        )
 
 
 if __name__ == "__main__":

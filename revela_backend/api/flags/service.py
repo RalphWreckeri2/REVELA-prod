@@ -4,8 +4,6 @@ from api.models.detection_runs import (
     update_detection_run_status,
     get_detection_quota_info,
 )
-import re
-import difflib
 import math
 import numpy as np
 from sklearn.cluster import DBSCAN
@@ -20,7 +18,7 @@ from app import mysql
 from shapely.geometry import shape, Point
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.notifications import hub
-from api.utils.name_match import name_match, parse_name
+from api.utils.name_match import address_similarity, name_match, parse_name
 from api.utils.places_quota import read_usage, reserve_usage_slot
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -360,36 +358,60 @@ def _normalize_business_name(name: str) -> str:
     return " ".join(tokens)
 
 
-def _name_similarity(name1: str, name2: str, reg_line: str = '', poi_types: tuple = ()) -> float:
-    score, _ = name_match(name1, name2, reg_line=reg_line, poi_types=poi_types)
+def _name_similarity(
+    name1: str,
+    name2: str,
+    reg_line: str = '',
+    poi_types: tuple = (),
+    reg_type: str = '',
+) -> float:
+    score, _ = name_match(
+        name1, name2, reg_line=reg_line, poi_types=poi_types, reg_type=reg_type
+    )
     return score
 
 
-def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id=None, poi_types=()):
+def _match_poi_to_registry(
+    poi_name,
+    poi_lat,
+    poi_lng,
+    registry,
+    poi_barangay_id=None,
+    poi_types=(),
+    poi_address='',
+):
     """
     Tiered Decision Matrix for matching a candidate POI to official registry entries:
-    - Auto (score >= 0.80 AND (same barangay OR dist <= 300m)): Safe automatic snap.
-    - Review (0.55 <= score < 0.80, OR score >= 0.80 with different barangay AND dist > 300m):
-      Held in review queue for human confirmation.
-    - No Match (score < 0.55): Rejected candidate; proximity alone never overrides low score.
+    - Auto: compatible category, score >= 0.80, and within 300 m; without coordinates,
+      require same barangay plus strong address agreement.
+    - Review: plausible score >= 0.55 with no hard category conflict, or competing candidates.
+    - No Match: weak/single-token-only name, hard category conflict, or score < 0.55.
+      Address or proximity alone never establishes identity.
     Returns (matched_entry, distance_meters, similarity_score, match_status)
     """
     best_match = None
     best_dist = float("inf")
     best_score = 0.0
     best_status = "no_match"
+    candidate_scores = []
 
     for entry in registry:
-        sim = _name_similarity(
+        sim, match_reason = name_match(
             entry.get("businessName", ""),
             poi_name,
             reg_line=entry.get("businessLine", ""),
-            poi_types=poi_types
+            reg_type=entry.get("businessType", ""),
+            poi_types=poi_types,
         )
+        if match_reason in ("category_conflict", "weak_name", "no_shared_name"):
+            continue
         # Strict cutoff: under 0.55 is rejected regardless of proximity
         if sim < 0.55:
             continue
 
+        address_score = address_similarity(
+            entry.get("businessAddress", ""), poi_address
+        )
         reg_lat = entry.get("latitude")
         reg_lng = entry.get("longitude")
         reg_b_id = entry.get("barangayID")
@@ -403,14 +425,22 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
             except Exception:
                 dist = None
 
-        if sim >= 0.80:
+        supported_score = min(
+            1.0,
+            sim + (0.05 if address_score >= 0.6 else 0.0),
+        )
+        candidate_scores.append((entry.get("businessID"), supported_score))
+        if match_reason == "soft_category_conflict":
+            status = "review"
+        elif supported_score >= 0.80:
             if dist is not None:
-                if same_barangay or dist <= 300.0:
-                    status = "auto"
-                else:
-                    status = "review"
+                status = "auto" if dist <= 300.0 else "review"
             else:
-                status = "auto" if same_barangay else "review"
+                status = (
+                    "auto"
+                    if same_barangay and address_score >= 0.75
+                    else "review"
+                )
         else:
             status = "review"
 
@@ -424,9 +454,9 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
         elif status == "auto" and best_status != "auto":
             is_better = True
         elif status == best_status:
-            if sim > best_score + 0.01:
+            if supported_score > best_score + 0.01:
                 is_better = True
-            elif abs(sim - best_score) <= 0.01:
+            elif abs(supported_score - best_score) <= 0.01:
                 cur_dist = dist if dist is not None else float("inf")
                 if cur_dist < best_dist:
                     is_better = True
@@ -434,13 +464,72 @@ def _match_poi_to_registry(poi_name, poi_lat, poi_lng, registry, poi_barangay_id
         if is_better:
             best_match = entry
             best_dist = dist if dist is not None else 0.0
-            best_score = sim
+            best_score = supported_score
             best_status = status
+
+    competing_match = any(
+        business_id != best_match.get("businessID")
+        and score >= best_score - 0.05
+        for business_id, score in candidate_scores
+    ) if best_match else False
+    if competing_match and best_status == "auto":
+        best_status = "review"
 
     return best_match, best_dist, best_score, best_status
 
 
-def _match_registry_to_google(place_id, business_id, detected_name, target_color='Green', lat=None, lng=None, barangay_id=None, match_score=None, match_status=None):
+_place_types_column_ready = False
+_place_types_schema_lock = threading.Lock()
+
+
+def _ensure_place_types_column():
+    global _place_types_column_ready
+    if _place_types_column_ready:
+        return
+
+    with _place_types_schema_lock:
+        if _place_types_column_ready:
+            return
+        cursor = mysql.connection.cursor()
+        try:
+            cursor.execute("SHOW COLUMNS FROM geospatial_logs LIKE 'placeTypes'")
+            if not cursor.fetchone():
+                cursor.execute(
+                    "ALTER TABLE geospatial_logs ADD COLUMN placeTypes JSON NULL AFTER nearestLandmark"
+                )
+                mysql.connection.commit()
+            _place_types_column_ready = True
+        finally:
+            cursor.close()
+
+
+def _decode_place_types(value):
+    if isinstance(value, (list, tuple, set)):
+        return tuple(sorted(str(item) for item in value if item))
+    if not value:
+        return ()
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(parsed, (list, tuple, set)):
+        return ()
+    return tuple(sorted(str(item) for item in parsed if item))
+
+
+def _match_registry_to_google(
+    place_id,
+    business_id,
+    detected_name,
+    target_color='Green',
+    lat=None,
+    lng=None,
+    barangay_id=None,
+    match_score=None,
+    match_status=None,
+    poi_types=(),
+    poi_address=None,
+):
     """
     Updates or inserts the geospatial log for an existing registry business 
     with its official Google Maps Place ID and dynamic status-based flag color.
@@ -532,16 +621,22 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
         final_lat = (reg_lat if reg_lat is not None else primary_log.get("latitude")) if is_locked else lat
         final_lng = (reg_lng if reg_lng is not None else primary_log.get("longitude")) if is_locked else lng
 
+        serialized_types = json.dumps(sorted(set(poi_types))) if poi_types else None
         cursor.execute("""
-            UPDATE geospatial_logs 
-            SET businessID = %s,
-                placeID = %s, flagColor = %s,
-                detectedName = %s,
-                latitude = %s,
-                longitude = %s,
-                barangayID = COALESCE(%s, barangayID)
-            WHERE logID = %s
-        """, (business_id, place_id, target_color, detected_name, final_lat, final_lng, barangay_id, primary_log["logID"]))
+                UPDATE geospatial_logs
+                SET businessID = %s,
+                    placeID = %s, flagColor = %s,
+                    detectedName = %s,
+                    latitude = %s,
+                    longitude = %s,
+                    nearestLandmark = COALESCE(%s, nearestLandmark),
+                    placeTypes = COALESCE(%s, placeTypes),
+                    barangayID = COALESCE(%s, barangayID)
+                WHERE logID = %s
+            """, (
+                business_id, place_id, target_color, detected_name, final_lat, final_lng,
+                poi_address, serialized_types, barangay_id, primary_log["logID"]
+            ))
 
         # Remove redundant duplicate unpositioned logs, repointing inspections first
         for log in matched_logs:
@@ -566,9 +661,12 @@ def _match_registry_to_google(place_id, business_id, detected_name, target_color
         cursor.execute("""
             INSERT INTO geospatial_logs
                 (barangayID, businessID, reportID, detectedName, latitude, longitude,
-                 flagColor, placeID, nearestLandmark)
-            VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, NULL)
-        """, (barangay_id, business_id, detected_name, final_lat, final_lng, target_color, place_id))
+                 flagColor, placeID, nearestLandmark, placeTypes)
+            VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            barangay_id, business_id, detected_name, final_lat, final_lng,
+            target_color, place_id, poi_address, serialized_types
+        ))
 
     mysql.connection.commit()
     cursor.close()
@@ -603,9 +701,11 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
     try:
         _last_reconcile_time = now
 
+        _ensure_place_types_column()
         cursor = mysql.connection.cursor()
         cursor.execute("""
-            SELECT logID, businessID, placeID, detectedName, latitude, longitude, barangayID
+            SELECT logID, businessID, placeID, detectedName, latitude, longitude, barangayID,
+                   nearestLandmark, placeTypes
             FROM geospatial_logs
             WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL
         """)
@@ -672,7 +772,14 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                 status = "auto"
             else:
                 matched, dist, score, status = _match_poi_to_registry(
-                    name, lat, lng, registry, poi_barangay_id=b_id)
+                    name,
+                    lat,
+                    lng,
+                    registry,
+                    poi_barangay_id=b_id,
+                    poi_types=_decode_place_types(flag.get("placeTypes")),
+                    poi_address=flag.get("nearestLandmark") or "",
+                )
 
             if matched and status != "no_match":
                 app_status = (matched.get('applicationStatus')
@@ -691,7 +798,9 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                 _match_registry_to_google(
                     place_id, matched['businessID'], matched['businessName'],
                     target_color=target_color, lat=lat, lng=lng, barangay_id=target_b_id,
-                    match_score=score
+                    match_score=score,
+                    poi_types=_decode_place_types(flag.get("placeTypes")),
+                    poi_address=flag.get("nearestLandmark"),
                 )
                 converted_count += 1
 
@@ -1162,7 +1271,9 @@ def _load_registry():
     cursor = mysql.connection.cursor()
     cursor.execute("""
         SELECT r.businessID, r.barangayID, r.businessName, r.applicationStatus,
+               r.businessType AS businessType,
                r.lineOfBusiness AS businessLine,
+               r.businessAddress AS businessAddress,
                r.placeID, r.coordSource, r.matchStatus,
                COALESCE(r.latitude, g.latitude) AS latitude,
                COALESCE(r.longitude, g.longitude) AS longitude
@@ -1344,14 +1455,15 @@ def _already_flagged(place_id):
 
 # ── Insert Red Flag ───────────────────────────────────────────────────────────
 
-def _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address=None):
+def _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address=None, poi_types=()):
+    serialized_types = json.dumps(sorted(set(poi_types))) if poi_types else None
     cursor = mysql.connection.cursor()
     cursor.execute("""
         INSERT INTO geospatial_logs
             (barangayID, reportID, detectedName, latitude, longitude,
-             flagColor, placeID, nearestLandmark)
-        VALUES (%s, NULL, %s, %s, %s, 'Red', %s, %s)
-    """, (barangay_id, place_name, lat, lng, place_id, address))
+             flagColor, placeID, nearestLandmark, placeTypes)
+        VALUES (%s, NULL, %s, %s, %s, 'Red', %s, %s, %s)
+    """, (barangay_id, place_name, lat, lng, place_id, address, serialized_types))
     flag_id = cursor.lastrowid
     mysql.connection.commit()
     cursor.close()
@@ -1476,6 +1588,7 @@ def run_detection(user_id=None):
             "type": "detection_progress", "stage": "matching", "percentage": 1,
             "status": "Loading official business registry database..."
         })
+        _ensure_place_types_column()
         registry = _load_registry()
         try:
             reconcile_existing_flags(silent=True)
@@ -1540,7 +1653,7 @@ def run_detection(user_id=None):
                 p_types = place.get("types") or []
                 if place.get("primaryType"):
                     p_types = list(p_types) + [place.get("primaryType")]
-                poi_types = tuple(p_types)
+                poi_types = tuple(sorted(set(p_types)))
 
                 if matching_by_place:
                     nearest = matching_by_place
@@ -1549,7 +1662,10 @@ def run_detection(user_id=None):
                     match_status = "auto"
                 else:
                     nearest, dist, sim_score, match_status = _match_poi_to_registry(
-                        place_name, lat, lng, registry, poi_barangay_id=barangay_id, poi_types=poi_types
+                        place_name, lat, lng, registry,
+                        poi_barangay_id=barangay_id,
+                        poi_types=poi_types,
+                        poi_address=address or "",
                     )
 
                 if nearest is None or match_status == "no_match":
@@ -1577,7 +1693,9 @@ def run_detection(user_id=None):
                     counters["no_match"] += 1
                     if not existing_flag:
                         flag_id = _insert_red_flag(
-                            place_id, place_name, lat, lng, barangay_id, address)
+                            place_id, place_name, lat, lng, barangay_id, address,
+                            poi_types=poi_types,
+                        )
                         inserted_flag_ids.append(flag_id)
                         counters["new_flags"] += 1
                 else:
@@ -1599,7 +1717,9 @@ def run_detection(user_id=None):
                     _match_registry_to_google(
                         place_id, nearest["businessID"], nearest["businessName"],
                         target_color=target_color, lat=lat, lng=lng, barangay_id=target_barangay_id,
-                        match_score=sim_score, match_status=match_status
+                        match_score=sim_score, match_status=match_status,
+                        poi_types=poi_types,
+                        poi_address=address,
                     )
 
         _scan_grid(process_places, progress_callback, state)
