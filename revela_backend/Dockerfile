@@ -27,6 +27,8 @@ EXPOSE 5000
 # so background threads and SSE clients share memory queues without requiring external message brokers.
 # Each persistent SSE client holds one thread for its duration; 16 threads provides expanded headroom
 # for SSE streams alongside concurrent REST API requests. (Multi-replica scaling requires Redis pub/sub.)
-# Note: Background snap runs in a detached daemon thread (not tracked by Gunicorn worker timeout).
-# --timeout 120 protects slow synchronous endpoints (e.g. run-detection) from triggering worker kills.
+# --timeout 120 serves as a worker-liveness threshold: with gthread, Gunicorn monitors worker process
+# heartbeats rather than per-request deadlines (individual request threads and detached daemon threads
+# continue running while the worker heartbeats). 120s gives an unresponsive or blocked worker process
+# sufficient leeway before the master arbiter considers it dead and restarts it.
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "16", "--timeout", "120", "app:create_app()"]
