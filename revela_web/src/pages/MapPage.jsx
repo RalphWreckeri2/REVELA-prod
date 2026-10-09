@@ -2889,7 +2889,7 @@ export default function MapPage() {
           ? `${candidate.businessName} was approved and its map pin was updated.`
           : `${candidate.businessName}'s current pin was kept; the suggestion was rejected.`,
       );
-      if (isApprove) await fetchFlags(true);
+      await fetchFlags(true);
       const nextPage =
         reviewQueue?.data?.length === 1 && reviewQueuePage > 1
           ? reviewQueuePage - 1
@@ -3107,6 +3107,16 @@ export default function MapPage() {
     const flag = flags.find(f => f.id === id);
     if (!flag) return;
 
+    if (flag.matchStatus === "review" && flag.businessID != null) {
+      const businessId = String(flag.businessID);
+      setSelectedFlag(id);
+      setShowReviewQueue(true);
+      setReviewQueueSearch(businessId);
+      setReviewQueueNotice("");
+      loadRegistryReviewQueue(1, businessId);
+      return;
+    }
+
     if (location.search && location.search.includes("flag=")) {
       navigate(location.pathname, { replace: true });
     }
@@ -3119,7 +3129,7 @@ export default function MapPage() {
       mapRef.current.panTo({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
       mapRef.current.setZoom(18);
     }
-  }, [flags, location.search, location.pathname, navigate]);
+  }, [flags, location.search, location.pathname, navigate, loadRegistryReviewQueue]);
 
   // â”€â”€ When user clicks a flag in the side panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleSidePanelClick = (flag) => {
