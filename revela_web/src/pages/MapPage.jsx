@@ -2755,6 +2755,7 @@ export default function MapPage() {
     });
     if (!confirm.isConfirmed) return;
     try {
+      snapDismissedRef.current = false;
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting Places name search...', snapped: 0, failed: 0, cached: 0, total: unsnappedCount });
       await snapUnresolvedPinsRequest(token, 200);
     } catch (err) {
@@ -3403,7 +3404,12 @@ export default function MapPage() {
               detectionProgress={detectionProgress}
               reconcileProgress={reconcileProgress}
               snapProgress={snapProgress}
-              onCloseSnapProgress={() => { snapDismissedRef.current = true; setSnapProgress(null); }}
+              onCloseSnapProgress={() => {
+                if (snapProgress?.stage !== 'completed') {
+                  snapDismissedRef.current = true;
+                }
+                setSnapProgress(null);
+              }}
               elapsedTime={elapsedTime}
               satellite={satellite}
               clusters={clusters}
