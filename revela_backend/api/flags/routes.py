@@ -15,7 +15,7 @@ from api.flags.service import (
     get_places_usage_today,
 )
 from api.middleware.decorators import jwt_required, admin_required
-
+from app import mysql
 flags_bp = Blueprint("flags", __name__)
 
 

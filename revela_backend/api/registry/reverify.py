@@ -30,7 +30,8 @@ import threading
 import traceback
 from collections import Counter
 
-STACK_MIN = 3               # businesses on one point (to ~1 m) before it counts as a stack
+# businesses on one point (to ~1 m) before it counts as a stack
+STACK_MIN = 3
 SKIP_RECENT_DAYS = 30       # do not re-check a business attempted within this many days
 VERIFIED_WITHIN_M = 5       # Google place this close to the old pin = old pin was right
 MAX_CONSECUTIVE_ERRORS = 5
@@ -65,8 +66,10 @@ def stack_key(lat, lng):
 
 def distance_m(a, b):
     """Haversine distance in metres between two (lat, lng) pairs."""
-    lat1, lon1, lat2, lon2 = map(math.radians, (float(a[0]), float(a[1]), float(b[0]), float(b[1])))
-    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
+    lat1, lon1, lat2, lon2 = map(math.radians, (float(
+        a[0]), float(a[1]), float(b[0]), float(b[1])))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * \
+        math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2
     return 2 * 6371000.0 * math.asin(math.sqrt(h))
 
 
@@ -91,7 +94,8 @@ def classify_suspect(row, stack_size):
 def build_suspects(rows):
     """rows: iterable of dicts/tuples (SUSPECT_COLS). Returns (suspects, stack_sizes)."""
     rows = [_as_dict(r) for r in rows]
-    sizes = Counter(stack_key(r["latitude"], r["longitude"]) for r in rows if _has_coords(r))
+    sizes = Counter(stack_key(r["latitude"], r["longitude"])
+                    for r in rows if _has_coords(r))
     suspects = []
     for r in rows:
         if not _has_coords(r):
@@ -100,7 +104,8 @@ def build_suspects(rows):
         reason = classify_suspect(r, n)
         if reason:
             suspects.append({**r, "reason": reason, "stackSize": n})
-    suspects.sort(key=lambda r: (-r["stackSize"], str(r["businessID"])))   # biggest stacks first
+    # biggest stacks first
+    suspects.sort(key=lambda r: (-r["stackSize"], str(r["businessID"])))
     return suspects, sizes
 
 
@@ -235,7 +240,8 @@ def _update_registry(cur, biz, lat, lng, meta, status):
              AND (coordSource IS NULL OR coordSource <> 'manual')
              AND (matchStatus IS NULL OR matchStatus NOT IN ('approved', 'rejected'))""",
         (lat, lng, meta.get("coord_source") or "places", meta.get("place_id"),
-         meta.get("place_id_kind"), meta.get("score"), status, meta.get("resolve_key"),
+         meta.get("place_id_kind"), meta.get(
+             "score"), status, meta.get("resolve_key"),
          biz["businessID"]),
     )
     return cur.rowcount
@@ -263,11 +269,13 @@ def _move_pin(cur, service, biz, lat, lng):
             """UPDATE geospatial_logs SET latitude = %s, longitude = %s, businessID = %s
                WHERE businessID IS NULL AND barangayID = %s AND detectedName = %s
                  AND flagColor <> 'Red'""",
-            (lat, lng, biz["businessID"], biz["barangayID"], str(biz["businessName"]).strip()),
+            (lat, lng, biz["businessID"], biz["barangayID"],
+             str(biz["businessName"]).strip()),
         )
     # Keeps colour in sync and seeds a pin if the business has none yet
     service._sync_flag_color(
-        cur, biz["barangayID"], biz["businessName"], biz.get("applicationStatus") or "Active",
+        cur, biz["barangayID"], biz["businessName"], biz.get(
+            "applicationStatus") or "Active",
         lat, lng, biz.get("businessAddress"), business_id=biz["businessID"],
     )
 
@@ -283,7 +291,8 @@ def preview():
         _ensure_history_table(cur)
         rows = _load_rows(cur)
         recent = _recent_ids(cur)
-        registry_count = _count(cur, "SELECT COUNT(*) AS n FROM official_registry")
+        registry_count = _count(
+            cur, "SELECT COUNT(*) AS n FROM official_registry")
         pin_count = _count(
             cur,
             "SELECT COUNT(*) AS n FROM geospatial_logs WHERE latitude IS NOT NULL AND longitude IS NOT NULL",
@@ -336,7 +345,8 @@ def _run(limit):
             cur.close()
 
         suspects, _sizes = build_suspects(rows)
-        todo = [s for s in suspects if s["businessID"] not in recent][: int(limit)]
+        todo = [s for s in suspects if s["businessID"]
+                not in recent][: int(limit)]
         total = len(todo)
         if total == 0:
             msg = (
@@ -346,8 +356,10 @@ def _run(limit):
             _emit(hub, "completed", 100, 0, 0, 0, 0, msg)
             return {"total": 0, "message": msg}, None
 
-        _emit(hub, "running", 0, 0, 0, 0, total, f"Re-verifying {total} pins against Google Places...")
-        brgy_name_by_id = {v: k for k, v in service._load_barangay_lookup().items()}
+        _emit(hub, "running", 0, 0, 0, 0, total,
+              f"Re-verifying {total} pins against Google Places...")
+        brgy_name_by_id = {v: k for k,
+                           v in service._load_barangay_lookup().items()}
 
         counts = Counter()
         consecutive_errors = 0
@@ -369,22 +381,28 @@ def _run(limit):
                     break
 
                 old = (biz["latitude"], biz["longitude"])
-                new = (float(lat), float(lng)) if lat is not None and lng is not None else None
+                new = (float(lat), float(lng)
+                       ) if lat is not None and lng is not None else None
                 cur = mysql.connection.cursor()
                 try:
-                    conflict = _claimed_by_other(cur, meta.get("place_id"), biz["businessID"]) if new else False
-                    ok_brgy = _barangay_ok(lat, lng, biz["barangayID"]) if new else True
-                    outcome = plan_outcome(old, new, meta, conflict=conflict, barangay_ok=ok_brgy)
+                    conflict = _claimed_by_other(cur, meta.get(
+                        "place_id"), biz["businessID"]) if new else False
+                    ok_brgy = _barangay_ok(
+                        lat, lng, biz["barangayID"]) if new else True
+                    outcome = plan_outcome(
+                        old, new, meta, conflict=conflict, barangay_ok=ok_brgy)
 
                     if outcome == "verified":
-                        _update_registry(cur, biz, lat, lng, meta, meta.get("match_status") or "auto")  # old pin was right
+                        _update_registry(cur, biz, lat, lng, meta, meta.get(
+                            "match_status") or "auto")  # old pin was right
                     elif outcome in ("moved", "review"):
                         status = "auto" if outcome == "moved" else "review"
                         if _update_registry(cur, biz, lat, lng, meta, status):
                             _move_pin(cur, service, biz, lat, lng)
                         else:
                             outcome = "unresolved"                                # locked meanwhile
-                    _log_attempt(cur, biz, outcome, new=new, place_id=meta.get("place_id"), score=meta.get("score"))
+                    _log_attempt(cur, biz, outcome, new=new, place_id=meta.get(
+                        "place_id"), score=meta.get("score"))
                     mysql.connection.commit()
                 finally:
                     cur.close()
@@ -399,23 +417,27 @@ def _run(limit):
                 counts["error"] += 1
                 consecutive_errors += 1
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                    raise RuntimeError("Too many consecutive errors; see server log.")
+                    raise RuntimeError(
+                        "Too many consecutive errors; see server log.")
 
             if (idx + 1) % 5 == 0 or idx < 5 or idx == total - 1:
                 moved = counts["moved"] + counts["review"]
-                failed = counts["unresolved"] + counts["conflict"] + counts["error"]
+                failed = counts["unresolved"] + \
+                    counts["conflict"] + counts["error"]
                 _emit(hub, "running", min(99, int((idx + 1) / total * 95)), moved, failed,
                       counts["verified"], total,
                       f"Checked {idx + 1}/{total}: {counts['moved']} moved, {counts['review']} to review, "
                       f"{counts['verified']} already right, {failed} not found")
 
         moved_total = counts["moved"] + counts["review"]
-        failed_total = counts["unresolved"] + counts["conflict"] + counts["error"]
+        failed_total = counts["unresolved"] + \
+            counts["conflict"] + counts["error"]
         msg = (f"Re-verify done: {counts['moved']} pins moved, {counts['review']} sent to review, "
                f"{counts['verified']} already correct, {failed_total} could not be matched.")
         if budget_hit:
             msg += " Google Places budget reached; run again later to continue (progress is saved)."
-        _emit(hub, "completed", 100, moved_total, failed_total, counts["verified"], total, msg, budget_hit=budget_hit)
+        _emit(hub, "completed", 100, moved_total, failed_total,
+              counts["verified"], total, msg, budget_hit=budget_hit)
         hub.publish_to_admins({"type": "registry_updated"})
         return {"total": total, **dict(counts), "budget_hit": budget_hit, "message": msg}, None
 
