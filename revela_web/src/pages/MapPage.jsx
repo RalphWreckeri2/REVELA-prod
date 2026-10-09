@@ -1607,7 +1607,7 @@ function MapCanvas({
               </div>
               <button
                 type="button"
-                onClick={() => setSnapProgress(null)}
+                onClick={() => onCloseSnapProgress && onCloseSnapProgress()}
                 style={{
                   marginLeft: "auto",
                   background: "rgba(255,255,255,0.08)",
@@ -1651,7 +1651,7 @@ function MapCanvas({
               {snapProgress.stage === 'completed' && (
                 <button
                   type="button"
-                  onClick={() => setSnapProgress(null)}
+                  onClick={() => onCloseSnapProgress && onCloseSnapProgress()}
                   style={{
                     marginTop: 6,
                     padding: "8px 16px",
@@ -2255,12 +2255,20 @@ export default function MapPage() {
     return () => window.removeEventListener("revela:reconcile-progress", handleRec);
   }, [fetchFlags]);
 
+  // Track whether the user manually closed the modal while a snap job was still running.
+  // SSE events keep firing from the backend; we must not reopen the overlay after dismissal.
+  const snapDismissedRef = useRef(false);
+
   useEffect(() => {
     let dismissTimer = null;
     const handleSnap = (e) => {
       const d = e.detail;
+      // Don't reopen the overlay if the user already dismissed it mid-run
+      if (snapDismissedRef.current && d?.stage !== 'completed') return;
+      if (d?.stage !== 'completed') snapDismissedRef.current = false;
       setSnapProgress(d);
       if (d?.stage === "completed") {
+        snapDismissedRef.current = false;
         fetchFlags(true);
         fetchPlacesUsage();
         if (dismissTimer) clearTimeout(dismissTimer);
@@ -3395,7 +3403,7 @@ export default function MapPage() {
               detectionProgress={detectionProgress}
               reconcileProgress={reconcileProgress}
               snapProgress={snapProgress}
-              onCloseSnapProgress={() => setSnapProgress(null)}
+              onCloseSnapProgress={() => { snapDismissedRef.current = true; setSnapProgress(null); }}
               elapsedTime={elapsedTime}
               satellite={satellite}
               clusters={clusters}

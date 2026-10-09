@@ -23,5 +23,9 @@ COPY . .
 
 EXPOSE 5000
 
-# Run with Gunicorn on port 5000 with 1 worker and multiple threads so in-process SSE pub/sub works across all connections
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "8", "app:create_app()"]
+# 1 worker + 8 threads: keeps the in-process SSE pub/sub (hub.py) on a single address space so
+# background threads and SSE streams share the same queue. Long-lived SSE streams hold a thread
+# each; 8 threads comfortably handles the single admin user + spare capacity for regular API calls.
+# If multiple Railway replicas or high SSE concurrency is ever needed, migrate hub.py to Redis pub/sub.
+# --timeout 120 prevents Gunicorn from killing threads during long snap/detection runs.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "8", "--timeout", "120", "app:create_app()"]

@@ -1384,6 +1384,19 @@ def snap_unresolved_pins(limit: int = 200):
             if stored_key and stored_key == curr_key:
                 # Previously attempted with exact same data → cached failure, skip
                 cached += 1
+                # Still emit progress so the bar advances during cache-heavy batches
+                if (idx + 1) % 5 == 0 or idx < 5 or idx == total - 1:
+                    pct = min(99, int(((idx + 1) / max(total, 1)) * 95))
+                    hub.publish_to_admins({
+                        "type": "snap_progress",
+                        "stage": "running",
+                        "percentage": pct,
+                        "snapped": snapped,
+                        "failed": failed,
+                        "cached": cached,
+                        "total": total,
+                        "status": f"Processing {idx + 1}/{total}... ({snapped} snapped, {failed} unresolvable, {cached} cached)"
+                    })
                 continue
 
             # Places can still resolve pins after the Geocoding budget is exhausted.
