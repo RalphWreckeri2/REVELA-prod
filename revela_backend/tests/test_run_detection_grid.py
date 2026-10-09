@@ -24,6 +24,7 @@ class RunDetectionGridTests(unittest.TestCase):
         service._places_run_state.query_kind = "initial"
         service._places_run_state.started_at = None
         service._places_run_state.work_budget_exhausted = False
+        service._places_run_state.work_budget_reason = None
 
     @patch("api.flags.service._fetch_point_results_once")
     def test_saturated_nearby_search_refines_dense_area(self, fetch_once):
@@ -264,6 +265,30 @@ class RunDetectionGridTests(unittest.TestCase):
             )
             self.assertLessEqual(nearest, child_radius)
 
+    @patch("api.flags.service._fetch_point_results_once")
+    def test_saturated_edge_cell_skips_children_outside_municipality(self, fetch_once):
+        root = (13.9450, 121.1020, service.DETECTION_RADIUS_M)
+        children = service._adaptive_nearby_centers(*root)
+        intersecting_children = [
+            child for child in children
+            if service._nearby_circle_intersects_municipality(*child)
+        ]
+        fetch_once.side_effect = [
+            ([{"place_id": f"root-{index}"} for index in range(60)], True),
+            *[([], True) for _ in intersecting_children],
+        ]
+
+        results, complete = service._fetch_point_results(*root)
+
+        self.assertEqual(len(intersecting_children), 2)
+        self.assertTrue(complete)
+        self.assertEqual(len(results), 60)
+        self.assertEqual(fetch_once.call_count, 1 + len(intersecting_children))
+        self.assertTrue(all(
+            service._nearby_circle_intersects_municipality(*call.args)
+            for call in fetch_once.call_args_list[1:]
+        ))
+
     @patch("api.flags.service.mysql")
     @patch("api.flags.service.reserve_usage_slot", return_value=(True, None))
     @patch("api.flags.service.http.post")
@@ -492,6 +517,20 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(len(results), 20)
         fetch_once.assert_called_once()
         self.assertTrue(service._places_run_state.work_budget_exhausted)
+        self.assertEqual(
+            service._places_run_state.work_budget_reason, "request_limit"
+        )
+
+    def test_work_budget_reports_elapsed_time_limit(self):
+        service._places_run_state.started_at = 10.0
+
+        with patch.object(service.time, "monotonic", return_value=100.0), \
+                patch.object(service, "RUN_DETECTION_MAX_SECONDS", 90):
+            self.assertTrue(service._detection_work_budget_reached())
+
+        self.assertEqual(
+            service._places_run_state.work_budget_reason, "time_limit"
+        )
 
     @patch("api.flags.service._fetch_legacy_point_results_once")
     def test_legacy_mode_remains_the_default_fallback(self, fetch_legacy):

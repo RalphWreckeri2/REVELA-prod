@@ -16,6 +16,7 @@ import json
 from geopy.distance import geodesic
 from app import mysql
 from shapely import prepare
+from shapely.affinity import scale
 from shapely.geometry import shape, Point
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.notifications import hub
@@ -373,6 +374,14 @@ _BOUNDARY_GEOJSON = {
 _MUNICIPALITY_BOUNDARY = shape(_BOUNDARY_GEOJSON)
 _MUNICIPALITY_WITH_TOLERANCE = _MUNICIPALITY_BOUNDARY.buffer(0.0005)
 prepare(_MUNICIPALITY_WITH_TOLERANCE)
+_METERS_PER_DEGREE_LAT = 111_320.0
+_METERS_PER_DEGREE_LNG = _METERS_PER_DEGREE_LAT * math.cos(math.radians(13.98))
+_MUNICIPALITY_WITH_TOLERANCE_METERS = scale(
+    _MUNICIPALITY_WITH_TOLERANCE,
+    xfact=_METERS_PER_DEGREE_LNG,
+    yfact=_METERS_PER_DEGREE_LAT,
+    origin=(0, 0),
+)
 
 
 def _within_municipality(lat: float, lng: float) -> bool:
@@ -931,12 +940,18 @@ def _detection_work_budget_reached():
         return False
     calls = getattr(_places_run_state, "calls", {})
     request_count = calls.get("legacy_nearby", 0) + calls.get("new_nearby", 0)
+    elapsed_seconds = time.monotonic() - started_at
     reached = (
-        time.monotonic() - started_at >= RUN_DETECTION_MAX_SECONDS
+        elapsed_seconds >= RUN_DETECTION_MAX_SECONDS
         or request_count >= RUN_DETECTION_MAX_REQUESTS
     )
     if reached:
         _places_run_state.work_budget_exhausted = True
+        _places_run_state.work_budget_reason = (
+            "time_limit"
+            if elapsed_seconds >= RUN_DETECTION_MAX_SECONDS
+            else "request_limit"
+        )
     return reached
 
 
@@ -1197,6 +1212,17 @@ def _adaptive_nearby_centers(lat, lng, radius_m):
     ]
 
 
+def _nearby_circle_intersects_municipality(lat, lng, radius_m):
+    center = Point(
+        lng * _METERS_PER_DEGREE_LNG,
+        lat * _METERS_PER_DEGREE_LAT,
+    )
+    return (
+        _MUNICIPALITY_WITH_TOLERANCE_METERS.distance(center)
+        <= radius_m + 10
+    )
+
+
 def _fetch_point_results(lat, lng, radius_m):
     """
     Fetch one grid cell and deduplicate overlapping parent/child results by place ID.
@@ -1240,6 +1266,10 @@ def _fetch_point_results_adaptive(lat, lng, radius_m, depth, query_budget):
     for child_lat, child_lng, child_radius in _adaptive_nearby_centers(
         lat, lng, radius_m
     ):
+        if not _nearby_circle_intersects_municipality(
+            child_lat, child_lng, child_radius
+        ):
+            continue
         if query_budget["remaining"] <= 0 or _detection_work_budget_reached():
             refined_complete = False
             break
@@ -1407,9 +1437,14 @@ def _load_registry():
     return rows
 
 
-def _log_detection_summary(run_id, state, counters, stop_reason=None):
+def _log_detection_summary(
+    run_id, state, counters, stop_reason=None, elapsed=None
+):
     calls = getattr(_places_run_state, "calls", {})
     state["api_errors"] = getattr(_places_run_state, "api_errors", 0)
+    state["work_budget_reason"] = getattr(
+        _places_run_state, "work_budget_reason", None
+    )
     try:
         usage = get_places_usage_today()
     except Exception as exc:
@@ -1424,6 +1459,10 @@ def _log_detection_summary(run_id, state, counters, stop_reason=None):
         f"new_flags={counters['new_flags']} api_error={state['api_errors']} "
         f"quota_stop={stop_reason or 'none'} "
         f"api_error_stop={state.get('api_error_stop', False)} "
+        f"work_budget_stop={state.get('work_budget_stop', False)} "
+        f"work_budget_reason={state['work_budget_reason'] or 'none'} "
+        f"elapsed_seconds={(elapsed or {}).get('elapsed_seconds', 0)} "
+        f"scan_elapsed_seconds={(elapsed or {}).get('scan_elapsed_seconds', 0)} "
         f"grid_completed={state['skipped_points'] + len(state['done_keys'])}/"
         f"{state['total_points']} grid_incomplete={state['incomplete_points']} "
         f"results={getattr(_places_run_state, 'results_received', 0)} "
@@ -1667,6 +1706,7 @@ def run_detection(user_id=None):
     _places_run_state.query_kind = "initial"
     _places_run_state.started_at = None
     _places_run_state.work_budget_exhausted = False
+    _places_run_state.work_budget_reason = None
 
     quota_info = get_detection_quota_info()
     if quota_info.get("is_limit_reached"):
@@ -1883,7 +1923,10 @@ def run_detection(user_id=None):
         done_total = state["skipped_points"] + len(state["done_keys"])
         terminal_gaps = _grid_scan_has_terminal_gaps(state)
         scan_terminal = done_total >= state["total_points"] or terminal_gaps
-        places_usage = _log_detection_summary(run_id, state, counters)
+        elapsed = _detection_elapsed_metrics(request_started_at)
+        places_usage = _log_detection_summary(
+            run_id, state, counters, elapsed=elapsed
+        )
         print(
             f"[Run Detection] grid summary completed={done_total}/{state['total_points']} "
             f"incomplete_dense_or_failed_points={state['incomplete_points']} "
@@ -1973,7 +2016,10 @@ def run_detection(user_id=None):
                 "api_errors": getattr(_places_run_state, "api_errors", 0),
                 "api_error_stop": state["api_error_stop"],
                 "work_budget_stop": state.get("work_budget_stop", False),
-                **_detection_elapsed_metrics(request_started_at),
+                "work_budget_reason": state["work_budget_reason"],
+                "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
+                "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
+                **elapsed,
                 "quota_stop": None,
             },
             "quota_stop": None,
@@ -1984,7 +2030,8 @@ def run_detection(user_id=None):
     except PlacesBudgetExceeded as be:
         done_total = state["skipped_points"] + len(state["done_keys"])
         places_usage = _log_detection_summary(
-            run_id, state, counters, stop_reason=str(be)
+            run_id, state, counters, stop_reason=str(be),
+            elapsed=_detection_elapsed_metrics(request_started_at),
         )
         update_detection_run_status(
             run_id, "partial",
@@ -2021,6 +2068,11 @@ def run_detection(user_id=None):
                 "api_errors": getattr(_places_run_state, "api_errors", 0),
                 "api_error_stop": state["api_error_stop"],
                 "work_budget_stop": state.get("work_budget_stop", False),
+                "work_budget_reason": getattr(
+                    _places_run_state, "work_budget_reason", None
+                ),
+                "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
+                "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
                 **_detection_elapsed_metrics(request_started_at),
                 "quota_stop": be.reason,
             },

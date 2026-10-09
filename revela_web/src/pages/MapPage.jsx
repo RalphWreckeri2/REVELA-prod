@@ -2686,6 +2686,17 @@ export default function MapPage() {
       const attemptedPoints = Number(result.attempted_points ?? result.completed_points ?? 0);
       const totalPoints = Number(result.total_points ?? 0);
       const incompletePoints = Number(result.incomplete_points ?? 0);
+      const runSummary = result.run_summary ?? {};
+      const initialRequests = Number(runSummary.initial_requests ?? 0);
+      const adaptiveRequests = Number(runSummary.adaptive_requests ?? 0);
+      const requestCount = initialRequests + adaptiveRequests;
+      const partialStopDetails = runSummary.work_budget_reason === "time_limit"
+        ? `The ${runSummary.work_budget_max_seconds}-second scan limit was reached after ${runSummary.scan_elapsed_seconds} seconds and ${requestCount} Nearby requests.`
+        : runSummary.work_budget_reason === "request_limit"
+          ? `The ${runSummary.work_budget_max_requests}-request scan limit was reached after ${runSummary.scan_elapsed_seconds} seconds.`
+          : runSummary.api_error_stop
+            ? "A Places API error stopped the remaining grid cells."
+            : "The scan stopped before all grid cells were completed.";
       const remainingScans = result.quota?.remaining_this_month ?? 0;
       const resetsOn = result.quota?.resets_on || "the 1st of next month";
 
@@ -2716,7 +2727,7 @@ export default function MapPage() {
               <div style="font-size: 12.5px; color: #92400e; background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 14px;">
                 ${hasCoverageGaps
             ? "All grid points were attempted. This run counts toward the monthly scan limit; repeating the same search settings may hit the same result caps."
-            : "Progress is saved. Run Detection again to continue; this partial run does not use a monthly scan."}
+            : `${partialStopDetails} Progress is saved; this partial run does not use a monthly scan.`}
               </div>
             ` : ""}
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
