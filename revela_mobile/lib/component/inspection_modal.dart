@@ -6,6 +6,7 @@ import 'dart:io';
 import '../service/inspection_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/image_compressor.dart';
+import '../utils/street_view_launcher.dart';
 
 class InspectionModal extends StatefulWidget {
   final InspectionTask task;
@@ -143,6 +144,33 @@ class _InspectionModalState extends State<InspectionModal> {
       ).showSnackBar(SnackBar(content: Text('Submit failed: $e')));
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _openStreetView() async {
+    final latitude = widget.task.latitude;
+    final longitude = widget.task.longitude;
+    if (latitude == null || longitude == null ||
+        !latitude.isFinite || !longitude.isFinite) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This pin does not have a valid location.')),
+      );
+      return;
+    }
+
+    try {
+      final opened = await launchGoogleStreetView(latitude, longitude);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open Street View in Google Maps.')),
+        );
+      }
+    } catch (error) {
+      debugPrint('Could not open Google Maps Street View: $error');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open Street View in Google Maps.')),
+      );
     }
   }
 
@@ -500,6 +528,20 @@ class _InspectionModalState extends State<InspectionModal> {
                 ],
               ),
             ),
+
+            if (widget.task.latitude != null &&
+                widget.task.longitude != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                    onPressed: _openStreetView,
+                    icon: const Icon(Icons.streetview_rounded),
+                    label: const Text('Open Street View in Google Maps'),
+                  ),
+                ),
+              ),
 
             const Divider(height: 32),
 

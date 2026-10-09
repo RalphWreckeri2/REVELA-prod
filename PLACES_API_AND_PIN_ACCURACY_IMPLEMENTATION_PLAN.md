@@ -279,6 +279,8 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
 
 **Map modal camera behavior:** Opening a pin remembers the previous map center and zoom. Closing its business-information modal restores that camera position. The map's React `GoogleMap` props remain at their initial center/zoom rather than being derived from `selectedFlag`; marker selection pans/zooms imperatively, so clearing selection on close cannot reset the controlled map props and override camera restoration.
 
+**Street View pin review:** The web business-detail modal offers an opt-in embedded Street View panorama near the pin and reports when imagery is unavailable, with a Google Maps fallback link. The mobile map's inspection and reported-flag details open Google Maps Street View at the selected coordinates. Street View is user-triggered; enable and restrict the required Maps JavaScript API for web, and review its separate Maps Platform usage/billing in Cloud Console.
+
 ### Phase 3 — Implement Nearby Search (New) behind a feature switch
 
 1. Keep `RUN_DETECTION_NEARBY_API=legacy` until staging approval. The backend switch and initial New Nearby client are implemented; verify the exact request contract and quota behavior in tests before enabling.

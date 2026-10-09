@@ -496,8 +496,80 @@ function normalizeFlag(flag) {
 }
 
 // â”€â”€ Flag Detail Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function StreetViewPanel({ latitude, longitude }) {
+  const panoramaElementRef = useRef(null);
+  const [status, setStatus] = useState("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    let panorama = null;
+    const maps = window.google?.maps;
+
+    if (!maps?.StreetViewService || !panoramaElementRef.current) {
+      setStatus("error");
+      return undefined;
+    }
+
+    const service = new maps.StreetViewService();
+    service.getPanorama(
+      {
+        location: { lat: latitude, lng: longitude },
+        radius: 100,
+      },
+      (data, resultStatus) => {
+        if (cancelled) return;
+
+        if (resultStatus !== maps.StreetViewStatus.OK || !data?.location?.pano) {
+          setStatus(resultStatus === maps.StreetViewStatus.ZERO_RESULTS ? "unavailable" : "error");
+          return;
+        }
+
+        panorama = new maps.StreetViewPanorama(panoramaElementRef.current, {
+          pano: data.location.pano,
+          visible: true,
+          addressControl: true,
+          linksControl: true,
+          fullscreenControl: true,
+        });
+        setStatus("ready");
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      panorama?.setVisible(false);
+    };
+  }, [latitude, longitude]);
+
+  return (
+    <div>
+      <div
+        ref={panoramaElementRef}
+        aria-label="Google Street View panorama"
+        style={{
+          width: "100%",
+          height: 260,
+          borderRadius: 12,
+          background: "var(--color-surface)",
+        }}
+      />
+      {status !== "ready" && (
+        <div
+          role={status === "error" ? "alert" : "status"}
+          style={{ color: "var(--color-muted)", fontSize: 13, marginTop: 8 }}
+        >
+          {status === "loading" && "Checking for Street View imagery…"}
+          {status === "unavailable" && "Street View imagery is not available near this pin."}
+          {status === "error" && "Street View could not be loaded. Check the Maps API configuration."}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, onReviewLocation, isAdmin, actionLoading, isClosing }) {
   const [showMoreActions, setShowMoreActions] = useState(false);
+  const [showStreetView, setShowStreetView] = useState(false);
   const fc = getFlagColor(flag.color);
 
   const canShowDispatchButton = (() => {
@@ -544,6 +616,8 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
         style={{
           ...styles.detailModal,
           width: "min(100%, 420px)",
+          maxHeight: "90vh",
+          overflowY: "auto",
           borderRadius: 16,
           background: "var(--color-modal-bg)",
           boxShadow: "0 20px 50px rgba(0, 0, 0, 0.4)",
@@ -604,6 +678,36 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             <div>{sourceLabel} <span style={{ color: "var(--color-muted)" }}>&bull; {flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
           </div>
         </div>
+
+        {flag.latitude != null && flag.longitude != null && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <button
+              type="button"
+              className="secondary-btn"
+              aria-expanded={showStreetView}
+              onClick={() => setShowStreetView(value => !value)}
+              style={{ width: "100%", minHeight: 44 }}
+            >
+              <Icon.MapPin size={16} /> {showStreetView ? "Hide Street View" : "View Street View"}
+            </button>
+            {showStreetView && (
+              <>
+                <StreetViewPanel
+                  latitude={Number(flag.latitude)}
+                  longitude={Number(flag.longitude)}
+                />
+                <a
+                  href={`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${encodeURIComponent(`${flag.latitude},${flag.longitude}`)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ color: "var(--color-muted)", fontSize: 13, textAlign: "center" }}
+                >
+                  Open Street View in Google Maps
+                </a>
+              </>
+            )}
+          </div>
+        )}
 
         {isAdmin && flag.matchStatus === "review" && flag.businessID != null && (
           <button
