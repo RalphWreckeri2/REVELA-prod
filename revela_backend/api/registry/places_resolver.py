@@ -16,10 +16,10 @@ Environment variables (all optional unless noted)
   PLACES_BIAS_RADIUS_M      default 8000
   PLACES_AUTO_ACCEPT        default 0.80   name-similarity >= this: accept as 'auto'
   PLACES_REVIEW_MIN         default 0.55   between REVIEW_MIN and AUTO_ACCEPT: 'review'
-  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search Pro budget (default 2500 / 75). Free cap is 5,000/mo
+  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search budget (default 2500/month, 500/day)
                                   PER SKU: if api/flags/service.py also calls Text Search, the SUM of both
                                   caps must stay below 5,000.
-  PD_MONTHLY_CAP / PD_DAILY_CAP   Place Details (refresh) budget (default 3000 / 90)
+  PD_MONTHLY_CAP                  Place Details (refresh) budget (default 3000/month)
 
 Scheduled maintenance (cron / task scheduler), inside an app context:
     from api.registry.places_resolver import refresh_expired_coords, purge_expired_coords
@@ -52,9 +52,8 @@ BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
 REVIEW_MIN = float(os.getenv("PLACES_REVIEW_MIN", "0.55"))
 TS_MONTHLY_CAP = int(os.getenv("TS_MONTHLY_CAP", "2500"))
-TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "75"))
+TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "500"))
 PD_MONTHLY_CAP = int(os.getenv("PD_MONTHLY_CAP", "3000"))
-PD_DAILY_CAP = int(os.getenv("PD_DAILY_CAP", "90"))
 REFRESH_AFTER_DAYS = 20
 PURGE_AFTER_DAYS = 28
 
@@ -73,6 +72,7 @@ def reset_run_state():
     _api_state.quota_halted = False
     _api_state.last_error = None
     _api_state.outcome = None
+    _api_state.quota_reason = None
 
 
 def get_places_call_usage():
@@ -110,6 +110,20 @@ def _usage_count(row):
     if not row:
         return 0
     return int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0)
+
+
+def get_text_search_quota_status():
+    usage = get_places_call_usage()["text_search"]
+    return {
+        "used": usage["month"],
+        "cap": TS_MONTHLY_CAP,
+        "remaining": max(0, TS_MONTHLY_CAP - usage["month"]),
+        "monthly_quota_exceeded": usage["month"] >= TS_MONTHLY_CAP,
+        "used_today": usage["day"],
+        "daily_cap": TS_DAILY_CAP,
+        "daily_remaining": max(0, TS_DAILY_CAP - usage["day"]),
+        "daily_quota_exceeded": usage["day"] >= TS_DAILY_CAP,
+    }
 
 
 def compute_resolve_key(name, address, barangay_id):
@@ -207,8 +221,8 @@ _MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
 _table_ready = False
 
 
-def reserve_call(prefix, monthly_cap, daily_cap):
-    """Atomically take one call from the monthly + daily budget (same table/pattern as
+def reserve_call(prefix, monthly_cap, daily_cap=None):
+    """Atomically take a monthly and optional daily slot; always persist daily usage (same table/pattern as
     service._reserve_geocode_call). Returns False when over budget or on any DB problem (fail closed).
     Note: like the existing helper, this commits on the shared request connection."""
     global _table_ready
@@ -230,10 +244,12 @@ def reserve_call(prefix, monthly_cap, daily_cap):
         cur.execute(f"UPDATE places_api_usage SET requestCount = requestCount + 1 "
                     f"WHERE usageDate = {_MONTH_KEY} AND kind = %s AND requestCount < %s", (mk, monthly_cap))
         month_ok = cur.rowcount == 1
-        day_ok = False
+        day_ok = True
         if month_ok:
             cur.execute("UPDATE places_api_usage SET requestCount = requestCount + 1 "
-                        "WHERE usageDate = CURDATE() AND kind = %s AND requestCount < %s", (dk, daily_cap))
+                        "WHERE usageDate = CURDATE() AND kind = %s" +
+                        (" AND requestCount < %s" if daily_cap is not None else ""),
+                        (dk, daily_cap) if daily_cap is not None else (dk,))
             day_ok = cur.rowcount == 1
             if not day_ok:
                 cur.execute(f"UPDATE places_api_usage SET requestCount = requestCount - 1 "
@@ -241,8 +257,12 @@ def reserve_call(prefix, monthly_cap, daily_cap):
         mysql.connection.commit()
         if not month_ok:
             print(f"[places_resolver budget] monthly cap reached for {prefix} ({monthly_cap})")
+            _api_state.quota_reason = "monthly_quota_exceeded"
         elif not day_ok:
             print(f"[places_resolver budget] daily cap reached for {prefix} ({daily_cap})")
+            _api_state.quota_reason = "daily_quota_exceeded"
+        else:
+            _api_state.quota_reason = None
         return month_ok and day_ok
     except Exception as e:
         mysql.connection.rollback()
@@ -296,7 +316,7 @@ def _places_request(label, request, reserve):
     max_retries = 3
     for attempt in range(max_retries + 1):
         if getattr(_api_state, "quota_halted", False):
-            _api_state.outcome = "skipped_quota"
+            _api_state.outcome = getattr(_api_state, "quota_reason", None) or "skipped_quota"
             _api_state.last_error = "Places quota exhausted for this run"
             return None
         with _places_request_lock:
@@ -305,8 +325,9 @@ def _places_request(label, request, reserve):
                 time.sleep(random.uniform(0.3, 0.5) - elapsed)
             if not reserve():
                 _api_state.quota_halted = True
-                _api_state.outcome = "skipped_quota"
-                _api_state.last_error = f"{label} daily/monthly app quota reached"
+                reason = getattr(_api_state, "quota_reason", None) or "skipped_quota"
+                _api_state.outcome = reason
+                _api_state.last_error = f"{label} {reason.replace('_', ' ')}"
                 print(f"[places_resolver] {label} not sent: daily/monthly app quota reached")
                 return None
             try:
@@ -352,7 +373,6 @@ def _places_request(label, request, reserve):
 def _text_search(name, address, barangay, post=requests.post, reserve=None):
     _api_state.last_error = None
     _api_state.outcome = None
-    _api_state.quota_halted = False
     parts = [str(p).strip() for p in (name, address, barangay, MUNICIPALITY, PROVINCE)
              if p is not None and str(p).strip() and str(p).strip().lower() != "nan"]
     body = {"textQuery": ", ".join(parts), "regionCode": "PH", "pageSize": 5}
@@ -421,11 +441,16 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     """
     _api_state.last_error = None
     _api_state.outcome = None
-    _api_state.quota_halted = False
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return None, None, {"reason": "api_error", "api_error": "Google Maps API key is not configured"}
     if _halted:
         return None, None, {"reason": "api_error", "api_error": str(_halted)}
+    if getattr(_api_state, "quota_halted", False):
+        return None, None, {
+            "reason": getattr(_api_state, "quota_reason", None) or "skipped_quota",
+            "api_error": getattr(_api_state, "last_error", None),
+            "budget_exhausted": True,
+        }
     # 1. Compute resolveKey for caching
     b_ref = barangay_id if barangay_id is not None else barangay
     current_key = (
@@ -499,11 +524,14 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         reserve=lambda: reserve_call("imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP),
     )
     call_outcome = getattr(_api_state, "outcome", None)
-    if call_outcome in ("skipped_quota", "api_error"):
+    if call_outcome in ("skipped_quota", "monthly_quota_exceeded",
+                        "daily_quota_exceeded", "api_error"):
         return None, None, {
             "reason": call_outcome,
             "api_error": getattr(_api_state, "last_error", None),
-            "budget_exhausted": call_outcome == "skipped_quota",
+            "budget_exhausted": call_outcome in (
+                "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
+            ),
         }
     discarded_rejected = False
     seen_places = len(data.get("places", []) or [])
@@ -669,9 +697,11 @@ def refresh_expired_coords(limit=500):
                 "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
                 "X-Goog-FieldMask": "location",
             }),
-            lambda: reserve_call("imp_pd", PD_MONTHLY_CAP, PD_DAILY_CAP),
+            lambda: reserve_call("imp_pd", PD_MONTHLY_CAP),
         )
-        if data is None and getattr(_api_state, "outcome", None) == "skipped_quota":
+        if data is None and getattr(_api_state, "outcome", None) in (
+            "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
+        ):
             break
         loc = (data or {}).get("location")
         if not loc:

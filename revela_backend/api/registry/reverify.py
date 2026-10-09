@@ -357,7 +357,7 @@ def _emit(hub, stage, pct, moved, failed, same, total, status, error=None, **ext
 
 
 def _log_run_summary(places_resolver, counts):
-    verified = counts["verified"] + counts["moved"] + counts["review"]
+    verified = counts["verified"]
     no_match = counts["unresolved"] + counts["conflict"]
     try:
         usage = places_resolver.get_places_call_usage()
@@ -365,7 +365,8 @@ def _log_run_summary(places_resolver, counts):
         details = usage["details"]
         print(
             "[reverify] summary "
-            f"verified={verified} no_match={no_match} "
+            f"verified={verified} moved={counts['moved']} review={counts['review']} "
+            f"no_match={no_match} "
             f"skipped_quota={counts['skipped_quota']} api_error={counts['api_error']} "
             f"TextSearch calls today={text_search['day']} month={text_search['month']}; "
             f"PlaceDetails calls today={details['day']} month={details['month']}"
@@ -453,9 +454,13 @@ def _run(limit):
                     counts["api_error"] += 1
                     abort_msg = f"Google Places is blocked: {halted}"
                     break
-                if lat is None and meta.get("reason") == "skipped_quota":
+                if lat is None and meta.get("reason") in (
+                    "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
+                ):
                     budget_hit = True
                     counts["skipped_quota"] += total - idx
+                    if meta.get("reason") == "monthly_quota_exceeded":
+                        counts["monthly_quota_exceeded"] += 1
                     break
                 # Temporary API trouble (HTTP 4xx/5xx, network): not a "no match" -> retry next run.
                 if lat is None and meta.get("reason") == "api_error":

@@ -558,6 +558,7 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
 def upload_registry(file, ext: str):
     """Parse CSV/Excel → geocode → insert into OFFICIAL_REGISTRY.
     Returns (summary_dict, error_string)."""
+    places_resolver.reset_run_state()
     set_cancel("registry_import", False)
     try:
         raw = file.read()
@@ -834,6 +835,7 @@ def sync_registry(file, ext: str):
     Existing rows match on businessName + barangayID and are overwritten
     with file values; new rows are inserted (same rules as upload).
     Returns (summary_dict, error_string)."""
+    places_resolver.reset_run_state()
     set_cancel("registry_import", False)
     try:
         raw = file.read()
@@ -1251,6 +1253,7 @@ def snap_unresolved_pins(limit: int = 200):
     from api.notifications import hub
     from api.models.geospatial import insert_green_flag
 
+    places_resolver.reset_run_state()
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
     if not api_key:
         err = "GOOGLE_MAPS_API_KEY is not configured on the server."
@@ -1375,6 +1378,9 @@ def snap_unresolved_pins(limit: int = 200):
         snapped = 0
         failed = 0
         budget_hit = False
+        api_error = False
+        monthly_quota_exceeded = False
+        budget_reason = None
 
         for idx, biz in enumerate(candidates):
             bid = biz.get("businessID") if isinstance(biz, dict) else biz[0]
@@ -1440,6 +1446,7 @@ def snap_unresolved_pins(limit: int = 200):
                 or get_geocode_remaining_month() <= 0
             ):
                 budget_hit = True
+                budget_reason = "geocode_quota_exceeded"
                 # Break before attempting API calls so we don't save a budget failure as unresolvable
                 break
 
@@ -1456,8 +1463,15 @@ def snap_unresolved_pins(limit: int = 200):
                 if geo_meta and geo_meta.get("resolve_key") is None:
                     geo_meta["resolve_key"] = curr_key
 
+                if lat is None and geo_meta and geo_meta.get("reason") == "api_error":
+                    api_error = True
+                    break
                 if lat is None and geo_meta and geo_meta.get("budget_exhausted"):
                     budget_hit = True
+                    budget_reason = geo_meta.get("reason")
+                    monthly_quota_exceeded = (
+                        budget_reason == "monthly_quota_exceeded"
+                    )
                     break
 
             elif address:
@@ -1561,7 +1575,14 @@ def snap_unresolved_pins(limit: int = 200):
             f"{', ' + str(cached) + ' already cached' if cached else ''}."
         )
         if budget_hit:
-            msg += f" Daily geocoding budget reached — run again tomorrow to continue (progress is saved)."
+            if monthly_quota_exceeded:
+                msg += " Monthly Text Search limit reached; remaining pins will resume next month."
+            elif budget_reason == "daily_quota_exceeded":
+                msg += " Daily Text Search limit reached; remaining pins will resume tomorrow."
+            else:
+                msg += " Daily geocoding budget reached — run again tomorrow to continue (progress is saved)."
+        if api_error:
+            msg += " Google Places returned an API error; this pin was left unchanged and can be retried next run."
 
         hub.publish_to_admins({
             "type": "snap_progress",
@@ -1572,7 +1593,9 @@ def snap_unresolved_pins(limit: int = 200):
             "cached": cached,
             "total": total,
             "status": msg,
-            "budget_hit": budget_hit
+            "budget_hit": budget_hit,
+            "monthly_quota_exceeded": monthly_quota_exceeded,
+            "api_error": api_error,
         })
         hub.publish_to_admins({"type": "registry_updated"})
 
@@ -1582,6 +1605,8 @@ def snap_unresolved_pins(limit: int = 200):
             "failed": failed,
             "cached": cached,
             "budget_hit": budget_hit,
+            "monthly_quota_exceeded": monthly_quota_exceeded,
+            "api_error": api_error,
             "message": msg
         }, None
 

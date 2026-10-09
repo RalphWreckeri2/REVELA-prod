@@ -2683,14 +2683,27 @@ export default function MapPage() {
   };
 
   const isSnapMonthlyMaxed = Boolean(
-    (placesUsage?.text_search_month && placesUsage.text_search_month.remaining <= 0) ||
-    (placesUsage?.month && placesUsage.month.remaining <= 0)
+    placesUsage?.text_search_month?.monthly_quota_exceeded ||
+    (placesUsage?.text_search_month &&
+      placesUsage.text_search_month.used >= placesUsage.text_search_month.cap)
   );
   const isSnapDailyMaxed = Boolean(
-    placesUsage?.today && placesUsage.today.remaining <= 0
+    placesUsage?.text_search_day &&
+    placesUsage.text_search_day.remaining <= 0
   );
+  const monthlyTextSearchLabel = `${(placesUsage?.text_search_month?.used ?? 2500).toLocaleString()}/${(placesUsage?.text_search_month?.cap ?? 2500).toLocaleString()}`;
 
   const handleReverifyPins = async () => {
+    if (isSnapMonthlyMaxed) {
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Monthly API limit reached',
+        text: `Monthly API limit reached (${monthlyTextSearchLabel} calls). Resets next month.`,
+        confirmButtonColor: '#6366f1',
+      });
+      return;
+    }
+    if (isSnapDailyMaxed) return;
     if (detectionQuota && detectionQuota.registry_count === 0) {
       await Swal.fire({
         title: 'Official Registry Is Empty',
@@ -2803,7 +2816,7 @@ export default function MapPage() {
         title: 'Monthly Quota Reached',
         html: `
           <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-            <p style="margin-bottom:8px;">You have reached the monthly free quota limit for Google Places (<strong>${placesUsage?.text_search_month?.used ?? placesUsage?.month?.used ?? 2500} / ${placesUsage?.text_search_month?.cap ?? placesUsage?.month?.cap ?? 2500}</strong> used).</p>
+            <p style="margin-bottom:8px;">Monthly API limit reached (<strong>${monthlyTextSearchLabel} calls</strong>).</p>
             <p style="color:var(--color-muted, #64748b); font-size:12.5px;">Snap Pins is temporarily disabled to prevent any Google Cloud billing charges. It will automatically re-enable on the 1st of next month.</p>
           </div>
         `,
@@ -2818,7 +2831,7 @@ export default function MapPage() {
         title: 'Daily Budget Reached',
         html: `
           <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-            <p style="margin-bottom:8px;">You have reached the daily safety limit for Google Places requests (<strong>${placesUsage?.today?.cap || 500} / ${placesUsage?.today?.cap || 500}</strong> used today).</p>
+            <p style="margin-bottom:8px;">You have reached the daily Text Search safety limit (<strong>${placesUsage?.text_search_day?.used ?? 500}/${placesUsage?.text_search_day?.cap ?? 500}</strong> used today).</p>
             <p style="color:var(--color-muted, #64748b); font-size:12.5px;">To protect your billing account, please try again tomorrow after midnight.</p>
           </div>
         `,
@@ -3368,9 +3381,9 @@ export default function MapPage() {
                       detectionQuota && detectionQuota.registry_count === 0
                         ? "Official registry is empty. Import business permits first before snapping pins."
                         : isSnapMonthlyMaxed
-                        ? `Monthly Places quota reached (${placesUsage?.text_search_month?.used ?? 2500}/${placesUsage?.text_search_month?.cap ?? 2500} used). Resets on the 1st of next month.`
+                        ? `Monthly API limit reached (${monthlyTextSearchLabel} calls). Resets next month.`
                         : isSnapDailyMaxed
-                          ? `Daily Places safety budget reached (0 remaining today). Resets at midnight.`
+                          ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 500}/${placesUsage?.text_search_day?.cap ?? 500} calls). Resets at midnight.`
                           : "Geocode registry businesses that have no map coordinates yet"
                     }
                     style={{
@@ -3409,6 +3422,10 @@ export default function MapPage() {
                     title={
                       detectionQuota && detectionQuota.registry_count === 0
                         ? "Official registry is empty. Import business permits first before re-verifying pins."
+                        : isSnapMonthlyMaxed
+                        ? `Monthly API limit reached (${monthlyTextSearchLabel} calls). Resets next month.`
+                        : isSnapDailyMaxed
+                        ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 500}/${placesUsage?.text_search_day?.cap ?? 500} calls). Resets at midnight.`
                         : "Re-check pins that already have coordinates and move wrong ones onto the real Google place"
                     }
                     style={{

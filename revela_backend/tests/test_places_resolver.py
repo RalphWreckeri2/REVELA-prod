@@ -19,6 +19,12 @@ sys.path.insert(0, os.path.abspath(
 
 class PlacesResolverHardeningTests(unittest.TestCase):
 
+    def setUp(self):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        places_resolver._last_places_request_at = 0
+
     @patch("api.registry.places_resolver.time.sleep")
     def test_resource_exhausted_429_stops_without_retry(self, mock_sleep):
         from api.registry import places_resolver
@@ -118,6 +124,40 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         post.assert_called_once()
         geocode_reservation.assert_not_called()
 
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    def test_daily_quota_halt_persists_across_resolver_calls(self):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        places_resolver._api_state.quota_halted = True
+        post = MagicMock()
+
+        lat, lng, meta = resolve_location(
+            "Next Store", "Poblacion", "Barangay I", _post=post
+        )
+
+        self.assertIsNone(lat)
+        self.assertIsNone(lng)
+        self.assertEqual(meta["reason"], "skipped_quota")
+        post.assert_not_called()
+        reset_run_state()
+
+    @patch("api.registry.places_resolver.mysql")
+    def test_monthly_quota_reservation_has_distinct_status(self, mock_mysql):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        places_resolver._table_ready = True
+        cursor = MagicMock()
+        cursor.rowcount = 0
+        mock_mysql.connection.cursor.return_value = cursor
+
+        self.assertFalse(places_resolver.reserve_call("imp_ts", 2500, 500))
+        self.assertEqual(
+            places_resolver._api_state.quota_reason, "monthly_quota_exceeded"
+        )
+        reset_run_state()
+
     def test_compute_resolve_key_deterministic(self):
         """compute_resolve_key must return a 40-char SHA-1 hex digest normalized across case and spacing."""
         key1 = compute_resolve_key("Silva's Pharmacy", "  Poblacion  ", 1)
@@ -131,6 +171,9 @@ class PlacesResolverHardeningTests(unittest.TestCase):
     @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
     def test_text_search_field_mask_excludes_enterprise(self):
         """Text Search must request only Pro-tier fields and exclude all Enterprise tier fields."""
+        reset_run_state()
+        from api.registry import places_resolver
+        places_resolver._last_places_request_at = 0
         mock_post = MagicMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 200

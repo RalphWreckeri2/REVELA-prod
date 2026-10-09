@@ -31,6 +31,20 @@ def _registry_count():
 _EMPTY_REGISTRY_MSG = "The official business registry is empty. Please import business records first."
 
 
+def _text_search_monthly_limit_response():
+    quota = places_resolver.get_text_search_quota_status()
+    if not quota["monthly_quota_exceeded"]:
+        return None
+    return jsonify({
+        "code": "monthly_quota_exceeded",
+        "error": (
+            f"Monthly Text Search limit reached "
+            f"({quota['used']}/{quota['cap']} calls). Resets next month."
+        ),
+        "quota": quota,
+    }), 429
+
+
 # ── POST /api/registry/cancel ─────────────────────────────────────────────────
 
 @registry_bp.route("/cancel", methods=["POST"])
@@ -67,6 +81,9 @@ def snap_unresolved():
     """
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
+    quota_response = _text_search_monthly_limit_response()
+    if quota_response:
+        return quota_response
     if _registry_count() == 0:
         return jsonify({"error": "Cannot snap: " + _EMPTY_REGISTRY_MSG}), 400
 
@@ -112,6 +129,9 @@ def reverify_run():
     from api.registry import reverify
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
+    quota_response = _text_search_monthly_limit_response()
+    if quota_response:
+        return quota_response
     if _registry_count() == 0:
         return jsonify({"error": "Cannot re-verify: " + _EMPTY_REGISTRY_MSG}), 400
     if reverify.is_running():

@@ -184,7 +184,10 @@ def get_places_usage_today():
         except Exception:
             pass
 
-        from api.registry.places_resolver import TS_MONTHLY_CAP, PD_MONTHLY_CAP
+        from api.registry.places_resolver import (
+            TS_DAILY_CAP, TS_MONTHLY_CAP, PD_MONTHLY_CAP,
+        )
+        ts_d_used = _places_usage_count(cur, "imp_ts_day", today=True)
 
         return {
             "month": {
@@ -207,7 +210,14 @@ def get_places_usage_today():
                 "used": ts_m_used,
                 "cap": TS_MONTHLY_CAP,
                 "remaining": max(0, TS_MONTHLY_CAP - ts_m_used),
+                "monthly_quota_exceeded": ts_m_used >= TS_MONTHLY_CAP,
             },
+            "text_search_day": {
+                "used": ts_d_used,
+                "cap": TS_DAILY_CAP,
+                "remaining": max(0, TS_DAILY_CAP - ts_d_used),
+            },
+            "monthly_quota_exceeded": ts_m_used >= TS_MONTHLY_CAP,
             "place_details_month": {
                 "used": pd_m_used,
                 "cap": PD_MONTHLY_CAP,
@@ -216,6 +226,21 @@ def get_places_usage_today():
         }
     finally:
         cur.close()
+
+
+def _places_usage_count(cur, kind, today=False):
+    if today:
+        cur.execute(
+            "SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = %s",
+            (kind,),
+        )
+    else:
+        cur.execute(
+            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = %s",
+            (kind,),
+        )
+    row = cur.fetchone()
+    return int((row.get("c") if isinstance(row, dict) else row[0]) or 0) if row else 0
 
 
 def _completed_points_this_cycle():
