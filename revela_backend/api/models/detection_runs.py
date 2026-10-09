@@ -37,7 +37,7 @@ def get_monthly_detection_count():
     cur = mysql.connection.cursor()
     cur.execute("""
         SELECT COUNT(*) AS cnt FROM detection_runs
-        WHERE status = 'completed'
+        WHERE status IN ('completed', 'completed_with_gaps')
           AND YEAR(startedAt) = YEAR(CURRENT_DATE())
           AND MONTH(startedAt) = MONTH(CURRENT_DATE())
     """)
@@ -60,7 +60,7 @@ def reset_detection_quota():
     cur.execute("""
         UPDATE detection_runs
         SET status = 'reset'
-        WHERE status = 'completed'
+        WHERE status IN ('completed', 'completed_with_gaps')
     """)
     mysql.connection.commit()
     cur.close()
@@ -112,7 +112,7 @@ def get_latest_detection_run():
                r.status, r.newFlags, r.totalChecked, u.fullName as triggeredByName
         FROM detection_runs r
         LEFT JOIN users u ON r.triggeredByUserID = u.userID
-        WHERE r.status = 'completed'
+        WHERE r.status IN ('completed', 'completed_with_gaps')
         ORDER BY r.completedAt DESC, r.runID DESC
         LIMIT 1
     """)
@@ -196,7 +196,8 @@ def get_detection_quota_info():
         cur.execute("SELECT COUNT(*) AS cnt FROM official_registry")
         r_row = cur.fetchone()
         cur.close()
-        reg_count = int((r_row.get("cnt") if isinstance(r_row, dict) else r_row[0]) or 0) if r_row else 0
+        reg_count = int((r_row.get("cnt") if isinstance(
+            r_row, dict) else r_row[0]) or 0) if r_row else 0
     except Exception as e:
         print(f"[detection_runs] Error getting registry count: {e}")
 

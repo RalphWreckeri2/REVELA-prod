@@ -43,6 +43,36 @@ const FLAG_COLORS = {
   Purple: COLOR.purple,
 };
 
+// ── Detection scan outcomes ───────────────────────────────────────────────────
+// `completed_with_gaps` attempted every grid cell but left saturated cells
+// uncheckpointed. It consumed a monthly scan and processed a real POI set, so
+// it renders as a finished scan (amber) rather than an interruption.
+const SCAN_STATUS_LABEL = {
+  completed: "Completed",
+  completed_with_gaps: "Completed w/ Gaps",
+  partial: "Partial",
+  cancelled: "Cancelled",
+  failed: "Failed",
+  reset: "Reset",
+  running: "Running",
+};
+
+const SCAN_STATUS_COLOR = {
+  completed: COLOR.green,
+  completed_with_gaps: COLOR.yellow,
+  partial: COLOR.orange,
+  cancelled: COLOR.slate,
+  failed: COLOR.red,
+  reset: COLOR.slate,
+  running: COLOR.blue,
+};
+
+// Runs that consumed a monthly scan and therefore have a comparable yield rate.
+const SCAN_STATUS_COMPARABLE_YIELD = new Set([
+  "completed",
+  "completed_with_gaps",
+]);
+
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 const shortBarangay = (name = "") =>
   name.replace("Barangay ", "Brgy. ").replace("San Sebastian", "San Seb.");
@@ -2946,13 +2976,13 @@ export default function AnalyticsPage() {
                           {scanHistory.map((run) => {
                             const checked = Number(run.total_checked || 0);
                             const newFlags = Number(run.new_flags || 0);
-                            const yieldRate = run.status === "completed" && checked > 0
+                            const yieldRate = SCAN_STATUS_COMPARABLE_YIELD.has(run.status) && checked > 0
                               ? `${((newFlags / checked) * 100).toFixed(1)}%`
                               : "—";
                             return (
                               <tr key={run.run_id} style={{ borderBottom: "1px solid rgba(226,232,240,0.35)" }}>
                                 <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{run.started_at || "—"}</td>
-                                <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: run.status === "completed" ? COLOR.green : COLOR.orange }}>{run.status}</td>
+                                <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: SCAN_STATUS_COLOR[run.status] || COLOR.orange, whiteSpace: "nowrap" }}>{SCAN_STATUS_LABEL[run.status] || run.status}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{checked}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{newFlags}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12, fontWeight: 700 }}>{yieldRate}</td>
@@ -2962,7 +2992,7 @@ export default function AnalyticsPage() {
                         </tbody>
                       </table>
                       <p style={{ margin: "10px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        Completed-scan yield = new candidate flags / Places results processed. The denominator includes out-of-area and non-business results; partial runs have no comparable yield.
+                        Completed-scan yield = new candidate flags / Places results processed. The denominator includes out-of-area and non-business results. Interrupted runs (partial, cancelled, failed) have no comparable yield; completed-with-gaps runs do, but some dense grid cells stayed saturated.
                       </p>
                     </div>
                   )}

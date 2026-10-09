@@ -19,6 +19,8 @@ class RunDetectionGridTests(unittest.TestCase):
         service._places_run_state.results_received = 0
         service._places_run_state.duplicate_results = 0
         service._places_run_state.query_kind = "initial"
+        service._places_run_state.started_at = None
+        service._places_run_state.work_budget_exhausted = False
 
     @patch("api.flags.service._fetch_point_results_once")
     def test_saturated_nearby_search_refines_dense_area(self, fetch_once):
@@ -30,12 +32,14 @@ class RunDetectionGridTests(unittest.TestCase):
             ([{"place_id": "child-4"}], True),
         ]
 
-        results, complete = service._fetch_point_results(13.9667, 121.1167, 850)
+        results, complete = service._fetch_point_results(
+            13.9667, 121.1167, 850)
 
         self.assertTrue(complete)
         self.assertEqual(len(results), 64)
         self.assertEqual(fetch_once.call_count, 5)
-        self.assertAlmostEqual(fetch_once.call_args_list[1].args[2], 850 * 0.72)
+        self.assertAlmostEqual(
+            fetch_once.call_args_list[1].args[2], 850 * 0.72)
 
     @patch("api.flags.service._fetch_point_results_once")
     def test_parent_child_duplicates_keep_first_location_and_fill_missing_metadata(
@@ -71,7 +75,8 @@ class RunDetectionGridTests(unittest.TestCase):
 
         self.assertTrue(complete)
         self.assertEqual(len(results), 20)
-        shared = next(place for place in results if place["place_id"] == "shared")
+        shared = next(
+            place for place in results if place["place_id"] == "shared")
         self.assertEqual(shared["name"], "Known Business")
         self.assertEqual(
             shared["geometry"]["location"],
@@ -91,9 +96,34 @@ class RunDetectionGridTests(unittest.TestCase):
         expected_buffer = (service.DETECTION_RADIUS_M / 111_320.0) * 1.1
         boundary.buffer.assert_called_once_with(expected_buffer)
 
+    def test_municipality_predicate_uses_cached_tolerance_geometry(self):
+        with patch.object(service, "_MUNICIPALITY_WITH_TOLERANCE") as prepared, \
+                patch.object(service, "_MUNICIPALITY_BOUNDARY") as boundary:
+            prepared.contains.return_value = True
+
+            self.assertTrue(service._within_municipality(13.9667, 121.1167))
+
+        boundary.buffer.assert_not_called()
+
+    def test_barangay_lookup_uses_preloaded_rows_without_database_reads(self):
+        polygon = MagicMock()
+        polygon.contains.return_value = True
+        barangay_rows = [{"barangayID": 7, "barangayName": "Barangay I"}]
+
+        with patch.object(
+            service, "_BARANGAY_POLYGONS", {"District I (Pob.)": polygon}
+        ), patch.object(service, "mysql") as mysql:
+            barangay_id = service._get_barangay_id_by_coords(
+                13.9667, 121.1167, barangay_rows, []
+            )
+
+        self.assertEqual(barangay_id, 7)
+        mysql.connection.cursor.assert_not_called()
+
     def test_adaptive_centers_cover_radius_with_smaller_search_circles(self):
         center_lat, center_lng, root_radius = 13.9667, 121.1167, 850
-        centers = service._adaptive_nearby_centers(center_lat, center_lng, root_radius)
+        centers = service._adaptive_nearby_centers(
+            center_lat, center_lng, root_radius)
 
         self.assertEqual(len(centers), 4)
         child_radius = root_radius * service.ADAPTIVE_QUERY_RADIUS_RATIO
@@ -104,7 +134,8 @@ class RunDetectionGridTests(unittest.TestCase):
         edge_points = [
             (
                 center_lat + math.sin(angle) * root_radius / 111_320.0,
-                center_lng + math.cos(angle) * root_radius / (111_320.0 * lng_scale),
+                center_lng + math.cos(angle) * root_radius /
+                (111_320.0 * lng_scale),
             )
             for angle in (0, math.pi / 4, math.pi / 2, 3 * math.pi / 4,
                           math.pi, 5 * math.pi / 4, 3 * math.pi / 2,
@@ -161,7 +192,8 @@ class RunDetectionGridTests(unittest.TestCase):
             service.NEW_NEARBY_FIELD_MASK,
         )
         self.assertEqual(kwargs["json"]["maxResultCount"], 20)
-        self.assertEqual(kwargs["json"]["locationRestriction"]["circle"]["radius"], 850)
+        self.assertEqual(
+            kwargs["json"]["locationRestriction"]["circle"]["radius"], 850)
         self.assertEqual(
             kwargs["json"],
             {
@@ -269,8 +301,10 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(post.call_count, 2)
         self.assertEqual(reserve.call_count, 2)
         self.assertEqual(service._places_run_state.calls["new_nearby"], 2)
-        self.assertEqual(service._places_run_state.calls["new_nearby_initial"], 2)
-        self.assertEqual(service._places_run_state.calls["new_nearby_adaptive"], 0)
+        self.assertEqual(
+            service._places_run_state.calls["new_nearby_initial"], 2)
+        self.assertEqual(
+            service._places_run_state.calls["new_nearby_adaptive"], 0)
         self.assertEqual(sleep.call_args_list[0].args, (2.0,))
         self.assertEqual(len(sleep.call_args_list), 2)
 
@@ -325,6 +359,26 @@ class RunDetectionGridTests(unittest.TestCase):
             fetch_once.call_count,
             1 + service.MAX_ADAPTIVE_QUERIES_PER_POINT,
         )
+
+    @patch("api.flags.service._fetch_point_results_once")
+    def test_adaptive_search_stops_at_run_request_budget(self, fetch_once):
+        def saturated_result(*_args):
+            service._places_run_state.calls["new_nearby"] += 1
+            return ([{"place_id": f"place-{i}"} for i in range(20)], True)
+
+        fetch_once.side_effect = saturated_result
+        service._places_run_state.started_at = service.time.monotonic()
+
+        with patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
+                patch.object(service, "RUN_DETECTION_MAX_REQUESTS", 1):
+            results, complete = service._fetch_point_results(
+                13.9667, 121.1167, 850
+            )
+
+        self.assertFalse(complete)
+        self.assertEqual(len(results), 20)
+        fetch_once.assert_called_once()
+        self.assertTrue(service._places_run_state.work_budget_exhausted)
 
     @patch("api.flags.service._fetch_legacy_point_results_once")
     def test_legacy_mode_remains_the_default_fallback(self, fetch_legacy):
@@ -387,6 +441,40 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(state["incomplete_points"], 1)
         self.assertTrue(state["api_error_stop"])
         mark_done.assert_not_called()
+
+    def test_fully_attempted_saturated_grid_is_terminal_with_gaps(self):
+        state = {
+            "total_points": 3,
+            "skipped_points": 1,
+            "done_keys": ["completed"],
+            "incomplete_points": 1,
+            "api_error_stop": False,
+            "work_budget_stop": False,
+        }
+
+        self.assertTrue(service._grid_scan_has_terminal_gaps(state))
+        state["work_budget_stop"] = True
+        self.assertFalse(service._grid_scan_has_terminal_gaps(state))
+
+    def test_elapsed_metrics_separate_end_to_end_from_scan_slice(self):
+        service._places_run_state.started_at = service.time.monotonic() - 5
+        metrics = service._detection_elapsed_metrics(
+            service.time.monotonic() - 40
+        )
+
+        self.assertGreaterEqual(metrics["elapsed_seconds"], 40)
+        self.assertGreaterEqual(metrics["scan_elapsed_seconds"], 5)
+        self.assertLess(metrics["scan_elapsed_seconds"],
+                        metrics["elapsed_seconds"])
+
+    def test_elapsed_metrics_report_zero_slice_before_grid_traversal(self):
+        service._places_run_state.started_at = None
+        metrics = service._detection_elapsed_metrics(
+            service.time.monotonic() - 12
+        )
+
+        self.assertEqual(metrics["scan_elapsed_seconds"], 0.0)
+        self.assertGreaterEqual(metrics["elapsed_seconds"], 12)
 
     @patch("api.flags.service._mark_point_done")
     @patch("api.flags.service._completed_points_this_cycle", return_value=set())

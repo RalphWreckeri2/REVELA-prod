@@ -2679,24 +2679,46 @@ export default function MapPage() {
 
       const count = Number(result.new_flags ?? 0);
       const totalChecked = Number(result.total_checked ?? 0);
+      const isPartial = result.status === "partial";
+      const hasCoverageGaps = result.status === "completed_with_gaps";
+      const showGridProgress = isPartial || hasCoverageGaps;
+      const showWarning = isPartial || hasCoverageGaps;
+      const attemptedPoints = Number(result.attempted_points ?? result.completed_points ?? 0);
+      const totalPoints = Number(result.total_points ?? 0);
+      const incompletePoints = Number(result.incomplete_points ?? 0);
       const remainingScans = result.quota?.remaining_this_month ?? 0;
       const resetsOn = result.quota?.resets_on || "the 1st of next month";
 
       const alertRes = await Swal.fire({
-        icon: count > 0 ? "success" : "info",
-        title: count > 0 ? "Detection Scan Complete!" : "Scan Complete — No New Gaps",
+        icon: showWarning ? "warning" : count > 0 ? "success" : "info",
+        title: hasCoverageGaps
+          ? "Scan Finished with Coverage Gaps"
+          : isPartial
+          ? "Detection Paused — Progress Saved"
+          : count > 0 ? "Detection Scan Complete!" : "Scan Complete — No New Gaps",
         html: `
           <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
-            <div style="background: ${count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
-              <div style="font-size: 20px; font-weight: 800; color: ${count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
-                ${count} Unregistered Business${count !== 1 ? "es" : ""} Detected
+            <div style="background: ${showWarning ? "rgba(245, 158, 11, 0.10)" : count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${showWarning ? "rgba(245, 158, 11, 0.35)" : count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
+              <div style="font-size: 20px; font-weight: 800; color: ${showWarning ? "#b45309" : count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
+                ${showGridProgress ? `${attemptedPoints} of ${totalPoints} grid points attempted` : `${count} Unregistered Business${count !== 1 ? "es" : ""} Detected`}
               </div>
-              <div style="font-size: 12.5px; color: ${count > 0 ? "#7f1d1d" : "#065f46"};">
-                ${count > 0
-            ? "New Red Flags have been plotted on the municipal map and queued for field verification."
-            : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
+              <div style="font-size: 12.5px; color: ${showWarning ? "#92400e" : count > 0 ? "#7f1d1d" : "#065f46"};">
+                ${hasCoverageGaps
+            ? `${count} new flag${count !== 1 ? "s" : ""} saved. ${incompletePoints} dense grid cell${incompletePoints !== 1 ? "s" : ""} remained saturated; coverage may be incomplete.`
+            : isPartial
+            ? `${count} new flag${count !== 1 ? "s" : ""} saved so far. The scan has not checked all grid points.`
+            : count > 0
+              ? "New Red Flags have been plotted on the municipal map and queued for field verification."
+              : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
               </div>
             </div>
+            ${showWarning ? `
+              <div style="font-size: 12.5px; color: #92400e; background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 14px;">
+                ${hasCoverageGaps
+            ? "All grid points were attempted. This run counts toward the monthly scan limit; repeating the same search settings may hit the same result caps."
+            : "Progress is saved. Run Detection again to continue; this partial run does not use a monthly scan."}
+              </div>
+            ` : ""}
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
               <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
                 <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Places Scanned</div>

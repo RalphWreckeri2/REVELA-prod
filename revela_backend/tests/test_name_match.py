@@ -1,11 +1,11 @@
+from api.utils.name_match import name_match, parse_name
+from api.flags.service import _match_poi_to_registry, _name_similarity
 import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from api.flags.service import _match_poi_to_registry, _name_similarity
-from api.utils.name_match import name_match, parse_name
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")))
 
 
 class NameMatchRegressionTests(unittest.TestCase):
@@ -65,7 +65,8 @@ class NameMatchRegressionTests(unittest.TestCase):
         Valid elaboration within the same commercial category.
         Expected: Score >= 0.80 (Auto-Snap candidate tier).
         """
-        score = _name_similarity("Mercedes Hardware", "Mercedes Hardware & Construction Supply")
+        score = _name_similarity(
+            "Mercedes Hardware", "Mercedes Hardware & Construction Supply")
         self.assertGreaterEqual(
             score, 0.80,
             f"Expected score >= 0.80 for Hardware trade name expansion, but got {score:.2f}"
@@ -132,6 +133,16 @@ class NameMatchRegressionTests(unittest.TestCase):
     def test_accents_are_normalized_without_splitting_words(self):
         tokens, _ = parse_name("Jardín del Edén Event Venue")
         self.assertEqual(tokens, ["jardin", "eden"])
+
+    def test_parse_name_cache_does_not_share_mutable_results(self):
+        tokens, groups = parse_name("Silva Pharmacy")
+        tokens.append("contaminated")
+        groups.add("lodging")
+
+        next_tokens, next_groups = parse_name("Silva Pharmacy")
+
+        self.assertEqual(next_tokens, ["silva"])
+        self.assertEqual(next_groups, {"pharmacy"})
 
     def test_eden_store_and_jardin_del_eden_are_category_conflict(self):
         score, decision = name_match(

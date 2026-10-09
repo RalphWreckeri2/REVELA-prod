@@ -1,6 +1,7 @@
 import difflib
 import unicodedata
 import re
+from functools import lru_cache
 
 LEGAL = {
     'inc', 'corp', 'corporation', 'co', 'company', 'ltd', 'opc', 'enterprise',
@@ -98,6 +99,22 @@ def _ascii_fold(raw: str) -> str:
     return ''.join(char for char in decomposed if not unicodedata.combining(char))
 
 
+@lru_cache(maxsize=32768)
+def _parse_name_cached(raw: str) -> tuple[tuple[str, ...], frozenset[str]]:
+    s = _ascii_fold(raw).lower().replace('&', ' and ')
+    s = re.sub(r'[\u2019\x27`]s\b', '', s)
+    s = re.sub(r'[^a-z0-9 ]+', ' ', s)
+
+    groups = set()
+    for rx, group in CATEGORY_PATTERNS:
+        if re.search(rx, s):
+            groups.add(group)
+            s = re.sub(rx, ' ', s)
+
+    tokens = tuple(token for token in s.split() if token not in LEGAL)
+    return tokens, frozenset(groups)
+
+
 def parse_name(raw: str) -> tuple[list[str], set[str]]:
     """
     Normalizes a business trade name or POI name:
@@ -107,19 +124,8 @@ def parse_name(raw: str) -> tuple[list[str], set[str]]:
     4. Remove category keywords and legal noise tokens.
     Returns: (cleaned_tokens, category_groups_set)
     """
-    s = _ascii_fold(str(raw or '')).lower().replace('&', ' and ')
-    # Normalize curly and straight possessive apostrophes (silva's -> silva)
-    s = re.sub(r'[\u2019\x27`]s\b', '', s)
-    s = re.sub(r'[^a-z0-9 ]+', ' ', s)
-
-    groups = set()
-    for rx, g in CATEGORY_PATTERNS:
-        if re.search(rx, s):
-            groups.add(g)
-            s = re.sub(rx, ' ', s)
-
-    tokens = [t for t in s.split() if t not in LEGAL and len(t) > 0]
-    return tokens, groups
+    tokens, groups = _parse_name_cached(str(raw or ''))
+    return list(tokens), set(groups)
 
 
 def _overlap(ta: list[str], tb: list[str]) -> float:
@@ -145,7 +151,8 @@ def _overlap(ta: list[str], tb: list[str]) -> float:
             if ratio >= threshold and ratio > best_ratio:
                 best_index, best_ratio = index, ratio
         if best_index is not None:
-            matched_weight += min(weight(token), weight(unmatched.pop(best_index)))
+            matched_weight += min(weight(token),
+                                  weight(unmatched.pop(best_index)))
 
     total_weight = sum(weight(token) for token in ta + tb)
     return (2.0 * matched_weight / total_weight) if total_weight else 0.0

@@ -300,6 +300,14 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
 
 **Gate:** contract tests assert the exact endpoint, header, field mask, payload shape, excluded type list, max result count, and count reservation per call. No production requests yet.
 
+**Run Detection latency diagnosis and plan:** The scan executes synchronously inside one HTTP POST. Grid points are processed serially, each saturated root can issue up to 12 adaptive child requests in addition to its root request, and reconciliation runs before the grid scan. The former name matcher reparsed the same registry names for every POI, and the municipality tolerance buffer was rebuilt for each containment check. These costs make a long request and upstream/client disconnect plausible; production Railway/proxy logs are still needed to identify which timeout caused the reported SweetAlert failure.
+
+The implementation caches immutable parsed names/categories while preserving fresh mutable results from `parse_name`, prepares the municipality tolerance polygon once, and performs the scan's containment check only once per POI. Barangay-name rows are loaded once; fallback registry coordinates are queried only on the exceptional no-polygon path so mid-run pin updates cannot make a preloaded fallback snapshot stale. The scan-work clock starts immediately before grid traversal, and each POI, Places request, and grid boundary checks the 90-second `RUN_DETECTION_MAX_SECONDS` work slice (default) and 120-request `RUN_DETECTION_MAX_REQUESTS` cap. Responses report both end-to-end `elapsed_seconds` and `scan_elapsed_seconds`; pre-scan reconciliation remains part of end-to-end time and must be monitored against the hosting request deadline.
+
+If a time/request limit or API error interrupts the scan, it returns resumable `status='partial'`; the in-flight cell remains uncheckpointed and does not consume the monthly scan quota. If every root cell was attempted but one or more remained saturated at the bounded refinement depth, the run ends as `status='completed_with_gaps'`, consumes a monthly scan, and the UI warns that coverage is incomplete instead of promising an identical retry. This prevents repeated clicks from re-spending the request budget on permanently capped cells. Tune the limits only after staging measurements of total latency, scan latency, Places calls, registry size, and coverage. A request already in flight and the current POI evaluation can finish, so the scan slice may be exceeded slightly.
+
+**Gate:** verify the name cache preserves matcher decisions; the prepared boundary preserves geographic acceptance cases; partial runs resume without losing returned POIs; completed-with-gaps runs count against monthly quota; and both elapsed metrics stay within the hosting request deadline in a bounded staging run.
+
 ### Phase 4 — Side-by-side quality and bounded staging
 
 1. Build a set of representative grid cells and expected examples: visible obvious businesses, dense clusters, boundary locations, non-business POIs, closed businesses, official-registry matches, duplicate branches, and known false matches.
@@ -335,11 +343,13 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
    - Verify Geocoding API is enabled if fallback is retained.
 3. Open **Google Maps Platform → Quotas**:
    - Inspect method-specific request/day and request/minute quotas for Text Search (New), Place Details (New), Nearby Search (New), and Geocoding.
+  - Verify the exact Legacy Nearby Search method quota and billable SKU separately; do not infer it from Nearby Search (New).
    - Export/screenshot current values for the change record.
    - Do not assume Legacy Nearby Search quotas are interchangeable with New API method quotas.
 4. Open **Google Maps Platform → Metrics / Reports / SKU usage**:
    - Check recent and month-to-date calls for each SKU.
-   - Check whether another key/service consumes the same project’s quota/free cap.
+  - Record each applicable per-SKU monthly free-call allowance and remaining usage; check whether another key/service consumes the same project’s quota or free allowance.
+  - Do not budget against the retired USD $200 monthly credit; free calls are SKU-specific and do not offset usage on another SKU.
 5. Open **Billing → Budgets & alerts**:
    - Create or verify a low-threshold alert for forecast/actual Places spend.
    - Alerts are notifications, not hard spending caps.
@@ -376,6 +386,8 @@ PD_DAILY_CAP=90                 # if Cloud Place Details daily quota stays at 95
 PD_MONTHLY_CAP=3000
 BATCH_LIMIT=50
 RUN_DETECTION_NEARBY_API=legacy # initially; switch only after rollout gates
+RUN_DETECTION_MAX_SECONDS=90    # maximum work slice per synchronous run request
+RUN_DETECTION_MAX_REQUESTS=120 # includes retries and adaptive requests
 NEW_NEARBY_DAILY_CAP=<approved conservative value>
 NEW_NEARBY_MONTHLY_CAP=<approved conservative value>
 ```
@@ -430,6 +442,7 @@ Alert on:
 - New Nearby Search uses the correct endpoint, exact JSON schema, API-key header, and explicit FieldMask.
 - Excluded types and keyword heuristics remove known non-businesses without filtering representative local businesses.
 - Exactly 20 results triggers saturation refinement; child calls are bounded; place IDs are deduplicated.
+- Per-run time/request limits stop between external calls, keep incomplete cells uncheckpointed, and report an explicit partial outcome; cached barangay lookups do not issue one repeated database read per POI.
 - Saturated/error/quota-limited cells are not marked complete; later runs retry them.
 - Out-of-boundary results cannot create flags even if the API returns them.
 - Closed status is surfaced for admin review but does not automatically mutate official registry status or assign Purple.
@@ -439,7 +452,7 @@ Alert on:
 
 Do not declare rollout complete until all are true:
 
-1. Cloud method-level quotas and Railway app caps are verified and recorded.
+1. Cloud method-level quotas, exact Legacy Nearby SKU, per-SKU free-call allowances, shared project usage, and Railway app caps are verified and recorded; no cost estimate relies on the retired USD $200 monthly credit.
 2. Text Search daily app cap is lower than its Cloud daily limit.
 3. Place Details and Geocoding have independent usage controls.
 4. Nearby New and Legacy counters remain separate during transition.
