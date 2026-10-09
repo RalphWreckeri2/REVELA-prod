@@ -4,8 +4,8 @@ from flask_mysqldb import MySQL
 from config import Config
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
+from api.utils import cors_config
 import os
-import re
 
 
 mysql = MySQL()
@@ -25,16 +25,19 @@ def create_app():
     mysql.init_app(app)
     jwt.init_app(app)
 
-    # Load CORS origins from environment
-    cors_origins = os.getenv("CORS_ORIGINS")
-    if cors_origins:
-        allowed_origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
-    else:
-        allowed_origins = [
-            re.compile(r"http://localhost:\d+"),
-            re.compile(r"http://127\.0\.0\.1:\d+"),
-            "http://10.0.2.2:5000",
-        ]
+    # Allowed CORS origins. `build_allowed_origins` defaults to the production
+    # hosts plus loopback, so forgetting CORS_ORIGINS can no longer leave the
+    # frontend silently blocked; setting it overrides the production defaults.
+    # Parsing, www/apex mirroring, and trailing-slash normalisation live in
+    # api/utils/cors_config.py so they can be unit tested.
+    allowed_origins = cors_config.build_allowed_origins(os.getenv("CORS_ORIGINS"))
+    app.logger.info(
+        "[CORS] Allowed origins: %s",
+        ", ".join(
+            o if isinstance(o, str) else getattr(o, "pattern", str(o))
+            for o in allowed_origins
+        ),
+    )
 
     CORS(app, resources={
         r"/api/*": {
