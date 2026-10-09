@@ -72,6 +72,7 @@ class RegistrySnapTests(unittest.TestCase):
             )) as resolve_location,
             patch.object(service, "_load_barangay_lookup",
                          return_value={"Barangay I": 1}),
+            patch.object(service.places_resolver, "_update_pin") as update_pin,
             patch.object(service, "_sync_flag_color") as sync_flag,
             patch.object(service, "_geocode") as geocode,
             patch("api.notifications.hub.publish_to_admins"),
@@ -85,6 +86,10 @@ class RegistrySnapTests(unittest.TestCase):
         self.assertTrue(resolve_location.call_args.kwargs["refresh_geocode"])
         geocode.assert_not_called()
         sync_flag.assert_called_once()
+        update_pin.assert_called_once_with(
+            update_cursor, 1, "Silva Pharmacy", 13.9620, 121.1120,
+            13.9667, 121.1167, business_id="BIZ-GEOCODE-01",
+        )
 
         select_sql = select_cursor.execute.call_args.args[0]
         self.assertIn("coordSource = 'geocode'", select_sql)
@@ -94,6 +99,56 @@ class RegistrySnapTests(unittest.TestCase):
         self.assertIn("coordSource = 'geocode'", update_sql)
         self.assertIn("matchStatus IS NULL", update_sql)
         self.assertEqual(update_cursor.execute.call_args.args[1][-1], 1)
+
+    def test_snap_api_error_leaves_pin_and_flags_unchanged_for_resume(self):
+        candidate = {
+            "businessID": "BIZ-API-ERROR",
+            "barangayID": 1,
+            "businessName": "Silva Pharmacy",
+            "businessAddress": "Poblacion",
+            "lineOfBusiness": "Pharmacy",
+            "applicationStatus": "Active",
+            "coordSource": None,
+            "matchStatus": None,
+            "resolveKey": None,
+            "latitude": None,
+            "longitude": None,
+        }
+        select_cursor = MagicMock()
+        select_cursor.fetchall.return_value = [candidate]
+        mock_mysql = MagicMock()
+        mock_mysql.connection.cursor.return_value = select_cursor
+        usage = {
+            "text_search": {"day": 2, "month": 5},
+            "details": {"day": 0, "month": 0},
+            "geocoding": {"day": 0, "month": 0},
+        }
+
+        with (
+            patch.object(service, "mysql", mock_mysql),
+            patch.object(service, "GOOGLE_MAPS_API_KEY", "dummy_test_key"),
+            patch.object(service.places_resolver, "reset_run_state"),
+            patch.object(service.places_resolver, "enabled", return_value=True),
+            patch.object(service.places_resolver, "resolve_location", return_value=(
+                None, None, {"reason": "api_error", "api_error": "HTTP 503"}
+            )),
+            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service, "_places_usage_snapshot", return_value=usage),
+            patch.object(service, "_load_barangay_lookup", return_value={"Barangay I": 1}),
+            patch.object(service.places_resolver, "_update_pin") as update_pin,
+            patch.object(service, "_sync_flag_color") as sync_flag,
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.snap_unresolved_pins(limit=1)
+
+        self.assertIsNone(error)
+        self.assertTrue(summary["api_error"])
+        self.assertEqual(summary["snapped"], 0)
+        self.assertEqual(summary["skipped_quota"], 0)
+        update_pin.assert_not_called()
+        sync_flag.assert_not_called()
+        select_cursor.execute.assert_called_once()
+        select_cursor.close.assert_called_once()
 
 
 if __name__ == "__main__":

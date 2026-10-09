@@ -19,8 +19,7 @@ Safety rules
 * a Google place already claimed by another business is not claimed twice
 * every attempt is written to registry_pin_history (old + new coordinates), so any move
   can be undone, and recently checked businesses are skipped (no repeated API spend)
-* uncertain matches are moved to the candidate but flagged matchStatus='review'
-  so the existing review queue shows them to an admin
+* uncertain matches are recorded as proposals for review without moving the existing pin
 
 Cost: one Places Text Search per checked business (plus an optional quality-gated
 geocode fallback inside the resolver). The resolver's own daily/monthly caps still apply.
@@ -40,6 +39,7 @@ BATCH_LIMIT = int(os.getenv("BATCH_LIMIT", "50"))
 SUSPECT_COLS = (
     "businessID", "barangayID", "businessName", "businessAddress", "lineOfBusiness",
     "applicationStatus", "coordSource", "matchStatus", "latitude", "longitude",
+    "placeID", "placeIDKind",
 )
 
 _run_lock = threading.Lock()
@@ -233,6 +233,42 @@ def _attempted_ids(cur):
     }
 
 
+def _known_google_poi_business_ids(cur):
+    """Return registry businesses already linked to a Google POI in map flags."""
+    cur.execute("""
+        SELECT DISTINCT r.businessID
+        FROM official_registry r
+        JOIN geospatial_logs g
+          ON g.placeID IS NOT NULL
+         AND (
+             g.businessID = r.businessID
+             OR (
+                 g.businessID IS NULL
+                 AND g.barangayID = r.barangayID
+                 AND LOWER(TRIM(g.detectedName)) = LOWER(TRIM(r.businessName))
+             )
+         )
+    """)
+    return {
+        r["businessID"] if isinstance(r, dict) else r[0]
+        for r in cur.fetchall()
+    }
+
+
+def prioritize_candidates(suspects, recent, attempted, known_google_poi_ids):
+    """Prefer unchecked businesses already associated with a Google Maps POI."""
+    eligible = [s for s in suspects if s["businessID"] not in recent]
+    return sorted(
+        eligible,
+        key=lambda s: (
+            s["businessID"] in attempted,
+            s["businessID"] not in known_google_poi_ids,
+            -s["stackSize"],
+            str(s["businessID"]),
+        ),
+    )
+
+
 def _claimed_by_other(cur, place_id, business_id):
     if not place_id:
         return False
@@ -286,6 +322,18 @@ def _update_registry(cur, biz, lat, lng, meta, status):
         (lat, lng, meta.get("coord_source") or "places", meta.get("place_id"),
          meta.get("place_id_kind"), meta.get("score"), status, meta.get("resolve_key"),
          biz["businessID"]),
+    )
+    return cur.rowcount
+
+
+def _record_review_candidate(cur, biz, meta):
+    """Flag an ambiguous match for review while preserving the official pin and POI link."""
+    cur.execute(
+        """UPDATE official_registry SET matchScore = %s, matchStatus = 'review'
+           WHERE businessID = %s
+             AND (coordSource IS NULL OR coordSource <> 'manual')
+             AND (matchStatus IS NULL OR matchStatus NOT IN ('approved', 'rejected'))""",
+        (meta.get("score"), biz["businessID"]),
     )
     return cur.rowcount
 
@@ -363,16 +411,21 @@ def _log_run_summary(places_resolver, counts):
         usage = places_resolver.get_places_call_usage()
         text_search = usage["text_search"]
         details = usage["details"]
+        geocoding = usage["geocoding"]
         print(
             "[reverify] summary "
+            f"resolved={verified + counts['moved'] + counts['review']} "
             f"verified={verified} moved={counts['moved']} review={counts['review']} "
             f"no_match={no_match} "
-            f"skipped_quota={counts['skipped_quota']} api_error={counts['api_error']} "
+            f"skipped_quota={counts['skipped_quota']} api_error={counts['api_error']} cache_hits=0 "
             f"TextSearch calls today={text_search['day']} month={text_search['month']}; "
-            f"PlaceDetails calls today={details['day']} month={details['month']}"
+            f"PlaceDetails calls today={details['day']} month={details['month']}; "
+            f"Geocoding calls today={geocoding['day']} month={geocoding['month']}"
         )
+        return usage
     except Exception as e:
         print(f"[reverify] summary usage lookup failed: {e}")
+        return None
 
 
 def run(limit=50):
@@ -405,13 +458,15 @@ def _run(limit):
             rows = _load_rows(cur)
             recent = _recent_ids(cur)
             attempted = _attempted_ids(cur)
+            known_google_poi_ids = _known_google_poi_business_ids(cur)
             mysql.connection.commit()
         finally:
             cur.close()
 
         suspects, _sizes = build_suspects(rows)
-        eligible = [s for s in suspects if s["businessID"] not in recent]
-        eligible.sort(key=lambda s: s["businessID"] in attempted)
+        eligible = prioritize_candidates(
+            suspects, recent, attempted, known_google_poi_ids
+        )
         run_limit = max(1, min(int(limit), max(1, BATCH_LIMIT)))
         todo = eligible[:run_limit]
         total = len(todo)
@@ -421,8 +476,12 @@ def _run(limit):
                 if not rows else "No unreliable pins left to re-verify."
             )
             _emit(hub, "completed", 100, 0, 0, 0, 0, msg)
-            _log_run_summary(places_resolver, Counter())
-            return {"total": 0, "message": msg}, None
+            usage = _log_run_summary(places_resolver, Counter())
+            return {
+                "total": 0, "resolved": 0, "moved": 0, "review": 0,
+                "no_match": 0, "skipped_quota": 0, "api_error": 0,
+                "cache_hits": 0, "usage": usage, "message": msg,
+            }, None
 
         _emit(hub, "running", 0, 0, 0, 0, total, f"Re-verifying {total} pins against Google Places...")
         brgy_name_by_id = {v: k for k, v in service._load_barangay_lookup().items()}
@@ -444,6 +503,7 @@ def _run(limit):
                     line_of_business=biz["lineOfBusiness"] or "",
                     reserve_geocode=service._reserve_geocode_call,
                     refresh_geocode=False, force=True,
+                    preferred_place_id=biz.get("placeID"),
                 )
                 meta = meta or {}
 
@@ -481,10 +541,16 @@ def _run(limit):
                     outcome = plan_outcome(old, new, meta, conflict=conflict, barangay_ok=ok_brgy)
 
                     if outcome == "verified":
-                        _update_registry(cur, biz, lat, lng, meta, meta.get("match_status") or "auto")  # old pin was right
-                    elif outcome in ("moved", "review"):
-                        status = "auto" if outcome == "moved" else "review"
-                        if _update_registry(cur, biz, lat, lng, meta, status):
+                        if not _update_registry(
+                            cur, biz, lat, lng, meta,
+                            meta.get("match_status") or "auto",
+                        ):
+                            outcome = "unresolved"
+                    elif outcome == "review":
+                        if not _record_review_candidate(cur, biz, meta):
+                            outcome = "unresolved"
+                    elif outcome == "moved":
+                        if _update_registry(cur, biz, lat, lng, meta, "auto"):
                             _move_pin(cur, service, biz, lat, lng)
                         else:
                             outcome = "unresolved"                                # locked meanwhile
@@ -522,13 +588,26 @@ def _run(limit):
                       f"{counts['verified']} already right, {failed} not matched")
 
         if abort_msg:
-            _log_run_summary(places_resolver, counts)
-            _emit(hub, "completed", 100, 0, 0, 0, total, abort_msg, error=abort_msg)
-            return {"total": total, **dict(counts)}, abort_msg
+            usage = _log_run_summary(places_resolver, counts)
+            resolved = counts["verified"] + counts["moved"] + counts["review"]
+            no_match = counts["unresolved"] + counts["conflict"]
+            _emit(
+                hub, "completed", 100, counts["moved"] + counts["review"],
+                no_match + counts["api_error"], counts["verified"], total,
+                abort_msg, error=abort_msg, resolved=resolved,
+                no_match=no_match, skipped_quota=counts["skipped_quota"],
+                api_error=counts["api_error"], cache_hits=0, usage=usage,
+            )
+            return {
+                "total": total, **dict(counts), "resolved": resolved,
+                "no_match": no_match, "cache_hits": 0, "usage": usage,
+            }, abort_msg
 
         moved_total = counts["moved"] + counts["review"]
         failed_total = counts["unresolved"] + counts["conflict"] + counts["api_error"]
-        _log_run_summary(places_resolver, counts)
+        usage = _log_run_summary(places_resolver, counts)
+        resolved = counts["verified"] + counts["moved"] + counts["review"]
+        no_match = counts["unresolved"] + counts["conflict"]
         msg = (f"Re-verify done: {counts['moved']} pins moved, {counts['review']} sent to review, "
                f"{counts['verified']} already correct, {failed_total} not matched.")
         if reasons:
@@ -539,10 +618,17 @@ def _run(limit):
             msg += f" {counts['api_error']} had Google errors and will be retried next run."
         if budget_hit:
             msg += " Google Places budget reached; run again later to continue (progress is saved)."
-        _emit(hub, "completed", 100, moved_total, failed_total, counts["verified"], total, msg, budget_hit=budget_hit)
+        _emit(
+            hub, "completed", 100, moved_total, failed_total, counts["verified"],
+            total, msg, budget_hit=budget_hit, resolved=resolved,
+            no_match=no_match, skipped_quota=counts["skipped_quota"],
+            api_error=counts["api_error"], cache_hits=0, usage=usage,
+        )
         hub.publish_to_admins({"type": "registry_updated"})
         return {
             "total": total, **dict(counts), "reasons": dict(reasons),
+            "resolved": resolved, "no_match": no_match,
+            "cache_hits": 0, "usage": usage,
             "budget_hit": budget_hit, "message": msg,
         }, None
 

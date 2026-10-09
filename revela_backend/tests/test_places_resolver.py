@@ -158,6 +158,38 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         )
         reset_run_state()
 
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call", return_value=False)
+    @patch("api.registry.places_resolver._places_request")
+    @patch("api.registry.places_resolver.mysql")
+    def test_place_details_reservation_uses_daily_and_monthly_caps(
+        self, mock_mysql, mock_places_request, mock_reserve
+    ):
+        from api.registry import places_resolver
+
+        reset_run_state()
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [{
+            "businessID": 1,
+            "barangayID": 1,
+            "businessName": "Test Business",
+            "latitude": 13.96,
+            "longitude": 121.11,
+            "placeID": "place-id",
+        }]
+        mock_mysql.connection.cursor.return_value = cursor
+        mock_places_request.side_effect = (
+            lambda _label, _request, reserve: (reserve(), None)[1]
+        )
+
+        places_resolver.refresh_expired_coords(limit=1)
+
+        mock_reserve.assert_called_once_with(
+            "imp_pd", places_resolver.PD_MONTHLY_CAP, places_resolver.PD_DAILY_CAP
+        )
+        cursor.close.assert_called_once()
+        reset_run_state()
+
     def test_compute_resolve_key_deterministic(self):
         """compute_resolve_key must return a 40-char SHA-1 hex digest normalized across case and spacing."""
         key1 = compute_resolve_key("Silva's Pharmacy", "  Poblacion  ", 1)
@@ -384,7 +416,7 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         }
 
         ok, err = decide_review("BIZ-REV-01", approve=False)
-        self.assertTrue(ok)
+        self.assertTrue(ok, err)
         self.assertIsNone(err)
 
         insert_calls = [

@@ -160,6 +160,89 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         self.assertIn("longitude=NULL", detach_sql)
         self.assertIn("placeID=NULL", detach_sql)
 
+    @patch("api.registry.places_resolver._update_pin")
+    @patch("api.registry.places_resolver.mysql")
+    def test_approving_reverify_proposal_moves_pin_only_after_admin_approval(
+        self, mock_mysql, update_pin
+    ):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {
+                "barangayID": 1,
+                "businessName": "Candidate Store",
+                "latitude": 13.962,
+                "longitude": 121.112,
+                "placeID": "existing_place",
+            },
+            {
+                "reviewHistoryID": 42,
+                "newLat": 13.965,
+                "newLng": 121.115,
+                "placeID": "proposed_place",
+                "score": 0.68,
+            },
+        ]
+        cursor.rowcount = 1
+        mock_mysql.connection.cursor.return_value = cursor
+
+        ok, error = decide_review("BIZ-REV-02", approve=True)
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        proposal_update = next(
+            call for call in cursor.execute.call_args_list
+            if "SET latitude=%s, longitude=%s, placeID=%s" in call.args[0]
+        )
+        self.assertEqual(
+            proposal_update.args[1],
+            (13.965, 121.115, "proposed_place", 0.68, "BIZ-REV-02"),
+        )
+        update_pin.assert_called_once_with(
+            cursor, 1, "Candidate Store", 13.962, 121.112, 13.965, 121.115,
+            business_id="BIZ-REV-02",
+        )
+        self.assertTrue(any(
+            "review_approved" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+
+    @patch("api.registry.places_resolver._update_pin")
+    @patch("api.registry.places_resolver.mysql")
+    def test_rejecting_reverify_proposal_keeps_original_pin(self, mock_mysql, update_pin):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {
+                "barangayID": 1,
+                "businessName": "Candidate Store",
+                "latitude": 13.962,
+                "longitude": 121.112,
+                "placeID": "existing_place",
+            },
+            {
+                "reviewHistoryID": 43,
+                "newLat": 13.965,
+                "newLng": 121.115,
+                "placeID": "proposed_place",
+                "score": 0.68,
+            },
+        ]
+        mock_mysql.connection.cursor.return_value = cursor
+
+        ok, error = decide_review("BIZ-REV-03", approve=False)
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        update_pin.assert_not_called()
+        self.assertNotIn(
+            "latitude=NULL",
+            "\n".join(call.args[0] for call in cursor.execute.call_args_list),
+        )
+        rejected = next(
+            call for call in cursor.execute.call_args_list
+            if "INSERT IGNORE INTO registry_rejected_places" in call.args[0]
+        )
+        self.assertEqual(rejected.args[1], ("BIZ-REV-03", "proposed_place"))
+
 
 if __name__ == "__main__":
     unittest.main()

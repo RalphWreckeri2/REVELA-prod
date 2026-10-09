@@ -1155,6 +1155,37 @@ export async function reverifyPinsRequest(token, limit = 50) {
   }
 }
 
+/** GET /api/registry/review - low-confidence re-verify proposals awaiting admin review */
+export async function getRegistryReviewQueueRequest(token, page = 1, limit = 20) {
+  try {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+    const res = await fetch(`${BASE_URL}/registry/review?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/registry/review/{accept|reject} - decide a pending pin proposal */
+export async function decideRegistryReviewRequest(token, businessID, action) {
+  try {
+    const endpoint = action === "approve" ? "accept" : "reject";
+    const res = await fetch(`${BASE_URL}/registry/review/${endpoint}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ businessID }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 /** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
 export async function snapUnresolvedPinsRequest(token, limit = 200) {
   try {

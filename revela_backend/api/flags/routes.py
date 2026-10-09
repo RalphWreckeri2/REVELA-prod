@@ -77,6 +77,10 @@ def run_detection_route():
 
     result, error = run_detection(user_id=user_id)
     if error:
+        if result and result.get("status") in (
+            "skipped_quota", "daily_quota_exceeded", "monthly_quota_exceeded"
+        ):
+            return jsonify({"error": error, **result}), 429
         if error == "Detection cancelled by user.":
             return jsonify({"message": error}), 200
         if "Monthly detection limit reached" in error or ("Places API" in error and "limit reached" in error) or "budget" in error.lower():

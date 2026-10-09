@@ -6,9 +6,11 @@ from api.models.detection_runs import (
 )
 import re
 import difflib
+import math
 import numpy as np
 from sklearn.cluster import DBSCAN
 import os
+import random
 import time
 import threading
 import requests as http
@@ -19,6 +21,7 @@ from shapely.geometry import shape, Point
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.notifications import hub
 from api.utils.name_match import name_match, parse_name
+from api.utils.places_quota import read_usage, reserve_usage_slot
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -30,10 +33,32 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "2000"))
 PLACES_DAILY_CAP = int(os.getenv("PLACES_DAILY_CAP", "1000"))
 PLACES_KINDS = ("nearby",)
+NEW_NEARBY_DAILY_CAP = int(os.getenv("NEW_NEARBY_DAILY_CAP", "0"))
+NEW_NEARBY_MONTHLY_CAP = int(os.getenv("NEW_NEARBY_MONTHLY_CAP", "0"))
+NEW_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
+NEW_NEARBY_FIELD_MASK = (
+    "places.id,places.displayName,places.location,"
+    "places.primaryType,places.businessStatus"
+)
+NEW_NEARBY_EXCLUDED_TYPES = (
+    "place_of_worship", "school", "primary_school", "secondary_school",
+    "university", "local_government_office", "city_hall", "courthouse",
+    "fire_station", "police_station", "post_office", "library", "cemetery",
+    "park", "transit_station", "bus_station", "subway_station",
+    "train_station", "light_rail_station",
+)
+RUN_DETECTION_NEARBY_API = os.getenv(
+    "RUN_DETECTION_NEARBY_API", "legacy"
+).strip().lower()
+_nearby_request_lock = threading.Lock()
+_nearby_last_request_at = 0.0
+_places_run_state = threading.local()
 
 
 class PlacesBudgetExceeded(Exception):
-    pass
+    def __init__(self, message, reason="skipped_quota"):
+        super().__init__(message)
+        self.reason = reason
 
 
 _budget_tables_ready = False
@@ -78,69 +103,34 @@ _MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
 
 
 def _reserve_places_call(kind):
-    """
-    Atomically take one request from the shared monthly AND daily budgets, or raise.
-    Rows in places_api_usage: kind='month' (usageDate = first of month) and kind='day'.
-    """
+    """Reserve a legacy Nearby Search call, preserving its existing ledger rows."""
     _ensure_budget_tables()
-    month_ok = day_ok = False
-    cur = mysql.connection.cursor()
     try:
-        cur.execute(
-            f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES ({_MONTH_KEY}, 'month', 0)")
-        cur.execute(
-            "INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) VALUES (CURDATE(), 'day', 0)")
-
-        cur.execute(f"""
-            UPDATE places_api_usage SET requestCount = requestCount + 1
-            WHERE usageDate = {_MONTH_KEY} AND kind = 'month' AND requestCount < %s
-        """, (PLACES_MONTHLY_CAP,))
-        month_ok = cur.rowcount == 1
-
-        if month_ok:
-            cur.execute("""
-                UPDATE places_api_usage SET requestCount = requestCount + 1
-                WHERE usageDate = CURDATE() AND kind = 'day' AND requestCount < %s
-            """, (PLACES_DAILY_CAP,))
-            day_ok = cur.rowcount == 1
-            if not day_ok:   # give the monthly slot back
-                cur.execute(f"""
-                    UPDATE places_api_usage SET requestCount = requestCount - 1
-                    WHERE usageDate = {_MONTH_KEY} AND kind = 'month'
-                """)
-        mysql.connection.commit()
-    except Exception:
-        mysql.connection.rollback()
-        raise                      # callers fail CLOSED: no budget row, no Google request
-    finally:
-        cur.close()
-
-    if not month_ok:
+        allowed, reason = reserve_usage_slot(
+            mysql.connection, "month", "day",
+            PLACES_MONTHLY_CAP, PLACES_DAILY_CAP,
+        )
+    except Exception as exc:
+        print(f"[Run Detection] legacy_nearby reservation failed closed: {exc}")
         raise PlacesBudgetExceeded(
-            f"Places API monthly limit reached ({PLACES_MONTHLY_CAP} requests/month, kept under Google's free tier). "
-            "Available again next month.")
-    if not day_ok:
+            "Legacy Nearby Search usage ledger is unavailable; no request was sent."
+        ) from exc
+    if not allowed:
         raise PlacesBudgetExceeded(
-            f"Places API daily limit reached ({PLACES_DAILY_CAP} requests/day). Try again tomorrow.")
-
-
-def _refund_places_call():
-    """Refund one Places API slot when Google denies the request or fails without returning data."""
-    try:
-        cur = mysql.connection.cursor()
-        cur.execute(
-            f"UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
-        cur.execute(
-            "UPDATE places_api_usage SET requestCount = GREATEST(0, requestCount - 1) WHERE usageDate = CURDATE() AND kind = 'day'")
-        mysql.connection.commit()
-        cur.close()
-    except Exception as e:
-        print(f"[Places budget] refund error: {e}")
+            f"Legacy Nearby Search {reason.replace('_', ' ')} "
+            f"(daily {PLACES_DAILY_CAP}, monthly {PLACES_MONTHLY_CAP}).",
+            reason=reason,
+        )
 
 
 def _places_get(kind, url, **kwargs):
     """Every Google Places HTTP call in this module must go through here."""
     _reserve_places_call(kind)
+    calls = getattr(_places_run_state, "calls", None)
+    if calls is not None:
+        calls["legacy_nearby"] += 1
+        query_kind = getattr(_places_run_state, "query_kind", "initial")
+        calls[f"legacy_nearby_{query_kind}"] += 1
     return http.get(url, **kwargs)
 
 
@@ -148,46 +138,71 @@ def get_places_usage_today():
     _ensure_budget_tables()
     cur = mysql.connection.cursor()
     try:
-        cur.execute(
-            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'month'")
-        m = cur.fetchone()
-        cur.execute(
-            "SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'day'")
-        d = cur.fetchone()
+        m_used = _places_usage_count(cur, "month")
+        d_used = _places_usage_count(cur, "day", today=True)
 
-        cur.execute(
-            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_ts_month'")
-        ts_m = cur.fetchone()
-        cur.execute(
-            f"SELECT requestCount AS c FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = 'imp_pd_month'")
-        pd_m = cur.fetchone()
-
-        m_used = int((m.get("c") if isinstance(
-            m, dict) else m[0]) or 0) if m else 0
-        d_used = int((d.get("c") if isinstance(
-            d, dict) else d[0]) or 0) if d else 0
-
-        ts_m_used = int((ts_m.get("c") if isinstance(
-            ts_m, dict) else ts_m[0]) or 0) if ts_m else 0
-        pd_m_used = int((pd_m.get("c") if isinstance(
-            pd_m, dict) else pd_m[0]) or 0) if pd_m else 0
-
-        geo_info = {"cap": 1500, "remaining": 1500, "used": 0}
-        try:
-            from api.registry.service import get_geocode_remaining_today, GEOCODE_DAILY_CAP
-            geo_rem = get_geocode_remaining_today()
-            geo_info = {
-                "cap": GEOCODE_DAILY_CAP,
-                "remaining": geo_rem,
-                "used": max(0, GEOCODE_DAILY_CAP - geo_rem),
-            }
-        except Exception:
-            pass
+        from api.registry.service import (
+            GEOCODE_DAILY_CAP,
+            GEOCODE_MONTHLY_CAP,
+            get_geocode_remaining_month,
+            get_geocode_remaining_today,
+        )
+        geo_remaining_day = get_geocode_remaining_today()
+        geo_remaining_month = get_geocode_remaining_month()
+        geo_info = {
+            "cap": GEOCODE_DAILY_CAP,
+            "remaining": geo_remaining_day,
+            "used": max(0, GEOCODE_DAILY_CAP - geo_remaining_day),
+            "monthly_cap": GEOCODE_MONTHLY_CAP,
+            "monthly_remaining": geo_remaining_month,
+            "used_month": max(0, GEOCODE_MONTHLY_CAP - geo_remaining_month),
+        }
 
         from api.registry.places_resolver import (
-            TS_DAILY_CAP, TS_MONTHLY_CAP, PD_MONTHLY_CAP,
+            TS_DAILY_CAP, TS_MONTHLY_CAP, PD_DAILY_CAP, PD_MONTHLY_CAP,
         )
-        ts_d_used = _places_usage_count(cur, "imp_ts_day", today=True)
+        text_search = read_usage(mysql.connection, "imp_ts_month", "imp_ts_day")
+        details = read_usage(mysql.connection, "imp_pd_month", "imp_pd_day")
+        nearby_new = read_usage(
+            mysql.connection, "new_nearby_month", "new_nearby_day"
+        )
+        nearby_legacy = {
+            "enabled": True,
+            "used_today": d_used,
+            "daily_cap": PLACES_DAILY_CAP,
+            "daily_remaining": max(0, PLACES_DAILY_CAP - d_used),
+            "used_month": m_used,
+            "monthly_cap": PLACES_MONTHLY_CAP,
+            "monthly_remaining": max(0, PLACES_MONTHLY_CAP - m_used),
+            "daily_quota_exceeded": d_used >= PLACES_DAILY_CAP,
+            "monthly_quota_exceeded": m_used >= PLACES_MONTHLY_CAP,
+        }
+        nearby_new_status = {
+            "enabled": (
+                NEW_NEARBY_DAILY_CAP > 0 and NEW_NEARBY_MONTHLY_CAP > 0
+            ),
+            "used_today": nearby_new["day"],
+            "daily_cap": NEW_NEARBY_DAILY_CAP,
+            "daily_remaining": max(0, NEW_NEARBY_DAILY_CAP - nearby_new["day"]),
+            "used_month": nearby_new["month"],
+            "monthly_cap": NEW_NEARBY_MONTHLY_CAP,
+            "monthly_remaining": max(
+                0, NEW_NEARBY_MONTHLY_CAP - nearby_new["month"]
+            ),
+            "daily_quota_exceeded": (
+                NEW_NEARBY_DAILY_CAP > 0
+                and nearby_new["day"] >= NEW_NEARBY_DAILY_CAP
+            ),
+            "monthly_quota_exceeded": (
+                NEW_NEARBY_MONTHLY_CAP > 0
+                and nearby_new["month"] >= NEW_NEARBY_MONTHLY_CAP
+            ),
+        }
+        active_nearby_usage = (
+            nearby_new_status
+            if _nearby_api_mode() == "new"
+            else nearby_legacy
+        )
 
         return {
             "month": {
@@ -207,22 +222,34 @@ def get_places_usage_today():
             },
             "geocode": geo_info,
             "text_search_month": {
-                "used": ts_m_used,
+                "used": text_search["month"],
                 "cap": TS_MONTHLY_CAP,
-                "remaining": max(0, TS_MONTHLY_CAP - ts_m_used),
-                "monthly_quota_exceeded": ts_m_used >= TS_MONTHLY_CAP,
+                "remaining": max(0, TS_MONTHLY_CAP - text_search["month"]),
+                "monthly_quota_exceeded": text_search["month"] >= TS_MONTHLY_CAP,
             },
             "text_search_day": {
-                "used": ts_d_used,
+                "used": text_search["day"],
                 "cap": TS_DAILY_CAP,
-                "remaining": max(0, TS_DAILY_CAP - ts_d_used),
+                "remaining": max(0, TS_DAILY_CAP - text_search["day"]),
+                "daily_quota_exceeded": text_search["day"] >= TS_DAILY_CAP,
             },
-            "monthly_quota_exceeded": ts_m_used >= TS_MONTHLY_CAP,
+            "monthly_quota_exceeded": text_search["month"] >= TS_MONTHLY_CAP,
+            "place_details_day": {
+                "used": details["day"],
+                "cap": PD_DAILY_CAP,
+                "remaining": max(0, PD_DAILY_CAP - details["day"]),
+                "daily_quota_exceeded": details["day"] >= PD_DAILY_CAP,
+            },
             "place_details_month": {
-                "used": pd_m_used,
+                "used": details["month"],
                 "cap": PD_MONTHLY_CAP,
-                "remaining": max(0, PD_MONTHLY_CAP - pd_m_used),
-            }
+                "remaining": max(0, PD_MONTHLY_CAP - details["month"]),
+                "monthly_quota_exceeded": details["month"] >= PD_MONTHLY_CAP,
+            },
+            "nearby_search_mode": _nearby_api_mode(),
+            "nearby_search_legacy": nearby_legacy,
+            "nearby_search_new": nearby_new_status,
+            "nearby_search_active": active_nearby_usage,
         }
     finally:
         cur.close()
@@ -696,26 +723,212 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
 
 # ── Google Places fetch & checkpointed grid scan ───────────────────────────────
 DETECTION_RADIUS_M = 850
+NEARBY_RESULT_LIMIT = 60
+NEW_NEARBY_RESULT_LIMIT = 20
+MAX_ADAPTIVE_DEPTH = 2
+MAX_ADAPTIVE_QUERIES_PER_POINT = 12
+ADAPTIVE_QUERY_RADIUS_RATIO = 0.72
+ADAPTIVE_CENTER_OFFSET_RATIO = 0.5
 
 
 def _grid_points():
-    """Same grid as before (unchanged numbers)."""
+    """Include nearby outside centers so search circles cover the municipal boundary."""
     min_lat, max_lat = 13.9450, 14.0125
     min_lng, max_lng = 121.0120, 121.1260
     step = 0.0075
+    search_buffer_degrees = (DETECTION_RADIUS_M / 111_320.0) * 1.1
+    search_area = _MUNICIPALITY_BOUNDARY.buffer(search_buffer_degrees)
     points = []
     lat = min_lat
     while lat <= max_lat:
         lng = min_lng
         while lng <= max_lng:
-            if _MUNICIPALITY_BOUNDARY.buffer(0.001).contains(Point(lng, lat)):
+            if search_area.contains(Point(lng, lat)):
                 points.append((lat, lng))
             lng += step
         lat += step
     return points
 
 
-def _fetch_point_results(lat, lng, radius_m):
+def _nearby_api_mode():
+    mode = RUN_DETECTION_NEARBY_API
+    if mode not in ("legacy", "new"):
+        raise RuntimeError(
+            "RUN_DETECTION_NEARBY_API must be either 'legacy' or 'new'."
+        )
+    return mode
+
+
+def _record_nearby_api_error():
+    current = getattr(_places_run_state, "api_errors", 0)
+    _places_run_state.api_errors = current + 1
+
+
+def _active_nearby_result_limit():
+    return (
+        NEW_NEARBY_RESULT_LIMIT
+        if _nearby_api_mode() == "new"
+        else NEARBY_RESULT_LIMIT
+    )
+
+
+def _normalize_new_nearby_results(data):
+    normalized = []
+    for place in data.get("places", []) or []:
+        location = place.get("location") or {}
+        display_name = place.get("displayName") or {}
+        primary_type = place.get("primaryType")
+        normalized.append({
+            "place_id": place.get("id"),
+            "name": display_name.get("text") or "Unknown",
+            "geometry": {
+                "location": {
+                    "lat": location.get("latitude"),
+                    "lng": location.get("longitude"),
+                }
+            },
+            "vicinity": place.get("formattedAddress"),
+            "primaryType": primary_type,
+            "types": [primary_type] if primary_type else [],
+            "business_status": place.get("businessStatus"),
+        })
+    return normalized
+
+
+def _new_nearby_request(lat, lng, radius_m):
+    """Send one quota-reserved New Nearby request with bounded RPM retries."""
+    global _nearby_last_request_at
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or os.getenv("GOOGLE_PLACES_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GOOGLE_MAPS_API_KEY or GOOGLE_PLACES_API_KEY must be configured "
+            "on the backend."
+        )
+    if NEW_NEARBY_DAILY_CAP <= 0 or NEW_NEARBY_MONTHLY_CAP <= 0:
+        raise PlacesBudgetExceeded(
+            "Nearby Search (New) is disabled until positive "
+            "NEW_NEARBY_DAILY_CAP and NEW_NEARBY_MONTHLY_CAP limits are configured."
+        )
+
+    payload = {
+        "excludedTypes": list(NEW_NEARBY_EXCLUDED_TYPES),
+        "maxResultCount": NEW_NEARBY_RESULT_LIMIT,
+        "locationRestriction": {
+            "circle": {
+                "center": {"latitude": lat, "longitude": lng},
+                "radius": radius_m,
+            }
+        },
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": NEW_NEARBY_FIELD_MASK,
+    }
+
+    for attempt in range(4):
+        with _nearby_request_lock:
+            elapsed = time.monotonic() - _nearby_last_request_at
+            if _nearby_last_request_at and elapsed < 0.3:
+                time.sleep(max(0.0, random.uniform(0.3, 0.5) - elapsed))
+            try:
+                allowed, reason = reserve_usage_slot(
+                    mysql.connection,
+                    "new_nearby_month",
+                    "new_nearby_day",
+                    NEW_NEARBY_MONTHLY_CAP,
+                    NEW_NEARBY_DAILY_CAP,
+                )
+            except Exception as exc:
+                print(f"[Run Detection] new_nearby reservation failed closed: {exc}")
+                raise PlacesBudgetExceeded(
+                    "Nearby Search (New) usage ledger is unavailable; no request was sent."
+                ) from exc
+            if not allowed:
+                raise PlacesBudgetExceeded(
+                    f"Nearby Search (New) {reason.replace('_', ' ')} "
+                    f"(daily {NEW_NEARBY_DAILY_CAP}, monthly {NEW_NEARBY_MONTHLY_CAP}).",
+                    reason=reason,
+                )
+            calls = getattr(_places_run_state, "calls", None)
+            if calls is not None:
+                calls["new_nearby"] += 1
+                query_kind = getattr(_places_run_state, "query_kind", "initial")
+                calls[f"new_nearby_{query_kind}"] += 1
+
+            try:
+                response = http.post(
+                    NEW_NEARBY_URL, headers=headers, json=payload, timeout=10
+                )
+                _nearby_last_request_at = time.monotonic()
+            except http.RequestException as exc:
+                _record_nearby_api_error()
+                print(
+                    "[Run Detection] Nearby Search (New) network error "
+                    f"({type(exc).__name__})"
+                )
+                return [], False
+
+        if response.status_code == 429:
+            body = getattr(response, "text", "") or ""
+            print(
+                f"[Run Detection] Nearby Search (New) HTTP 429 "
+                f"attempt={attempt + 1} body={body[:2000]}"
+            )
+            lowered = body.lower()
+            per_minute = any(marker in lowered for marker in (
+                "requestsperminute", "requests_per_minute", "per minute",
+                "per_minute", "rate limit", "rate_limit",
+            ))
+            daily_quota = any(marker in lowered for marker in (
+                "resource_exhausted", "requestsperday", "per_day", "per day",
+                "daily quota", "quota exceeded",
+            ))
+            if per_minute and attempt < 3:
+                delay = (2 ** (attempt + 1)) * random.uniform(0.8, 1.2)
+                print(
+                    f"[Run Detection] New Nearby per-minute throttle; "
+                    f"retry {attempt + 1}/3 after {delay:.2f}s"
+                )
+                time.sleep(delay)
+                continue
+            if daily_quota or not per_minute:
+                raise PlacesBudgetExceeded(
+                    "Nearby Search (New) quota exhausted by Google (HTTP 429); "
+                    "stopping Places calls for this run.",
+                    reason=(
+                        "daily_quota_exceeded"
+                        if daily_quota else "skipped_quota"
+                    ),
+                )
+            _record_nearby_api_error()
+            print("[Run Detection] New Nearby per-minute retries exhausted.")
+            return [], False
+
+        if response.status_code != 200:
+            _record_nearby_api_error()
+            body = getattr(response, "text", "") or ""
+            print(
+                f"[Run Detection] Nearby Search (New) HTTP "
+                f"{response.status_code}: {body[:2000]}"
+            )
+            return [], False
+        try:
+            return _normalize_new_nearby_results(response.json()), True
+        except (ValueError, TypeError) as exc:
+            _record_nearby_api_error()
+            print(f"[Run Detection] Nearby Search (New) invalid response: {exc}")
+            return [], False
+    return [], False
+
+
+def _fetch_point_results_once(lat, lng, radius_m):
+    if _nearby_api_mode() == "new":
+        return _new_nearby_request(lat, lng, radius_m)
+    return _fetch_legacy_point_results_once(lat, lng, radius_m)
+
+
+def _fetch_legacy_point_results_once(lat, lng, radius_m):
     """
     Fetch all result pages for ONE grid point. Nothing is stored.
     Returns (results, complete). Raises PlacesBudgetExceeded when a limit is hit.
@@ -723,7 +936,6 @@ def _fetch_point_results(lat, lng, radius_m):
     api_key = (
         os.getenv("GOOGLE_MAPS_API_KEY")
         or os.getenv("GOOGLE_PLACES_API_KEY")
-        or os.getenv("VITE_GOOGLE_MAPS_API_KEY")
     )
     if not api_key:
         raise RuntimeError(
@@ -731,11 +943,7 @@ def _fetch_point_results(lat, lng, radius_m):
 
     url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
     params = {"location": f"{lat},{lng}", "radius": radius_m, "key": api_key}
-    headers = {
-        "User-Agent": "REVELA-Backend/1.0",
-        "Referer": os.getenv("FRONTEND_URL", "https://revela-web.up.railway.app/"),
-        "Origin": os.getenv("FRONTEND_URL", "https://revela-web.up.railway.app/").rstrip("/"),
-    }
+    headers = {"User-Agent": "REVELA-Backend/1.0"}
     results, complete = [], True
 
     while True:
@@ -746,8 +954,11 @@ def _fetch_point_results(lat, lng, radius_m):
         except PlacesBudgetExceeded:
             raise
         except Exception as he:
+            _record_nearby_api_error()
             print(
-                f"[Run Detection] HTTP error querying point ({lat}, {lng}): {he}")
+                f"[Run Detection] HTTP error querying point ({lat}, {lng}): "
+                f"{type(he).__name__}"
+            )
             return results, False
 
         status = data.get("status")
@@ -756,7 +967,6 @@ def _fetch_point_results(lat, lng, radius_m):
             raise PlacesBudgetExceeded(
                 f"Places API daily budget reached (Google returned {status}). Try again tomorrow.")
         if status == "REQUEST_DENIED":
-            _refund_places_call()
             details = f": {err_msg}" if err_msg else ""
             raise RuntimeError(
                 f"Google Maps Places API request was denied (REQUEST_DENIED){details}. "
@@ -764,6 +974,7 @@ def _fetch_point_results(lat, lng, radius_m):
                 "is enabled, billing is active, and the API key has no incompatible HTTP referrer restrictions."
             )
         if status not in ("OK", "ZERO_RESULTS"):
+            _record_nearby_api_error()
             print(
                 f"[Run Detection] Places API status: {status}, message: {err_msg}")
             return results, False
@@ -774,6 +985,125 @@ def _fetch_point_results(lat, lng, radius_m):
             return results, complete
         time.sleep(2)
         params = {"pagetoken": next_token, "key": api_key}
+
+
+def _adaptive_nearby_centers(lat, lng, radius_m):
+    """Split a saturated search circle into four overlapping, smaller search circles."""
+    lat_offset = radius_m * ADAPTIVE_CENTER_OFFSET_RATIO / 111_320.0
+    lng_scale = max(0.01, math.cos(math.radians(lat)))
+    lng_offset = radius_m * ADAPTIVE_CENTER_OFFSET_RATIO / (111_320.0 * lng_scale)
+    child_radius = radius_m * ADAPTIVE_QUERY_RADIUS_RATIO
+    return [
+        (lat + lat_sign * lat_offset, lng + lng_sign * lng_offset, child_radius)
+        for lat_sign, lng_sign in ((-1, -1), (-1, 1), (1, -1), (1, 1))
+    ]
+
+
+def _fetch_point_results(lat, lng, radius_m):
+    """
+    Fetch one grid cell and deduplicate overlapping parent/child results by place ID.
+    Refinement is bounded; a still-saturated area is left uncheckpointed for a later scan.
+    """
+    query_budget = {"remaining": MAX_ADAPTIVE_QUERIES_PER_POINT}
+    results, complete = _fetch_point_results_adaptive(
+        lat, lng, radius_m, depth=0, query_budget=query_budget
+    )
+    return _deduplicate_nearby_results(results), complete
+
+
+def _fetch_point_results_adaptive(lat, lng, radius_m, depth, query_budget):
+    result_limit = _active_nearby_result_limit()
+    previous_query_kind = getattr(_places_run_state, "query_kind", "initial")
+    _places_run_state.query_kind = "adaptive" if depth else "initial"
+    try:
+        results, complete = _fetch_point_results_once(lat, lng, radius_m)
+    finally:
+        _places_run_state.query_kind = previous_query_kind
+    _places_run_state.results_received = (
+        getattr(_places_run_state, "results_received", 0) + len(results)
+    )
+    if not complete:
+        return results, False
+    if len(results) < result_limit:
+        return results, True
+
+    print(
+        f"[Run Detection] Nearby Search saturated at {len(results)} results "
+        f"(limit {result_limit}) "
+        f"near ({lat:.5f}, {lng:.5f}); refining dense area"
+    )
+    if depth >= MAX_ADAPTIVE_DEPTH:
+        return results, False
+
+    refined = list(results)
+    refined_complete = True
+    for child_lat, child_lng, child_radius in _adaptive_nearby_centers(
+        lat, lng, radius_m
+    ):
+        if query_budget["remaining"] <= 0:
+            refined_complete = False
+            break
+        query_budget["remaining"] -= 1
+        child_results, child_complete = _fetch_point_results_adaptive(
+            child_lat, child_lng, child_radius, depth + 1, query_budget
+        )
+        refined.extend(child_results)
+        refined_complete = refined_complete and child_complete
+
+    return refined, refined_complete
+
+
+def _deduplicate_nearby_results(results):
+    """Merge repeated Places records while retaining the first complete location."""
+    unique = []
+    places_by_id = {}
+    duplicate_count = 0
+    for place in results:
+        place_id = place.get("place_id")
+        if not place_id:
+            unique.append(place)
+            continue
+        existing = places_by_id.get(place_id)
+        if existing is None:
+            places_by_id[place_id] = place
+            unique.append(place)
+            continue
+        duplicate_count += 1
+        _merge_nearby_place(existing, place)
+
+    _places_run_state.duplicate_results = (
+        getattr(_places_run_state, "duplicate_results", 0) + duplicate_count
+    )
+    return unique
+
+
+def _merge_nearby_place(existing, duplicate):
+    """Fill absent metadata from duplicate records without replacing a known location."""
+    for key in ("name", "vicinity", "primaryType", "business_status"):
+        current = existing.get(key)
+        incoming = duplicate.get(key)
+        if (current is None or current == "" or current == "Unknown") and incoming:
+            existing[key] = incoming
+
+    types = list(existing.get("types") or [])
+    for place_type in duplicate.get("types") or []:
+        if place_type not in types:
+            types.append(place_type)
+    if types:
+        existing["types"] = types
+
+    current_location = (
+        (existing.get("geometry") or {}).get("location") or {}
+    )
+    duplicate_location = (
+        (duplicate.get("geometry") or {}).get("location") or {}
+    )
+    if (
+        (current_location.get("lat") is None or current_location.get("lng") is None)
+        and duplicate_location.get("lat") is not None
+        and duplicate_location.get("lng") is not None
+    ):
+        existing.setdefault("geometry", {})["location"] = dict(duplicate_location)
 
 
 def _scan_grid(process_places, progress_cb, state):
@@ -797,7 +1127,13 @@ def _scan_grid(process_places, progress_cb, state):
         if progress_cb:
             progress_cb(idx, len(points), lat, lng)
 
+        errors_before_query = getattr(_places_run_state, "api_errors", 0)
         results, complete = _fetch_point_results(lat, lng, DETECTION_RADIUS_M)
+        api_error_during_query = (
+            getattr(_places_run_state, "api_errors", 0) > errors_before_query
+        )
+        if not complete:
+            state["incomplete_points"] += 1
 
         inside = []
         for p in results:
@@ -811,6 +1147,9 @@ def _scan_grid(process_places, progress_cb, state):
                 state["outside"] += 1
 
         process_places(inside)
+        if api_error_during_query:
+            state["api_error_stop"] = True
+            break
         if complete:
             _mark_point_done(key)
             state["done_keys"].append(key)
@@ -841,6 +1180,53 @@ def _load_registry():
     rows = cursor.fetchall()
     cursor.close()
     return rows
+
+
+def _log_detection_summary(run_id, state, counters, stop_reason=None):
+    calls = getattr(_places_run_state, "calls", {})
+    state["api_errors"] = getattr(_places_run_state, "api_errors", 0)
+    try:
+        usage = get_places_usage_today()
+    except Exception as exc:
+        print(
+            f"[Run Detection] run={run_id} Places usage summary unavailable "
+            f"({type(exc).__name__})"
+        )
+        return None
+    print(
+        f"[Run Detection] run={run_id} mode={_nearby_api_mode()} "
+        f"matched={counters['matched']} no_match={counters['no_match']} "
+        f"new_flags={counters['new_flags']} api_error={state['api_errors']} "
+        f"quota_stop={stop_reason or 'none'} "
+        f"api_error_stop={state.get('api_error_stop', False)} "
+        f"grid_completed={state['skipped_points'] + len(state['done_keys'])}/"
+        f"{state['total_points']} grid_incomplete={state['incomplete_points']} "
+        f"results={getattr(_places_run_state, 'results_received', 0)} "
+        f"duplicates={getattr(_places_run_state, 'duplicate_results', 0) + counters.get('duplicates', 0)} "
+        f"non_business={counters.get('non_business', 0)} "
+        f"closed_results={counters.get('closed_results', 0)} "
+        f"review={counters.get('review', 0)} "
+        f"initial_requests="
+        f"{calls.get('legacy_nearby_initial', 0) + calls.get('new_nearby_initial', 0)} "
+        f"adaptive_requests="
+        f"{calls.get('legacy_nearby_adaptive', 0) + calls.get('new_nearby_adaptive', 0)} "
+        f"calls_this_run={calls} "
+        f"legacy_nearby_day/month="
+        f"{usage['nearby_search_legacy']['used_today']}/"
+        f"{usage['nearby_search_legacy']['used_month']} "
+        f"new_nearby_day/month="
+        f"{usage['nearby_search_new']['used_today']}/"
+        f"{usage['nearby_search_new']['used_month']} "
+        f"text_search_day/month="
+        f"{usage['text_search_day']['used']}/"
+        f"{usage['text_search_month']['used']} "
+        f"details_day/month="
+        f"{usage['place_details_day']['used']}/"
+        f"{usage['place_details_month']['used']} "
+        f"geocode_day/month={usage['geocode']['used']}/"
+        f"{usage['geocode']['used_month']}"
+    )
+    return usage
 
 
 # ── 20-meter threshold check ──────────────────────────────────────────────────
@@ -975,14 +1361,13 @@ def _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address=None):
 def _is_non_business_place(place):
     """
     Return True if this POI is non-commercial (religious, public school, government,
-    cemetery, park, infrastructure, residential, or permanently closed).
+    cemetery, park, infrastructure, residential).
     Such places must NEVER be flagged as unregistered commercial businesses.
     """
     # 1. Closed permanently
-    if place.get("business_status") == "CLOSED_PERMANENTLY":
-        return True
-
     types = set(place.get("types") or [])
+    if place.get("primaryType"):
+        types.add(place["primaryType"])
 
     # Non-business Google types
     disqualifying_types = {
@@ -1032,6 +1417,18 @@ def run_detection(user_id=None):
     3. If the Places budget runs out, keep the progress and stop (status 'partial', quota NOT used)
     """
     set_cancel("run_detection", False)
+    _places_run_state.calls = {
+        "legacy_nearby": 0,
+        "legacy_nearby_initial": 0,
+        "legacy_nearby_adaptive": 0,
+        "new_nearby": 0,
+        "new_nearby_initial": 0,
+        "new_nearby_adaptive": 0,
+    }
+    _places_run_state.api_errors = 0
+    _places_run_state.results_received = 0
+    _places_run_state.duplicate_results = 0
+    _places_run_state.query_kind = "initial"
 
     quota_info = get_detection_quota_info()
     if quota_info.get("is_limit_reached"):
@@ -1051,11 +1448,17 @@ def run_detection(user_id=None):
         cursor.close()
 
     run_id = create_detection_run(user_id)
-    state = {"done_keys": [], "total_points": 0,
-             "skipped_points": 0, "outside": 0}
+    state = {
+        "done_keys": [], "total_points": 0, "skipped_points": 0,
+        "outside": 0, "incomplete_points": 0, "api_errors": 0,
+        "api_error_stop": False,
+    }
     inserted_flag_ids = []
     seen_place_ids = set()
-    counters = {"new_flags": 0, "total_checked": 0}
+    counters = {
+        "new_flags": 0, "total_checked": 0, "matched": 0, "no_match": 0,
+        "duplicates": 0, "non_business": 0, "closed_results": 0, "review": 0,
+    }
 
     try:
         def progress_callback(idx, total_steps, lat, lng):
@@ -1082,8 +1485,11 @@ def run_detection(user_id=None):
         def process_places(places):
             for place in places:
                 place_id = place.get("place_id")
-                if not place_id or place_id in seen_place_ids:
-                    continue          # overlapping grid circles return the same place
+                if not place_id:
+                    continue
+                if place_id in seen_place_ids:
+                    counters["duplicates"] += 1
+                    continue          # adjacent grid cells can return the same place
                 seen_place_ids.add(place_id)
                 counters["total_checked"] += 1
 
@@ -1095,6 +1501,10 @@ def run_detection(user_id=None):
                     continue
                 if not _within_municipality(lat, lng):
                     continue
+                if place.get("business_status") in (
+                    "CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY"
+                ):
+                    counters["closed_results"] += 1
 
                 cursor = mysql.connection.cursor()
                 cursor.execute("""
@@ -1111,6 +1521,7 @@ def run_detection(user_id=None):
                 barangay_id = _get_barangay_id_by_coords(lat, lng)
 
                 if _is_non_business_place(place):
+                    counters["non_business"] += 1
                     if existing_flag and existing_flag["flagColor"] == "Red":
                         cursor = mysql.connection.cursor()
                         cursor.execute(
@@ -1160,14 +1571,17 @@ def run_detection(user_id=None):
                                 is_held = True
 
                     if is_held:
+                        counters["matched"] += 1
                         continue
 
+                    counters["no_match"] += 1
                     if not existing_flag:
                         flag_id = _insert_red_flag(
                             place_id, place_name, lat, lng, barangay_id, address)
                         inserted_flag_ids.append(flag_id)
                         counters["new_flags"] += 1
                 else:
+                    counters["matched"] += 1
                     app_status = (nearest.get("applicationStatus")
                                   or "Active").strip()
                     target_color = (
@@ -1178,6 +1592,7 @@ def run_detection(user_id=None):
                     )
                     if match_status == "review":
                         target_color = "Yellow"
+                        counters["review"] += 1
 
                     target_barangay_id = nearest.get(
                         "barangayID") or barangay_id
@@ -1210,11 +1625,26 @@ def run_detection(user_id=None):
         new_flags = counters["new_flags"]
         total_checked = counters["total_checked"]
         done_total = state["skipped_points"] + len(state["done_keys"])
+        places_usage = _log_detection_summary(run_id, state, counters)
+        print(
+            f"[Run Detection] grid summary completed={done_total}/{state['total_points']} "
+            f"incomplete_dense_or_failed_points={state['incomplete_points']} "
+            f"outside_boundary_results={state['outside']}"
+        )
 
         if done_total < state["total_points"]:
             update_detection_run_status(
                 run_id, "partial", new_flags=new_flags, total_checked=total_checked)
-            msg = f"Scan partial: {done_total} of {state['total_points']} grid points completed. {new_flags} new flags recorded. Run again to finish."
+            msg = (
+                f"Scan partial: {done_total} of {state['total_points']} grid points completed. "
+                f"{new_flags} new flags recorded. "
+                f"{state['incomplete_points']} dense or failed points need another scan."
+                + (
+                    " Places API returned an error; remaining cells were not requested."
+                    if state["api_error_stop"] else
+                    " Run again later to finish."
+                )
+            )
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": msg
@@ -1231,11 +1661,42 @@ def run_detection(user_id=None):
             "new_flags":        new_flags,
             "total_checked":    total_checked,
             "outside_boundary": state["outside"],
+            "incomplete_points": state["incomplete_points"],
+            "api_errors": getattr(_places_run_state, "api_errors", 0),
+            "run_summary": {
+                "results_received": getattr(_places_run_state, "results_received", 0),
+                "duplicates": (
+                    getattr(_places_run_state, "duplicate_results", 0)
+                    + counters["duplicates"]
+                ),
+                "non_business": counters["non_business"],
+                "closed_results": counters["closed_results"],
+                "matched": counters["matched"],
+                "no_match": counters["no_match"],
+                "review": counters["review"],
+                "new_flags": counters["new_flags"],
+                "initial_requests": (
+                    _places_run_state.calls["legacy_nearby_initial"]
+                    + _places_run_state.calls["new_nearby_initial"]
+                ),
+                "adaptive_requests": (
+                    _places_run_state.calls["legacy_nearby_adaptive"]
+                    + _places_run_state.calls["new_nearby_adaptive"]
+                ),
+                "api_errors": getattr(_places_run_state, "api_errors", 0),
+                "api_error_stop": state["api_error_stop"],
+                "quota_stop": None,
+            },
+            "quota_stop": None,
             "quota":            get_detection_quota_info(),
+            "places_usage":     places_usage,
         }, None
 
     except PlacesBudgetExceeded as be:
         done_total = state["skipped_points"] + len(state["done_keys"])
+        places_usage = _log_detection_summary(
+            run_id, state, counters, stop_reason=str(be)
+        )
         update_detection_run_status(
             run_id, "partial",
             new_flags=counters["new_flags"], total_checked=counters["total_checked"])
@@ -1245,9 +1706,40 @@ def run_detection(user_id=None):
         hub.publish_to_admins({
             "type": "detection_progress", "stage": "completed", "percentage": 100, "status": msg
         })
-        return None, msg
+        return {
+            "status": be.reason,
+            "quota_reason": be.reason,
+            "run_summary": {
+                "results_received": getattr(_places_run_state, "results_received", 0),
+                "duplicates": (
+                    getattr(_places_run_state, "duplicate_results", 0)
+                    + counters["duplicates"]
+                ),
+                "non_business": counters["non_business"],
+                "closed_results": counters["closed_results"],
+                "matched": counters["matched"],
+                "no_match": counters["no_match"],
+                "review": counters["review"],
+                "new_flags": counters["new_flags"],
+                "initial_requests": (
+                    _places_run_state.calls["legacy_nearby_initial"]
+                    + _places_run_state.calls["new_nearby_initial"]
+                ),
+                "adaptive_requests": (
+                    _places_run_state.calls["legacy_nearby_adaptive"]
+                    + _places_run_state.calls["new_nearby_adaptive"]
+                ),
+                "api_errors": getattr(_places_run_state, "api_errors", 0),
+                "api_error_stop": state["api_error_stop"],
+                "quota_stop": be.reason,
+            },
+            "places_usage": places_usage,
+            "completed_points": done_total,
+            "total_points": state["total_points"],
+        }, msg
 
     except Exception as e:
+        print(f"[Run Detection] run={run_id} failed ({type(e).__name__})")
         update_detection_run_status(run_id, "failed")
         return None, str(e)
 

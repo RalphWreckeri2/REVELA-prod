@@ -36,6 +36,8 @@ import {
   snapUnresolvedPinsRequest,
   reverifyPreviewRequest,
   reverifyPinsRequest,
+  getRegistryReviewQueueRequest,
+  decideRegistryReviewRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -159,6 +161,7 @@ const Icon = {
 
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const DEFAULT_MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+const REVIEW_QUEUE_PAGE_SIZE = 20;
 
 // `public/data/mataasnakahoy.json` is a single outer boundary for the whole
 // municipality. Feature names must be listed here so the heatmap sums all
@@ -2023,6 +2026,13 @@ export default function MapPage() {
   const [reconcileProgress, setReconcileProgress] = useState(null);
   const reconcileProgressRef = useRef(null);
   const [snapProgress, setSnapProgress] = useState(null);
+  const [showReviewQueue, setShowReviewQueue] = useState(false);
+  const [reviewQueue, setReviewQueue] = useState(null);
+  const [reviewQueuePage, setReviewQueuePage] = useState(1);
+  const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
+  const [reviewQueueError, setReviewQueueError] = useState("");
+  const [reviewQueueNotice, setReviewQueueNotice] = useState("");
+  const [reviewQueueActionId, setReviewQueueActionId] = useState(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [placesUsage, setPlacesUsage] = useState(null);
@@ -2076,7 +2086,7 @@ export default function MapPage() {
   const [satellite, setSatellite] = useState(false);
   const [filterSource, setFilterSource] = useState("all");
 
-  const isAdmin = user?.role === "Admin" || user?.role === "SUPER_ADMIN";
+  const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
 
   const [showYellowModal, setShowYellowModal] = useState(false);
   const [isPickingYellowLocation, setIsPickingYellowLocation] = useState(false);
@@ -2172,6 +2182,25 @@ export default function MapPage() {
       console.error("Failed to load places usage", err);
     }
   }, [token, isAdmin]);
+
+  const loadRegistryReviewQueue = async (page = 1) => {
+    if (!token || !isAdmin) return;
+    setReviewQueueLoading(true);
+    setReviewQueueError("");
+    try {
+      const result = await getRegistryReviewQueueRequest(
+        token,
+        page,
+        REVIEW_QUEUE_PAGE_SIZE,
+      );
+      setReviewQueue(result);
+      setReviewQueuePage(result?.page ?? page);
+    } catch (err) {
+      setReviewQueueError(err.message || "Unable to load pin review suggestions.");
+    } finally {
+      setReviewQueueLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchFlags(false);
@@ -2420,13 +2449,20 @@ export default function MapPage() {
       return;
     }
 
-    if (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0) {
+    if (isDetectionPlacesQuotaReached) {
+      const activeBudgetDisabled = activeDetectionPlacesQuota?.enabled === false;
+      const monthlyReached =
+        activeDetectionPlacesQuota?.monthly_quota_exceeded;
       await Swal.fire({
-        title: 'Daily Places Budget Reached',
-        html: `<p style="font-size:14px; margin-bottom:8px;">Today's Google Places API limit of <strong>1000 requests</strong> has been reached.</p>
+        title: activeBudgetDisabled
+          ? 'Nearby Search Quota Not Configured'
+          : monthlyReached ? 'Monthly Places Budget Reached' : 'Daily Places Budget Reached',
+        html: activeBudgetDisabled
+          ? `<p style="font-size:14px; margin-bottom:8px;">Nearby Search (New) is safely disabled until positive, Cloud-verified daily and monthly app caps are configured on the backend.</p>`
+          : `<p style="font-size:14px; margin-bottom:8px;">The ${placesUsage?.nearby_search_mode === "new" ? "Nearby Search (New)" : "legacy Nearby Search"} ${monthlyReached ? "monthly" : "daily"} app limit of <strong>${monthlyReached ? activeDetectionPlacesQuota?.monthly_cap ?? 0 : activeDetectionPlacesQuota?.daily_cap ?? 0} requests</strong> has been reached.</p>
                <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
-                 Used today: <strong>${placesUsage.today.used}/1000</strong>.<br/>
-                 To guarantee a $0.00 bill and prevent extra charges, detection scans are paused until tomorrow (resets at midnight).
+                 Usage: <strong>${monthlyReached ? activeDetectionPlacesQuota?.used_month ?? 0 : activeDetectionPlacesQuota?.used_today ?? 0}/${monthlyReached ? activeDetectionPlacesQuota?.monthly_cap ?? 0 : activeDetectionPlacesQuota?.daily_cap ?? 0}</strong>.<br/>
+                 Detection is paused until this counter resets. Any incomplete grid points remain resumable.
                </p>`,
         icon: 'warning',
         confirmButtonColor: '#6366f1',
@@ -2460,8 +2496,10 @@ export default function MapPage() {
 
     const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
     const isFinalScan = remaining === 1;
-    const placesTodayLeft = placesUsage?.today?.remaining ?? 1000;
-    const placesMonthLeft = placesUsage?.month?.remaining ?? placesUsage?.monthly?.remaining ?? 2000;
+    const placesTodayLeft = activeDetectionPlacesQuota?.daily_remaining ?? 0;
+    const placesDailyCap = activeDetectionPlacesQuota?.daily_cap ?? 0;
+    const placesMonthLeft = activeDetectionPlacesQuota?.monthly_remaining ?? 0;
+    const placesMonthlyCap = activeDetectionPlacesQuota?.monthly_cap ?? 0;
 
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
@@ -2475,13 +2513,13 @@ export default function MapPage() {
             </div>
             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
               <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of 2</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
-              <li><strong>Daily Places API Budget:</strong> <b>${placesTodayLeft} of 1000</b> requests left today (resets at midnight).</li>
-              <li><strong>Monthly Places Free Tier:</strong> <b>${placesMonthLeft} of 2000</b> requests left.</li>
+              <li><strong>${placesUsage?.nearby_search_mode === "new" ? "Nearby Search (New)" : "Legacy Nearby Search"} daily app cap:</strong> <b>${placesTodayLeft} of ${placesDailyCap}</b> requests left today.</li>
+              <li><strong>Monthly app cap:</strong> <b>${placesMonthLeft} of ${placesMonthlyCap}</b> requests left for this method.</li>
             </ul>
           </div>
 
           <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #047857;">
-            🛡️ <strong>Zero-Overcharge Safe:</strong> If the 1000 daily API cap is reached mid-scan, progress is automatically saved as <em>Partial</em>. Your monthly scan quota is NOT consumed, and scanning resumes seamlessly tomorrow!
+            🛡️ <strong>Quota-safe:</strong> If this method's app cap is reached mid-scan, progress is saved as <em>Partial</em>; incomplete grid points can be resumed after the quota reset.
           </div>
 
           ${isFinalScan ? `
@@ -2692,6 +2730,12 @@ export default function MapPage() {
     placesUsage.text_search_day.remaining <= 0
   );
   const monthlyTextSearchLabel = `${(placesUsage?.text_search_month?.used ?? 2500).toLocaleString()}/${(placesUsage?.text_search_month?.cap ?? 2500).toLocaleString()}`;
+  const activeDetectionPlacesQuota = placesUsage?.nearby_search_active;
+  const isDetectionPlacesQuotaReached = Boolean(
+    activeDetectionPlacesQuota?.enabled === false ||
+    activeDetectionPlacesQuota?.daily_quota_exceeded ||
+    activeDetectionPlacesQuota?.monthly_quota_exceeded
+  );
 
   const handleReverifyPins = async () => {
     if (isSnapMonthlyMaxed) {
@@ -2791,6 +2835,49 @@ export default function MapPage() {
     }
   };
 
+  const handleOpenReviewQueue = () => {
+    setShowReviewQueue(true);
+    setReviewQueueNotice("");
+    loadRegistryReviewQueue(1);
+  };
+
+  const handleReviewQueueDecision = async (candidate, action) => {
+    const isApprove = action === "approve";
+    const decision = await Swal.fire({
+      icon: "warning",
+      title: isApprove ? "Approve pin move?" : "Reject pin suggestion?",
+      text: isApprove
+        ? `This will move ${candidate.businessName} to the proposed Google Maps location.`
+        : `This will keep ${candidate.businessName}'s current pin and reject this Google Place.`,
+      showCancelButton: true,
+      confirmButtonText: isApprove ? "Approve move" : "Reject suggestion",
+      confirmButtonColor: isApprove ? "#059669" : "#dc2626",
+      cancelButtonText: "Cancel",
+    });
+    if (!decision.isConfirmed) return;
+
+    setReviewQueueActionId(candidate.businessID);
+    setReviewQueueError("");
+    try {
+      await decideRegistryReviewRequest(token, candidate.businessID, action);
+      setReviewQueueNotice(
+        isApprove
+          ? `${candidate.businessName} was approved and its map pin was updated.`
+          : `${candidate.businessName}'s current pin was kept; the suggestion was rejected.`,
+      );
+      if (isApprove) await fetchFlags(true);
+      const nextPage =
+        reviewQueue?.data?.length === 1 && reviewQueuePage > 1
+          ? reviewQueuePage - 1
+          : reviewQueuePage;
+      await loadRegistryReviewQueue(nextPage);
+    } catch (err) {
+      setReviewQueueError(err.message || "Unable to save the pin review decision.");
+    } finally {
+      setReviewQueueActionId(null);
+    }
+  };
+
   const handleSnapUnresolved = async () => {
     if (detectionQuota && detectionQuota.registry_count === 0) {
       await Swal.fire({
@@ -2831,7 +2918,7 @@ export default function MapPage() {
         title: 'Daily Budget Reached',
         html: `
           <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-            <p style="margin-bottom:8px;">You have reached the daily Text Search safety limit (<strong>${placesUsage?.text_search_day?.used ?? 500}/${placesUsage?.text_search_day?.cap ?? 500}</strong> used today).</p>
+            <p style="margin-bottom:8px;">You have reached the daily Text Search safety limit (<strong>${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 75}</strong> used today).</p>
             <p style="color:var(--color-muted, #64748b); font-size:12.5px;">To protect your billing account, please try again tomorrow after midnight.</p>
           </div>
         `,
@@ -3267,7 +3354,7 @@ export default function MapPage() {
                 className="primary-btn"
                 type="button"
                 onClick={handleRunDetection}
-                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)}
+                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached}
                 title={
                   runDetectionLoading
                     ? "Detection scan in progress…"
@@ -3275,13 +3362,13 @@ export default function MapPage() {
                       ? "Official registry is empty. Import business permits first before running detection."
                       : detectionQuota && detectionQuota.remaining_this_month === 0
                         ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
-                        : placesUsage && placesUsage.today && placesUsage.today.remaining <= 0
-                          ? `Daily Google Places limit reached (0/${placesUsage?.today?.cap || 1000} remaining). Resets at midnight.`
+                        : isDetectionPlacesQuotaReached
+                          ? `Nearby Search app quota reached (${activeDetectionPlacesQuota?.used_today ?? 0}/${activeDetectionPlacesQuota?.daily_cap ?? 0} daily, ${activeDetectionPlacesQuota?.used_month ?? 0}/${activeDetectionPlacesQuota?.monthly_cap ?? 0} monthly).`
                           : "Run geospatial detection scan (Max 2x/month)"
                 }
                 style={{
-                  opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)) && !runDetectionLoading ? 0.6 : 1,
-                  cursor: ((detectionQuota && detectionQuota.remaining_this_month === 0) || (placesUsage && placesUsage.today && placesUsage.today.remaining <= 0)) && !runDetectionLoading ? "not-allowed" : "pointer",
+                  opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? 0.6 : 1,
+                  cursor: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? "not-allowed" : "pointer",
                   display: "inline-flex",
                   alignItems: "center",
                   gap: "7px"
@@ -3343,6 +3430,16 @@ export default function MapPage() {
                   <button
                     className="ghost-btn"
                     type="button"
+                    onClick={handleOpenReviewQueue}
+                    disabled={reviewQueueLoading}
+                    title="Review uncertain Re-verify pin suggestions"
+                    style={{ height: 38, borderRadius: "var(--radius-md)" }}
+                  >
+                    Review Pin Suggestions
+                  </button>
+                  <button
+                    className="ghost-btn"
+                    type="button"
                     onClick={handleReconcile}
                     disabled={runDetectionLoading || reconcileProgress?.stage === 'running' || snapProgress?.stage === 'running'}
                     title={
@@ -3383,7 +3480,7 @@ export default function MapPage() {
                         : isSnapMonthlyMaxed
                         ? `Monthly API limit reached (${monthlyTextSearchLabel} calls). Resets next month.`
                         : isSnapDailyMaxed
-                          ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 500}/${placesUsage?.text_search_day?.cap ?? 500} calls). Resets at midnight.`
+                          ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 75} calls). Resets at midnight.`
                           : "Geocode registry businesses that have no map coordinates yet"
                     }
                     style={{
@@ -3425,7 +3522,7 @@ export default function MapPage() {
                         : isSnapMonthlyMaxed
                         ? `Monthly API limit reached (${monthlyTextSearchLabel} calls). Resets next month.`
                         : isSnapDailyMaxed
-                        ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 500}/${placesUsage?.text_search_day?.cap ?? 500} calls). Resets at midnight.`
+                        ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 75} calls). Resets at midnight.`
                         : "Re-check pins that already have coordinates and move wrong ones onto the real Google place"
                     }
                     style={{
@@ -3890,6 +3987,234 @@ export default function MapPage() {
           onSuccess={() => { setShowYellowModal(false); setYellowDraft(null); fetchFlags(); }}
         />
       </AnimatePresence>
+
+      {showReviewQueue && createPortal(
+        <div
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !reviewQueueActionId) {
+              setShowReviewQueue(false);
+            }
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 10001,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            background: "rgba(15, 23, 42, 0.58)",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-queue-title"
+            style={{
+              width: "min(100%, 760px)",
+              maxHeight: "88vh",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              borderRadius: 18,
+              background: "var(--color-modal-bg)",
+              color: "var(--color-ink)",
+              border: "1px solid var(--color-border)",
+              boxShadow: "0 24px 60px rgba(15, 23, 42, 0.28)",
+            }}
+          >
+            <header style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 16,
+              padding: "18px 22px",
+              borderBottom: "1px solid var(--color-border-soft)",
+            }}>
+              <div>
+                <h2 id="review-queue-title" style={{ margin: 0, fontSize: 18, fontWeight: 750 }}>
+                  Re-verify Pin Suggestions
+                </h2>
+                <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
+                  Approving moves the official pin; rejecting keeps its current location.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setShowReviewQueue(false)}
+                disabled={Boolean(reviewQueueActionId)}
+                aria-label="Close pin review queue"
+              >
+                Close
+              </button>
+            </header>
+
+            {reviewQueueNotice && (
+              <div role="status" style={{
+                margin: "14px 20px 0",
+                padding: "10px 12px",
+                borderRadius: 9,
+                background: "rgba(5, 150, 105, 0.1)",
+                color: isDark ? "#6ee7b7" : "#047857",
+                fontSize: 13,
+              }}>
+                {reviewQueueNotice}
+              </div>
+            )}
+            {reviewQueueError && (
+              <div role="alert" style={{
+                margin: "14px 20px 0",
+                padding: "10px 12px",
+                borderRadius: 9,
+                background: "rgba(220, 38, 38, 0.1)",
+                color: isDark ? "#fca5a5" : "#b91c1c",
+                fontSize: 13,
+              }}>
+                {reviewQueueError}
+                <button
+                  type="button"
+                  onClick={() => loadRegistryReviewQueue(reviewQueuePage)}
+                  disabled={reviewQueueLoading}
+                  style={{ marginLeft: 10, color: "inherit", background: "none", border: 0, textDecoration: "underline", cursor: "pointer" }}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            <div style={{ overflowY: "auto", padding: 20 }}>
+              {reviewQueueLoading && !reviewQueue?.data?.length ? (
+                <p style={{ margin: 0, color: "var(--color-muted)", textAlign: "center", padding: 30 }}>
+                  Loading pending suggestions…
+                </p>
+              ) : reviewQueue?.data?.length ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {reviewQueue.data.map((candidate) => (
+                    <article
+                      key={candidate.businessID}
+                      style={{
+                        padding: 16,
+                        border: "1px solid var(--color-border-soft)",
+                        borderRadius: 12,
+                        background: "var(--color-input-bg)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{candidate.businessName}</h3>
+                          <p style={{ margin: "4px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
+                            {candidate.businessID} · {candidate.barangayName || "Barangay not listed"}
+                          </p>
+                          {candidate.businessAddress && (
+                            <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
+                              {candidate.businessAddress}
+                            </p>
+                          )}
+                        </div>
+                        {candidate.mapsUrl && (
+                          <a
+                            href={candidate.mapsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ color: "var(--color-primary)", fontSize: 12, whiteSpace: "nowrap" }}
+                          >
+                            View Google Place
+                          </a>
+                        )}
+                      </div>
+                      <div style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                        gap: 10,
+                        marginTop: 14,
+                        fontSize: 12,
+                      }}>
+                        <div>
+                          <strong>Current pin</strong>
+                          <div style={{ color: "var(--color-muted)", marginTop: 3 }}>
+                            {candidate.originalLatitude == null || candidate.originalLongitude == null
+                              ? "Coordinates unavailable"
+                              : `${Number(candidate.originalLatitude).toFixed(6)}, ${Number(candidate.originalLongitude).toFixed(6)}`}
+                          </div>
+                        </div>
+                        <div>
+                          <strong>Proposed pin</strong>
+                          <div style={{ color: "var(--color-muted)", marginTop: 3 }}>
+                            {candidate.latitude == null || candidate.longitude == null
+                              ? "Coordinates unavailable"
+                              : `${Number(candidate.latitude).toFixed(6)}, ${Number(candidate.longitude).toFixed(6)}`}
+                            {candidate.matchScore != null && ` · Match score ${Number(candidate.matchScore).toFixed(2)}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+                        <button
+                          type="button"
+                          className="ghost-btn"
+                          onClick={() => handleReviewQueueDecision(candidate, "reject")}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+                          style={{ color: "var(--color-danger, #dc2626)" }}
+                        >
+                          {reviewQueueActionId === candidate.businessID ? "Saving…" : "Reject suggestion"}
+                        </button>
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={() => handleReviewQueueDecision(candidate, "approve")}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+                        >
+                          {reviewQueueActionId === candidate.businessID ? "Saving…" : "Approve pin move"}
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : !reviewQueueLoading && !reviewQueueError ? (
+                <div style={{ padding: 32, textAlign: "center", color: "var(--color-muted)" }}>
+                  <strong style={{ display: "block", color: "var(--color-ink)", marginBottom: 6 }}>
+                    No pending pin suggestions
+                  </strong>
+                  Uncertain Re-verify matches will appear here for admin review.
+                </div>
+              ) : null}
+            </div>
+
+            {reviewQueue?.total > REVIEW_QUEUE_PAGE_SIZE && (
+              <footer style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "12px 20px",
+                borderTop: "1px solid var(--color-border-soft)",
+              }}>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => loadRegistryReviewQueue(reviewQueuePage - 1)}
+                  disabled={reviewQueuePage <= 1 || reviewQueueLoading || Boolean(reviewQueueActionId)}
+                >
+                  Previous
+                </button>
+                <span style={{ color: "var(--color-muted)", fontSize: 12 }}>
+                  Page {reviewQueuePage} of {Math.ceil(reviewQueue.total / REVIEW_QUEUE_PAGE_SIZE)} · {reviewQueue.total} pending
+                </span>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => loadRegistryReviewQueue(reviewQueuePage + 1)}
+                  disabled={reviewQueuePage * REVIEW_QUEUE_PAGE_SIZE >= reviewQueue.total || reviewQueueLoading || Boolean(reviewQueueActionId)}
+                >
+                  Next
+                </button>
+              </footer>
+            )}
+          </section>
+        </div>,
+        document.body
+      )}
 
       {/* Modals */}
       <InspectorReportsModal

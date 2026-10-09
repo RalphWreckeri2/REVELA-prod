@@ -16,10 +16,8 @@ Environment variables (all optional unless noted)
   PLACES_BIAS_RADIUS_M      default 8000
   PLACES_AUTO_ACCEPT        default 0.80   name-similarity >= this: accept as 'auto'
   PLACES_REVIEW_MIN         default 0.55   between REVIEW_MIN and AUTO_ACCEPT: 'review'
-  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search budget (default 2500/month, 500/day)
-                                  PER SKU: if api/flags/service.py also calls Text Search, the SUM of both
-                                  caps must stay below 5,000.
-  PD_MONTHLY_CAP                  Place Details (refresh) budget (default 3000/month)
+  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search budget (default 2500/month, 75/day)
+  PD_MONTHLY_CAP / PD_DAILY_CAP   Place Details budget (default 3000/month, 90/day)
 
 Scheduled maintenance (cron / task scheduler), inside an app context:
     from api.registry.places_resolver import refresh_expired_coords, purge_expired_coords
@@ -39,6 +37,7 @@ import requests
 
 from app import mysql
 from api.utils.name_match import name_match, parse_name
+from api.utils.places_quota import read_usage, reserve_usage_slot
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places/{pid}"
@@ -52,8 +51,9 @@ BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
 REVIEW_MIN = float(os.getenv("PLACES_REVIEW_MIN", "0.55"))
 TS_MONTHLY_CAP = int(os.getenv("TS_MONTHLY_CAP", "2500"))
-TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "500"))
+TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "75"))
 PD_MONTHLY_CAP = int(os.getenv("PD_MONTHLY_CAP", "3000"))
+PD_DAILY_CAP = int(os.getenv("PD_DAILY_CAP", "90"))
 REFRESH_AFTER_DAYS = 20
 PURGE_AFTER_DAYS = 28
 
@@ -76,40 +76,12 @@ def reset_run_state():
 
 
 def get_places_call_usage():
-    """Return persistent Text Search and Place Details usage for today and this month."""
-    cur = mysql.connection.cursor()
-    try:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS places_api_usage (
-                usageDate DATE NOT NULL, kind VARCHAR(20) NOT NULL,
-                requestCount INT NOT NULL DEFAULT 0, PRIMARY KEY (usageDate, kind)
-            ) ENGINE=InnoDB
-        """)
-        usage = {}
-        for label, prefix in (("text_search", "imp_ts"), ("details", "imp_pd")):
-            cur.execute(
-                f"SELECT requestCount FROM places_api_usage WHERE usageDate = {_MONTH_KEY} AND kind = %s",
-                (f"{prefix}_month",),
-            )
-            month_row = cur.fetchone()
-            cur.execute(
-                "SELECT requestCount FROM places_api_usage WHERE usageDate = CURDATE() AND kind = %s",
-                (f"{prefix}_day",),
-            )
-            day_row = cur.fetchone()
-            usage[label] = {
-                "month": _usage_count(month_row),
-                "day": _usage_count(day_row),
-            }
-        return usage
-    finally:
-        cur.close()
-
-
-def _usage_count(row):
-    if not row:
-        return 0
-    return int((row.get("requestCount") if isinstance(row, dict) else row[0]) or 0)
+    """Return persistent usage for each Registry API method for today and this month."""
+    return {
+        "text_search": read_usage(mysql.connection, "imp_ts_month", "imp_ts_day"),
+        "details": read_usage(mysql.connection, "imp_pd_month", "imp_pd_day"),
+        "geocoding": read_usage(mysql.connection, "geo_month", "geo_day"),
+    }
 
 
 def get_text_search_quota_status():
@@ -218,58 +190,25 @@ def similarity(a, b, reg_line='', poi_types=()):
 
 # ------------------------------ budget guard ---------------------------------
 _MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
-_table_ready = False
-
-
 def reserve_call(prefix, monthly_cap, daily_cap=None):
-    """Atomically take a monthly and optional daily slot; always persist daily usage (same table/pattern as
-    service._reserve_geocode_call). Returns False when over budget or on any DB problem (fail closed).
-    Note: like the existing helper, this commits on the shared request connection."""
-    global _table_ready
-    mk, dk = f"{prefix}_month", f"{prefix}_day"
-    cur = mysql.connection.cursor()
+    """Atomically reserve a method's monthly and daily slots; fail closed on DB errors."""
+    daily_cap = daily_cap if daily_cap is not None else 2_147_483_647
     try:
-        if not _table_ready:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS places_api_usage (
-                    usageDate DATE NOT NULL, kind VARCHAR(20) NOT NULL,
-                    requestCount INT NOT NULL DEFAULT 0, PRIMARY KEY (usageDate, kind)
-                ) ENGINE=InnoDB
-            """)
-            _table_ready = True
-        cur.execute(f"INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) "
-                    f"VALUES ({_MONTH_KEY}, %s, 0)", (mk,))
-        cur.execute("INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) "
-                    "VALUES (CURDATE(), %s, 0)", (dk,))
-        cur.execute(f"UPDATE places_api_usage SET requestCount = requestCount + 1 "
-                    f"WHERE usageDate = {_MONTH_KEY} AND kind = %s AND requestCount < %s", (mk, monthly_cap))
-        month_ok = cur.rowcount == 1
-        day_ok = True
-        if month_ok:
-            cur.execute("UPDATE places_api_usage SET requestCount = requestCount + 1 "
-                        "WHERE usageDate = CURDATE() AND kind = %s" +
-                        (" AND requestCount < %s" if daily_cap is not None else ""),
-                        (dk, daily_cap) if daily_cap is not None else (dk,))
-            day_ok = cur.rowcount == 1
-            if not day_ok:
-                cur.execute(f"UPDATE places_api_usage SET requestCount = requestCount - 1 "
-                            f"WHERE usageDate = {_MONTH_KEY} AND kind = %s", (mk,))
-        mysql.connection.commit()
-        if not month_ok:
-            print(f"[places_resolver budget] monthly cap reached for {prefix} ({monthly_cap})")
-            _api_state.quota_reason = "monthly_quota_exceeded"
-        elif not day_ok:
-            print(f"[places_resolver budget] daily cap reached for {prefix} ({daily_cap})")
-            _api_state.quota_reason = "daily_quota_exceeded"
-        else:
-            _api_state.quota_reason = None
-        return month_ok and day_ok
+        allowed, reason = reserve_usage_slot(
+            mysql.connection,
+            f"{prefix}_month",
+            f"{prefix}_day",
+            monthly_cap,
+            daily_cap,
+        )
+        _api_state.quota_reason = reason
+        if not allowed:
+            print(f"[places_resolver budget] {reason} for {prefix}")
+        return allowed
     except Exception as e:
-        mysql.connection.rollback()
-        print(f"[places_resolver budget] error, skipping call: {e}")
+        _api_state.quota_reason = "quota_ledger_error"
+        print(f"[places_resolver budget] reservation failed closed for {prefix}: {e}")
         return False
-    finally:
-        cur.close()
 
 
 def _api_get_json(resp, label):
@@ -326,9 +265,14 @@ def _places_request(label, request, reserve):
             if not reserve():
                 _api_state.quota_halted = True
                 reason = getattr(_api_state, "quota_reason", None) or "skipped_quota"
-                _api_state.outcome = reason
+                _api_state.outcome = (
+                    "api_error" if reason == "quota_ledger_error" else reason
+                )
                 _api_state.last_error = f"{label} {reason.replace('_', ' ')}"
-                print(f"[places_resolver] {label} not sent: daily/monthly app quota reached")
+                print(
+                    f"[places_resolver] {label} not sent: "
+                    f"{reason.replace('_', ' ')}"
+                )
                 return None
             try:
                 resp = request()
@@ -344,7 +288,7 @@ def _places_request(label, request, reserve):
             print(f"[places_resolver] {label} HTTP 429 body: {body[:2000]}")
             if _429_is_per_minute(body):
                 if attempt < max_retries:
-                    delay = (2 ** attempt) * random.uniform(0.8, 1.2)
+                    delay = (2 ** (attempt + 1)) * random.uniform(0.8, 1.2)
                     print(f"[places_resolver] {label} per-minute quota; retry "
                           f"{attempt + 1}/{max_retries} in {delay:.2f}s")
                     time.sleep(delay)
@@ -404,14 +348,28 @@ def _geocode_fallback(address, barangay, get=requests.get):
         data = _api_get_json(
             get(GEOCODE_URL, params=params, timeout=10), "Geocode") or {}
     except requests.RequestException as e:
+        _api_state.last_error = f"Geocode network error: {e}"
+        _api_state.outcome = "api_error"
         print(f"[places_resolver] Geocode network error: {e}")
         return None
-    if data.get("status") in ("REQUEST_DENIED", "OVER_DAILY_LIMIT", "OVER_QUERY_LIMIT"):
+    if data.get("status") in ("OVER_DAILY_LIMIT", "OVER_QUERY_LIMIT"):
+        _api_state.last_error = f"Geocode quota exhausted: {data.get('status')}"
+        _api_state.outcome = "skipped_quota"
+        _api_state.quota_reason = "geocode_quota_exceeded"
+        print(f"[places_resolver] {_api_state.last_error}")
+        return None
+    if data.get("status") == "REQUEST_DENIED":
         global _halted
         _halted = f"Geocode {data.get('status')}"
+        _api_state.last_error = _halted
+        _api_state.outcome = "api_error"
         print(f"[places_resolver] HALTED until restart -> {_halted}")
         return None
     if data.get("status") != "OK" or not data.get("results"):
+        if data.get("status") not in ("ZERO_RESULTS", "OK"):
+            _api_state.last_error = f"Geocode API status {data.get('status')}"
+            _api_state.outcome = "api_error"
+            print(f"[places_resolver] {_api_state.last_error}")
         return None
     top = data["results"][0]
     loc = top["geometry"]["location"]
@@ -433,7 +391,8 @@ def _geocode_fallback(address, barangay, get=requests.get):
 
 def resolve_location(name, address, barangay, business_id=None, barangay_id=None,
                      line_of_business='', reserve_geocode=None, refresh_geocode=False,
-                     force=False, _post=requests.post, _get=requests.get):
+                     force=False, preferred_place_id=None,
+                     _post=requests.post, _get=requests.get):
     """Returns (lat, lng, meta); API/quota failures are distinguished from no-match results.
 
     force=True skips the resolveKey cache so an already-attempted record is looked up again
@@ -548,6 +507,9 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         if pid and pid in rejected_pids:
             discarded_rejected = True
             continue
+        if preferred_place_id and pid == preferred_place_id:
+            best, best_score = p, 1.0
+            break
 
         poi_types = p.get("types", []) or []
         if p.get("primaryType"):
@@ -597,6 +559,13 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
 
     if _halted:
         return None, None, {"reason": "api_error", "api_error": str(_halted)}
+    if getattr(_api_state, "outcome", None) == "skipped_quota":
+        return None, None, {
+            "reason": "skipped_quota",
+            "quota_kind": getattr(_api_state, "quota_reason", None) or "geocode",
+            "budget_exhausted": True,
+            "api_error": getattr(_api_state, "last_error", None),
+        }
     if getattr(_api_state, "outcome", None) == "api_error":
         return None, None, {
             "reason": "api_error",
@@ -621,9 +590,8 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
 
 
 def record_coord_meta(cursor, business_id, meta):
-    """Persist provenance for coordinates we just wrote. No-op when the resolver is disabled
-    (so the new columns are never touched before the migration is applied)."""
-    if not enabled() or not meta:
+    """Persist provenance for coordinates written by CSV, Places, or Geocoding."""
+    if not meta:
         return
     resolve_key = meta.get("resolve_key")
     if meta.get("coord_source") == "csv":
@@ -697,7 +665,7 @@ def refresh_expired_coords(limit=500):
                 "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
                 "X-Goog-FieldMask": "location",
             }),
-            lambda: reserve_call("imp_pd", PD_MONTHLY_CAP),
+            lambda: reserve_call("imp_pd", PD_MONTHLY_CAP, PD_DAILY_CAP),
         )
         if data is None and getattr(_api_state, "outcome", None) in (
             "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
@@ -743,24 +711,40 @@ def purge_expired_coords(dry_run=True):
 def list_review_queue(page=1, per_page=20):
     cur = mysql.connection.cursor()
     try:
+        from api.registry.reverify import _ensure_history_table
+        _ensure_history_table(cur)
         cur.execute(
             "SELECT COUNT(*) AS c FROM official_registry WHERE matchStatus='review'")
         row = cur.fetchone()
         total = int(_g(row, "c", 0))
         cur.execute(
             """SELECT r.businessID, r.barangayID, b.barangayName, r.businessName, r.businessAddress,
-                      r.latitude, r.longitude, r.placeID, r.coordSource, r.matchScore, r.matchStatus
+                      COALESCE(h.newLat, r.latitude) AS latitude,
+                      COALESCE(h.newLng, r.longitude) AS longitude,
+                      COALESCE(h.placeID, r.placeID) AS placeID,
+                      r.latitude AS originalLatitude, r.longitude AS originalLongitude,
+                      h.id AS reviewHistoryID,
+                      r.coordSource, r.matchScore, r.matchStatus
                FROM official_registry r
                LEFT JOIN barangays b ON r.barangayID = b.barangayID
+               LEFT JOIN registry_pin_history h
+                 ON h.id = (
+                     SELECT MAX(h2.id) FROM registry_pin_history h2
+                     WHERE h2.businessID = r.businessID AND h2.outcome = 'review'
+                 )
                WHERE r.matchStatus='review' ORDER BY r.businessID LIMIT %s OFFSET %s""",
             (per_page, max(0, (page - 1) * per_page)))
         items = []
         for r in cur.fetchall():
             d = dict(r) if isinstance(r, dict) else dict(zip(
                 ["businessID", "barangayID", "barangayName", "businessName", "businessAddress", "latitude",
-                 "longitude", "placeID", "coordSource", "matchScore", "matchStatus"], r))
-            for k in ("latitude", "longitude", "matchScore"):
+                 "longitude", "placeID", "originalLatitude", "originalLongitude", "reviewHistoryID",
+                 "coordSource", "matchScore", "matchStatus"], r))
+            for k in ("latitude", "longitude", "originalLatitude", "originalLongitude", "matchScore"):
                 d[k] = float(d[k]) if d.get(k) is not None else None
+            d.setdefault("originalLatitude", d.get("latitude"))
+            d.setdefault("originalLongitude", d.get("longitude"))
+            d.setdefault("reviewHistoryID", None)
             d["mapsUrl"] = (f"https://www.google.com/maps/search/?api=1&query=x&query_place_id={d['placeID']}"
                             if d.get("placeID") else None)
             items.append(d)
@@ -774,26 +758,97 @@ def list_review_queue(page=1, per_page=20):
 def decide_review(business_id, approve):
     cur = mysql.connection.cursor()
     try:
+        from api.registry.reverify import _ensure_history_table
+        _ensure_history_table(cur)
         cur.execute("SELECT barangayID, businessName, latitude, longitude, placeID FROM official_registry "
                     "WHERE businessID=%s AND matchStatus='review'", (business_id,))
         r = cur.fetchone()
         if not r:
             return False, "Not found or not awaiting review"
+        cur.execute(
+            """SELECT id AS reviewHistoryID, newLat, newLng, placeID, score
+               FROM registry_pin_history
+               WHERE businessID=%s AND outcome='review'
+               ORDER BY id DESC LIMIT 1""",
+            (business_id,),
+        )
+        proposal = cur.fetchone()
+        proposal_id = (
+            proposal.get("reviewHistoryID") if isinstance(proposal, dict)
+            else proposal[0] if proposal else None
+        )
+        proposal_lat = (
+            proposal.get("newLat") if isinstance(proposal, dict)
+            else proposal[1] if proposal else None
+        )
+        proposal_lng = (
+            proposal.get("newLng") if isinstance(proposal, dict)
+            else proposal[2] if proposal else None
+        )
+        proposal_place_id = (
+            proposal.get("placeID") if isinstance(proposal, dict)
+            else proposal[3] if proposal else None
+        )
+        proposal_score = (
+            proposal.get("score") if isinstance(proposal, dict)
+            else proposal[4] if proposal else None
+        )
+        has_reverify_proposal = (
+            proposal_id is not None
+            and proposal_lat is not None
+            and proposal_lng is not None
+        )
         if approve:
-            cur.execute(
-                "UPDATE official_registry SET matchStatus='approved', coordSource='manual' WHERE businessID=%s", (business_id,))
+            if has_reverify_proposal:
+                cur.execute(
+                    """UPDATE official_registry
+                       SET latitude=%s, longitude=%s, placeID=%s, placeIDKind='poi',
+                           matchScore=%s, coordFetchedAt=NOW(),
+                           matchStatus='approved', coordSource='manual'
+                       WHERE businessID=%s AND matchStatus='review'""",
+                    (proposal_lat, proposal_lng, proposal_place_id, proposal_score, business_id),
+                )
+                _update_pin(
+                    cur,
+                    _g(r, "barangayID", 0),
+                    _g(r, "businessName", 1),
+                    _g(r, "latitude", 2),
+                    _g(r, "longitude", 3),
+                    proposal_lat,
+                    proposal_lng,
+                    business_id=business_id,
+                )
+                cur.execute(
+                    "UPDATE registry_pin_history SET outcome='review_approved' WHERE id=%s",
+                    (proposal_id,),
+                )
+            else:
+                cur.execute(
+                    "UPDATE official_registry SET matchStatus='approved', coordSource='manual' WHERE businessID=%s",
+                    (business_id,),
+                )
         else:
-            pid = _g(r, "placeID", 4)
+            pid = proposal_place_id if has_reverify_proposal else _g(r, "placeID", 4)
             if pid:
                 cur.execute(
                     "INSERT IGNORE INTO registry_rejected_places (businessID, placeID) VALUES (%s, %s)",
                     (business_id, pid)
                 )
-            _update_pin(cur, _g(r, "barangayID", 0), _g(r, "businessName", 1),
-                        _g(r, "latitude", 2), _g(r, "longitude", 3), None, None, business_id=business_id)
-            cur.execute("""UPDATE official_registry SET matchStatus='rejected', latitude=NULL, longitude=NULL,
-                           placeID=NULL, placeIDKind=NULL, coordSource=NULL, coordFetchedAt=NULL
-                           WHERE businessID=%s""", (business_id,))
+            if has_reverify_proposal:
+                cur.execute(
+                    "UPDATE official_registry SET matchStatus=NULL, matchScore=NULL WHERE businessID=%s",
+                    (business_id,),
+                )
+                cur.execute(
+                    "UPDATE registry_pin_history SET outcome='review_rejected' WHERE id=%s",
+                    (proposal_id,),
+                )
+            else:
+                _update_pin(cur, _g(r, "barangayID", 0), _g(r, "businessName", 1),
+                            _g(r, "latitude", 2), _g(r, "longitude", 3), None, None, business_id=business_id)
+                cur.execute("""UPDATE official_registry SET matchStatus='rejected', latitude=NULL, longitude=NULL,
+                               placeID=NULL, placeIDKind=NULL, coordSource=NULL, coordFetchedAt=NULL
+                               WHERE businessID=%s""", (business_id,))
         mysql.connection.commit()
         return True, None
     except Exception as e:
