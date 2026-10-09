@@ -2691,11 +2691,49 @@ export default function MapPage() {
   );
 
   const handleReverifyPins = async () => {
+    if (detectionQuota && detectionQuota.registry_count === 0) {
+      await Swal.fire({
+        title: 'Official Registry Is Empty',
+        html: `
+          <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a)">
+            <p style="margin-bottom:10px">There are no businesses imported into the official registry yet.</p>
+            <p style="margin-bottom:0; color:var(--color-muted, #64748b)">
+              Re-verify checks the map pins of registered businesses, so there is nothing to check until records exist. Please import your business records first under <strong>Registry &rarr; Import</strong>.
+            </p>
+          </div>
+        `,
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
     let preview;
     try {
       preview = await reverifyPreviewRequest(token);
     } catch (err) {
       Swal.fire({ icon: 'error', title: 'Could not check pins', text: err.message, confirmButtonColor: '#ef4444' });
+      return;
+    }
+    if (preview?.registryCount === 0) {
+      await Swal.fire({
+        title: 'Official Registry Is Empty',
+        text: 'Import business records first. There is nothing to re-verify yet.',
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood',
+      });
+      return;
+    }
+    if (preview?.pinCount === 0) {
+      await Swal.fire({
+        title: 'No Pins to Re-verify',
+        text: 'No business has map coordinates yet. Run Snap Pins first to place them, then re-verify.',
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood',
+      });
       return;
     }
     const total = preview?.total ?? 0;
@@ -2741,6 +2779,24 @@ export default function MapPage() {
   };
 
   const handleSnapUnresolved = async () => {
+    if (detectionQuota && detectionQuota.registry_count === 0) {
+      await Swal.fire({
+        title: 'Official Registry Is Empty',
+        html: `
+          <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a)">
+            <p style="margin-bottom:10px">There are no businesses imported into the official registry yet.</p>
+            <p style="margin-bottom:0; color:var(--color-muted, #64748b)">
+              Snap Pins places registered businesses on the map, so there is nothing to snap until records exist. Please import your business records first under <strong>Registry &rarr; Import</strong>.
+            </p>
+          </div>
+        `,
+        icon: 'info',
+        confirmButtonColor: '#6366f1',
+        confirmButtonText: 'Understood'
+      });
+      return;
+    }
+
     if (isSnapMonthlyMaxed) {
       await Swal.fire({
         icon: 'warning',
@@ -3309,7 +3365,9 @@ export default function MapPage() {
                       isSnapDailyMaxed
                     }
                     title={
-                      isSnapMonthlyMaxed
+                      detectionQuota && detectionQuota.registry_count === 0
+                        ? "Official registry is empty. Import business permits first before snapping pins."
+                        : isSnapMonthlyMaxed
                         ? `Monthly Places quota reached (${placesUsage?.text_search_month?.used ?? 2500}/${placesUsage?.text_search_month?.cap ?? 2500} used). Resets on the 1st of next month.`
                         : isSnapDailyMaxed
                           ? `Daily Places safety budget reached (0 remaining today). Resets at midnight.`
@@ -3348,7 +3406,11 @@ export default function MapPage() {
                       isSnapMonthlyMaxed ||
                       isSnapDailyMaxed
                     }
-                    title="Re-check pins that already have coordinates and move wrong ones onto the real Google place"
+                    title={
+                      detectionQuota && detectionQuota.registry_count === 0
+                        ? "Official registry is empty. Import business permits first before re-verifying pins."
+                        : "Re-check pins that already have coordinates and move wrong ones onto the real Google place"
+                    }
                     style={{
                       display: "inline-flex",
                       alignItems: "center",

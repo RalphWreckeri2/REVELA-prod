@@ -18,6 +18,19 @@ from api.registry import places_resolver
 registry_bp = Blueprint("registry", __name__)
 
 
+def _registry_count():
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) AS total FROM official_registry")
+        row = cur.fetchone()
+        return int(row.get("total") if isinstance(row, dict) else row[0]) if row else 0
+    finally:
+        cur.close()
+
+
+_EMPTY_REGISTRY_MSG = "The official business registry is empty. Please import business records first."
+
+
 # ── POST /api/registry/cancel ─────────────────────────────────────────────────
 
 @registry_bp.route("/cancel", methods=["POST"])
@@ -54,6 +67,8 @@ def snap_unresolved():
     """
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
+    if _registry_count() == 0:
+        return jsonify({"error": "Cannot snap: " + _EMPTY_REGISTRY_MSG}), 400
 
     body = request.get_json(silent=True) or {}
     # hard cap at 1000/run
@@ -97,6 +112,8 @@ def reverify_run():
     from api.registry import reverify
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
+    if _registry_count() == 0:
+        return jsonify({"error": "Cannot re-verify: " + _EMPTY_REGISTRY_MSG}), 400
     if reverify.is_running():
         return jsonify({"error": "A re-verify run is already in progress."}), 409
 

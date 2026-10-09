@@ -171,6 +171,14 @@ def _load_rows(cur):
     return cur.fetchall()
 
 
+def _count(cur, sql):
+    cur.execute(sql)
+    row = cur.fetchone()
+    if not row:
+        return 0
+    return int(row["n"] if isinstance(row, dict) else row[0])
+
+
 def _recent_ids(cur):
     cur.execute(
         "SELECT DISTINCT businessID FROM registry_pin_history "
@@ -275,12 +283,20 @@ def preview():
         _ensure_history_table(cur)
         rows = _load_rows(cur)
         recent = _recent_ids(cur)
+        registry_count = _count(cur, "SELECT COUNT(*) AS n FROM official_registry")
+        pin_count = _count(
+            cur,
+            "SELECT COUNT(*) AS n FROM geospatial_logs WHERE latitude IS NOT NULL AND longitude IS NOT NULL",
+        )
         mysql.connection.commit()
     finally:
         cur.close()
     suspects, sizes = build_suspects(rows)
     active = [s for s in suspects if s["businessID"] not in recent]
-    return summarize(active, sizes, skipped_recent=len(suspects) - len(active))
+    out = summarize(active, sizes, skipped_recent=len(suspects) - len(active))
+    out["registryCount"] = registry_count
+    out["pinCount"] = pin_count
+    return out
 
 
 def _emit(hub, stage, pct, moved, failed, same, total, status, error=None, **extra):
@@ -323,7 +339,10 @@ def _run(limit):
         todo = [s for s in suspects if s["businessID"] not in recent][: int(limit)]
         total = len(todo)
         if total == 0:
-            msg = "No unreliable pins left to re-verify."
+            msg = (
+                "No pins have coordinates yet -- run Snap Pins first."
+                if not rows else "No unreliable pins left to re-verify."
+            )
             _emit(hub, "completed", 100, 0, 0, 0, 0, msg)
             return {"total": 0, "message": msg}, None
 
