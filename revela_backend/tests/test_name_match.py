@@ -1,5 +1,9 @@
 from api.utils.name_match import name_match, parse_name
-from api.flags.service import _match_poi_to_registry, _name_similarity
+from api.flags.service import (
+    _RegistryMatchIndex,
+    _match_poi_to_registry,
+    _name_similarity,
+)
 import os
 import sys
 import unittest
@@ -201,6 +205,86 @@ class NameMatchRegressionTests(unittest.TestCase):
             ),
             0.75,
         )
+
+    def test_registry_index_preserves_exhaustive_match_results(self):
+        registry = [
+            {
+                "businessID": f"DECOY-{index}",
+                "businessName": f"Unrelated Business {index}",
+                "businessLine": "Retail",
+                "barangayID": 2,
+                "latitude": 13.9700,
+                "longitude": 121.1200,
+            }
+            for index in range(100)
+        ] + [
+            {
+                "businessID": "MATCH-1",
+                "businessName": "Silva Pharmacy",
+                "businessLine": "Pharmacy",
+                "businessAddress": "Poblacion, Main Road",
+                "barangayID": 1,
+                "latitude": 13.9667,
+                "longitude": 121.1167,
+            },
+            {
+                "businessID": "MATCH-2",
+                "businessName": "Silva Drugstore",
+                "businessLine": "Pharmacy",
+                "businessAddress": "Poblacion, Main Road",
+                "barangayID": 1,
+                "latitude": 13.9668,
+                "longitude": 121.1168,
+            },
+            {
+                "businessID": "MATCH-3",
+                "businessName": "Barako Coffee Roasters",
+                "businessLine": "Coffee",
+                "barangayID": 1,
+                "latitude": 13.9667,
+                "longitude": 121.1167,
+            },
+            {
+                "businessID": "MATCH-4",
+                "businessName": "Jardín del Edén Event Venue",
+                "businessLine": "Event Venue",
+                "barangayID": 1,
+                "latitude": 13.9667,
+                "longitude": 121.1167,
+            },
+        ]
+        index = _RegistryMatchIndex(registry)
+
+        for poi_name, poi_types, poi_lat, poi_lng in (
+            ("Silva's Pharmacy", ("pharmacy",), 13.96671, 121.11671),
+            ("Silva Pharmacy Outlet", ("pharmacy",), 13.96671, 121.11671),
+            ("Silva Bakery", ("bakery",), 13.96671, 121.11671),
+            ("No Shared Brand", (), 13.96671, 121.11671),
+            ("Barako Roastery", ("cafe",), 13.96671, 121.11671),
+            (
+                "Jardin del Eden Convention Center",
+                ("event_venue",),
+                13.96671,
+                121.11671,
+            ),
+            ("Silva Pharmacy", ("pharmacy",), 13.9780, 121.1250),
+        ):
+            exhaustive = _match_poi_to_registry(
+                poi_name, poi_lat, poi_lng, registry,
+                poi_barangay_id=1,
+                poi_types=poi_types,
+                poi_address="Poblacion, Main Road",
+            )
+            indexed = _match_poi_to_registry(
+                poi_name, poi_lat, poi_lng, registry,
+                poi_barangay_id=1,
+                poi_types=poi_types,
+                poi_address="Poblacion, Main Road",
+                registry_index=index,
+            )
+            self.assertEqual(indexed, exhaustive)
+
+        self.assertLess(len(index.candidates("Silva Pharmacy")), len(registry))
 
 
 if __name__ == "__main__":

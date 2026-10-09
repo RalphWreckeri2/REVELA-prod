@@ -1,0 +1,11 @@
+.git
+**/.env
+**/.env.*
+!**/.env.example
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+revela_backend/instance/
+revela_web/node_modules/
+revela_web/dist/

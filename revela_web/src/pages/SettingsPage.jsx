@@ -1,7 +1,7 @@
-import { useState, useEffect, useContext } from "react";
-import { useTheme } from "../context/ThemeContext";
+import { useState, useEffect, useContext, useCallback } from "react";
+import { useTheme } from "../context/themeContext";
 import DashboardLayout from "../components/DashboardLayout";
-import { AuthContext } from "../context/AuthContext";
+import { AuthContext } from "../context/authContext";
 import { changePasswordRequest, setup2faRequest, verify2faSetupRequest } from "../services/authService";
 import Swal from "sweetalert2";
 import { QRCodeSVG } from "qrcode.react";
@@ -170,7 +170,7 @@ function Setup2FAModal({ onClose, token, onSuccess, isClosing }) {
           setSecret(res.secret);
           setOtpUri(res.otpUri);
         }
-      } catch (err) {
+      } catch {
         if (!cancelled) setError("Failed to initialize 2FA setup.");
       } finally {
         if (!cancelled) setLoading(false);
@@ -347,7 +347,10 @@ export default function SettingsPage() {
 
   const SECTOR_OPTIONS = ["Food Service", "Retail", "Manufacturing", "Healthcare", "Education", "Real Estate", "Logistics", "Other"];
 
-  const fetchStorageStats = () => {
+  // Stable across renders so the mount effect below can depend on it; a plain
+  // arrow function would be a new reference every render and re-run storage
+  // stats on each one.
+  const fetchStorageStats = useCallback(() => {
     if (token) {
       setStorageLoading(true);
       getEvidenceStorageStatsRequest(token)
@@ -359,18 +362,31 @@ export default function SettingsPage() {
         })
         .finally(() => setStorageLoading(false));
     }
-  };
+  }, [token]);
+
+  // Seed the email-alert toggle from the server profile, falling back to the
+  // last locally-saved choice.
+  //
+  // Derived during render instead of in an effect so the toggle shows the real
+  // saved value on the very first paint. As an effect it rendered the default
+  // first and then corrected itself, which showed up as a brief flicker.
+  const savedEmailAlerts = localStorage.getItem("revela_emailAlerts");
+  const serverEmailAlerts = typeof user?.emailInspectionAlerts === "boolean"
+    ? user.emailInspectionAlerts
+    : null;
+  const emailAlertsSeed = serverEmailAlerts !== null
+    ? serverEmailAlerts
+    : savedEmailAlerts === null
+      ? null
+      : savedEmailAlerts === "true";
+  const [lastEmailAlertsSeed, setLastEmailAlertsSeed] = useState(emailAlertsSeed);
+  if (emailAlertsSeed !== null && emailAlertsSeed !== lastEmailAlertsSeed) {
+    setLastEmailAlertsSeed(emailAlertsSeed);
+    setEmailAlerts(emailAlertsSeed);
+  }
 
   // Load initial settings on mount
   useEffect(() => {
-    const savedEmailAlerts = localStorage.getItem("revela_emailAlerts");
-
-    if (user != null && typeof user.emailInspectionAlerts === "boolean") {
-      setEmailAlerts(user.emailInspectionAlerts);
-    } else if (savedEmailAlerts !== null) {
-      setEmailAlerts(savedEmailAlerts === "true");
-    }
-
     getWlcConfigRequest(token).then(data => {
       if (data) {
         setWlcConfig(data);
@@ -387,7 +403,7 @@ export default function SettingsPage() {
       // Clear preview theme on unmount so it reverts if unsaved
       setPreviewTheme(null);
     };
-  }, [token, user, setPreviewTheme]);
+  }, [token, setPreviewTheme, fetchStorageStats]);
 
   const handleExecuteCleanup = async (filterToClean) => {
     setCleaningStorage(true);
@@ -621,7 +637,7 @@ export default function SettingsPage() {
             position: 'top-end'
           });
         },
-        (error) => {
+        () => {
           Swal.fire("Error", "Could not get your current location. Please check your browser permissions.", "error");
         }
       );

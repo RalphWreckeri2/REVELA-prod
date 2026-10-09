@@ -1,5 +1,6 @@
 from api.utils.cancellation import set_cancel
 from api.models.detection_runs import get_detection_quota_info
+from api.utils.quota_config import API_QUOTA_CONFIG
 import os
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity
@@ -45,7 +46,7 @@ def get_detection_quota_route():
 @admin_required()
 def reset_detection_quota_route():
     """Reset detection scan quota for testing purposes."""
-    if os.getenv("ALLOW_QUOTA_RESET") != "1":
+    if not API_QUOTA_CONFIG.allow_quota_resets:
         return jsonify({"error": "Quota reset is disabled in production."}), 403
     from api.models.detection_runs import reset_detection_quota
     reset_detection_quota()
@@ -68,15 +69,22 @@ def cancel_detection_route():
 @flags_bp.route("/run-detection", methods=["POST"])
 @admin_required()
 def run_detection_route():
-    """Trigger full Places API fetch + cross-reference + Red Flag insertion."""
+    """Trigger a detection scan in either quick or full mode."""
     user_id = None
     try:
         user_id = int(get_jwt_identity())
     except Exception:
         pass
 
-    result, error = run_detection(user_id=user_id)
+    payload = request.get_json(silent=True) or {}
+    mode = str(payload.get("mode", "quick") or "quick").strip().lower()
+    if mode not in {"quick", "full"}:
+        mode = "quick"
+
+    result, error = run_detection(user_id=user_id, mode=mode)
     if error:
+        if error == "A detection scan is already in progress.":
+            return jsonify({"error": error}), 409
         if result and result.get("status") in (
             "skipped_quota", "daily_quota_exceeded", "monthly_quota_exceeded"
         ):

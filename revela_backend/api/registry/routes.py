@@ -14,6 +14,7 @@ from api.registry.service import (
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.registry import places_resolver
+from api.utils.quota_config import API_QUOTA_CONFIG
 
 registry_bp = Blueprint("registry", __name__)
 
@@ -61,6 +62,8 @@ def cancel_import():
 @admin_required()
 def reset_quota():
     """Reset daily geocoding quota counters for today."""
+    if not API_QUOTA_CONFIG.allow_quota_resets:
+        return jsonify({"error": "Quota reset is disabled in production."}), 403
     from api.registry.service import reset_geocode_daily_quota
     success = reset_geocode_daily_quota()
     if success:
@@ -138,7 +141,8 @@ def reverify_run():
         return jsonify({"error": "A re-verify run is already in progress."}), 409
 
     body = request.get_json(silent=True) or {}
-    limit = max(1, min(int(body.get("limit", reverify.BATCH_LIMIT)), reverify.BATCH_LIMIT))
+    limit = max(
+        1, min(int(body.get("limit", reverify.BATCH_LIMIT)), reverify.BATCH_LIMIT))
     app_instance = current_app._get_current_object()
 
     def _go():

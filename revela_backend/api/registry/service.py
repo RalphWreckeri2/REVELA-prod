@@ -10,6 +10,8 @@ from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.registry import places_resolver
 from api.utils.places_quota import read_usage, reserve_usage_slot
+from api.utils.quota_config import API_QUOTA_CONFIG
+from api.utils import quota_settings
 
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -283,21 +285,25 @@ def _normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # free tier is 10,000/month
-GEOCODE_MONTHLY_CAP = int(os.getenv("GEOCODE_MONTHLY_CAP", "8000"))
+GEOCODE_MONTHLY_CAP = API_QUOTA_CONFIG.geocoding.monthly
 # 1500 geocodes per day
-GEOCODE_DAILY_CAP = int(os.getenv("GEOCODE_DAILY_CAP", "1500"))
+GEOCODE_DAILY_CAP = API_QUOTA_CONFIG.geocoding.daily
 # maximum 1500 businesses per import batch
 MAX_IMPORT_PER_BATCH = int(os.getenv("MAX_IMPORT_PER_BATCH", "1500"))
+
+
 def get_geocode_remaining_today():
     """Return remaining geocode requests allowed today."""
     usage = read_usage(mysql.connection, "geo_month", "geo_day")
-    return max(0, GEOCODE_DAILY_CAP - usage["day"])
+    return max(0, quota_settings.cap("quota.geocoding.daily") - usage["day"])
 
 
 def get_geocode_remaining_month():
     """Return remaining geocode requests allowed this month."""
     usage = read_usage(mysql.connection, "geo_month", "geo_day")
-    return max(0, GEOCODE_MONTHLY_CAP - usage["month"])
+    return max(
+        0, quota_settings.cap("quota.geocoding.monthly") - usage["month"]
+    )
 
 
 def _reserve_geocode_call():
@@ -305,7 +311,8 @@ def _reserve_geocode_call():
     try:
         allowed, _reason = reserve_usage_slot(
             mysql.connection, "geo_month", "geo_day",
-            GEOCODE_MONTHLY_CAP, GEOCODE_DAILY_CAP,
+            quota_settings.cap("quota.geocoding.monthly"),
+            quota_settings.cap("quota.geocoding.daily"),
         )
         return allowed
     except Exception as e:
@@ -349,7 +356,8 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
             )
         except Exception as e:
             _geocode_state.outcome = "api_error"
-            print(f"[Geocode] Could not read quota after reservation denial: {e}")
+            print(
+                f"[Geocode] Could not read quota after reservation denial: {e}")
         print(f"[Geocode] request not sent: {_geocode_state.outcome}")
         return None, None            # row is still saved, just without coordinates
 
@@ -385,7 +393,8 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
             _geocode_state.outcome = "no_match"
         else:
             _geocode_state.outcome = "api_error"
-            print(f"[Geocode] API response: {status}: {data.get('error_message', '')[:500]}")
+            print(
+                f"[Geocode] API response: {status}: {data.get('error_message', '')[:500]}")
     except (http.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
         _geocode_state.outcome = "api_error"
         print(f"[Geocode] request failed: {e}")
@@ -400,6 +409,7 @@ def _resolve_location(
     barangay_id=None,
     line_of_business=None,
     business_type=None,
+    quota_scope="registry_import",
 ):
     """Returns (lat, lng, meta).
     PLACES_RESOLVER_ENABLED=1 -> Places Text Search (+ quality-gated geocode fallback), meta describes provenance.
@@ -417,7 +427,8 @@ def _resolve_location(
             barangay_id=barangay_id,
             line_of_business=lob_str,
             business_type=type_str,
-            reserve_geocode=_reserve_geocode_call)
+            reserve_geocode=_reserve_geocode_call,
+            quota_scope=quota_scope)
 
     # Local BPLO data often contains only vague location labels such as "District IV"
     # or "Purok 5". In those cases, use the business name + barangay as a geocode
@@ -1070,7 +1081,8 @@ def sync_registry(file, ext: str):
             is_rejected = False
             existing_source = ""
             if existing:
-                existing_source = (existing.get("coordSource") or "").strip().lower()
+                existing_source = (existing.get(
+                    "coordSource") or "").strip().lower()
                 m_stat = (existing.get("matchStatus") or "").strip().lower()
                 if m_stat == "rejected":
                     is_rejected = True
@@ -1088,7 +1100,8 @@ def sync_registry(file, ext: str):
             csv_has_coords = coordinate_pair is not None
             if existing:
                 is_locked = _preserve_import_coordinates(
-                    existing_source, existing.get("matchStatus"), csv_has_coords
+                    existing_source, existing.get(
+                        "matchStatus"), csv_has_coords
                 )
             if coordinate_pair:
                 lat, lng = coordinate_pair
@@ -1225,7 +1238,8 @@ def sync_registry(file, ext: str):
                             place_id_kind_val,
                             score_val,
                             match_status_val,
-                            _resolution_key_for_cache(curr_resolve_key, geo_meta),
+                            _resolution_key_for_cache(
+                                curr_resolve_key, geo_meta),
                             biz_id,
                         ),
                     )
@@ -1259,7 +1273,8 @@ def sync_registry(file, ext: str):
                             renewal_date,
                             bsize,
                             reg_type,
-                            _resolution_key_for_cache(curr_resolve_key, geo_meta),
+                            _resolution_key_for_cache(
+                                curr_resolve_key, geo_meta),
                             biz_id,
                         ),
                     )
@@ -1333,7 +1348,8 @@ def sync_registry(file, ext: str):
                     inserted += 1
                     inserted_ids.append(biz_id)
                     if lat is not None:
-                        places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
+                        places_resolver.record_coord_meta(
+                            cursor, biz_id, geo_meta)
                     if not _is_retryable_resolution_failure(geo_meta):
                         flag_color = _status_to_flag_color(status)
                         insert_green_flag(
@@ -1627,7 +1643,8 @@ def snap_unresolved_pins(limit: int = 200):
                     line_of_business=lob or "",
                     business_type=business_type or "",
                     reserve_geocode=_reserve_geocode_call,
-                    refresh_geocode=refresh_geocode
+                    refresh_geocode=refresh_geocode,
+                    quota_scope="snap_pins",
                 )
                 if geo_meta and geo_meta.get("resolve_key") is None:
                     geo_meta["resolve_key"] = curr_key

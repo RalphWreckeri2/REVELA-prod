@@ -8,7 +8,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
 import { UploadModal } from "../components/UploadModal";
 import AnimatePresence from "../components/AnimatePresence";
-import { AuthContext } from "../context/AuthContext";
+import { AuthContext } from "../context/authContext";
 import Papa from "papaparse";
 import Swal from "sweetalert2";
 import {
@@ -544,10 +544,19 @@ export default function RegistryPage() {
     setShowImport(true);
   };
 
-  // Reset page to 1 whenever filters change (search, barangay, status, regType, pageSize)
-  useEffect(() => {
+  // Reset page to 1 whenever filters change (search, barangay, status, regType, pageSize).
+  //
+  // Adjusted during render rather than in an effect: an effect would first
+  // paint the stale page (e.g. page 4 of the previous filter), then reset,
+  // which also triggers an avoidable fetch of the wrong page. React re-runs
+  // the component immediately when state is set during render, so the reset is
+  // committed before anything is painted or fetched.
+  const filterSignature = `${debouncedSearch}|${barangay}|${status}|${regType}|${pageSize}`;
+  const [lastFilterSignature, setLastFilterSignature] = useState(filterSignature);
+  if (filterSignature !== lastFilterSignature) {
+    setLastFilterSignature(filterSignature);
     setPage(1);
-  }, [debouncedSearch, barangay, status, regType, pageSize]);
+  }
 
   // Fetch whenever page or filters change
   useEffect(() => {

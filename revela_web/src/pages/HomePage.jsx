@@ -10,10 +10,10 @@ import { useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
 import KpiCard from "../components/KpiCard";
-import { useAuth } from "../context/AuthContext";
-import { useTheme } from "../context/ThemeContext";
+import { useAuth } from "../context/authContext";
+import { useTheme } from "../context/themeContext";
 import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getOpsRankingsRequest, markNotificationsReadRequest } from "../services/api";
-import { getBarangayCentroid } from "./MapPage";
+import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import Swal from "sweetalert2";
@@ -283,7 +283,7 @@ function HighPriorityAlertsWidget({ opsRankings, navigate, loading }) {
           <div style={{ textAlign: "center", padding: "20px 0", color: "var(--color-muted)", fontSize: 13 }}>
             No barangays with active flags detected.
           </div>
-        ) : top5.map((b, i) => {
+        ) : top5.map((b) => {
           const riskStyle = RISK_COLORS[b.risk_level] || RISK_COLORS.Low;
           return (
             <div
@@ -392,7 +392,7 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
               map: activeMap,
               content: buildMarkerEl(fc.marker),
             });
-          } catch (e) {
+          } catch {
             marker = null;
           }
         }
@@ -828,7 +828,6 @@ export default function HomePage() {
 
   // Flags
   const [allFlags, setAllFlags] = useState([]);
-  const [flagsLoading, setFlagsLoading] = useState(true);
 
   const [inspections, setInspections] = useState([]);
   const [inspectors, setInspectors] = useState([]);
@@ -913,7 +912,6 @@ export default function HomePage() {
     } catch {
       /* ignore */
     } finally {
-      setFlagsLoading(false);
       setOpsLoading(false);
       setIsRefreshing(false);
     }

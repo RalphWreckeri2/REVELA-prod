@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback, useContext } from "react";
 import { createPortal } from "react-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { AuthContext } from "../context/AuthContext";
+import { AuthContext } from "../context/authContext";
 import {
   getInspectionsRequest,
   getInspectorTasksRequest,
@@ -15,7 +15,6 @@ import {
   reassignSubmittedInspectionRequest,
   verifyInspectionRequest,
   getInspectorsRequest,
-  inspectionEvidenceUrls,
   parseInspectionEvidence,
 } from "../services/api";
 import Swal from "sweetalert2";
@@ -729,7 +728,7 @@ function InspectionDetailModal({ report, isAdmin, onAssign, onVerify, onClose, i
 }
 
 // ── Column Focus Modal (Grid View) ─────────────────────────────────────────────
-function ColumnFocusModal({ status, reports, isAdmin, onAssign, onVerify, onViewDetail, onClose, isClosing }) {
+function ColumnFocusModal({ status, reports, onViewDetail, onClose }) {
   const [search, setSearch] = useState("");
   const [filterFlag, setFilterFlag] = useState("");
 
@@ -904,8 +903,7 @@ function ColumnFocusModal({ status, reports, isAdmin, onAssign, onVerify, onView
 }
 
 // ── Inspection Card ────────────────────────────────────────────────────────────
-function InspectionCard({ report, isAdmin, onAssign, onVerify, onViewDetail, isCompact }) {
-  const statusMeta = STATUS_COLOR[report.verificationStatus] ?? STATUS_COLOR.Assigned;
+function InspectionCard({ report, onViewDetail }) {
   const flagMeta = FLAG_COLOR[report.flagColor] ?? FLAG_COLOR.Green;
 
   // Uniform card styling for every report — overdue state is intentionally

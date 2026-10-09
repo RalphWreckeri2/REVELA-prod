@@ -2,18 +2,13 @@ import json
 import queue
 
 from flask import Blueprint, Response, request, jsonify
-from flask_jwt_extended import decode_token, get_jwt_identity
-from flask_jwt_extended.exceptions import JWTDecodeError
+from flask_jwt_extended import get_jwt_identity
 
-from api.middleware.decorators import jwt_required, get_current_role
+from api.middleware.decorators import jwt_required, admin_required
 from api.notifications import service as notif_service
 from api.notifications import hub
 
 notifications_bp = Blueprint("notifications", __name__)
-
-
-def _admin_roles():
-    return ("Admin", "SUPER_ADMIN", "System Administrator")
 
 
 # ── GET /api/notifications ──────────────────────────────────────────────────────
@@ -74,23 +69,11 @@ def delete_notifications_route():
     return jsonify(result), 200
 
 
-# ── GET /api/notifications/stream?token=JWT ───────────────────────────────────
-# EventSource cannot set Authorization header in all browsers.
+# ── GET /api/notifications/stream ─────────────────────────────────────────────
 @notifications_bp.route("/stream", methods=["GET"])
+@admin_required()
 def stream_notifications():
-    token = request.args.get("token")
-    if not token:
-        return jsonify({"error": "token query parameter required"}), 401
-    try:
-        decoded = decode_token(token)
-    except JWTDecodeError as e:
-        return jsonify({"error": "invalid token", "details": str(e)}), 401
-
-    role = decoded.get("role") or decoded.get("userRole")
-    if role not in _admin_roles():
-        return jsonify({"error": "Admins only"}), 403
-
-    user_id = str(decoded.get("sub"))
+    user_id = str(get_jwt_identity())
 
     def event_stream():
         q = hub.subscribe(user_id)

@@ -1,5 +1,5 @@
 from functools import wraps
-from flask import jsonify, request
+from flask import current_app, jsonify, request
 from flask_jwt_extended import verify_jwt_in_request, get_jwt, get_jwt_identity
 from api.models.user import find_user_by_id
 
@@ -36,9 +36,13 @@ def jwt_required():
                             "error": "Unauthorized",
                             "message": "Account has been deactivated by an administrator."
                         }), 401
-                except Exception as e:
-                    # In case of DB error during check, pass through to route handler
-                    pass
+                except Exception:
+                    current_app.logger.exception(
+                        "Could not verify account status for authenticated request."
+                    )
+                    return jsonify({
+                        "error": "Authorization could not be verified."
+                    }), 503
 
             return fn(*args, **kwargs)
         return wrapper
@@ -69,6 +73,7 @@ def admin_required():
                 return jsonify({"error": "Unauthorized", "message": str(e)}), 401
 
             identity = get_jwt_identity()
+            role = get_current_role()
             if identity is not None:
                 try:
                     user = find_user_by_id(int(identity))
@@ -77,10 +82,20 @@ def admin_required():
                             "error": "Unauthorized",
                             "message": "Account has been deactivated or removed."
                         }), 401
-                except Exception as e:
-                    pass
+                    current_role = user.get("userRole") or user.get("role")
+                    if current_role and current_role != role:
+                        return jsonify({
+                            "error": "Unauthorized",
+                            "message": "Account permissions changed. Sign in again."
+                        }), 401
+                except Exception:
+                    current_app.logger.exception(
+                        "Could not verify account status for admin request."
+                    )
+                    return jsonify({
+                        "error": "Authorization could not be verified."
+                    }), 503
 
-            role = get_current_role()
             if role not in ("Admin", "SUPER_ADMIN", "System Administrator"):
                 return jsonify({"error": "Forbidden", "message": "Admins only"}), 403
 

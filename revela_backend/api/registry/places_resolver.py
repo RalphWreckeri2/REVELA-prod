@@ -16,8 +16,13 @@ Environment variables (all optional unless noted)
   PLACES_BIAS_RADIUS_M      default 8000
   PLACES_AUTO_ACCEPT        default 0.80   name-similarity >= this: accept as 'auto'
   PLACES_REVIEW_MIN         default 0.55   between REVIEW_MIN and AUTO_ACCEPT: 'review'
-  TS_MONTHLY_CAP / TS_DAILY_CAP   Text Search budget (default 2500/month, 75/day)
-  PD_MONTHLY_CAP / PD_DAILY_CAP   Place Details budget (default 3000/month, 90/day)
+    TEXT_SEARCH_MONTHLY_CAP / TEXT_SEARCH_DAILY_CAP
+                                                                    Text Search aggregate (default 2500/month, 400/day)
+    TEXT_SEARCH_*_DAILY_CAP         workflow shares (default 200/100/100 per day)
+    PLACE_DETAILS_MONTHLY_CAP / PLACE_DETAILS_DAILY_CAP
+                                                                    Place Details (default 3000/month, 90/day)
+
+Legacy TS_*, PD_*, GEOCODE_*, PLACES_*, and NEW_NEARBY_* cap names remain aliases.
 
 Scheduled maintenance (cron / task scheduler), inside an app context:
     from api.registry.places_resolver import refresh_expired_coords, purge_expired_coords
@@ -35,7 +40,13 @@ import requests
 
 from app import mysql
 from api.utils.name_match import address_similarity, name_match, parse_name
-from api.utils.places_quota import read_usage, reserve_usage_slot
+from api.utils.places_quota import (
+    read_daily_usage,
+    read_usage,
+    reserve_usage_slot,
+)
+from api.utils.quota_config import API_QUOTA_CONFIG
+from api.utils import quota_settings
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places/{pid}"
@@ -48,10 +59,15 @@ DEFAULT_BIAS_RADIUS_M = 8000.0
 BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
 REVIEW_MIN = float(os.getenv("PLACES_REVIEW_MIN", "0.55"))
-TS_MONTHLY_CAP = int(os.getenv("TS_MONTHLY_CAP", "2500"))
-TS_DAILY_CAP = int(os.getenv("TS_DAILY_CAP", "75"))
-PD_MONTHLY_CAP = int(os.getenv("PD_MONTHLY_CAP", "3000"))
-PD_DAILY_CAP = int(os.getenv("PD_DAILY_CAP", "90"))
+TS_MONTHLY_CAP = API_QUOTA_CONFIG.text_search.monthly
+TS_DAILY_CAP = API_QUOTA_CONFIG.text_search.daily
+PD_MONTHLY_CAP = API_QUOTA_CONFIG.place_details.monthly
+PD_DAILY_CAP = API_QUOTA_CONFIG.place_details.daily
+TEXT_SEARCH_WORKFLOW_LEDGER = {
+    "registry_import": "ts_import_day",
+    "snap_pins": "ts_snap_day",
+    "reverify": "ts_reverify_day",
+}
 REFRESH_AFTER_DAYS = 20
 PURGE_AFTER_DAYS = 28
 
@@ -71,28 +87,44 @@ def reset_run_state():
     _api_state.last_error = None
     _api_state.outcome = None
     _api_state.quota_reason = None
+    _api_state.quota_scope = None
 
 
 def get_places_call_usage():
     """Return persistent usage for each Registry API method for today and this month."""
+    workflow_usage = {}
+    for scope, ledger_kind in TEXT_SEARCH_WORKFLOW_LEDGER.items():
+        used_today = read_daily_usage(mysql.connection, ledger_kind)
+        cap = quota_settings.cap(f"quota.text_search.workflow.{scope}")
+        workflow_usage[scope] = {
+            "used_today": used_today,
+            "daily_cap": cap,
+            "daily_remaining": max(0, cap - used_today),
+            "daily_quota_exceeded": used_today >= cap,
+        }
     return {
         "text_search": read_usage(mysql.connection, "imp_ts_month", "imp_ts_day"),
+        "text_search_workflows": workflow_usage,
         "details": read_usage(mysql.connection, "imp_pd_month", "imp_pd_day"),
         "geocoding": read_usage(mysql.connection, "geo_month", "geo_day"),
     }
 
 
 def get_text_search_quota_status():
-    usage = get_places_call_usage()["text_search"]
+    call_usage = get_places_call_usage()
+    usage = call_usage["text_search"]
+    monthly_cap = quota_settings.cap("quota.text_search.monthly")
+    daily_cap = quota_settings.cap("quota.text_search.daily")
     return {
         "used": usage["month"],
-        "cap": TS_MONTHLY_CAP,
-        "remaining": max(0, TS_MONTHLY_CAP - usage["month"]),
-        "monthly_quota_exceeded": usage["month"] >= TS_MONTHLY_CAP,
+        "cap": monthly_cap,
+        "remaining": max(0, monthly_cap - usage["month"]),
+        "monthly_quota_exceeded": usage["month"] >= monthly_cap,
         "used_today": usage["day"],
-        "daily_cap": TS_DAILY_CAP,
-        "daily_remaining": max(0, TS_DAILY_CAP - usage["day"]),
-        "daily_quota_exceeded": usage["day"] >= TS_DAILY_CAP,
+        "daily_cap": daily_cap,
+        "daily_remaining": max(0, daily_cap - usage["day"]),
+        "daily_quota_exceeded": usage["day"] >= daily_cap,
+        "workflows": call_usage["text_search_workflows"],
     }
 
 
@@ -196,13 +228,18 @@ def _distance_m(lat_a, lng_a, lat_b, lng_b):
     except (TypeError, ValueError):
         return None
     dlat, dlng = lat_b - lat_a, lng_b - lng_a
-    a = math.sin(dlat / 2) ** 2 + math.cos(lat_a) * math.cos(lat_b) * math.sin(dlng / 2) ** 2
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat_a) * \
+        math.cos(lat_b) * math.sin(dlng / 2) ** 2
     return 6_371_000 * 2 * math.asin(math.sqrt(a))
 
 
 # ------------------------------ budget guard ---------------------------------
 _MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
-def reserve_call(prefix, monthly_cap, daily_cap=None):
+
+
+def reserve_call(
+    prefix, monthly_cap, daily_cap=None, additional_daily_limits=()
+):
     """Atomically reserve a method's monthly and daily slots; fail closed on DB errors."""
     daily_cap = daily_cap if daily_cap is not None else 2_147_483_647
     try:
@@ -212,14 +249,20 @@ def reserve_call(prefix, monthly_cap, daily_cap=None):
             f"{prefix}_day",
             monthly_cap,
             daily_cap,
+            additional_daily_limits=additional_daily_limits,
         )
         _api_state.quota_reason = reason
         if not allowed:
-            print(f"[places_resolver budget] {reason} for {prefix}")
+            scope = getattr(_api_state, "quota_scope", None)
+            scope_detail = f" ({scope})" if scope else ""
+            print(
+                f"[places_resolver budget] {reason} for {prefix}{scope_detail}"
+            )
         return allowed
     except Exception as e:
         _api_state.quota_reason = "quota_ledger_error"
-        print(f"[places_resolver budget] reservation failed closed for {prefix}: {e}")
+        print(
+            f"[places_resolver budget] reservation failed closed for {prefix}: {e}")
         return False
 
 
@@ -239,7 +282,8 @@ def _api_get_json(resp, label):
         _halted = f"{label} {resp.status_code}: {body[:200]}"
         print(f"[places_resolver] HALTED until restart -> {_halted}")
     else:
-        print(f"[places_resolver] {label} HTTP {resp.status_code}: {body[:2000]}")
+        print(
+            f"[places_resolver] {label} HTTP {resp.status_code}: {body[:2000]}")
     _api_state.last_error = f"{label} HTTP {resp.status_code}"
     _api_state.outcome = "api_error"
     return None
@@ -267,7 +311,8 @@ def _places_request(label, request, reserve):
     max_retries = 3
     for attempt in range(max_retries + 1):
         if getattr(_api_state, "quota_halted", False):
-            _api_state.outcome = getattr(_api_state, "quota_reason", None) or "skipped_quota"
+            _api_state.outcome = getattr(
+                _api_state, "quota_reason", None) or "skipped_quota"
             _api_state.last_error = "Places quota exhausted for this run"
             return None
         with _places_request_lock:
@@ -276,11 +321,16 @@ def _places_request(label, request, reserve):
                 time.sleep(random.uniform(0.3, 0.5) - elapsed)
             if not reserve():
                 _api_state.quota_halted = True
-                reason = getattr(_api_state, "quota_reason", None) or "skipped_quota"
+                reason = getattr(_api_state, "quota_reason",
+                                 None) or "skipped_quota"
                 _api_state.outcome = (
                     "api_error" if reason == "quota_ledger_error" else reason
                 )
-                _api_state.last_error = f"{label} {reason.replace('_', ' ')}"
+                scope = getattr(_api_state, "quota_scope", None)
+                scope_detail = f" for {scope.replace('_', ' ')}" if scope else ""
+                _api_state.last_error = (
+                    f"{label} {reason.replace('_', ' ')}{scope_detail}"
+                )
                 print(
                     f"[places_resolver] {label} not sent: "
                     f"{reason.replace('_', ' ')}"
@@ -312,7 +362,8 @@ def _places_request(label, request, reserve):
                 _api_state.quota_halted = True
                 _api_state.outcome = "skipped_quota"
                 _api_state.last_error = f"{label} daily quota exhausted (HTTP 429)"
-                print(f"[places_resolver] {label} daily quota exhausted; stopping Places calls for this run")
+                print(
+                    f"[places_resolver] {label} daily quota exhausted; stopping Places calls for this run")
                 return None
 
         data = _api_get_json(resp, label)
@@ -345,7 +396,8 @@ def _text_search(name, address, barangay, post=requests.post, reserve=None):
     }
     data = _places_request(
         "TextSearch",
-        lambda: post(PLACES_SEARCH_URL, headers=headers, json=body, timeout=10),
+        lambda: post(PLACES_SEARCH_URL, headers=headers,
+                     json=body, timeout=10),
         reserve or (lambda: True),
     )
     return data if data is not None else {}
@@ -405,6 +457,7 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
                      line_of_business='', business_type='', reserve_geocode=None, refresh_geocode=False,
                      force=False, preferred_place_id=None,
                      current_lat=None, current_lng=None,
+                     quota_scope="registry_import",
                      _post=requests.post, _get=requests.get):
     """Returns (lat, lng, meta); API/quota failures are distinguished from no-match results.
 
@@ -496,9 +549,24 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     best, best_score = None, 0.0
     best_reason = None
     category_conflict_seen = False
+    _api_state.quota_scope = quota_scope
+    workflow_ledger_kind = TEXT_SEARCH_WORKFLOW_LEDGER[quota_scope]
+    # Effective caps, so an admin override applies without a redeploy.
+    workflow_daily_cap = quota_settings.cap(
+        f"quota.text_search.workflow.{quota_scope}"
+    )
+    text_search_monthly_cap = quota_settings.cap("quota.text_search.monthly")
+    text_search_daily_cap = quota_settings.cap("quota.text_search.daily")
     data = _text_search(
         name, address, barangay, post=_post,
-        reserve=lambda: reserve_call("imp_ts", TS_MONTHLY_CAP, TS_DAILY_CAP),
+        reserve=lambda: reserve_call(
+            "imp_ts",
+            text_search_monthly_cap,
+            text_search_daily_cap,
+            additional_daily_limits=((
+                workflow_ledger_kind, workflow_daily_cap
+            ),),
+        ),
     )
     call_outcome = getattr(_api_state, "outcome", None)
     if call_outcome in ("skipped_quota", "monthly_quota_exceeded",
@@ -609,7 +677,8 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
                 return g["lat"], g["lng"], g["meta"]
         else:
             geocode_budget_exhausted = True
-            print("[places_resolver budget] Geocode daily/monthly cap reached; skipping fallback")
+            print(
+                "[places_resolver budget] Geocode daily/monthly cap reached; skipping fallback")
 
     if _halted:
         return None, None, {"reason": "api_error", "api_error": str(_halted)}
@@ -639,7 +708,8 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         else:
             meta["reason"] = "below_threshold"
             meta["best_score"] = round(best_score, 3)
-            meta["best_name"] = ((best or {}).get("displayName") or {}).get("text")
+            meta["best_name"] = ((best or {}).get(
+                "displayName") or {}).get("text")
     return None, None, meta
 
 
@@ -719,7 +789,11 @@ def refresh_expired_coords(limit=500):
                 "X-Goog-Api-Key": os.getenv("GOOGLE_MAPS_API_KEY", ""),
                 "X-Goog-FieldMask": "location",
             }),
-            lambda: reserve_call("imp_pd", PD_MONTHLY_CAP, PD_DAILY_CAP),
+            lambda: reserve_call(
+                "imp_pd",
+                quota_settings.cap("quota.place_details.monthly"),
+                quota_settings.cap("quota.place_details.daily"),
+            ),
         )
         if data is None and getattr(_api_state, "outcome", None) in (
             "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
@@ -778,7 +852,8 @@ def list_review_queue(page=1, per_page=20, search=""):
                       OR CAST(r.businessID AS CHAR) LIKE %s
                       OR r.businessAddress LIKE %s
                       OR b.barangayName LIKE %s)""",
-            (search_term, search_pattern, search_pattern, search_pattern, search_pattern),
+            (search_term, search_pattern, search_pattern,
+             search_pattern, search_pattern),
         )
         row = cur.fetchone()
         total = int(_g(row, "c", 0))
@@ -879,7 +954,8 @@ def decide_review(business_id, approve):
                            matchScore=%s, coordFetchedAt=NOW(),
                            matchStatus='approved', coordSource='manual'
                        WHERE businessID=%s AND matchStatus='review'""",
-                    (proposal_lat, proposal_lng, proposal_place_id, proposal_score, business_id),
+                    (proposal_lat, proposal_lng, proposal_place_id,
+                     proposal_score, business_id),
                 )
                 _update_pin(
                     cur,
@@ -901,7 +977,8 @@ def decide_review(business_id, approve):
                     (business_id,),
                 )
         else:
-            pid = proposal_place_id if has_reverify_proposal else _g(r, "placeID", 4)
+            pid = proposal_place_id if has_reverify_proposal else _g(
+                r, "placeID", 4)
             if pid:
                 cur.execute(
                     "INSERT IGNORE INTO registry_rejected_places (businessID, placeID) VALUES (%s, %s)",

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import DashboardLayout from "../components/DashboardLayout";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/authContext";
 import {
   getUsersRequest,
   createUserRequest,
@@ -106,7 +106,12 @@ function CreateUserModal({ onClose, onSuccess, token }) {
   const [loading,  setLoading]  = useState(false);
   const [generating, setGenerating] = useState(false);
 
-  const generatePassword = async () => {
+  // Memoised on `token` so the mount effect below can depend on it safely.
+  // Depending on the token rather than an empty array also means the password
+  // is regenerated if the session is hydrated after this page mounts, which
+  // previously produced an empty field with no way to recover short of a reload.
+  const generatePassword = useCallback(async () => {
+    if (!token) return;
     setGenerating(true);
     try {
       const res = await fetch(`${API_ORIGIN}/api/users/generate-password`, {
@@ -119,9 +124,9 @@ function CreateUserModal({ onClose, onSuccess, token }) {
     } finally {
       setGenerating(false);
     }
-  };
+  }, [token]);
 
-  useEffect(() => { generatePassword(); }, []);
+  useEffect(() => { void generatePassword(); }, [generatePassword]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -398,7 +403,10 @@ function ResetPasswordModal({ targetUser, onClose, onSuccess, token }) {
       try {
         data = JSON.parse(text);
       } catch (parseErr) {
-        throw new Error(`Server returned ${res.status}: ${text.slice(0, 60)}...`);
+        if (!(parseErr instanceof SyntaxError)) throw parseErr;
+        throw new Error(`Server returned ${res.status}: ${text.slice(0, 60)}...`, {
+          cause: parseErr,
+        });
       }
 
       if (!res.ok) throw new Error(data?.error || "Failed to reset password.");

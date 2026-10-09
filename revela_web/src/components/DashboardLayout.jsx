@@ -14,15 +14,15 @@
  *   logo      — imported logo asset (optional)
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useEffectEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/authContext";
 import {
   getNotificationsRequest,
   getNotificationsUnreadCountRequest,
   markNotificationsReadRequest,
   deleteNotificationsRequest,
-  getNotificationStreamUrl,
+  streamNotificationsRequest,
 } from "../services/api";
 import "../styles/global.css";
 import Swal from "sweetalert2";
@@ -244,7 +244,7 @@ function formatTimeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlaceholder = "Search businesses, barangays...", onProfileClick }) {
+function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick }) {
   const { token, user: authUser } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationButtonRef = useRef(null);
@@ -256,10 +256,12 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState(() => new Date());
-  const [showSnippet, setShowSnippet] = useState(false);
-  const lastAlertIdRef = useRef(null);
-  const snippetTimerRef = useRef(null);
+  const [dismissedAlertId, setDismissedAlertId] = useState(null);
+  const latestAlert = notifications[0];
+  const showSnippet = Boolean(
+    isAdmin && unreadCount > 0 && latestAlert && !latestAlert.readAt &&
+    latestAlert.id !== dismissedAlertId
+  );
 
   const refreshNotifications = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -270,18 +272,20 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
       ]);
       setNotifications(listRes?.data ?? []);
       setUnreadCount(countRes?.count ?? 0);
-      setLastSyncTime(new Date());
     } catch {
       /* ignore */
     }
   }, [token, isAdmin]);
+
+  const refreshNotificationsOnEffect = useEffectEvent(() => {
+    refreshNotifications();
+  });
 
   const handleGlobalSync = useCallback(async () => {
     setIsSyncing(true);
     try {
       await refreshNotifications();
       window.dispatchEvent(new CustomEvent("revela:global-refresh", { detail: { timestamp: Date.now() } }));
-      setLastSyncTime(new Date());
     } finally {
       setTimeout(() => setIsSyncing(false), 600);
     }
@@ -289,27 +293,29 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
 
   useEffect(() => {
     if (!token || !isAdmin) return undefined;
-    refreshNotifications();
+    queueMicrotask(() => {
+      if (isSubscribed) refreshNotificationsOnEffect();
+    });
 
-    let es = null;
+    let streamController = null;
     let reconnectTimeout = null;
     let isSubscribed = true;
 
-    const connectSSE = () => {
+    const connectSSE = async () => {
       if (!isSubscribed) return;
+      streamController = new AbortController();
+      const currentController = streamController;
       try {
-        es = new EventSource(getNotificationStreamUrl(token));
-        
-        es.onopen = () => {
-          if (!isSubscribed) return;
-          setIsLiveConnected(true);
-        };
-
-        es.onmessage = (event) => {
-          if (!isSubscribed) return;
+        await streamNotificationsRequest(token, {
+          signal: currentController.signal,
+          onOpen: () => {
+            if (isSubscribed) setIsLiveConnected(true);
+          },
+          onMessage: (rawMessage) => {
+            if (!isSubscribed) return;
           let data;
           try {
-            data = JSON.parse(event.data);
+              data = JSON.parse(rawMessage);
           } catch {
             return;
           }
@@ -318,7 +324,6 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
             return;
           }
           setIsLiveConnected(true);
-          setLastSyncTime(new Date());
 
           if (data.type !== "detection_progress" && data.type !== "reconcile_progress" && data.type !== "snap_progress") {
             refreshNotifications();
@@ -373,20 +378,13 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
               new CustomEvent("revela:new-year-rollover", { detail: data }),
             );
           }
-        };
-
-        es.onerror = () => {
-          if (!isSubscribed) return;
-          setIsLiveConnected(false);
-          try {
-            es.close();
-          } catch {
-            /* ignore */
-          }
-          // Reconnect with 4s backoff
-          reconnectTimeout = setTimeout(connectSSE, 4000);
-        };
+          },
+        });
+        if (!isSubscribed || currentController.signal.aborted) return;
+        setIsLiveConnected(false);
+        reconnectTimeout = setTimeout(connectSSE, 4000);
       } catch {
+        if (!isSubscribed || currentController.signal.aborted) return;
         setIsLiveConnected(false);
         reconnectTimeout = setTimeout(connectSSE, 6000);
       }
@@ -403,38 +401,16 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
       isSubscribed = false;
       window.clearInterval(poll);
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
-      if (es) {
-        try {
-          es.close();
-        } catch {
-          /* ignore */
-        }
-      }
+      streamController?.abort();
     };
   }, [token, isAdmin, refreshNotifications]);
 
   useEffect(() => {
-    if (!isAdmin || notifications.length === 0 || unreadCount === 0) {
-      setShowSnippet(false);
-      return;
-    }
-    const latest = notifications[0];
-    if (latest && !latest.readAt && latest.id !== lastAlertIdRef.current) {
-      lastAlertIdRef.current = latest.id;
-      setShowSnippet(true);
-
-      if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
-      snippetTimerRef.current = setTimeout(() => {
-        setShowSnippet(false);
-      }, 7000);
-    }
-  }, [notifications, unreadCount, isAdmin]);
-
-  useEffect(() => {
-    return () => {
-      if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
-    };
-  }, []);
+    if (!showSnippet) return undefined;
+    const alertId = latestAlert.id;
+    const timeoutId = setTimeout(() => setDismissedAlertId(alertId), 7000);
+    return () => clearTimeout(timeoutId);
+  }, [showSnippet, latestAlert?.id]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -456,8 +432,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
   const toggleNotifications = async () => {
     const next = !showNotifications;
     setShowNotifications(next);
-    setShowSnippet(false);
-    if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+    setDismissedAlertId(latestAlert?.id ?? null);
     if (next && isAdmin && token) {
       await refreshNotifications();
     }
@@ -526,7 +501,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
-        <input type="text" placeholder={searchPlaceholder} />
+        <input type="text" placeholder="Search businesses, barangays..." />
       </div>*/}
 
       <div className="top-nav-right" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -634,8 +609,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, searchPlac
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setShowSnippet(false);
-                    if (snippetTimerRef.current) clearTimeout(snippetTimerRef.current);
+                    setDismissedAlertId(notifications[0]?.id ?? null);
                   }}
                   onMouseEnter={(e) => e.currentTarget.style.color = "#fff"}
                   onMouseLeave={(e) => e.currentTarget.style.color = "rgba(255,255,255,0.85)"}

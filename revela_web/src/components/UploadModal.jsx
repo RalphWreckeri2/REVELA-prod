@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Papa from "papaparse";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import Swal from "sweetalert2";
 import { uploadRegistryFile, syncRegistryFile, cancelRegistryImport } from "../services/api";
 
@@ -72,7 +72,11 @@ const Icon = {
 };
 
 function useRegistryProgress({ active, done, finalCount }) {
-  const [displayed, setDisplayed] = useState(0);
+  const [progress, setProgress] = useState({ active: false, value: 0 });
+
+  if (active !== progress.active) {
+    setProgress({ active, value: active ? 0 : progress.value });
+  }
 
   useEffect(() => {
     if (!active || done) return;
@@ -80,7 +84,10 @@ function useRegistryProgress({ active, done, finalCount }) {
     const handleProgress = (e) => {
       const data = e.detail;
       if (data.processed !== undefined) {
-        setDisplayed(data.processed);
+        setProgress((current) => ({
+          ...current,
+          value: data.processed,
+        }));
       }
     };
 
@@ -88,17 +95,8 @@ function useRegistryProgress({ active, done, finalCount }) {
     return () => window.removeEventListener("revela:registry-progress", handleProgress);
   }, [active, done]);
 
-  useEffect(() => {
-    if (done && finalCount !== undefined) {
-      setDisplayed(finalCount);
-    }
-  }, [done, finalCount]);
-
-  useEffect(() => {
-    if (!active && !done) setDisplayed(0);
-  }, [active, done]);
-
-  return displayed;
+  if (done && finalCount !== undefined) return finalCount;
+  return active ? progress.value : 0;
 };
 
 // ── Progress bar sub-component ─────────────────────────────────────────────────

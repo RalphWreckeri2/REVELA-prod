@@ -11,7 +11,7 @@ export function inspectionEvidenceUrl(photoPath) {
 
 export function parseInspectionEvidence(photoPath) {
   if (!photoPath) return [];
-  let rawPaths = [];
+  let rawPaths;
   try {
     const parsed = JSON.parse(photoPath);
     if (Array.isArray(parsed)) {
@@ -19,7 +19,7 @@ export function parseInspectionEvidence(photoPath) {
     } else {
       rawPaths = [photoPath];
     }
-  } catch (e) {
+  } catch {
     rawPaths = [photoPath]; // legacy single string
   }
 
@@ -67,7 +67,9 @@ async function handleResponse(res) {
     return data;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error(`Server error: Invalid response (${res.status})`);
+      throw new Error(`Server error: Invalid response (${res.status})`, {
+        cause: err,
+      });
     }
     throw err;
   }
@@ -97,6 +99,7 @@ export async function loginRequest(email, password) {
     if (err instanceof TypeError) {
       throw new Error(
         "Unable to connect to server. Please check your connection.",
+        { cause: err },
       );
     }
     throw err;
@@ -114,15 +117,68 @@ export async function getMeRequest(token) {
     if (err instanceof TypeError) {
       throw new Error(
         "Unable to connect to server. Please check your connection.",
+        { cause: err },
       );
     }
     throw err;
   }
 }
 
-/** SSE URL (EventSource cannot send Authorization header reliably). */
-export function getNotificationStreamUrl(token) {
-  return `${API_ORIGIN}/api/notifications/stream?token=${encodeURIComponent(token)}`;
+/** Consume the admin notification SSE stream using the normal Bearer header. */
+export async function streamNotificationsRequest(
+  token,
+  { signal, onOpen, onMessage } = {},
+) {
+  if (!token) throw new Error("Missing authentication token.");
+
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}/notifications/stream`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal,
+    });
+  } catch (err) {
+    connectionGuard(err);
+  }
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => null);
+    throw new Error(
+      errorData?.message ||
+        errorData?.error ||
+        `Notification stream failed with status ${res.status}`,
+    );
+  }
+  if (!res.body) throw new Error("Notification streaming is not supported.");
+
+  onOpen?.();
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const dispatchEvent = (eventText) => {
+    const data = eventText
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).replace(/^ /, ""))
+      .join("\n");
+    if (data) onMessage?.(data);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.match(/\r?\n\r?\n/);
+    while (boundary) {
+      dispatchEvent(buffer.slice(0, boundary.index));
+      buffer = buffer.slice(boundary.index + boundary[0].length);
+      boundary = buffer.match(/\r?\n\r?\n/);
+    }
+  }
+
+  buffer += decoder.decode();
+  if (buffer.trim()) dispatchEvent(buffer);
 }
 
 export async function getNotificationsRequest(token) {
@@ -189,6 +245,7 @@ export async function requestOtpRequest(identifier) {
     if (err instanceof TypeError) {
       throw new Error(
         "Unable to connect to server. Please check your connection.",
+        { cause: err },
       );
     }
     throw err;
@@ -207,6 +264,7 @@ export async function resetPasswordRequest(identifier, otp, newPassword) {
     if (err instanceof TypeError) {
       throw new Error(
         "Unable to connect to server. Please check your connection.",
+        { cause: err },
       );
     }
     throw err;
@@ -491,7 +549,7 @@ export async function escalateFlagToBlackRequest(logId, token) {
   }
 }
 
-export async function runDetectionRequest(token) {
+export async function runDetectionRequest(token, mode = "quick") {
   if (!token) {
     throw new Error("Missing authentication token.");
   }
@@ -503,6 +561,7 @@ export async function runDetectionRequest(token) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
+      body: JSON.stringify({ mode }),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1078,7 +1137,9 @@ export async function downloadEvidenceArchiveRequest(filter, token) {
       try {
         const errData = await res.json();
         if (errData.error) errMsg = errData.error;
-      } catch (_) {}
+      } catch (parseError) {
+        if (!(parseError instanceof SyntaxError)) throw parseError;
+      }
       throw new Error(errMsg);
     }
 
@@ -1156,7 +1217,12 @@ export async function reverifyPinsRequest(token, limit = 50) {
 }
 
 /** GET /api/registry/review - low-confidence re-verify proposals awaiting admin review */
-export async function getRegistryReviewQueueRequest(token, page = 1, limit = 20, search = "") {
+export async function getRegistryReviewQueueRequest(
+  token,
+  page = 1,
+  limit = 20,
+  search = "",
+) {
   try {
     const params = new URLSearchParams({
       page: String(page),
@@ -1191,6 +1257,7 @@ export async function decideRegistryReviewRequest(token, businessID, action) {
 }
 
 /** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
+/** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
 export async function snapUnresolvedPinsRequest(token, limit = 200) {
   try {
     const res = await fetch(`${BASE_URL}/registry/snap-unresolved`, {
@@ -1200,6 +1267,157 @@ export async function snapUnresolvedPinsRequest(token, limit = 200) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ limit }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+// ── API Usage & Testing (admin) ──────────────────────────────────────────────
+
+/** GET /api/admin-settings/usage — usage, limits, and cost per API method */
+export async function getApiUsageReportRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/usage`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** GET /api/admin-settings/quota — effective quota settings with sources */
+export async function getApiQuotaSettingsRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/quota`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** PUT /api/admin-settings/quota — persist quota overrides */
+export async function updateApiQuotaSettingsRequest(payload, token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/quota`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/admin-settings/quota/reset — drop overrides, restore env baseline */
+export async function resetApiQuotaSettingsRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/quota/reset`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** GET /api/admin-settings/test-mode — Test Mode config + fixture cache stats */
+export async function getTestModeSettingsRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/test-mode`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** PUT /api/admin-settings/test-mode — persist Test Mode settings */
+export async function updateTestModeSettingsRequest(payload, token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/test-mode`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/admin-settings/test-mode/reset — restore Test Mode defaults */
+export async function resetTestModeSettingsRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/test-mode/reset`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/admin-settings/test-mode/fixtures/purge — drop cached payloads */
+export async function purgeTestFixturesRequest(token, olderThanDays) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(
+      `${BASE_URL}/admin-settings/test-mode/fixtures/purge`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          olderThanDays === undefined || olderThanDays === null
+            ? {}
+            : { older_than_days: olderThanDays },
+        ),
+      },
+    );
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/admin-settings/matching-dry-run — replay candidates, zero Google calls */
+export async function matchingDryRunRequest(candidates, token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/matching-dry-run`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ candidates }),
     });
     return await handleResponse(res);
   } catch (err) {

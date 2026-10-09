@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import ReactDOM from 'react-dom';
 import AnimatePresence from './AnimatePresence';
 
@@ -35,7 +35,7 @@ export default function InspectorReportsModal(props) {
   );
 }
 
-function InspectorReportsModalInner({ isOpen, onClose, flags, inspectors, navigate, isClosing }) {
+function InspectorReportsModalInner({ isOpen, onClose, flags, navigate, isClosing }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterColor, setFilterColor] = useState("all");
   const [sortBy, setSortBy] = useState("recent");
@@ -46,15 +46,11 @@ function InspectorReportsModalInner({ isOpen, onClose, flags, inspectors, naviga
   const cleanQ = q.startsWith("#") ? q.slice(1).trim() : q;
 
   const filteredFlags = flags.filter(f => {
-    let matchColor = false;
-    
-    if (filterColor === "all") {
-      matchColor = true;
-    } else if (filterColor === "Yellow_Inspector") {
-      matchColor = parseColor(f) === "Yellow" && f.reportedByUserID;
-    } else {
-      matchColor = parseColor(f) === filterColor;
-    }
+    const matchColor = filterColor === "all"
+      ? true
+      : filterColor === "Yellow_Inspector"
+        ? parseColor(f) === "Yellow" && f.reportedByUserID
+        : parseColor(f) === filterColor;
     
     const matchSearch = !q || (
       (f.detectedName || f.name || "").toLowerCase().includes(q) ||

@@ -14,7 +14,7 @@ import {
   Area
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/authContext";
 import { getAnalyticsOverviewRequest, getFlagsRequest } from "../services/api";
 import Papa from "papaparse";
 import { saveAs } from "file-saver";
@@ -30,6 +30,32 @@ const SECTOR_COLORS = [
   "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
   "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#06b6d4"
 ];
+
+function CustomChartTooltip({ active, payload, label }) {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div
+      style={{
+        background: "#0f172a",
+        border: "1px solid #334155",
+        borderRadius: 8,
+        padding: "8px 12px",
+        color: "#ffffff",
+        fontSize: 12,
+        boxShadow: "0 10px 25px -5px rgba(0,0,0,0.3)"
+      }}
+    >
+      <p style={{ margin: "0 0 4px 0", fontWeight: 700, color: "#93c5fd" }}>{label || payload[0]?.name}</p>
+      {payload.map((entry, idx) => (
+        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0" }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: entry.color || entry.fill }} />
+          <span style={{ color: "#cbd5e1" }}>{entry.name}:</span>
+          <span style={{ fontWeight: 700, color: "#ffffff" }}>{entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ── Operational Reports (strictly retained per requirements) ──────────────────
 const OPERATIONAL_REPORTS = [
@@ -668,33 +694,6 @@ export default function ExportReportsPage() {
         }
       });
     }
-  };
-
-  // Custom visual tooltip
-  const CustomChartTooltip = ({ active, payload, label }) => {
-    if (!active || !payload || !payload.length) return null;
-    return (
-      <div
-        style={{
-          background: "#0f172a",
-          border: "1px solid #334155",
-          borderRadius: 8,
-          padding: "8px 12px",
-          color: "#ffffff",
-          fontSize: 12,
-          boxShadow: "0 10px 25px -5px rgba(0,0,0,0.3)"
-        }}
-      >
-        <p style={{ margin: "0 0 4px 0", fontWeight: 700, color: "#93c5fd" }}>{label || payload[0]?.name}</p>
-        {payload.map((entry, idx) => (
-          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: entry.color || entry.fill }} />
-            <span style={{ color: "#cbd5e1" }}>{entry.name}:</span>
-            <span style={{ fontWeight: 700, color: "#ffffff" }}>{entry.value}</span>
-          </div>
-        ))}
-      </div>
-    );
   };
 
   return (

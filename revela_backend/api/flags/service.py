@@ -4,6 +4,7 @@ from api.models.detection_runs import (
     update_detection_run_status,
     get_detection_quota_info,
 )
+import difflib
 import math
 import numpy as np
 from sklearn.cluster import DBSCAN
@@ -21,7 +22,14 @@ from shapely.geometry import shape, Point
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.notifications import hub
 from api.utils.name_match import address_similarity, name_match, parse_name
-from api.utils.places_quota import read_usage, reserve_usage_slot
+from api.utils.places_quota import (
+    read_daily_usage,
+    read_usage,
+    reserve_usage_slot,
+)
+from api.utils.quota_config import API_QUOTA_CONFIG
+from api.utils.quota_ceilings import pacing_for
+from api.utils import quota_settings, test_mode
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -30,11 +38,11 @@ GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 # Tune via env vars on Railway without redeploying code.
 #
 
-PLACES_MONTHLY_CAP = int(os.getenv("PLACES_MONTHLY_CAP", "2000"))
-PLACES_DAILY_CAP = int(os.getenv("PLACES_DAILY_CAP", "1000"))
+PLACES_MONTHLY_CAP = API_QUOTA_CONFIG.legacy_nearby.monthly
+PLACES_DAILY_CAP = API_QUOTA_CONFIG.legacy_nearby.daily
 PLACES_KINDS = ("nearby",)
-NEW_NEARBY_DAILY_CAP = int(os.getenv("NEW_NEARBY_DAILY_CAP", "0"))
-NEW_NEARBY_MONTHLY_CAP = int(os.getenv("NEW_NEARBY_MONTHLY_CAP", "0"))
+NEW_NEARBY_DAILY_CAP = API_QUOTA_CONFIG.nearby_new.daily
+NEW_NEARBY_MONTHLY_CAP = API_QUOTA_CONFIG.nearby_new.monthly
 NEW_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
 NEW_NEARBY_FIELD_MASK = (
     "places.id,places.displayName,places.location,"
@@ -47,12 +55,8 @@ NEW_NEARBY_EXCLUDED_TYPES = (
     "park", "transit_station", "bus_station", "subway_station",
     "train_station", "light_rail_station",
 )
-RUN_DETECTION_MAX_SECONDS = max(
-    1, int(os.getenv("RUN_DETECTION_MAX_SECONDS", "90"))
-)
-RUN_DETECTION_MAX_REQUESTS = max(
-    1, int(os.getenv("RUN_DETECTION_MAX_REQUESTS", "120"))
-)
+RUN_DETECTION_MAX_SECONDS = API_QUOTA_CONFIG.run_detection_max_seconds
+RUN_DETECTION_MAX_REQUESTS = API_QUOTA_CONFIG.run_detection_max_requests
 
 
 def _env_positive_float(name, default, minimum):
@@ -72,9 +76,10 @@ def _env_positive_float(name, default, minimum):
 
 
 RUN_DETECTION_NEARBY_API = os.getenv(
-    "RUN_DETECTION_NEARBY_API", "legacy"
+    "RUN_DETECTION_NEARBY_API", API_QUOTA_CONFIG.run_detection_nearby_api
 ).strip().lower()
 _nearby_request_lock = threading.Lock()
+_run_detection_lock = threading.Lock()
 _nearby_last_request_at = 0.0
 _places_run_state = threading.local()
 
@@ -112,8 +117,6 @@ def _ensure_budget_tables():
                 completedAt DATETIME    NOT NULL
             ) ENGINE=InnoDB
         """)
-        # Cleanly purge obsolete cache table if it existed from previous version
-        cur.execute("DROP TABLE IF EXISTS places_nearby_cache")
         mysql.connection.commit()
         _budget_tables_ready = True      # only set after everything succeeded
     finally:
@@ -129,10 +132,13 @@ _MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
 def _reserve_places_call(kind):
     """Reserve a legacy Nearby Search call, preserving its existing ledger rows."""
     _ensure_budget_tables()
+    # Resolved per call, not from the import-time constant, so an admin quota
+    # override in the settings panel takes effect without a redeploy.
+    monthly_cap = quota_settings.cap("quota.legacy_nearby.monthly")
+    daily_cap = quota_settings.cap("quota.legacy_nearby.daily")
     try:
         allowed, reason = reserve_usage_slot(
-            mysql.connection, "month", "day",
-            PLACES_MONTHLY_CAP, PLACES_DAILY_CAP,
+            mysql.connection, "month", "day", monthly_cap, daily_cap,
         )
     except Exception as exc:
         print(
@@ -143,20 +149,53 @@ def _reserve_places_call(kind):
     if not allowed:
         raise PlacesBudgetExceeded(
             f"Legacy Nearby Search {reason.replace('_', ' ')} "
-            f"(daily {PLACES_DAILY_CAP}, monthly {PLACES_MONTHLY_CAP}).",
+            f"(daily {daily_cap}, monthly {monthly_cap}).",
             reason=reason,
         )
 
 
 def _places_get(kind, url, **kwargs):
     """Every Google Places HTTP call in this module must go through here."""
-    _reserve_places_call(kind)
-    calls = getattr(_places_run_state, "calls", None)
-    if calls is not None:
-        calls["legacy_nearby"] += 1
-        query_kind = getattr(_places_run_state, "query_kind", "initial")
-        calls[f"legacy_nearby_{query_kind}"] += 1
-    return http.get(url, **kwargs)
+    # Test Mode: replay a stored fixture if we have one. A replay costs nothing
+    # and is deliberately NOT reserved, because no Google request happens.
+    # `remember_response` then stores any live result for the next replay.
+    if test_mode.is_enabled():
+        cached, _ = test_mode.resolve_request(
+            kind, url, params=kwargs.get("params")
+        )
+        if cached is not None:
+            calls = getattr(_places_run_state, "calls", None)
+            if calls is not None:
+                calls["legacy_nearby_fixture"] = calls.get(
+                    "legacy_nearby_fixture", 0) + 1
+            return cached
+
+    global _nearby_last_request_at
+    pacing_seconds = (
+        pacing_for("nearby_search_legacy")["min_interval_ms"] / 1000.0
+    )
+    with _nearby_request_lock:
+        elapsed = time.monotonic() - _nearby_last_request_at
+        if _nearby_last_request_at and elapsed < pacing_seconds:
+            time.sleep(pacing_seconds - elapsed)
+        _reserve_places_call(kind)
+        calls = getattr(_places_run_state, "calls", None)
+        if calls is not None:
+            calls["legacy_nearby"] += 1
+            query_kind = getattr(_places_run_state, "query_kind", "initial")
+            calls[f"legacy_nearby_{query_kind}"] += 1
+        try:
+            response = http.get(url, **kwargs)
+        finally:
+            _nearby_last_request_at = time.monotonic()
+    if test_mode.is_enabled() and getattr(response, "status_code", None) == 200:
+        try:
+            test_mode.remember_response(
+                kind, url, kwargs.get("params"), None, response.json()
+            )
+        except ValueError:
+            pass
+    return response
 
 
 def get_places_usage_today():
@@ -185,10 +224,21 @@ def get_places_usage_today():
 
         from api.registry.places_resolver import (
             TS_DAILY_CAP, TS_MONTHLY_CAP, PD_DAILY_CAP, PD_MONTHLY_CAP,
+            TEXT_SEARCH_WORKFLOW_LEDGER,
         )
         text_search = read_usage(
             mysql.connection, "imp_ts_month", "imp_ts_day")
         details = read_usage(mysql.connection, "imp_pd_month", "imp_pd_day")
+        text_search_workflows = {}
+        for scope, ledger_kind in TEXT_SEARCH_WORKFLOW_LEDGER.items():
+            used = read_daily_usage(mysql.connection, ledger_kind)
+            cap = API_QUOTA_CONFIG.text_search_workflow_daily[scope]
+            text_search_workflows[scope] = {
+                "used_today": used,
+                "daily_cap": cap,
+                "daily_remaining": max(0, cap - used),
+                "daily_quota_exceeded": used >= cap,
+            }
         nearby_new = read_usage(
             mysql.connection, "new_nearby_month", "new_nearby_day"
         )
@@ -259,6 +309,7 @@ def get_places_usage_today():
                 "remaining": max(0, TS_DAILY_CAP - text_search["day"]),
                 "daily_quota_exceeded": text_search["day"] >= TS_DAILY_CAP,
             },
+            "text_search_workflows": text_search_workflows,
             "monthly_quota_exceeded": text_search["month"] >= TS_MONTHLY_CAP,
             "place_details_day": {
                 "used": details["day"],
@@ -276,6 +327,38 @@ def get_places_usage_today():
             "nearby_search_legacy": nearby_legacy,
             "nearby_search_new": nearby_new_status,
             "nearby_search_active": active_nearby_usage,
+            "quota_source": "application",
+            "quota_settings": {
+                "text_search": {
+                    "daily_cap": TS_DAILY_CAP,
+                    "monthly_cap": TS_MONTHLY_CAP,
+                    "workflow_daily_caps": dict(
+                        API_QUOTA_CONFIG.text_search_workflow_daily
+                    ),
+                },
+                "place_details": {
+                    "daily_cap": PD_DAILY_CAP,
+                    "monthly_cap": PD_MONTHLY_CAP,
+                },
+                "geocoding": {
+                    "daily_cap": GEOCODE_DAILY_CAP,
+                    "monthly_cap": GEOCODE_MONTHLY_CAP,
+                },
+                "nearby_search_legacy": {
+                    "daily_cap": PLACES_DAILY_CAP,
+                    "monthly_cap": PLACES_MONTHLY_CAP,
+                },
+                "nearby_search_new": {
+                    "daily_cap": NEW_NEARBY_DAILY_CAP,
+                    "monthly_cap": NEW_NEARBY_MONTHLY_CAP,
+                },
+                "run_detection_monthly_scan_limit": (
+                    API_QUOTA_CONFIG.run_detection_monthly_scans
+                ),
+                "quota_resets_enabled": (
+                    API_QUOTA_CONFIG.allow_quota_resets
+                ),
+            },
         }
     finally:
         cur.close()
@@ -396,6 +479,53 @@ def _normalize_business_name(name: str) -> str:
     return " ".join(tokens)
 
 
+class _RegistryMatchIndex:
+    """Find only registry names that can share a token with the POI name."""
+
+    def __init__(self, registry):
+        self.registry = registry
+        self.entries_by_token = {}
+        self.tokens_by_length = {}
+        self.match_requests = 0
+        self.candidate_rows_scored = 0
+        for index, entry in enumerate(registry):
+            tokens, _ = parse_name(entry.get("businessName", ""))
+            for token in set(tokens):
+                self.entries_by_token.setdefault(token, []).append(index)
+                self.tokens_by_length.setdefault(len(token), set()).add(token)
+
+    def candidates(self, poi_name):
+        self.match_requests += 1
+        poi_tokens, _ = parse_name(poi_name)
+        candidate_indexes = set()
+        for poi_token in set(poi_tokens):
+            if len(poi_token) < 5:
+                possible_tokens = (poi_token,)
+            else:
+                min_length = max(1, int(len(poi_token) * 0.7))
+                max_length = int(len(poi_token) / 0.7) + 1
+                possible_tokens = (
+                    token
+                    for length in range(min_length, max_length + 1)
+                    for token in self.tokens_by_length.get(length, ())
+                )
+            for registry_token in possible_tokens:
+                threshold = (
+                    0.85 if min(len(registry_token), len(poi_token)) >= 5
+                    else 1.0
+                )
+                if difflib.SequenceMatcher(
+                    None, registry_token, poi_token
+                ).ratio() >= threshold:
+                    candidate_indexes.update(
+                        self.entries_by_token.get(registry_token, ())
+                    )
+        candidates = [self.registry[index]
+                      for index in sorted(candidate_indexes)]
+        self.candidate_rows_scored += len(candidates)
+        return candidates
+
+
 def _name_similarity(
     name1: str,
     name2: str,
@@ -417,6 +547,7 @@ def _match_poi_to_registry(
     poi_barangay_id=None,
     poi_types=(),
     poi_address='',
+    registry_index=None,
 ):
     """
     Tiered Decision Matrix for matching a candidate POI to official registry entries:
@@ -433,7 +564,11 @@ def _match_poi_to_registry(
     best_status = "no_match"
     candidate_scores = []
 
-    for entry in registry:
+    entries = (
+        registry_index.candidates(poi_name)
+        if registry_index is not None else registry
+    )
+    for entry in entries:
         sim, match_reason = name_match(
             entry.get("businessName", ""),
             poi_name,
@@ -569,6 +704,7 @@ def _match_registry_to_google(
     match_status=None,
     poi_types=(),
     poi_address=None,
+    commit=True,
 ):
     """
     Updates or inserts the geospatial log for an existing registry business 
@@ -591,7 +727,7 @@ def _match_registry_to_google(
     reg_lat = None
     reg_lng = None
     if business_id:
-        cursor.execute("""
+        _detection_execute(cursor, """
             SELECT coordSource, matchStatus, latitude, longitude
             FROM official_registry
             WHERE businessID = %s
@@ -614,7 +750,7 @@ def _match_registry_to_google(
     if business_id and not is_locked:
         if lat and lng:
             stat_sql = "review" if match_status == "review" else "auto"
-            cursor.execute(f"""
+            _detection_execute(cursor, f"""
                 UPDATE official_registry
                 SET latitude = %s,
                     longitude = %s,
@@ -634,7 +770,7 @@ def _match_registry_to_google(
             ))
 
     # 3. Check all geospatial_logs matching businessID, placeID OR (businessID IS NULL AND detectedName + barangayID)
-    cursor.execute("""
+    _detection_execute(cursor, """
         SELECT logID, businessID, placeID, flagColor, latitude, longitude
         FROM geospatial_logs
         WHERE (businessID IS NOT NULL AND businessID = %s)
@@ -665,7 +801,7 @@ def _match_registry_to_google(
         final_lng = (reg_lng if reg_lng is not None else primary_log.get(
             "longitude")) if is_locked else lng
 
-        cursor.execute("""
+        _detection_execute(cursor, """
                 UPDATE geospatial_logs
                 SET businessID = %s,
                     placeID = %s, flagColor = %s,
@@ -684,24 +820,24 @@ def _match_registry_to_google(
         # Remove redundant duplicate unpositioned logs, repointing inspections first
         for log in matched_logs:
             if log["logID"] != primary_log["logID"]:
-                cursor.execute(
-                    "UPDATE inspection_reports SET targetID = %s WHERE targetID = %s",
-                    (primary_log["logID"], log["logID"])
-                )
+                _detection_execute(cursor,
+                                   "UPDATE inspection_reports SET targetID = %s WHERE targetID = %s",
+                                   (primary_log["logID"], log["logID"])
+                                   )
                 try:
-                    cursor.execute(
-                        "UPDATE inspection_lifecycle_events SET targetLogID = %s WHERE targetLogID = %s",
-                        (primary_log["logID"], log["logID"])
-                    )
+                    _detection_execute(cursor,
+                                       "UPDATE inspection_lifecycle_events SET targetLogID = %s WHERE targetLogID = %s",
+                                       (primary_log["logID"], log["logID"])
+                                       )
                 except Exception:
                     pass
-                cursor.execute(
-                    "DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
+                _detection_execute(cursor,
+                                   "DELETE FROM geospatial_logs WHERE logID = %s", (log["logID"],))
 
     elif lat and lng and barangay_id:
         final_lat = reg_lat if (is_locked and reg_lat is not None) else lat
         final_lng = reg_lng if (is_locked and reg_lng is not None) else lng
-        cursor.execute("""
+        _detection_execute(cursor, """
             INSERT INTO geospatial_logs
                 (barangayID, businessID, reportID, detectedName, latitude, longitude,
                  flagColor, placeID, nearestLandmark, placeTypes)
@@ -711,7 +847,8 @@ def _match_registry_to_google(
             target_color, place_id, poi_address, serialized_types
         ))
 
-    mysql.connection.commit()
+    if commit:
+        _detection_commit()
     cursor.close()
 
 
@@ -774,6 +911,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             return 0
 
         registry = _load_registry()
+        registry_match_index = _RegistryMatchIndex(registry)
         converted_count = 0
         total = len(red_flags)
 
@@ -891,14 +1029,128 @@ MAX_ADAPTIVE_DEPTH = 2
 MAX_ADAPTIVE_QUERIES_PER_POINT = 12
 ADAPTIVE_QUERY_RADIUS_RATIO = 0.72
 ADAPTIVE_CENTER_OFFSET_RATIO = 0.5
+RUN_DETECTION_MODES = ("quick", "full")
+
+
+def _normalize_barangay_name(value):
+    return "".join(ch for ch in (value or "").lower() if ch.isalnum())
+
+
+def _quick_discovery_points(barangay_rows=None, max_points=24):
+    """Lightweight discovery mode: a capped set of distributed municipal points.
+
+    This is intentionally smaller than the exhaustive grid and avoids adaptive
+    recursion. It remains inside Mataasnakahoy's valid barangay boundaries and
+    rotates through less-frequently visited sectors across repeated quick scans.
+    """
+    if barangay_rows is None:
+        try:
+            cursor = mysql.connection.cursor()
+            cursor.execute("SELECT barangayID, barangayName FROM barangays")
+            barangay_rows = cursor.fetchall()
+            cursor.close()
+        except Exception:
+            barangay_rows = []
+
+    if not barangay_rows:
+        barangay_rows = [
+            {"barangayID": i, "barangayName": f"Barangay {letter}"}
+            for i, letter in enumerate([
+                "I", "II", "III", "IV", "V", "VI", "VII", "VIII",
+                "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI",
+            ], 1)
+        ]
+
+    candidates = []
+    for idx, row in enumerate(barangay_rows):
+        name = (row.get("barangayName") if isinstance(
+            row, dict) else row[1]) or ""
+        matched = None
+        normalized_name = _normalize_barangay_name(name)
+        for poly_name, poly in _BARANGAY_POLYGONS.items():
+            if normalized_name and (
+                normalized_name in _normalize_barangay_name(poly_name)
+                or _normalize_barangay_name(poly_name) in normalized_name
+            ):
+                matched = poly.centroid
+                break
+
+        if matched is None:
+            lat = 13.9667 + ((idx % 4) - 1.5) * 0.0035
+            lng = 121.1167 + ((idx % 3) - 1) * 0.0038
+            matched = Point(lng, lat)
+
+        base_lat, base_lng = matched.y, matched.x
+        offsets = [
+            (0.0000, 0.0000),
+            (0.0018, 0.0025),
+            (-0.0015, -0.0024),
+            (0.0022, -0.0012),
+        ]
+        for lat_offset, lng_offset in offsets:
+            lat = base_lat + lat_offset
+            lng = base_lng + lng_offset
+            if _within_municipality(lat, lng):
+                candidates.append((lat, lng))
+
+    anchor_points = [
+        (13.9490, 121.1040),
+        (13.9498, 121.1188),
+        (13.9595, 121.0900),
+        (13.9595, 121.1248),
+        (13.9705, 121.0925),
+        (13.9746, 121.1240),
+        (13.9832, 121.0998),
+        (13.9860, 121.1185),
+        (13.9988, 121.1090),
+        (13.9667, 121.1167),
+    ]
+    for lat, lng in anchor_points:
+        if _within_municipality(lat, lng):
+            candidates.append((lat, lng))
+
+    seen = set()
+    distinct = []
+    history = getattr(_places_run_state, "quick_scan_history", {})
+    scored = []
+    for lat, lng in candidates:
+        key = (round(lat, 5), round(lng, 5))
+        if key in seen:
+            continue
+        seen.add(key)
+        score = history.get(key, 0) + abs(lat - 13.9667) + abs(lng - 121.1167)
+        scored.append((score, lat, lng))
+
+    point_limit = max(1, min(24, int(max_points)))
+    for _, lat, lng in sorted(scored, key=lambda item: (item[0], item[1], item[2]))[:point_limit]:
+        distinct.append((lat, lng))
+
+    if not distinct:
+        return [(13.9667, 121.1167)]
+
+    return distinct
 
 
 def _grid_points():
-    """Include nearby outside centers so search circles cover the municipal boundary."""
+    """
+    Include nearby outside centers so search circles cover the municipal boundary.
+
+    The step comes from the effective setting rather than the import-time
+    constant so an admin override applies without a redeploy. Test Mode narrows
+    the scope to the first N centres, which is the "small geographic area"
+    switch the admin panel exposes.
+    """
     min_lat, max_lat = 13.9450, 14.0125
     min_lng, max_lng = 121.0120, 121.1260
-    step = DETECTION_GRID_STEP_DEGREES
-    search_buffer_degrees = (DETECTION_RADIUS_M / 111_320.0) * 1.1
+    step = quota_settings.cap("run_detection.grid_step_degrees")
+    test_config = test_mode.get_config() if test_mode.is_enabled() else None
+    radius_m = DETECTION_RADIUS_M
+    limit = None
+    if test_config:
+        step = test_config["test_mode.grid_step_degrees"]
+        radius_m = test_config["test_mode.radius_m"]
+        limit = test_config["test_mode.max_grid_points"]
+    search_buffer_degrees = (radius_m / 111_320.0) * 1.1
     search_area = _MUNICIPALITY_BOUNDARY.buffer(search_buffer_degrees)
     points = []
     lat = min_lat
@@ -907,9 +1159,29 @@ def _grid_points():
         while lng <= max_lng:
             if search_area.contains(Point(lng, lat)):
                 points.append((lat, lng))
+                if limit and len(points) >= limit:
+                    return points
             lng += step
         lat += step
     return points
+
+
+def _detection_points_for_mode(mode, barangay_rows=None):
+    if mode == "full":
+        return _grid_points()
+    test_config = test_mode.get_config()
+    max_points = (
+        test_config["test_mode.max_grid_points"]
+        if test_config["test_mode.enabled"] else 24
+    )
+    return _quick_discovery_points(barangay_rows, max_points=max_points)
+
+
+def _detection_radius_m():
+    """Effective search radius; Test Mode may shrink it."""
+    if test_mode.is_enabled():
+        return test_mode.get_config()["test_mode.radius_m"]
+    return DETECTION_RADIUS_M
 
 
 def _nearby_api_mode():
@@ -926,12 +1198,43 @@ def _record_nearby_api_error():
     _places_run_state.api_errors = current + 1
 
 
+def _detection_execute(cursor, query, params=None):
+    if getattr(_places_run_state, "db_metrics_active", False):
+        _places_run_state.db_queries += 1
+    if params is None:
+        return cursor.execute(query)
+    return cursor.execute(query, params)
+
+
+def _detection_commit():
+    if getattr(_places_run_state, "db_metrics_active", False):
+        _places_run_state.db_commits += 1
+    mysql.connection.commit()
+
+
 def _active_nearby_result_limit():
     return (
         NEW_NEARBY_RESULT_LIMIT
         if _nearby_api_mode() == "new"
         else NEARBY_RESULT_LIMIT
     )
+
+
+def _detection_work_limits():
+    """
+    Effective work-slice limits for this check.
+
+    Resolved per call so an admin override applies to the next slice without a
+    redeploy. Test Mode tightens the request cap further. Fixture replays are
+    not counted: they cost no Google request.
+    """
+    max_seconds = quota_settings.cap("run_detection.max_seconds")
+    max_requests = quota_settings.cap("run_detection.max_requests")
+    if test_mode.is_enabled():
+        max_requests = min(
+            max_requests, test_mode.get_config()["test_mode.max_requests"]
+        )
+    return max_seconds, max_requests
 
 
 def _detection_work_budget_reached():
@@ -941,18 +1244,15 @@ def _detection_work_budget_reached():
     calls = getattr(_places_run_state, "calls", {})
     request_count = calls.get("legacy_nearby", 0) + calls.get("new_nearby", 0)
     elapsed_seconds = time.monotonic() - started_at
-    reached = (
-        elapsed_seconds >= RUN_DETECTION_MAX_SECONDS
-        or request_count >= RUN_DETECTION_MAX_REQUESTS
-    )
-    if reached:
+    max_seconds, max_requests = _detection_work_limits()
+    time_limit_hit = elapsed_seconds >= max_seconds
+    request_limit_hit = request_count >= max_requests
+    if time_limit_hit or request_limit_hit:
         _places_run_state.work_budget_exhausted = True
         _places_run_state.work_budget_reason = (
-            "time_limit"
-            if elapsed_seconds >= RUN_DETECTION_MAX_SECONDS
-            else "request_limit"
+            "time_limit" if time_limit_hit else "request_limit"
         )
-    return reached
+    return time_limit_hit or request_limit_hit
 
 
 def _detection_elapsed_metrics(request_started_at):
@@ -972,6 +1272,67 @@ def _detection_elapsed_metrics(request_started_at):
         "scan_elapsed_seconds": (
             0.0 if scan_started_at is None
             else round(now - scan_started_at, 1)
+        ),
+    }
+
+
+def _detection_performance_metrics(counters, registry, registry_match_index):
+    calls = getattr(_places_run_state, "calls", {})
+    api_requests = (
+        calls.get("legacy_nearby", 0) + calls.get("new_nearby", 0)
+    )
+    fixture_requests = (
+        calls.get("legacy_nearby_fixture", 0)
+        + calls.get("new_nearby_fixture", 0)
+    )
+    nearby_queries = api_requests + fixture_requests
+    match_calls = registry_match_index.match_requests
+    possible_registry_comparisons = match_calls * len(registry)
+    candidate_rows = registry_match_index.candidate_rows_scored
+    return {
+        "api_requests_consumed": api_requests,
+        "fixture_requests_replayed": fixture_requests,
+        "nearby_queries_processed": nearby_queries,
+        "unique_in_bound_pois": counters["unique_in_bound_pois"],
+        "unique_pois_per_api_request": round(
+            counters["unique_in_bound_pois"] / api_requests, 3
+        ) if api_requests else 0.0,
+        "unique_pois_per_nearby_query": round(
+            counters["unique_in_bound_pois"] / nearby_queries, 3
+        ) if nearby_queries else 0.0,
+        "actionable_business_candidates": counters[
+            "actionable_business_candidates"
+        ],
+        "actionable_candidates_per_api_request": round(
+            counters["actionable_business_candidates"] / api_requests, 3
+        ) if api_requests else 0.0,
+        "actionable_candidates_per_nearby_query": round(
+            counters["actionable_business_candidates"] / nearby_queries, 3
+        ) if nearby_queries else 0.0,
+        "new_flags_per_api_request": round(
+            counters["new_flags"] / api_requests, 3
+        ) if api_requests else 0.0,
+        "registry_match_time_seconds": round(
+            getattr(_places_run_state, "registry_match_time_seconds", 0.0), 4
+        ),
+        "registry_match_calls": match_calls,
+        "registry_candidate_rows_scored": candidate_rows,
+        "registry_full_scan_rows_avoided": max(
+            0, possible_registry_comparisons - candidate_rows
+        ),
+        "registry_candidate_reduction_percent": round(
+            100 * (possible_registry_comparisons - candidate_rows)
+            / possible_registry_comparisons,
+            1,
+        ) if possible_registry_comparisons else 0.0,
+        "poi_processing_db_queries": getattr(
+            _places_run_state, "db_queries", 0
+        ),
+        "poi_processing_db_commits": getattr(
+            _places_run_state, "db_commits", 0
+        ),
+        "poi_processing_db_metric_scope": (
+            "POI lookups and writes during grid scanning; excludes startup and reconciliation"
         ),
     }
 
@@ -1009,7 +1370,8 @@ def _new_nearby_request(lat, lng, radius_m):
             "GOOGLE_MAPS_API_KEY or GOOGLE_PLACES_API_KEY must be configured "
             "on the backend."
         )
-    if NEW_NEARBY_DAILY_CAP <= 0 or NEW_NEARBY_MONTHLY_CAP <= 0:
+    if (quota_settings.cap("quota.nearby_new.daily") <= 0
+            or quota_settings.cap("quota.nearby_new.monthly") <= 0):
         raise PlacesBudgetExceeded(
             "Nearby Search (New) is disabled until positive "
             "NEW_NEARBY_DAILY_CAP and NEW_NEARBY_MONTHLY_CAP limits are configured."
@@ -1031,9 +1393,26 @@ def _new_nearby_request(lat, lng, radius_m):
         "X-Goog-FieldMask": NEW_NEARBY_FIELD_MASK,
     }
 
+    monthly_cap = quota_settings.cap("quota.nearby_new.monthly")
+    daily_cap = quota_settings.cap("quota.nearby_new.daily")
+
     for attempt in range(4):
         if _detection_work_budget_reached():
             return [], False
+
+        # Test Mode replay. Checked before the pacing sleep and the reservation
+        # so a cached round costs no ledger entry and no rate-limit budget.
+        if test_mode.is_enabled():
+            cached, _ = test_mode.resolve_request(
+                "nearby_new", NEW_NEARBY_URL, payload=payload
+            )
+            if cached is not None:
+                calls = getattr(_places_run_state, "calls", None)
+                if calls is not None:
+                    calls["new_nearby_fixture"] = calls.get(
+                        "new_nearby_fixture", 0) + 1
+                return _normalize_new_nearby_results(cached.json()), True
+
         with _nearby_request_lock:
             elapsed = time.monotonic() - _nearby_last_request_at
             if _nearby_last_request_at and elapsed < 0.3:
@@ -1043,8 +1422,8 @@ def _new_nearby_request(lat, lng, radius_m):
                     mysql.connection,
                     "new_nearby_month",
                     "new_nearby_day",
-                    NEW_NEARBY_MONTHLY_CAP,
-                    NEW_NEARBY_DAILY_CAP,
+                    monthly_cap,
+                    daily_cap,
                 )
             except Exception as exc:
                 print(
@@ -1055,7 +1434,7 @@ def _new_nearby_request(lat, lng, radius_m):
             if not allowed:
                 raise PlacesBudgetExceeded(
                     f"Nearby Search (New) {reason.replace('_', ' ')} "
-                    f"(daily {NEW_NEARBY_DAILY_CAP}, monthly {NEW_NEARBY_MONTHLY_CAP}).",
+                    f"(daily {daily_cap}, monthly {monthly_cap}).",
                     reason=reason,
                 )
             calls = getattr(_places_run_state, "calls", None)
@@ -1123,12 +1502,17 @@ def _new_nearby_request(lat, lng, radius_m):
             )
             return [], False
         try:
-            return _normalize_new_nearby_results(response.json()), True
+            body = response.json()
         except (ValueError, TypeError) as exc:
             _record_nearby_api_error()
             print(
                 f"[Run Detection] Nearby Search (New) invalid response: {exc}")
             return [], False
+        if test_mode.is_enabled():
+            test_mode.remember_response(
+                "nearby_new", NEW_NEARBY_URL, None, payload, body
+            )
+        return _normalize_new_nearby_results(body), True
     return [], False
 
 
@@ -1155,6 +1539,7 @@ def _fetch_legacy_point_results_once(lat, lng, radius_m):
     params = {"location": f"{lat},{lng}", "radius": radius_m, "key": api_key}
     headers = {"User-Agent": "REVELA-Backend/1.0"}
     results, complete = [], True
+    quick_mode = getattr(_places_run_state, "mode", "full") == "quick"
 
     while True:
         if _detection_work_budget_reached():
@@ -1193,7 +1578,7 @@ def _fetch_legacy_point_results_once(lat, lng, radius_m):
 
         results.extend(data.get("results", []))
         next_token = data.get("next_page_token")
-        if not next_token:
+        if not next_token or quick_mode:
             return results, complete
         time.sleep(2)
         params = {"pagetoken": next_token, "key": api_key}
@@ -1233,6 +1618,18 @@ def _fetch_point_results(lat, lng, radius_m):
         lat, lng, radius_m, depth=0, query_budget=query_budget
     )
     return _deduplicate_nearby_results(results), complete
+
+
+def _fetch_point_results_quick(lat, lng, radius_m):
+    """Quick discovery: one lightweight request per search point without recursive refinement."""
+    results, complete = _fetch_point_results_once(lat, lng, radius_m)
+    return _deduplicate_nearby_results(results), complete
+
+
+def _fetch_point_results_for_mode(lat, lng, radius_m, mode):
+    if mode == "quick":
+        return _fetch_point_results_quick(lat, lng, radius_m)
+    return _fetch_point_results(lat, lng, radius_m)
 
 
 def _fetch_point_results_adaptive(lat, lng, radius_m, depth, query_budget):
@@ -1337,15 +1734,17 @@ def _merge_nearby_place(existing, duplicate):
             "location"] = dict(duplicate_location)
 
 
-def _scan_grid(process_places, progress_cb, state):
+def _scan_grid(process_places, progress_cb, state, detection_mode="full", points=None):
     """
-    Walk the grid. For every point not finished in this scan cycle:
+    Walk the selected grid. For every point not finished in this scan cycle:
     fetch -> process_places(results inside the municipality) -> checkpoint.
     `state` is filled in as we go, so the caller still has it if PlacesBudgetExceeded is raised.
     """
     done_before = _completed_points_this_cycle()
-    points = _grid_points()
+    if points is None:
+        points = _detection_points_for_mode(detection_mode)
     state["total_points"] = len(points)
+    state["detection_mode"] = detection_mode
 
     for idx, (lat, lng) in enumerate(points):
         if is_cancelled("run_detection"):
@@ -1359,13 +1758,26 @@ def _scan_grid(process_places, progress_cb, state):
             continue
 
         if progress_cb:
-            progress_cb(idx, len(points), lat, lng)
+            progress_cb(
+                idx,
+                len(points),
+                lat,
+                lng,
+                mode=detection_mode,
+            )
 
         errors_before_query = getattr(_places_run_state, "api_errors", 0)
-        results, complete = _fetch_point_results(lat, lng, DETECTION_RADIUS_M)
+        results, complete = _fetch_point_results_for_mode(
+            lat, lng, _detection_radius_m(), detection_mode
+        )
         api_error_during_query = (
             getattr(_places_run_state, "api_errors", 0) > errors_before_query
         )
+        if detection_mode == "quick":
+            history = getattr(_places_run_state, "quick_scan_history", {})
+            history[(round(lat, 5), round(lng, 5))] = history.get(
+                (round(lat, 5), round(lng, 5)), 0) + 1
+            _places_run_state.quick_scan_history = history
         if not complete:
             state["incomplete_points"] += 1
 
@@ -1614,20 +2026,47 @@ def _already_flagged(place_id):
     return row is not None
 
 
+def _load_existing_flags(place_ids):
+    """Load existing flags for a bounded POI batch with one indexed lookup."""
+    if not place_ids:
+        return {}
+    place_ids = list(dict.fromkeys(place_ids))
+    placeholders = ", ".join(["%s"] * len(place_ids))
+    cursor = mysql.connection.cursor()
+    try:
+        _detection_execute(cursor, f"""
+            SELECT logID, placeID, flagColor
+            FROM geospatial_logs
+            WHERE placeID IN ({placeholders})
+            ORDER BY logID
+        """, tuple(place_ids))
+        rows = cursor.fetchall()
+    finally:
+        cursor.close()
+    existing = {}
+    for row in rows:
+        existing.setdefault(row["placeID"], row)
+    return existing
+
+
 # ── Insert Red Flag ───────────────────────────────────────────────────────────
 
-def _insert_red_flag(place_id, place_name, lat, lng, barangay_id, address=None, poi_types=()):
+def _insert_red_flag(
+    place_id, place_name, lat, lng, barangay_id, address=None,
+    poi_types=(), commit=True,
+):
     serialized_types = json.dumps(
         sorted(set(poi_types))) if poi_types else None
     cursor = mysql.connection.cursor()
-    cursor.execute("""
+    _detection_execute(cursor, """
         INSERT INTO geospatial_logs
             (barangayID, reportID, detectedName, latitude, longitude,
              flagColor, placeID, nearestLandmark, placeTypes)
         VALUES (%s, NULL, %s, %s, %s, 'Red', %s, %s, %s)
     """, (barangay_id, place_name, lat, lng, place_id, address, serialized_types))
     flag_id = cursor.lastrowid
-    mysql.connection.commit()
+    if commit:
+        _detection_commit()
     cursor.close()
     return flag_id
 
@@ -1682,16 +2121,30 @@ def _is_non_business_place(place):
 # ── Main detection runner ─────────────────────────────────────────────────────
 
 
-def run_detection(user_id=None):
+def run_detection(user_id=None, mode="quick"):
+    if not _run_detection_lock.acquire(blocking=False):
+        return None, "A detection scan is already in progress."
+    try:
+        return _run_detection_cycle(user_id=user_id, mode=mode)
+    finally:
+        _run_detection_lock.release()
+
+
+def _run_detection_cycle(user_id=None, mode="quick"):
     """
-    Full detection cycle, resumable across days:
-    1. Enforce monthly limit (max 2 completed scans per calendar month)
-    2. For each grid point not yet done in this cycle: fetch Places POIs, cross-reference against
-       OFFICIAL_REGISTRY, insert Red Flags for unmatched POIs, checkpoint the point
-    3. If the Places budget runs out, keep the progress and stop (status 'partial', quota NOT used)
+    Detection cycle, resumable across days.
+
+    Mode values:
+      - quick: limited distributed discovery across Mataasnakahoy, optimized for a faster first pass
+      - full: existing exhaustive municipality grid scan
     """
+    if mode not in RUN_DETECTION_MODES:
+        mode = "quick"
     request_started_at = time.monotonic()
     set_cancel("run_detection", False)
+    _places_run_state.mode = mode
+    _places_run_state.quick_scan_history = getattr(
+        _places_run_state, "quick_scan_history", {})
     _places_run_state.calls = {
         "legacy_nearby": 0,
         "legacy_nearby_initial": 0,
@@ -1705,12 +2158,18 @@ def run_detection(user_id=None):
     _places_run_state.duplicate_results = 0
     _places_run_state.query_kind = "initial"
     _places_run_state.started_at = None
+    _places_run_state.db_metrics_active = False
+    _places_run_state.db_queries = 0
+    _places_run_state.db_commits = 0
+    _places_run_state.registry_match_time_seconds = 0.0
     _places_run_state.work_budget_exhausted = False
     _places_run_state.work_budget_reason = None
 
     quota_info = get_detection_quota_info()
     if quota_info.get("is_limit_reached"):
-        limit = quota_info.get("monthly_limit", 2)
+        limit = quota_info.get(
+            "monthly_limit", API_QUOTA_CONFIG.run_detection_monthly_scans
+        )
         return None, f"Monthly detection limit reached ({limit}/{limit} scans used for this month). Detection scans can only be run {limit} times a month."
 
     # Guard: check if official_registry has any records
@@ -1736,10 +2195,16 @@ def run_detection(user_id=None):
     counters = {
         "new_flags": 0, "total_checked": 0, "matched": 0, "no_match": 0,
         "duplicates": 0, "non_business": 0, "closed_results": 0, "review": 0,
+        "unique_in_bound_pois": 0,
+        "actionable_business_candidates": 0,
     }
 
     try:
-        def progress_callback(idx, total_steps, lat, lng):
+        def progress_callback(idx, total_steps, lat, lng, mode=None):
+            mode_name = (mode or getattr(
+                _places_run_state, "mode", "quick")).title()
+            prefix = "Quick Discovery" if (mode or getattr(
+                _places_run_state, "mode", "quick")) == "quick" else "Full Coverage"
             percentage = int((idx / max(total_steps, 1)) * 95)
             hub.publish_to_admins({
                 "type": "detection_progress",
@@ -1747,7 +2212,7 @@ def run_detection(user_id=None):
                 "current_step": idx + 1,
                 "total_steps": total_steps,
                 "percentage": percentage,
-                "status": f"Scanning coordinates ({lat:.4f}, {lng:.4f}) — step {idx + 1} of {total_steps}..."
+                "status": f"{prefix}: scanning area ({lat:.4f}, {lng:.4f}) — step {idx + 1} of {total_steps}..."
             })
 
         hub.publish_to_admins({
@@ -1756,6 +2221,12 @@ def run_detection(user_id=None):
         })
         _ensure_place_types_column()
         registry = _load_registry()
+        registry_by_place_id = {}
+        for entry in registry:
+            place_id_value = entry.get("placeID")
+            if place_id_value:
+                registry_by_place_id.setdefault(place_id_value, entry)
+        registry_match_index = _RegistryMatchIndex(registry)
         lookup_cursor = mysql.connection.cursor()
         try:
             lookup_cursor.execute(
@@ -1769,9 +2240,18 @@ def run_detection(user_id=None):
             print(f"[Run Detection] Reconcile error: {re_err}")
 
         def process_places(places):
+            pending_place_ids = {
+                place.get("place_id")
+                for place in places
+                if place.get("place_id")
+                and place.get("place_id") not in seen_place_ids
+            }
+            existing_flags = _load_existing_flags(pending_place_ids)
+            non_business_red_ids = []
+            writes_pending = False
             for place in places:
                 if _detection_work_budget_reached():
-                    return
+                    break
                 place_id = place.get("place_id")
                 if not place_id:
                     continue
@@ -1787,44 +2267,29 @@ def run_detection(user_id=None):
                 address = place.get("vicinity")
                 if not lat or not lng:
                     continue
+                counters["unique_in_bound_pois"] += 1
                 if place.get("business_status") in (
                     "CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY"
                 ):
                     counters["closed_results"] += 1
 
-                cursor = mysql.connection.cursor()
-                cursor.execute("""
-                    SELECT logID, flagColor FROM geospatial_logs
-                    WHERE placeID = %s
-                    LIMIT 1
-                """, (place_id,))
-                existing_flag = cursor.fetchone()
-                cursor.close()
+                existing_flag = existing_flags.get(place_id)
 
                 if existing_flag and existing_flag["flagColor"] in ("Green", "Orange", "Black", "Purple"):
                     continue
 
                 barangay_id = _get_barangay_id_by_coords(
-                    lat, lng, barangay_rows
+                    lat, lng, barangay_rows, registry
                 )
 
                 if _is_non_business_place(place):
                     counters["non_business"] += 1
                     if existing_flag and existing_flag["flagColor"] == "Red":
-                        cursor = mysql.connection.cursor()
-                        cursor.execute(
-                            "DELETE FROM geospatial_logs WHERE logID = %s", (existing_flag["logID"],))
-                        mysql.connection.commit()
-                        cursor.close()
+                        non_business_red_ids.append(existing_flag["logID"])
                     continue
+                counters["actionable_business_candidates"] += 1
 
-                matching_by_place = None
-                if place_id:
-                    for entry in registry:
-                        if entry.get("placeID") == place_id:
-                            matching_by_place = entry
-                            break
-
+                matching_by_place = registry_by_place_id.get(place_id)
                 p_types = place.get("types") or []
                 if place.get("primaryType"):
                     p_types = list(p_types) + [place.get("primaryType")]
@@ -1836,32 +2301,24 @@ def run_detection(user_id=None):
                     sim_score = 1.0
                     match_status = "auto"
                 else:
-                    nearest, dist, sim_score, match_status = _match_poi_to_registry(
-                        place_name, lat, lng, registry,
-                        poi_barangay_id=barangay_id,
-                        poi_types=poi_types,
-                        poi_address=address or "",
-                    )
+                    matching_started_at = time.perf_counter()
+                    try:
+                        nearest, dist, sim_score, match_status = _match_poi_to_registry(
+                            place_name, lat, lng, registry,
+                            poi_barangay_id=barangay_id,
+                            poi_types=poi_types,
+                            poi_address=address or "",
+                            registry_index=registry_match_index,
+                        )
+                    finally:
+                        _places_run_state.registry_match_time_seconds += (
+                            time.perf_counter() - matching_started_at
+                        )
 
                 if nearest is None or match_status == "no_match":
                     # Guard: Detection skips creating a Red flag for any Google POI whose
                     # placeID is already held by an official registry business
-                    is_held = False
-                    if place_id:
-                        if any(e.get("placeID") == place_id for e in registry):
-                            is_held = True
-                        else:
-                            cursor = mysql.connection.cursor()
-                            cursor.execute(
-                                "SELECT businessID FROM official_registry WHERE placeID = %s LIMIT 1",
-                                (place_id,)
-                            )
-                            held_row = cursor.fetchone()
-                            cursor.close()
-                            if held_row:
-                                is_held = True
-
-                    if is_held:
+                    if place_id in registry_by_place_id:
                         counters["matched"] += 1
                         continue
 
@@ -1870,9 +2327,11 @@ def run_detection(user_id=None):
                         flag_id = _insert_red_flag(
                             place_id, place_name, lat, lng, barangay_id, address,
                             poi_types=poi_types,
+                            commit=False,
                         )
                         inserted_flag_ids.append(flag_id)
                         counters["new_flags"] += 1
+                        writes_pending = True
                 else:
                     counters["matched"] += 1
                     app_status = (nearest.get("applicationStatus")
@@ -1895,10 +2354,33 @@ def run_detection(user_id=None):
                         match_score=sim_score, match_status=match_status,
                         poi_types=poi_types,
                         poi_address=address,
+                        commit=False,
                     )
+                    writes_pending = True
+
+            if non_business_red_ids:
+                placeholders = ", ".join(["%s"] * len(non_business_red_ids))
+                cursor = mysql.connection.cursor()
+                try:
+                    _detection_execute(cursor,
+                                       "DELETE FROM geospatial_logs "
+                                       f"WHERE logID IN ({placeholders})",
+                                       tuple(non_business_red_ids),
+                                       )
+                    writes_pending = True
+                finally:
+                    cursor.close()
+            if writes_pending:
+                _detection_commit()
 
         _places_run_state.started_at = time.monotonic()
-        _scan_grid(process_places, progress_callback, state)
+        points = _detection_points_for_mode(mode, barangay_rows)
+        _places_run_state.db_metrics_active = True
+        try:
+            _scan_grid(process_places, progress_callback, state,
+                       detection_mode=mode, points=points)
+        finally:
+            _places_run_state.db_metrics_active = False
 
         if is_cancelled("run_detection"):
             # Roll back the flags created by THIS run and un-checkpoint its points, so a later
@@ -1994,6 +2476,7 @@ def run_detection(user_id=None):
             "incomplete_points": state["incomplete_points"],
             "api_errors": getattr(_places_run_state, "api_errors", 0),
             "run_summary": {
+                "detection_mode": mode,
                 "results_received": getattr(_places_run_state, "results_received", 0),
                 "duplicates": (
                     getattr(_places_run_state, "duplicate_results", 0)
@@ -2016,10 +2499,15 @@ def run_detection(user_id=None):
                 "api_errors": getattr(_places_run_state, "api_errors", 0),
                 "api_error_stop": state["api_error_stop"],
                 "work_budget_stop": state.get("work_budget_stop", False),
-                "work_budget_reason": state["work_budget_reason"],
+                "work_budget_reason": getattr(
+                    _places_run_state, "work_budget_reason", None
+                ),
                 "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
                 "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
                 **elapsed,
+                **_detection_performance_metrics(
+                    counters, registry, registry_match_index
+                ),
                 "quota_stop": None,
             },
             "quota_stop": None,
@@ -2028,6 +2516,7 @@ def run_detection(user_id=None):
         }, None
 
     except PlacesBudgetExceeded as be:
+        mysql.connection.rollback()
         done_total = state["skipped_points"] + len(state["done_keys"])
         places_usage = _log_detection_summary(
             run_id, state, counters, stop_reason=str(be),
@@ -2046,6 +2535,7 @@ def run_detection(user_id=None):
             "status": be.reason,
             "quota_reason": be.reason,
             "run_summary": {
+                "detection_mode": mode,
                 "results_received": getattr(_places_run_state, "results_received", 0),
                 "duplicates": (
                     getattr(_places_run_state, "duplicate_results", 0)
@@ -2074,6 +2564,9 @@ def run_detection(user_id=None):
                 "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
                 "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
                 **_detection_elapsed_metrics(request_started_at),
+                **_detection_performance_metrics(
+                    counters, registry, registry_match_index
+                ),
                 "quota_stop": be.reason,
             },
             "places_usage": places_usage,
@@ -2085,6 +2578,7 @@ def run_detection(user_id=None):
         }, msg
 
     except Exception as e:
+        mysql.connection.rollback()
         elapsed = _detection_elapsed_metrics(request_started_at)
         print(
             f"[Run Detection] run={run_id} failed ({type(e).__name__}) "

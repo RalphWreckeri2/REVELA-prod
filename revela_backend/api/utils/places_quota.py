@@ -32,12 +32,29 @@ def _ensure_table(connection):
             cursor.close()
 
 
-def reserve_usage_slot(connection, monthly_kind, daily_kind, monthly_cap, daily_cap):
-    """Atomically reserve one monthly and daily slot, returning (allowed, reason)."""
+def reserve_usage_slot(
+    connection,
+    monthly_kind,
+    daily_kind,
+    monthly_cap,
+    daily_cap,
+    additional_daily_limits=(),
+):
+    """Atomically reserve an aggregate monthly/daily slot and optional daily sub-budgets."""
     if not re.fullmatch(r"[a-z0-9_]{1,32}", monthly_kind) or not re.fullmatch(
         r"[a-z0-9_]{1,32}", daily_kind
     ):
         raise ValueError("Invalid Places usage ledger key")
+    daily_limits = [(daily_kind, daily_cap), *additional_daily_limits]
+    seen_kinds = set()
+    for kind, cap in daily_limits:
+        if not re.fullmatch(r"[a-z0-9_]{1,32}", kind):
+            raise ValueError("Invalid Places usage ledger key")
+        if kind in seen_kinds:
+            raise ValueError("Duplicate daily Places usage ledger key")
+        if int(cap) < 0:
+            raise ValueError("Places quota caps cannot be negative")
+        seen_kinds.add(kind)
     _ensure_table(connection)
 
     cursor = None
@@ -49,36 +66,32 @@ def reserve_usage_slot(connection, monthly_kind, daily_kind, monthly_cap, daily_
             f"VALUES ({_MONTH_KEY}, %s, 0)",
             (monthly_kind,),
         )
-        cursor.execute(
-            "INSERT IGNORE INTO places_api_usage (usageDate, kind, requestCount) "
-            "VALUES (CURDATE(), %s, 0)",
-            (daily_kind,),
-        )
+        for kind, _cap in daily_limits:
+            cursor.execute(
+                "INSERT IGNORE INTO places_api_usage "
+                "(usageDate, kind, requestCount) VALUES (CURDATE(), %s, 0)",
+                (kind,),
+            )
         cursor.execute(
             f"UPDATE places_api_usage SET requestCount = requestCount + 1 "
             f"WHERE usageDate = {_MONTH_KEY} AND kind = %s AND requestCount < %s",
             (monthly_kind, monthly_cap),
         )
         month_ok = cursor.rowcount == 1
-        day_ok = False
-        if month_ok:
+        if not month_ok:
+            connection.rollback()
+            return False, "monthly_quota_exceeded"
+
+        for kind, cap in daily_limits:
             cursor.execute(
                 "UPDATE places_api_usage SET requestCount = requestCount + 1 "
                 "WHERE usageDate = CURDATE() AND kind = %s AND requestCount < %s",
-                (daily_kind, daily_cap),
+                (kind, cap),
             )
-            day_ok = cursor.rowcount == 1
-            if not day_ok:
-                cursor.execute(
-                    f"UPDATE places_api_usage SET requestCount = requestCount - 1 "
-                    f"WHERE usageDate = {_MONTH_KEY} AND kind = %s",
-                    (monthly_kind,),
-                )
+            if cursor.rowcount != 1:
+                connection.rollback()
+                return False, "daily_quota_exceeded"
         connection.commit()
-        if not month_ok:
-            return False, "monthly_quota_exceeded"
-        if not day_ok:
-            return False, "daily_quota_exceeded"
         return True, None
     except Exception:
         connection.rollback()
@@ -106,6 +119,23 @@ def read_usage(connection, monthly_kind, daily_kind):
         )
         day_row = cursor.fetchone()
         return {"month": _row_count(month_row), "day": _row_count(day_row)}
+    finally:
+        cursor.close()
+
+
+def read_daily_usage(connection, daily_kind):
+    """Return today's count for a daily workflow sub-budget."""
+    if not re.fullmatch(r"[a-z0-9_]{1,32}", daily_kind):
+        raise ValueError("Invalid Places usage ledger key")
+    _ensure_table(connection)
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT requestCount FROM places_api_usage "
+            "WHERE usageDate = CURDATE() AND kind = %s",
+            (daily_kind,),
+        )
+        return _row_count(cursor.fetchone())
     finally:
         cursor.close()
 

@@ -54,18 +54,19 @@ Official references:
 
 ### 2.3 Current app configuration risk
 
-The repository currently has these defaults:
+The central config defaults, workspace backend values, and Cloud limits are separate facts:
 
-| Workflow | Current app default | Previously reported GCP limit | Action |
-|---|---:|---:|---|
-| Registry Text Search (New) | `TS_DAILY_CAP=75`, `TS_MONTHLY_CAP=2500` | 80/day was reported | Keep the Railway app cap at 75/day unless the verified GCP quota is deliberately increased. Keep monthly app cap 2,500 unless deliberately revised. |
-| Place Details refresh (New) | `PD_DAILY_CAP=90`, `PD_MONTHLY_CAP=3000` | 95/day was reported | Daily cap 90 is below the reported Cloud limit. Monthly cap 3,000 is a conservative app limit, below Essentials free cap if Details stays Essentials. |
-| Run Detection legacy Nearby Search | `PLACES_DAILY_CAP=1000`, `PLACES_MONTHLY_CAP=2000` | Must be checked in Cloud Console | These are legacy-method app counters; do not assume they apply to Nearby Search (New). |
-| Re-verify batch | `BATCH_LIMIT=50` | n/a | Retain the bounded batch and resumability. |
+| Workflow | Central app default | Workspace backend value | Cloud value/evidence | Action |
+|---|---:|---:|---:|---|
+| Registry Text Search (New) | 400/day, 2,500/month; 200/100/100 workflow lanes | 1,000/day, 2,500/month; 500/250/250 lanes (`TS_DAILY_CAP=1000` loaded through local app bootstrap) | User screenshot shows `SearchTextRequest per day=500`, about 10% used; confirm project/key | Use a 400/day app cap only if this is the same project and shared usage leaves headroom; Railway remains unverified. |
+| Place Details refresh (New) | 90/day, 3,000/month | 90/day, 3,000/month | 95/day was reported, not independently verified | Leave unchanged until the method quota is confirmed. |
+| Geocoding | 1,500/day, 8,000/month | 1,500/day, 8,000/month | Not verified | Leave unchanged until its request quota is confirmed. |
+| Run Detection legacy Nearby Search | 120/day, 2,000/month | 120/day, 2,000/month | Unverified; 120/day is a conservative one-work-slice cap until checked in Cloud Console | Keep separate from Text Search and Nearby Search (New). |
+| Nearby Search (New) | Disabled at 0/0 | Disabled at 0/0 | Method quota not verified | Keep disabled until the method-specific quota is verified. |
+| Run Detection completed scans | 10/month, bounded by active Nearby monthly cap / 120 max requests | 10/month | App/product control | Partial runs do not use a completed-scan slot; request caps still apply. |
+| Re-verify batch | 50 | 50 | n/a | Retain the bounded batch and resumability. |
 
-The values in the GCP column are user-reported, not independently observed from the project. Confirm the method-specific quotas in Cloud Console before setting Railway variables. A 500 Text Search requests/day app cap is not safe against an 80/day Cloud quota.
-
-The repository default for `TS_DAILY_CAP` is now 75. This protects deployments that omit the variable as well as Railway deployments, but it does not verify or replace the Cloud Console quota.
+The workspace value is from local app bootstrap, not Railway. `/api/flags/places-usage` returns the running backend's loaded application caps with `quota_source="application"`; it does not query Google Cloud. Confirm the server key's project, method quotas, shared project usage, and Railway settings before deployment. Monthly free-call allowances are not hard request limits.
 
 ## 3. Workflow design
 
@@ -234,15 +235,15 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
    - Current usage by SKU, including usage from any other app sharing this project.
    - Key restriction type/application restrictions and API restrictions.
 3. Capture verified quota numbers and usage baselines. Do not raise Cloud quotas yet.
-4. Confirm deployed Railway values; environment variables override repository defaults. Pay special attention to `TS_DAILY_CAP`, `TS_MONTHLY_CAP`, `PD_DAILY_CAP`, `PD_MONTHLY_CAP`, `PLACES_DAILY_CAP`, `PLACES_MONTHLY_CAP`, `BATCH_LIMIT`, and resolver enablement.
+4. Confirm deployed Railway values using the admin `/api/flags/places-usage` response and the service variable list. Check canonical `TEXT_SEARCH_*`, workflow Text Search caps, `PLACE_DETAILS_*`, `GEOCODING_*`, `LEGACY_NEARBY_*`, `NEARBY_NEW_*`, `RUN_DETECTION_MONTHLY_SCAN_LIMIT`, `BATCH_LIMIT`, and resolver enablement; note legacy aliases such as `TS_DAILY_CAP` remain supported.
 5. Set immediate safety values before enabling new behavior:
-   - `TS_DAILY_CAP=75` if Text Search GCP daily quota remains 80.
-   - `PD_DAILY_CAP=90` if Place Details GCP daily quota remains 95.
-   - `TS_MONTHLY_CAP=2500`, `PD_MONTHLY_CAP=3000`, `BATCH_LIMIT=50` unless product owners deliberately change them.
-   - Do not assume the existing legacy `PLACES_*` limits apply to the New Nearby Search method.
+  - `TEXT_SEARCH_DAILY_CAP=400` and workflow caps 200/100/100 only if the verified Cloud SearchTextRequest quota is 500/day and shared project usage leaves 100/day headroom; otherwise choose a lower aggregate cap and compatible shares.
+  - Keep Place Details at 90/day only if its verified Cloud quota remains 95/day.
+  - Keep Text Search monthly 2,500, Place Details 3,000, Geocoding 1,500/day and 8,000/month, Legacy Nearby 1,000/day and 2,000/month, and `BATCH_LIMIT=50` until each corresponding Cloud quota is verified.
+  - Keep Nearby Search (New) disabled (`NEARBY_NEW_* = 0`) until its method quota is verified.
 6. Make no live Cloud quota increase until the app reservation, stop, and UI behavior are tested.
 
-**Gate:** verified Cloud quota list and Railway variable list exist; app-side Text Search cannot exceed the actual 80/day Cloud limit.
+**Gate:** verified Cloud quota list and Railway variable list exist; each app-side method cap is below its verified Cloud request quota after shared project usage is considered.
 
 ### Phase 1 — Make counters correct and observable
 
@@ -255,6 +256,8 @@ Expose current usage and lockout reasons from backend endpoints. In the dashboar
 7. Add concurrency/reservation tests, boundary-at-cap tests, and "failed request still counted" tests.
 
 **Gate:** tests demonstrate no request is sent when a cap is reached and concurrent workers cannot overspend the app-side limit.
+
+**Central quota configuration implementation note:** `api/utils/quota_config.py` now loads all application-side method caps, workflow Text Search allocations, reset gating, and the Run Detection scan allowance. Text Search reserves its existing aggregate `imp_ts_month/day` ledger plus a per-workflow daily bucket in one transaction; no historical usage rows are truncated or rewritten. `/api/flags/places-usage` returns loaded app settings and usage (`quota_source='application'`), not Google Cloud limits. Workflow lanes default to Import 200/day, Snap 100/day, and Re-verify 100/day under a shared 400/day cap. The 10 completed-scan monthly default is capped by active Nearby monthly requests divided by the 120-request maximum per scan. `ALLOW_QUOTA_RESET` defaults off and gates both existing test reset routes. Legacy env names remain aliases; canonical names win if both are set.
 
 **Initial implementation note:** the shared reservation helper and New Nearby Search client have been added behind `RUN_DETECTION_NEARBY_API=legacy|new`. New Nearby Search remains disabled by default. `NEW_NEARBY_DAILY_CAP` and `NEW_NEARBY_MONTHLY_CAP` default to `0`, which fails closed; set positive values only after confirming the specific Cloud method quotas and monthly project usage.
 
@@ -367,7 +370,7 @@ Reducing roots does not proportionally reduce Places requests, because a saturat
 ### If Cloud quotas need updating
 
 1. Confirm desired peak requests/minute and requests/day from measured app behavior, including adaptive searches and retries.
-2. Set Railway app caps below the approved Cloud caps (safety margin; initially keep Text Search at 75/day for reported GCP 80/day and Details at 90/day for reported 95/day).
+2. Set each Railway app cap below its verified Cloud method quota with headroom for other project consumers; the proposed Text Search cap is 400/day only if the observed 500/day Cloud quota belongs to this backend's project and key. Keep Place Details at 90/day only if its 95/day Cloud quota is confirmed.
 3. In **Google Maps Platform → Quotas**, select the specific API/method quota, choose **Edit**, enter the justified value, and submit/request approval if Google requires it.
 4. Change only that method's limit. Do not increase all Places API quotas together.
 5. Watch status/approval and verify the new limit in Cloud Console before raising the matching Railway cap.
@@ -384,20 +387,29 @@ Maintain separate Railway variables for backend server and frontend:
 ```text
 GOOGLE_MAPS_API_KEY=<restricted server-side key>
 PLACES_RESOLVER_ENABLED=1
-TS_DAILY_CAP=75                 # if Cloud Text Search daily quota stays at 80
-TS_MONTHLY_CAP=2500
-PD_DAILY_CAP=90                 # if Cloud Place Details daily quota stays at 95
-PD_MONTHLY_CAP=3000
+TEXT_SEARCH_DAILY_CAP=400       # aggregate; confirm Cloud SearchTextRequest quota first
+TEXT_SEARCH_MONTHLY_CAP=2500
+TEXT_SEARCH_REGISTRY_IMPORT_DAILY_CAP=200
+TEXT_SEARCH_SNAP_PINS_DAILY_CAP=100
+TEXT_SEARCH_REVERIFY_DAILY_CAP=100
+PLACE_DETAILS_DAILY_CAP=90      # unchanged; verify Cloud method quota
+PLACE_DETAILS_MONTHLY_CAP=3000
+GEOCODING_DAILY_CAP=1500        # unchanged; verify Cloud method quota
+GEOCODING_MONTHLY_CAP=8000
+LEGACY_NEARBY_DAILY_CAP=120    # one default work slice; raise only after verifying the Legacy Nearby quota
+LEGACY_NEARBY_MONTHLY_CAP=2000
+NEARBY_NEW_DAILY_CAP=0          # remain disabled until its Cloud quota is verified
+NEARBY_NEW_MONTHLY_CAP=0
 BATCH_LIMIT=50
 RUN_DETECTION_NEARBY_API=legacy # initially; switch only after rollout gates
+RUN_DETECTION_MONTHLY_SCAN_LIMIT=10 # bounded by active Nearby monthly cap / 120 requests
 RUN_DETECTION_MAX_SECONDS=90    # maximum work slice per synchronous run request
 RUN_DETECTION_MAX_REQUESTS=120 # includes retries and adaptive requests
 DETECTION_GRID_STEP_DEGREES=0.009 # widen only after re-running the coverage test
-NEW_NEARBY_DAILY_CAP=<approved conservative value>
-NEW_NEARBY_MONTHLY_CAP=<approved conservative value>
+ALLOW_QUOTA_RESET=0             # set to 1 only in an isolated test environment
 ```
 
-`NEW_NEARBY_*` caps default to `0`, so selecting `new` without configuring positive verified caps will stop before sending a request. Do not set them to 5,000 automatically: first subtract other project usage, then select a lower app safety cap.
+The newer names above are read by the centralized quota config. Existing `TS_*`, `PD_*`, `GEOCODE_*`, `PLACES_*`, and `NEW_NEARBY_*` aliases remain supported for backward compatibility; the new canonical names take precedence if both are set, but remove stale aliases when moving to avoid configuration ambiguity. The Text Search workflow caps share the aggregate 400/day ceiling and must sum to no more than it. `/api/flags/places-usage` returns `quota_source: "application"`, the loaded caps, and per-workflow daily usage; it does not query Google Cloud's quotas. `NEARBY_NEW_*` default to 0, so New Nearby stops before sending a request until both positive app caps are configured. Do not set them to the free monthly allowance without subtracting usage shared elsewhere in the Cloud project.
 
 **Legacy Run Detection while still available**
 

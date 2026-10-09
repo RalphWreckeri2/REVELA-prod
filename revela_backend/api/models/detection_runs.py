@@ -1,5 +1,7 @@
 import datetime
 from app import mysql
+from api.utils.quota_config import API_QUOTA_CONFIG
+from api.utils import quota_settings
 
 TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS `detection_runs` (
@@ -156,13 +158,13 @@ def get_recent_detection_runs(limit=10):
 def get_detection_quota_info():
     """
     Returns quota details for detection scans:
-    - monthly_limit: 2
+    - monthly_limit: configured scan limit bounded by the active Nearby app budget
     - used_this_month: count of completed scans this month
     - remaining_this_month: scans left
     - resets_on: date when monthly limit resets (1st of next month)
     - last_run: info about latest scan
     """
-    monthly_limit = 2
+    monthly_limit = quota_settings.cap("run_detection.monthly_scan_limit")
     used = get_monthly_detection_count()
     remaining = max(0, monthly_limit - used)
 

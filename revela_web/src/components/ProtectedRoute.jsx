@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/authContext";
 import { Navigate } from "react-router-dom";
 
 const ALLOWED_ROLES = ["Admin", "SUPER_ADMIN", "System Administrator"];
@@ -12,7 +12,7 @@ export default function ProtectedRoute({ children }) {
 
   useEffect(() => {
     if (isForbidden) logout();
-  }, [isForbidden]);
+  }, [isForbidden, logout]);
 
   // Not logged in at all → back to login
   if (!token) return <Navigate to="/" replace />;

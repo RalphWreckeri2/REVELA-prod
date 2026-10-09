@@ -1,45 +1,45 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { loginRequest, getMeRequest } from "../services/api";
-
-const AuthContext = createContext(null);
-
-export { AuthContext };
+import { AuthContext } from "./authContext";
 
 export function AuthProvider({ children }) {
   const [token, setTokenState] = useState(() => localStorage.getItem("revela_token"));
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => token === "dev-admin-token"
+    ? { id: 1, fullName: "BPLO Administrator", role: "Admin", email: "admin@mataasnakahoy.gov.ph" }
+    : null);
 
-  const setToken = (newToken) => {
+  const setToken = useCallback((newToken) => {
     setTokenState(newToken);
     if (newToken) {
       localStorage.setItem("revela_token", newToken);
     } else {
       localStorage.removeItem("revela_token");
     }
-  };
+  }, []);
 
   useEffect(() => {
-    if (token && !user) {
-      if (token === "dev-admin-token") {
-        setUser({ id: 1, fullName: "BPLO Administrator", role: "Admin", email: "admin@mataasnakahoy.gov.ph" });
-        return;
-      }
-      Promise.all([
-        getMeRequest(token),
-        new Promise(resolve => setTimeout(resolve, 1000)) // Force at least 1 second delay
-      ])
-        .then(([me]) => {
-          if (!["Admin", "SUPER_ADMIN", "System Administrator"].includes(me?.role)) {
-            setToken(null);
-          } else {
-            setUser(me);
-          }
-        })
-        .catch(() => {
+    if (!token || user || token === "dev-admin-token") return undefined;
+
+    let isCurrent = true;
+    const hydrateUser = async () => {
+      try {
+        const [me] = await Promise.all([
+          getMeRequest(token),
+          new Promise(resolve => setTimeout(resolve, 1000)),
+        ]);
+        if (!isCurrent) return;
+        if (!["Admin", "SUPER_ADMIN", "System Administrator"].includes(me?.role)) {
           setToken(null);
-        });
-    }
-  }, [token, user]);
+        } else {
+          setUser(me);
+        }
+      } catch {
+        if (isCurrent) setToken(null);
+      }
+    };
+    void hydrateUser();
+    return () => { isCurrent = false; };
+  }, [token, user, setToken]);
 
   async function login(email, password) {
     const data = await loginRequest(email, password);
@@ -73,16 +73,15 @@ export function AuthProvider({ children }) {
     return me;
   }
 
-  const refreshUser = async () => {
-    if (token) {
-      try {
-        const me = await getMeRequest(token);
-        setUser(me);
-      } catch {
-        /* ignore */
-      }
+  const refreshUser = useCallback(async () => {
+    if (!token) return;
+    try {
+      const me = await getMeRequest(token);
+      setUser(me);
+    } catch {
+      // Keep the current profile if a background refresh fails.
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -95,20 +94,16 @@ export function AuthProvider({ children }) {
       window.removeEventListener("revela:user-update", handleUserUpdate);
       window.removeEventListener("revela:global-refresh", handleUserUpdate);
     };
-  }, [token]);
+  }, [token, refreshUser]);
 
-  function logout() {
+  const logout = useCallback(() => {
     setToken(null);
     setUser(null);
-  }
+  }, [setToken]);
 
   return (
     <AuthContext.Provider value={{ token, user, login, completeLogin, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  return useContext(AuthContext);
 }

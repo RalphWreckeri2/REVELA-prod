@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, RadarChart, Radar, PolarGrid,
+  PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
   PolarAngleAxis, PolarRadiusAxis, LabelList, AreaChart, Area,
   ScatterChart, Scatter, ZAxis, ReferenceLine
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
 import KpiCard from "../components/KpiCard";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/authContext";
 import {
   getWlcConfigRequest,
   updateWlcConfigRequest,
@@ -21,7 +21,6 @@ import {
 const COLOR = {
   green: "#10b981", // elegant emerald
   red: "#f43f5e", // elegant rose
-  yellow: "#fbbf24", // elegant amber
   black: "#64748b", // slate gray for "closed/nonconforming" instead of blinding white
   blue: "#3b82f6",
   muted: "var(--color-muted)",
@@ -538,7 +537,10 @@ const renderMarkdown = (text) => {
 
 const GlobalAIAssistant = memo(({ globalData }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState([{
+    role: "model",
+    content: "I am the REVELA AI Analyst. I have reviewed all the data currently visible on your dashboard. What would you like to know?",
+  }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const { token } = useAuth();
@@ -546,13 +548,10 @@ const GlobalAIAssistant = memo(({ globalData }) => {
   const inputRef = useRef(null);
 
   useEffect(() => {
-    if (isExpanded && messages.length === 0) {
-      setMessages([{ role: "model", content: "I am the REVELA AI Analyst. I have reviewed all the data currently visible on your dashboard. What would you like to know?" }]);
-    }
-    if (isExpanded && inputRef.current) {
-      setTimeout(() => inputRef.current?.focus(), 300);
-    }
-  }, [isExpanded, messages.length]);
+    if (!isExpanded) return undefined;
+    const timeoutId = setTimeout(() => inputRef.current?.focus(), 300);
+    return () => clearTimeout(timeoutId);
+  }, [isExpanded]);
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -932,8 +931,13 @@ export default function AnalyticsPage() {
 
 
   useEffect(() => {
-    fetchAnalytics(false);
-    fetchWlcConfig();
+    let isCurrent = true;
+    queueMicrotask(() => {
+      if (!isCurrent) return;
+      void fetchAnalytics(false);
+      void fetchWlcConfig();
+    });
+    return () => { isCurrent = false; };
   }, [fetchAnalytics, fetchWlcConfig]);
 
   // Real-time event listeners and auto-polling
@@ -1072,7 +1076,10 @@ export default function AnalyticsPage() {
   }));
 
   // ── Enforcement progress chart data ──────────────────────────────────────
-  const naturePerBarangayData = desc?.nature_per_barangay || [];
+  const naturePerBarangayData = useMemo(
+    () => desc?.nature_per_barangay ?? [],
+    [desc?.nature_per_barangay],
+  );
   const natureKeys = useMemo(() => {
     const keys = new Set();
     naturePerBarangayData.forEach(row => {
@@ -1132,13 +1139,17 @@ export default function AnalyticsPage() {
   const flagCounts = useMemo(() => {
     const progress = desc?.enforcement_progress || [];
     let green = 0, red = 0, yellow = 0, black = 0, orange = 0, purple = 0;
+    const countValue = (value) => {
+      const count = Number(value);
+      return Number.isFinite(count) ? count : 0;
+    };
     progress.forEach(row => {
-      green += row.green_count || 0;
-      red += row.red_count || 0;
-      yellow += row.yellow_count || 0;
-      black += row.black_count || 0;
-      orange += row.orange_count || 0;
-      purple += row.purple_count || 0;
+      green += countValue(row.green_count);
+      red += countValue(row.red_count);
+      yellow += countValue(row.yellow_count);
+      black += countValue(row.black_count);
+      orange += countValue(row.orange_count);
+      purple += countValue(row.purple_count);
     });
     return { green, red, yellow, black, orange, purple, total: green + red + yellow + black + orange + purple };
   }, [desc?.enforcement_progress]);
@@ -2506,7 +2517,7 @@ export default function AnalyticsPage() {
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Field & Inspection KPIs</h4>
               <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginBottom: 24 }}>
-                <KpiCard iconVariant="red" value={(flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black) ?? "—"} label="Total Non-Compliant" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black} label="Total Non-Compliant" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="orange" value={dispatchedCount ?? "—"} label="Dispatched" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="gold" value={inspectedCount ?? "—"} label="Total Inspected" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="green" value={clearedCount ?? "—"} label="Compliant (Cleared)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />

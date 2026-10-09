@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "verify:contexts": "node scripts/verify-contexts.mjs",
+    "verify": "npm run lint && npm run verify:contexts && npm run build",
     "preview": "vite preview"
   },
   "dependencies": {

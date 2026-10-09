@@ -158,6 +158,83 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         )
         reset_run_state()
 
+    @patch("api.registry.places_resolver.get_places_call_usage")
+    def test_text_search_status_includes_shared_and_workflow_usage(self, get_usage):
+        from api.registry import places_resolver
+
+        get_usage.return_value = {
+            "text_search": {"month": 120, "day": 30},
+            "text_search_workflows": {
+                "registry_import": {
+                    "used_today": 12, "daily_cap": 200,
+                    "daily_remaining": 188, "daily_quota_exceeded": False,
+                },
+                "snap_pins": {
+                    "used_today": 8, "daily_cap": 100,
+                    "daily_remaining": 92, "daily_quota_exceeded": False,
+                },
+                "reverify": {
+                    "used_today": 10, "daily_cap": 100,
+                    "daily_remaining": 90, "daily_quota_exceeded": False,
+                },
+            },
+            "details": {"month": 0, "day": 0},
+            "geocoding": {"month": 0, "day": 0},
+        }
+
+        status = places_resolver.get_text_search_quota_status()
+
+        self.assertEqual(status["used_today"], 30)
+        self.assertEqual(status["daily_cap"], places_resolver.TS_DAILY_CAP)
+        self.assertEqual(status["workflows"]["snap_pins"]["used_today"], 8)
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_usage_slot", return_value=(True, None))
+    @patch("api.registry.places_resolver.mysql")
+    @patch("api.registry.places_resolver._places_request")
+    def test_text_search_reserves_aggregate_and_workflow_budgets(
+        self, mock_places_request, mock_mysql, mock_reserve
+    ):
+        from api.registry import places_resolver
+
+        def run_reservation(_label, _request, reserve):
+            self.assertTrue(reserve())
+            return {"places": []}
+
+        mock_places_request.side_effect = run_reservation
+        expected = {
+            "registry_import": "ts_import_day",
+            "snap_pins": "ts_snap_day",
+            "reverify": "ts_reverify_day",
+        }
+
+        for scope, workflow_kind in expected.items():
+            with self.subTest(scope=scope):
+                reset_run_state()
+                mock_reserve.reset_mock()
+                resolve_location(
+                    "Test Business", "Poblacion", "Barangay I",
+                    quota_scope=scope,
+                )
+
+                args, kwargs = mock_reserve.call_args
+                self.assertEqual(args[1:5], (
+                    "imp_ts_month",
+                    "imp_ts_day",
+                    places_resolver.TS_MONTHLY_CAP,
+                    places_resolver.TS_DAILY_CAP,
+                ))
+                workflow_cap = (
+                    places_resolver.API_QUOTA_CONFIG
+                    .text_search_workflow_daily[scope]
+                )
+                self.assertEqual(
+                    kwargs["additional_daily_limits"],
+                    ((workflow_kind, workflow_cap),),
+                )
+
+        reset_run_state()
+
     @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
     @patch("api.registry.places_resolver.reserve_call", return_value=False)
     @patch("api.registry.places_resolver._places_request")

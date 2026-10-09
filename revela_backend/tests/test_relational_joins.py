@@ -1,12 +1,12 @@
+from api.models.geospatial import insert_green_flag
+from api.flags.service import _load_registry, _match_registry_to_google
 import os
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from api.flags.service import _load_registry, _match_registry_to_google
-from api.models.geospatial import insert_green_flag
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..")))
 
 
 class RelationalJoinsTests(unittest.TestCase):
@@ -58,7 +58,8 @@ class RelationalJoinsTests(unittest.TestCase):
             match_score=0.95
         )
 
-        update_calls = [c for c in mock_cursor.execute.call_args_list if "UPDATE geospatial_logs" in c[0][0]]
+        update_calls = [
+            c for c in mock_cursor.execute.call_args_list if "UPDATE geospatial_logs" in c[0][0]]
         self.assertEqual(len(update_calls), 1)
         sql, params = update_calls[0][0][0], update_calls[0][0][1]
         self.assertIn("SET businessID = %s", sql)
@@ -98,13 +99,18 @@ class RelationalJoinsTests(unittest.TestCase):
         self.assertIsNone(err)
 
         count_sql = mock_cursor.execute.call_args_list[0][0][0]
-        self.assertIn("g2.businessID IS NOT NULL AND g2.businessID = r.businessID", count_sql)
-        self.assertIn("g2.placeID IS NOT NULL AND g2.placeID = r.placeID", count_sql)
-        self.assertIn("g.businessID IS NOT NULL AND r_chk.businessID = g.businessID", count_sql)
-        self.assertIn("g.placeID IS NOT NULL AND r_chk.placeID = g.placeID", count_sql)
+        self.assertIn(
+            "g2.businessID IS NOT NULL AND g2.businessID = r.businessID", count_sql)
+        self.assertIn(
+            "g2.placeID IS NOT NULL AND g2.placeID = r.placeID", count_sql)
+        self.assertIn(
+            "g.businessID IS NOT NULL AND r_chk.businessID = g.businessID", count_sql)
+        self.assertIn(
+            "g.placeID IS NOT NULL AND r_chk.placeID = g.placeID", count_sql)
 
         fetch_sql = mock_cursor.execute.call_args_list[1][0][0]
-        self.assertIn("g.placeID IS NOT NULL AND placeID = g.placeID", fetch_sql)
+        self.assertIn(
+            "g.placeID IS NOT NULL AND placeID = g.placeID", fetch_sql)
         self.assertIn("r.matchStatus", fetch_sql)
 
     @patch("api.flags.service._match_registry_to_google")
@@ -147,7 +153,9 @@ class RelationalJoinsTests(unittest.TestCase):
             lat=13.96,
             lng=121.11,
             barangay_id=1,
-            match_score=1.0
+            match_score=1.0,
+            poi_types=(),
+            poi_address=None,
         )
 
 

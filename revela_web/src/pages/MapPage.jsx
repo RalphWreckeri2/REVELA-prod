@@ -4,7 +4,7 @@
  * modal, working zoom controls, fixed "See Full List" modal.
  */
 
-import { useState, useEffect, useCallback, useRef, useContext, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useContext, useMemo, useEffectEvent } from "react";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -12,10 +12,16 @@ import { GoogleMap, Data } from "@react-google-maps/api";
 import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import DashboardLayout from "../components/DashboardLayout";
 import InspectorReportsModal from "../components/InspectorReportsModal";
-import { AuthContext } from "../context/AuthContext";
-import { useTheme } from "../context/ThemeContext";
+import ApiUsageSettingsPanel from "../components/ApiUsageSettingsPanel";
+import { AuthContext } from "../context/authContext";
+import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import {
+  BARANGAY_CENTROIDS,
+  DEFAULT_MAP_CENTER,
+  getBarangayCentroid,
+} from "../utils/barangayCentroids";
 import {
   API_ORIGIN,
   getFlagsRequest,
@@ -160,7 +166,6 @@ const Icon = {
 };
 
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-const DEFAULT_MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
 const STREET_VIEW_LAYER_MIN_ZOOM = 16;
 const REVIEW_QUEUE_PAGE_SIZE = 20;
 
@@ -280,48 +285,6 @@ function canonicalFlagColor(raw) {
   const s = String(raw).trim();
   const cap = s.length ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : "Red";
   return FLAG_COLORS[cap] ? cap : "Red";
-}
-
-// Barangay centroid coordinates used as fallback for establishments without exact GPS
-export const BARANGAY_CENTROIDS = {
-  "barangay ii-a": { lat: 13.952260, lng: 121.115799 },
-  "barangay ii-a (pob.)": { lat: 13.952260, lng: 121.115799 },
-  "bayorbor": { lat: 13.979234, lng: 121.095818 },
-  "bubuyan": { lat: 13.983266, lng: 121.108556 },
-  "calingatan": { lat: 13.962879, lng: 121.121234 },
-  "district i": { lat: 13.955117, lng: 121.110199 },
-  "district i (pob.)": { lat: 13.955117, lng: 121.110199 },
-  "barangay i": { lat: 13.955117, lng: 121.110199 },
-  "district ii": { lat: 13.960630, lng: 121.113447 },
-  "district ii (pob.)": { lat: 13.960630, lng: 121.113447 },
-  "barangay ii": { lat: 13.960630, lng: 121.113447 },
-  "district iii": { lat: 13.961458, lng: 121.109487 },
-  "district iii (pob.)": { lat: 13.961458, lng: 121.109487 },
-  "barangay iii": { lat: 13.961458, lng: 121.109487 },
-  "district iv": { lat: 13.956173, lng: 121.117793 },
-  "district iv (pob.)": { lat: 13.956173, lng: 121.117793 },
-  "barangay iv": { lat: 13.956173, lng: 121.117793 },
-  "kinalaglagan": { lat: 14.005574, lng: 121.094954 },
-  "loob": { lat: 13.980785, lng: 121.114404 },
-  "lumang lipa": { lat: 13.974504, lng: 121.087937 },
-  "manggahan": { lat: 13.967686, lng: 121.088860 },
-  "nangkaan": { lat: 13.990223, lng: 121.089892 },
-  "san sebastian": { lat: 13.984496, lng: 121.103597 },
-  "san seb.": { lat: 13.984496, lng: 121.103597 },
-  "santol": { lat: 13.972238, lng: 121.104850 },
-  "upa": { lat: 13.968345, lng: 121.111783 },
-};
-
-export function getBarangayCentroid(barangayName) {
-  if (!barangayName) return DEFAULT_MAP_CENTER;
-  const raw = String(barangayName).toLowerCase().replace("barangay ", "").replace("brgy. ", "").trim();
-  if (BARANGAY_CENTROIDS[raw]) return BARANGAY_CENTROIDS[raw];
-  for (const key in BARANGAY_CENTROIDS) {
-    if (raw.includes(key) || key.includes(raw)) {
-      return BARANGAY_CENTROIDS[key];
-    }
-  }
-  return DEFAULT_MAP_CENTER;
 }
 
 // ── Point-in-polygon helpers (ray-casting) ────────────────────────────────────
@@ -796,10 +759,6 @@ function MapCanvas({
 
   // Sync zoom prop if parent changes it
   useEffect(() => {
-    if (zoom != null) setCurrentZoom(zoom);
-  }, [zoom]);
-
-  useEffect(() => {
     const activeMap = mapInstance || internalMapRef.current;
     const maps = window.google?.maps;
     if (!isLoaded || !activeMap || !maps?.StreetViewCoverageLayer) return;
@@ -1073,6 +1032,7 @@ function MapCanvas({
   // Recreate markers whenever map instance, flags, layers, or selection changes
   useEffect(() => {
     const activeMap = mapInstance || internalMapRef.current;
+    const effectMarkerRefs = markerRefs.current;
     if (!isLoaded || !activeMap) return;
 
     // Clear old clusterer and markers
@@ -1080,11 +1040,11 @@ function MapCanvas({
       clusterRef.current.clearMarkers();
       clusterRef.current = null;
     }
-    markerRefs.current.forEach(m => {
+    effectMarkerRefs.forEach(m => {
       if (typeof m.setMap === "function") m.setMap(null);
       else m.map = null;
     });
-    markerRefs.current.clear();
+    effectMarkerRefs.clear();
 
     if (!layers.flags) return;
 
@@ -1161,7 +1121,7 @@ function MapCanvas({
             marker.addListener("gmp-click", () => onMarkerClick(flag.id));
             markers.push(marker);
           }
-        } catch (e) {
+        } catch {
           marker = null;
         }
       }
@@ -1203,7 +1163,7 @@ function MapCanvas({
         }
       }
 
-      markerRefs.current.set(flag.id, marker);
+      effectMarkerRefs.set(flag.id, marker);
     });
 
     // Initialize MarkerClusterer with SuperClusterAlgorithm
@@ -1301,11 +1261,11 @@ function MapCanvas({
         clusterRef.current.clearMarkers();
         clusterRef.current = null;
       }
-      markerRefs.current.forEach(m => {
+      effectMarkerRefs.forEach(m => {
         if (typeof m.setMap === "function") m.setMap(null);
         else m.map = null;
       });
-      markerRefs.current.clear();
+      effectMarkerRefs.clear();
     };
   }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd]);
 
@@ -1769,48 +1729,22 @@ function MapCanvas({
 }
 
 // — Side panel flag card ————————————————————————————————————————————————————————————————————————————————————————
-function FlagCard({ flag, selected, onClick }) {
-  const fc = getFlagColor(flag.color);
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        ...styles.flagCard,
-        borderLeft: `3px solid ${fc.marker}`,
-        borderColor: selected ? fc.marker : "var(--color-border)",
-        background: selected ? `${fc.bg}` : "var(--color-input-bg)",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ minWidth: 0 }}>
-          <p style={styles.flagName}>{flag.name}</p>
-          <p style={styles.flagMeta}>{flag.barangay}</p>
-        </div>
-        <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-          {flag.noticeLevel && (
-            <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: "var(--flag-orange-bg)", color: "var(--flag-orange-text)", display: "inline-block" }}>
-              {flag.noticeLevel}
-            </span>
-          )}
-          <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 12, background: fc.bg || "var(--color-hover)", color: fc.text || "var(--color-ink)" }}>
-            {fc.label}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function YellowFlagModal({ token, barangays, draft, onPickLocation, onClose, onSuccess, isClosing }) {
   const [form, setForm] = useState(draft || { businessName: "", lat: "", lng: "", barangayID: "", notes: "", flagColor: "Yellow" });
+  const [lastDraft, setLastDraft] = useState(draft);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  if (lastDraft !== draft) {
+    setLastDraft(draft);
     if (draft) {
-      setForm(prev => ({ ...prev, ...draft, flagColor: draft.flagColor || prev.flagColor || "Yellow" }));
+      setForm((previous) => ({
+        ...previous,
+        ...draft,
+        flagColor: draft.flagColor || previous.flagColor || "Yellow",
+      }));
     }
-  }, [draft]);
+  }
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -1982,7 +1916,7 @@ function YellowFlagModal({ token, barangays, draft, onPickLocation, onClose, onS
 }
 
 // — Dispatch Modal —————————————————————————————————————————————————————————————————————————————————————————————
-function DispatchModal({ flag, token, onClose, onSuccess, isClosing }) {
+function DispatchModal({ flag, token, onClose, onSuccess }) {
   const [inspectors, setInspectors] = useState([]);
   const [selectedUID, setSelectedUID] = useState("");
   const [deadline, setDeadline] = useState("");
@@ -2106,6 +2040,7 @@ export default function MapPage() {
   const [actionError, setActionError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
+  const [runDetectionMode, setRunDetectionMode] = useState("quick");
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
 
@@ -2162,27 +2097,30 @@ export default function MapPage() {
   }, [location.search, location.pathname, navigate]);
 
   useEffect(() => {
-    if (!flags || flags.length === 0) return;
-    const searchParams = new URLSearchParams(location.search);
-    const flagId = searchParams.get("flag");
-    if (!flagId) {
-      handledUrlFlagRef.current = null;
-      return;
-    }
-    // Only automatically pop open once per distinct flag parameter
-    if (handledUrlFlagRef.current !== flagId) {
-      const found = flags.find(f => String(f.logID || f.id) === flagId);
-      if (found) {
-        handledUrlFlagRef.current = flagId;
-        rememberMapCamera();
-        setSelectedFlag(found.id);
-        setModalFlag(found);
-        if (mapRef.current && found.latitude && found.longitude) {
-          mapRef.current.panTo({ lat: Number(found.latitude), lng: Number(found.longitude) });
-          mapRef.current.setZoom(18);
-        }
+    if (!flags || flags.length === 0) return undefined;
+    let isCurrent = true;
+    queueMicrotask(() => {
+      if (!isCurrent) return;
+      const searchParams = new URLSearchParams(location.search);
+      const flagId = searchParams.get("flag");
+      if (!flagId) {
+        handledUrlFlagRef.current = null;
+        return;
       }
-    }
+      if (handledUrlFlagRef.current === flagId) return;
+      const found = flags.find(f => String(f.logID || f.id) === flagId);
+      if (!found) return;
+
+      handledUrlFlagRef.current = flagId;
+      rememberMapCamera();
+      setSelectedFlag(found.id);
+      setModalFlag(found);
+      if (mapRef.current && found.latitude && found.longitude) {
+        mapRef.current.panTo({ lat: Number(found.latitude), lng: Number(found.longitude) });
+        mapRef.current.setZoom(18);
+      }
+    });
+    return () => { isCurrent = false; };
   }, [location.search, flags, rememberMapCamera]);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [dispatchTarget, setDispatchTarget] = useState(null);
@@ -2309,9 +2247,14 @@ export default function MapPage() {
   };
 
   useEffect(() => {
-    fetchFlags(false);
-    fetchDetectionQuota();
-    fetchPlacesUsage();
+    let isCurrent = true;
+    queueMicrotask(() => {
+      if (!isCurrent) return;
+      void fetchFlags(false);
+      void fetchDetectionQuota();
+      void fetchPlacesUsage();
+    });
+    return () => { isCurrent = false; };
   }, [fetchFlags, fetchDetectionQuota, fetchPlacesUsage]);
 
   useEffect(() => {
@@ -2461,19 +2404,24 @@ export default function MapPage() {
 
 
   useEffect(() => {
-    if (!layers.diagnostics || !token) return;
-    if (clusters.length > 0) return;           // already fetched this session
-
-    setClustersLoading(true);
-    getDiagnosticClustersRequest(token)
-      .then(data => {
-        setClusters(Array.isArray(data) ? data : (data?.clusters ?? []));
-      })
-      .catch(err => {
-        console.error("[Diagnostics] Failed to load clusters:", err);
-      })
-      .finally(() => setClustersLoading(false));
-  }, [layers.diagnostics, token]);
+    if (!layers.diagnostics || !token || clusters.length > 0) return undefined;
+    let isCurrent = true;
+    queueMicrotask(() => {
+      if (!isCurrent) return;
+      setClustersLoading(true);
+      getDiagnosticClustersRequest(token)
+        .then(data => {
+          if (isCurrent) setClusters(Array.isArray(data) ? data : (data?.clusters ?? []));
+        })
+        .catch(err => {
+          console.error("[Diagnostics] Failed to load clusters:", err);
+        })
+        .finally(() => {
+          if (isCurrent) setClustersLoading(false);
+        });
+    });
+    return () => { isCurrent = false; };
+  }, [clusters.length, layers.diagnostics, token]);
 
   // ──────────────────────────────────────────────────────────────────────────────────────────────────
   const handleEscalate = async (logId) => {
@@ -2540,12 +2488,14 @@ export default function MapPage() {
   };
 
   const handleRunDetection = async () => {
+    // The scan limit comes from the backend quota config, not a hardcoded 2.
+    const scanLimit = detectionQuota?.monthly_limit ?? 10;
     if (detectionQuota && detectionQuota.remaining_this_month <= 0) {
       await Swal.fire({
         title: 'Monthly Scan Limit Reached',
-        html: `<p style="font-size:14px; margin-bottom:8px;">Detection scans are limited to <strong>2 times per month</strong>.</p>
+        html: `<p style="font-size:14px; margin-bottom:8px;">Detection scans are limited to <strong>${scanLimit} time${scanLimit !== 1 ? 's' : ''} per month</strong>.</p>
                <p style="color:var(--color-muted, #94a3b8); font-size:13px;">
-                 You have used <strong>${detectionQuota.used_this_month || 2}/2</strong> scans this month.<br/>
+                 You have used <strong>${detectionQuota.used_this_month || scanLimit}/${scanLimit}</strong> scans this month.<br/>
                  Next scan will be available on <strong>${detectionQuota.resets_on || 'the 1st of next month'}</strong>.
                </p>`,
         icon: 'info',
@@ -2600,17 +2550,23 @@ export default function MapPage() {
       return;
     }
 
-    const remaining = detectionQuota ? detectionQuota.remaining_this_month : 2;
+    const monthlyScanLimit = detectionQuota?.monthly_limit ?? 10;
+    const remaining = detectionQuota?.remaining_this_month ?? monthlyScanLimit;
     const isFinalScan = remaining === 1;
     const placesTodayLeft = activeDetectionPlacesQuota?.daily_remaining ?? 0;
     const placesDailyCap = activeDetectionPlacesQuota?.daily_cap ?? 0;
     const placesMonthLeft = activeDetectionPlacesQuota?.monthly_remaining ?? 0;
     const placesMonthlyCap = activeDetectionPlacesQuota?.monthly_cap ?? 0;
 
+    const modeLabel = runDetectionMode === "quick" ? "Quick Discovery" : "Full Coverage";
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
       html: `
         <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
+          <div style="display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 6px 10px; border-radius: 999px; background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.2); font-weight: 700; color: #4338ca;">
+            <span>Mode</span>
+            <span>${modeLabel}</span>
+          </div>
           <p style="margin-bottom: 12px;">This will scan Google Places within Mataasnakahoy and cross-reference against the official business registry to discover unregistered commercial activities.</p>
 
           <div style="background: rgba(99, 102, 241, 0.08); border: 1px solid rgba(99, 102, 241, 0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;">
@@ -2618,7 +2574,7 @@ export default function MapPage() {
               📊 Quota & Limits Overview:
             </div>
             <ul style="margin: 4px 0 0 16px; padding: 0; font-size: 12.5px; color: inherit;">
-              <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of 2</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
+              <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of ${monthlyScanLimit}</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
               <li><strong>${placesUsage?.nearby_search_mode === "new" ? "Nearby Search (New)" : "Legacy Nearby Search"} daily app cap:</strong> <b>${placesTodayLeft} of ${placesDailyCap}</b> requests left today.</li>
               <li><strong>Monthly app cap:</strong> <b>${placesMonthLeft} of ${placesMonthlyCap}</b> requests left for this method.</li>
             </ul>
@@ -2630,7 +2586,7 @@ export default function MapPage() {
 
           ${isFinalScan ? `
             <div style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #f59e0b; margin-top: 8px;">
-              ⚠️ <strong>Warning:</strong> This is your 2nd and final scan for this month.
+              ⚠️ <strong>Warning:</strong> This is your ${monthlyScanLimit}${monthlyScanLimit === 2 ? 'nd' : 'th'} and final scan for this month.
             </div>
           ` : ''}
         </div>
@@ -2656,7 +2612,7 @@ export default function MapPage() {
 
     setActionError("");
     try {
-      const result = await runDetectionRequest(token);
+      const result = await runDetectionRequest(token, runDetectionMode);
       await fetchFlags();
       await fetchDetectionQuota();
       await fetchPlacesUsage();
@@ -2698,6 +2654,7 @@ export default function MapPage() {
             ? "A Places API error stopped the remaining grid cells."
             : "The scan stopped before all grid cells were completed.";
       const remainingScans = result.quota?.remaining_this_month ?? 0;
+      const monthlyScanLimit = result.quota?.monthly_limit ?? detectionQuota?.monthly_limit ?? 10;
       const resetsOn = result.quota?.resets_on || "the 1st of next month";
 
       const alertRes = await Swal.fire({
@@ -2737,7 +2694,7 @@ export default function MapPage() {
               </div>
               <div style="background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.06); border-radius: 8px; padding: 10px 12px;">
                 <div style="font-size: 11px; font-weight: 600; color: var(--color-muted, #64748b); text-transform: uppercase;">Monthly Scans Left</div>
-                <div style="font-size: 16px; font-weight: 800; color: #6366f1; margin-top: 2px;">${remainingScans} of 2</div>
+                <div style="font-size: 16px; font-weight: 800; color: #6366f1; margin-top: 2px;">${remainingScans} of ${monthlyScanLimit}</div>
               </div>
             </div>
             ${remainingScans === 0 ? `
@@ -2864,10 +2821,24 @@ export default function MapPage() {
     (placesUsage?.text_search_month &&
       placesUsage.text_search_month.used >= placesUsage.text_search_month.cap)
   );
-  const isSnapDailyMaxed = Boolean(
+  const isSharedTextSearchDailyMaxed = Boolean(
     placesUsage?.text_search_day &&
     placesUsage.text_search_day.remaining <= 0
   );
+  const snapTextSearchUsage = placesUsage?.text_search_workflows?.snap_pins;
+  const reverifyTextSearchUsage = placesUsage?.text_search_workflows?.reverify;
+  const isSnapDailyMaxed = isSharedTextSearchDailyMaxed || Boolean(
+    snapTextSearchUsage && snapTextSearchUsage.daily_remaining <= 0
+  );
+  const isReverifyDailyMaxed = isSharedTextSearchDailyMaxed || Boolean(
+    reverifyTextSearchUsage && reverifyTextSearchUsage.daily_remaining <= 0
+  );
+  const snapDailyUsageLabel = isSharedTextSearchDailyMaxed
+    ? `${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 400}`
+    : `${snapTextSearchUsage?.used_today ?? 0}/${snapTextSearchUsage?.daily_cap ?? 100}`;
+  const reverifyDailyUsageLabel = isSharedTextSearchDailyMaxed
+    ? `${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 400}`
+    : `${reverifyTextSearchUsage?.used_today ?? 0}/${reverifyTextSearchUsage?.daily_cap ?? 100}`;
   const monthlyTextSearchLabel = `${(placesUsage?.text_search_month?.used ?? 2500).toLocaleString()}/${(placesUsage?.text_search_month?.cap ?? 2500).toLocaleString()}`;
   const activeDetectionPlacesQuota = placesUsage?.nearby_search_active;
   const isDetectionPlacesQuotaReached = Boolean(
@@ -2886,7 +2857,15 @@ export default function MapPage() {
       });
       return;
     }
-    if (isSnapDailyMaxed) return;
+    if (isReverifyDailyMaxed) {
+      await Swal.fire({
+        icon: 'warning',
+        title: 'Daily Text Search limit reached',
+        text: `Re-verify has used its daily Text Search allocation (${reverifyDailyUsageLabel}). Resets at midnight.`,
+        confirmButtonColor: '#6366f1',
+      });
+      return;
+    }
     if (detectionQuota && detectionQuota.registry_count === 0) {
       await Swal.fire({
         title: 'Official Registry Is Empty',
@@ -3063,7 +3042,7 @@ export default function MapPage() {
         title: 'Daily Budget Reached',
         html: `
           <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
-            <p style="margin-bottom:8px;">You have reached the daily Text Search safety limit (<strong>${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 75}</strong> used today).</p>
+            <p style="margin-bottom:8px;">Snap Pins has reached its daily Text Search allocation (<strong>${snapDailyUsageLabel}</strong> used today).</p>
             <p style="color:var(--color-muted, #64748b); font-size:12.5px;">To protect your billing account, please try again tomorrow after midnight.</p>
           </div>
         `,
@@ -3147,7 +3126,7 @@ export default function MapPage() {
         await cancelRunDetection(token);
         // Refresh flags in the background so any partial results are rolled back
         fetchFlags(true);
-      } catch (err) {
+      } catch {
         setActionError("Failed to cancel detection.");
       } finally {
         setCancellingDetection(false);
@@ -3254,19 +3233,6 @@ export default function MapPage() {
   };
 
   // â”€â”€ When user clicks a flag in the side panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleSidePanelClick = (flag) => {
-    rememberMapCamera();
-    if (location.search && location.search.includes("flag=")) {
-      navigate(location.pathname, { replace: true });
-    }
-    setSelectedFlag(flag.id);
-    setModalFlag(flag);
-    if (mapRef.current && flag.latitude && flag.longitude) {
-      mapRef.current.panTo({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
-      mapRef.current.setZoom(18);
-    }
-  };
-
   const handleMapClick = useCallback((e) => {
     if (adjustingFlagId) {
       if (e && e.latLng) {
@@ -3406,34 +3372,35 @@ export default function MapPage() {
     return matchColor && matchSearch && matchSource;
   });
 
-  // Pan / fit bounds to search results (debounced)
-  useEffect(() => {
+  const panToSearchResults = useEffectEvent(() => {
     const q = search.trim();
     if (!q || !mapRef.current) return;
 
-    const timer = setTimeout(() => {
-      const bCentroid = getBarangayCentroid(q);
-      if (bCentroid && mapRef.current) {
-        mapRef.current.panTo(bCentroid);
-        mapRef.current.setZoom(15);
-        return;
-      }
+    const bCentroid = getBarangayCentroid(q);
+    if (bCentroid && mapRef.current) {
+      mapRef.current.panTo(bCentroid);
+      mapRef.current.setZoom(15);
+      return;
+    }
 
-      const matches = visibleFlags.filter(
-        f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
-      );
-      if (matches.length === 1 && mapRef.current) {
-        mapRef.current.panTo({ lat: Number(matches[0].latitude), lng: Number(matches[0].longitude) });
-        mapRef.current.setZoom(18);
-      } else if (matches.length > 1 && mapRef.current && window.google?.maps?.LatLngBounds) {
-        const bounds = new window.google.maps.LatLngBounds();
-        matches.forEach(m => bounds.extend({ lat: Number(m.latitude), lng: Number(m.longitude) }));
-        mapRef.current.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
-      }
-    }, 300);
+    const matches = visibleFlags.filter(
+      f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
+    );
+    if (matches.length === 1 && mapRef.current) {
+      mapRef.current.panTo({ lat: Number(matches[0].latitude), lng: Number(matches[0].longitude) });
+      mapRef.current.setZoom(18);
+    } else if (matches.length > 1 && mapRef.current && window.google?.maps?.LatLngBounds) {
+      const bounds = new window.google.maps.LatLngBounds();
+      matches.forEach(m => bounds.extend({ lat: Number(m.latitude), lng: Number(m.longitude) }));
+      mapRef.current.fitBounds(bounds, { top: 50, right: 50, bottom: 50, left: 50 });
+    }
+  });
 
+  // Pan / fit bounds to search results (debounced)
+  useEffect(() => {
+    if (!search.trim() || !mapRef.current) return undefined;
+    const timer = setTimeout(() => panToSearchResults(), 300);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
   // Flag counts
@@ -3498,6 +3465,50 @@ export default function MapPage() {
               <button className="ghost-btn" type="button" onClick={() => setShowYellowModal(true)}>
                 + Add Flag
               </button>
+              <div
+                role="group"
+                aria-label="Run detection mode"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 3,
+                  padding: 3,
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--color-input-bg)",
+                }}
+              >
+                {[
+                  { value: "quick", label: "Quick Discovery" },
+                  { value: "full", label: "Full Coverage" },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    aria-pressed={runDetectionMode === option.value}
+                    disabled={runDetectionLoading}
+                    onClick={() => setRunDetectionMode(option.value)}
+                    style={{
+                      minHeight: 30,
+                      padding: "4px 8px",
+                      border: 0,
+                      borderRadius: "calc(var(--radius-md) - 2px)",
+                      background: runDetectionMode === option.value
+                        ? "var(--color-primary)"
+                        : "transparent",
+                      color: runDetectionMode === option.value
+                        ? "#fff"
+                        : "var(--color-ink)",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      whiteSpace: "nowrap",
+                      cursor: runDetectionLoading ? "not-allowed" : "pointer",
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
               <button
                 className="primary-btn"
                 type="button"
@@ -3509,10 +3520,10 @@ export default function MapPage() {
                     : detectionQuota && detectionQuota.registry_count === 0
                       ? "Official registry is empty. Import business permits first before running detection."
                       : detectionQuota && detectionQuota.remaining_this_month === 0
-                        ? `Monthly limit reached (0/2 remaining). Resets on ${detectionQuota.resets_on}`
+                        ? `Monthly limit reached (0/${detectionQuota.monthly_limit ?? 10} remaining). Resets on ${detectionQuota.resets_on}`
                         : isDetectionPlacesQuotaReached
                           ? `Nearby Search app quota reached (${activeDetectionPlacesQuota?.used_today ?? 0}/${activeDetectionPlacesQuota?.daily_cap ?? 0} daily, ${activeDetectionPlacesQuota?.used_month ?? 0}/${activeDetectionPlacesQuota?.monthly_cap ?? 0} monthly).`
-                          : "Run geospatial detection scan (Max 2x/month)"
+                          : `Run geospatial detection scan (max ${detectionQuota?.monthly_limit ?? 10}x/month)`
                 }
                 style={{
                   opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? 0.6 : 1,
@@ -3538,7 +3549,7 @@ export default function MapPage() {
                       alignItems: "center"
                     }}
                   >
-                    {detectionQuota.remaining_this_month}/2
+                    {detectionQuota.remaining_this_month}/{detectionQuota.monthly_limit ?? 10}
                   </span>
                 )}
               </button>
@@ -3620,7 +3631,7 @@ export default function MapPage() {
                       reconcileProgress?.stage === 'running' ||
                       snapProgress?.stage === 'running' ||
                       isSnapMonthlyMaxed ||
-                      isSnapDailyMaxed
+                      isReverifyDailyMaxed
                     }
                     title={
                       detectionQuota && detectionQuota.registry_count === 0
@@ -3669,8 +3680,8 @@ export default function MapPage() {
                         ? "Official registry is empty. Import business permits first before re-verifying pins."
                         : isSnapMonthlyMaxed
                         ? `Monthly API limit reached (${monthlyTextSearchLabel} calls). Resets next month.`
-                        : isSnapDailyMaxed
-                        ? `Daily Text Search limit reached (${placesUsage?.text_search_day?.used ?? 0}/${placesUsage?.text_search_day?.cap ?? 75} calls). Resets at midnight.`
+                        : isReverifyDailyMaxed
+                        ? `Daily Text Search limit reached (${reverifyDailyUsageLabel} calls). Resets at midnight.`
                         : "Re-check pins that already have coordinates and move wrong ones onto the real Google place"
                     }
                     style={{
@@ -3680,10 +3691,10 @@ export default function MapPage() {
                       height: 38,
                       borderRadius: "var(--radius-md)",
                       background: "var(--color-input-bg)",
-                      color: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "var(--color-muted)" : "var(--color-ink)",
+                      color: (isSnapMonthlyMaxed || isReverifyDailyMaxed) ? "var(--color-muted)" : "var(--color-ink)",
                       borderColor: "var(--color-border)",
-                      opacity: (isSnapMonthlyMaxed || isSnapDailyMaxed || snapProgress?.stage === 'running') ? 0.5 : 1,
-                      cursor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "not-allowed" : "pointer",
+                      opacity: (isSnapMonthlyMaxed || isReverifyDailyMaxed || snapProgress?.stage === 'running') ? 0.5 : 1,
+                      cursor: (isSnapMonthlyMaxed || isReverifyDailyMaxed) ? "not-allowed" : "pointer",
                       transition: "all 0.2s"
                     }}
                   >
@@ -4075,6 +4086,17 @@ export default function MapPage() {
 
         </div>
       </div>
+
+      {isAdmin && (
+        <ApiUsageSettingsPanel
+          token={token}
+          isAdmin={isAdmin}
+          onUsageChanged={() => {
+            fetchPlacesUsage();
+            fetchDetectionQuota();
+          }}
+        />
+      )}
 
       {/* Footer */}
       <footer className="saas-footer frosted-glass">

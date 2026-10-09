@@ -31,4 +31,4 @@ EXPOSE 5000
 # heartbeats rather than per-request deadlines (individual request threads and detached daemon threads
 # continue running while the worker heartbeats). 120s gives an unresponsive or blocked worker process
 # sufficient leeway before the master arbiter considers it dead and restarts it.
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "16", "--timeout", "120", "app:create_app()"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${PORT:-5000} --workers 1 --threads 16 --timeout 120 'app:create_app()'"]

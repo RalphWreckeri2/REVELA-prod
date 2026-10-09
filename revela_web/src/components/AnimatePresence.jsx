@@ -1,28 +1,41 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function AnimatePresence({ isVisible, children, delay = 350 }) {
-  const [shouldRender, setShouldRender] = useState(isVisible);
-  const childrenRef = useRef(children);
+  const [renderState, setRenderState] = useState({
+    isVisible,
+    shouldRender: isVisible,
+    children,
+  });
 
-  if (isVisible) {
-    childrenRef.current = children;
+  if (
+    renderState.isVisible !== isVisible ||
+    (isVisible && renderState.children !== children)
+  ) {
+    setRenderState((previous) => ({
+      isVisible,
+      shouldRender: isVisible || previous.shouldRender,
+      children: isVisible ? children : previous.children,
+    }));
   }
 
   useEffect(() => {
-    let timeoutId;
-    if (isVisible && !shouldRender) {
-      setShouldRender(true);
-    } else if (!isVisible && shouldRender) {
-      timeoutId = setTimeout(() => setShouldRender(false), delay);
-    }
-    return () => clearTimeout(timeoutId);
-  }, [isVisible, delay, shouldRender]);
+    if (isVisible || !renderState.shouldRender) return undefined;
 
-  if (!shouldRender) return null;
+    const timeoutId = setTimeout(() => {
+      setRenderState((previous) => {
+        if (previous.isVisible || !previous.shouldRender) return previous;
+        return { ...previous, shouldRender: false };
+      });
+    }, delay);
+
+    return () => clearTimeout(timeoutId);
+  }, [isVisible, delay, renderState.shouldRender]);
+
+  if (!renderState.shouldRender) return null;
 
   // Pass isClosing down to the child. When animating out (!isVisible), use the cached children
   // so components don't crash from receiving null props (e.g., when the data driving them is cleared).
-  return React.cloneElement(isVisible ? children : childrenRef.current, {
+  return React.cloneElement(isVisible ? children : renderState.children, {
     isClosing: !isVisible
   });
 }

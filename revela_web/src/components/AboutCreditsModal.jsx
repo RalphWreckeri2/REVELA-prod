@@ -1,4 +1,3 @@
-import React from "react";
 import { createPortal } from "react-dom";
 import revelaLogo from "../assets/logo.png";
 import municipalSeal from "../assets/seal.png";

@@ -1,11 +1,46 @@
+import contextlib
+import json
 import math
+import statistics
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
 from shapely.affinity import scale
 from api.flags import service
+from api.utils import quota_settings
 from shapely.geometry import Point
 from shapely.ops import unary_union
+
+
+@contextlib.contextmanager
+def quota_overrides(**values):
+    """
+    Point `quota_settings.cap` at in-memory values for one test.
+
+    Run Detection resolves its caps from `quota_settings` (env baseline plus
+    persisted admin overrides) rather than from module-level constants, so a
+    test that wants a non-default cap has to override the resolver. Keys left
+    unset fall through to the real implementation, which degrades to the env
+    baseline when no database is reachable.
+    """
+    original = quota_settings.cap
+
+    def fake_cap(key):
+        return values.get(key, original(key))
+
+    with patch.object(quota_settings, "cap", side_effect=fake_cap):
+        yield
+
+
+def nearby_new_enabled(daily=75, monthly=2500):
+    """Context manager enabling Nearby Search (New) with test-sized caps."""
+    return quota_overrides(
+        **{
+            "quota.nearby_new.daily": daily,
+            "quota.nearby_new.monthly": monthly,
+        }
+    )
 
 
 class RunDetectionGridTests(unittest.TestCase):
@@ -132,6 +167,49 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(len(points), 70)
         self.assertTrue(uncovered_area.is_empty)
 
+    def test_quick_discovery_points_are_limited_and_cover_barangay_centres(self):
+        barangays = [
+            {"barangayID": 1, "barangayName": "Barangay I"},
+            {"barangayID": 2, "barangayName": "Barangay II"},
+            {"barangayID": 3, "barangayName": "Barangay III"},
+            {"barangayID": 4, "barangayName": "Barangay IV"},
+            {"barangayID": 5, "barangayName": "Barangay V"},
+            {"barangayID": 6, "barangayName": "Barangay VI"},
+            {"barangayID": 7, "barangayName": "Barangay VII"},
+            {"barangayID": 8, "barangayName": "Barangay VIII"},
+            {"barangayID": 9, "barangayName": "Barangay IX"},
+            {"barangayID": 10, "barangayName": "Barangay X"},
+            {"barangayID": 11, "barangayName": "Barangay XI"},
+            {"barangayID": 12, "barangayName": "Barangay XII"},
+            {"barangayID": 13, "barangayName": "Barangay XIII"},
+            {"barangayID": 14, "barangayName": "Barangay XIV"},
+            {"barangayID": 15, "barangayName": "Barangay XV"},
+            {"barangayID": 16, "barangayName": "Barangay XVI"},
+        ]
+
+        points = service._quick_discovery_points(barangays)
+
+        self.assertLessEqual(len(points), 24)
+        self.assertGreater(len(points), 0)
+        self.assertTrue(all(service._within_municipality(lat, lng)
+                        for lat, lng in points))
+        self.assertTrue(any(abs(lat - 13.9667) < 0.05 and abs(lng -
+                        121.1167) < 0.05 for lat, lng in points))
+
+    def test_quick_discovery_respects_test_mode_point_limit(self):
+        barangays = [
+            {"barangayID": index, "barangayName": f"Barangay {index}"}
+            for index in range(1, 17)
+        ]
+        config = {
+            "test_mode.enabled": True,
+            "test_mode.max_grid_points": 3,
+        }
+        with patch.object(service.test_mode, "get_config", return_value=config):
+            points = service._detection_points_for_mode("quick", barangays)
+
+        self.assertEqual(len(points), 3)
+
     def test_grid_step_env_tuning_is_guarded(self):
         # A non-positive step would never terminate the lattice walk.
         with patch.dict("os.environ",
@@ -143,7 +221,7 @@ class RunDetectionGridTests(unittest.TestCase):
             self.assertEqual(service._env_positive_float(
                 "DETECTION_GRID_STEP_DEGREES", 0.009, 0.001), 0.001)
 
-        # Garbage must fall back rather than raising at import time.
+        # Garbage must fall back rather than allowing a bad value to propagate.
         with patch.dict("os.environ",
                         {"DETECTION_GRID_STEP_DEGREES": "wider"}):
             self.assertEqual(service._env_positive_float(
@@ -234,6 +312,49 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(barangay_id, 7)
         mysql.connection.cursor.assert_not_called()
 
+    def test_existing_flags_are_loaded_in_one_batch_query(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            {"logID": 11, "placeID": "place-a", "flagColor": "Red"},
+            {"logID": 12, "placeID": "place-b", "flagColor": "Green"},
+        ]
+        with patch.object(service, "mysql") as mysql:
+            mysql.connection.cursor.return_value = cursor
+
+            existing = service._load_existing_flags(
+                ["place-a", "place-b", "place-a"]
+            )
+
+        self.assertEqual(existing["place-a"]["logID"], 11)
+        self.assertEqual(existing["place-b"]["flagColor"], "Green")
+        cursor.execute.assert_called_once()
+        self.assertEqual(
+            cursor.execute.call_args.args[1], ("place-a", "place-b"))
+
+    def test_red_flag_insert_can_defer_commit_for_batch_transaction(self):
+        cursor = MagicMock()
+        cursor.lastrowid = 42
+        with patch.object(service, "mysql") as mysql:
+            mysql.connection.cursor.return_value = cursor
+
+            flag_id = service._insert_red_flag(
+                "place-a", "Example Shop", 13.9667, 121.1167, 1,
+                commit=False,
+            )
+
+        self.assertEqual(flag_id, 42)
+        mysql.connection.commit.assert_not_called()
+
+    def test_run_detection_rejects_a_concurrent_scan(self):
+        with service._run_detection_lock, patch.object(
+            service, "_run_detection_cycle"
+        ) as run_cycle:
+            result, error = service.run_detection(mode="full")
+
+        self.assertIsNone(result)
+        self.assertEqual(error, "A detection scan is already in progress.")
+        run_cycle.assert_not_called()
+
     def test_adaptive_centers_cover_radius_with_smaller_search_circles(self):
         center_lat, center_lng, root_radius = 13.9667, 121.1167, 850
         centers = service._adaptive_nearby_centers(
@@ -310,8 +431,7 @@ class RunDetectionGridTests(unittest.TestCase):
 
         with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "server-key"}), \
                 patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
-                patch.object(service, "NEW_NEARBY_DAILY_CAP", 75), \
-                patch.object(service, "NEW_NEARBY_MONTHLY_CAP", 2500), \
+                nearby_new_enabled(75, 2500), \
                 patch.object(service, "_nearby_last_request_at", 0):
             results, complete = service._fetch_point_results_once(
                 13.9667, 121.1167, 850
@@ -400,8 +520,7 @@ class RunDetectionGridTests(unittest.TestCase):
 
         with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "server-key"}), \
                 patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
-                patch.object(service, "NEW_NEARBY_DAILY_CAP", 75), \
-                patch.object(service, "NEW_NEARBY_MONTHLY_CAP", 2500), \
+                nearby_new_enabled(75, 2500), \
                 patch.object(service, "_nearby_last_request_at", 0):
             with self.assertRaises(service.PlacesBudgetExceeded) as raised:
                 service._fetch_point_results_once(13.9667, 121.1167, 850)
@@ -427,8 +546,7 @@ class RunDetectionGridTests(unittest.TestCase):
 
         with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "server-key"}), \
                 patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
-                patch.object(service, "NEW_NEARBY_DAILY_CAP", 75), \
-                patch.object(service, "NEW_NEARBY_MONTHLY_CAP", 2500), \
+                nearby_new_enabled(75, 2500), \
                 patch.object(service, "_nearby_last_request_at", 0):
             results, complete = service._fetch_point_results_once(
                 13.9667, 121.1167, 850
@@ -454,8 +572,7 @@ class RunDetectionGridTests(unittest.TestCase):
     ):
         with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "server-key"}), \
                 patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
-                patch.object(service, "NEW_NEARBY_DAILY_CAP", 75), \
-                patch.object(service, "NEW_NEARBY_MONTHLY_CAP", 2500):
+                nearby_new_enabled(75, 2500):
             with self.assertRaises(service.PlacesBudgetExceeded):
                 service._fetch_point_results_once(13.9667, 121.1167, 850)
 
@@ -508,7 +625,7 @@ class RunDetectionGridTests(unittest.TestCase):
         service._places_run_state.started_at = service.time.monotonic()
 
         with patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
-                patch.object(service, "RUN_DETECTION_MAX_REQUESTS", 1):
+                quota_overrides(**{"run_detection.max_requests": 1}):
             results, complete = service._fetch_point_results(
                 13.9667, 121.1167, 850
             )
@@ -544,6 +661,30 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertTrue(complete)
         self.assertEqual(results, [{"place_id": "legacy"}])
         fetch_legacy.assert_called_once_with(13.9667, 121.1167, 850)
+
+    @patch("api.flags.service.time.sleep")
+    @patch("api.flags.service._reserve_places_call")
+    @patch("api.flags.service.http.get")
+    def test_legacy_nearby_enforces_configured_minimum_pacing(
+        self, http_get, reserve, sleep
+    ):
+        response = MagicMock()
+        response.json.return_value = {"status": "ZERO_RESULTS", "results": []}
+        http_get.return_value = response
+        service._nearby_last_request_at = service.time.monotonic() - 0.1
+
+        result = service._places_get(
+            "nearby", "https://places.test", timeout=10
+        )
+
+        self.assertIs(result, response)
+        reserve.assert_called_once_with("nearby")
+        self.assertGreaterEqual(
+            sleep.call_args.args[0],
+            service.pacing_for("nearby_search_legacy")[
+                "min_interval_ms"] / 1000
+            - 0.1 - 0.02,
+        )
 
     @patch("api.flags.service._mark_point_done")
     @patch("api.flags.service._completed_points_this_cycle", return_value=set())
@@ -651,6 +792,230 @@ class RunDetectionGridTests(unittest.TestCase):
                 service._scan_grid(lambda _places: None, None, state)
 
         mark_done.assert_not_called()
+
+    def test_fixture_benchmark_compares_quick_and_full_without_live_requests(self):
+        registry = [{
+            "businessID": "BIZ-SILVA",
+            "businessName": "Silva Pharmacy",
+            "businessLine": "Pharmacy",
+            "businessType": "Pharmacy",
+            "businessAddress": "Poblacion, Mataasnakahoy",
+            "applicationStatus": "Active",
+            "placeID": "registry-place-id",
+            "barangayID": 1,
+            "latitude": 13.9667,
+            "longitude": 121.1167,
+        }]
+        registry.extend({
+            "businessID": f"DECOY-{index}",
+            "businessName": f"UnrelatedBrand{index}",
+            "businessLine": "Retail",
+            "applicationStatus": "Active",
+            "placeID": f"registry-decoy-{index}",
+            "barangayID": 1,
+            "latitude": 13.9667,
+            "longitude": 121.1167,
+        } for index in range(100))
+
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        cursor.lastrowid = 900
+
+        def fetchone():
+            query = cursor.execute.call_args.args[0]
+            if "COUNT(*) AS total FROM official_registry" in query:
+                return {"total": len(registry)}
+            if "SELECT coordSource, matchStatus, latitude, longitude" in query:
+                return {
+                    "coordSource": "manual",
+                    "matchStatus": "approved",
+                    "latitude": 13.9667,
+                    "longitude": 121.1167,
+                }
+            return None
+
+        cursor.fetchone.side_effect = fetchone
+        database = MagicMock()
+        database.connection.cursor.return_value = cursor
+        results = []
+
+        def run_mode(mode):
+            service._places_run_state.quick_scan_history = {}
+            config = {
+                "test_mode.enabled": False,
+                "test_mode.max_grid_points": 6,
+            }
+            with patch.object(
+                service.test_mode, "get_config", return_value=config
+            ), patch.object(
+                service.quota_settings, "cap", return_value=0.009
+            ):
+                points = service._detection_points_for_mode(mode)
+            point_indexes = {
+                (round(lat, 5), round(lng, 5)): index
+                for index, (lat, lng) in enumerate(points)
+            }
+
+            def fetch_fixture(lat, lng, _radius, _mode):
+                index = point_indexes[(round(lat, 5), round(lng, 5))]
+                is_registered = index % 5 == 0
+                place_name = (
+                    "Silva Pharmacy" if is_registered
+                    else f"UnmatchedFixtureBusiness{index}"
+                )
+                places = [
+                    {
+                        "place_id": "fixture-library-shared",
+                        "name": "Public Library",
+                        "geometry": {"location": {
+                            "lat": 13.9667, "lng": 121.1167,
+                        }},
+                        "types": ["library"],
+                    },
+                    {
+                        "place_id": f"fixture-{mode}-{index}",
+                        "name": place_name,
+                        "geometry": {"location": {
+                            "lat": 13.9667, "lng": 121.1167,
+                        }},
+                        "types": ["pharmacy"] if is_registered else ["store"],
+                        "vicinity": "Poblacion, Mataasnakahoy",
+                        "business_status": "OPERATIONAL",
+                    },
+                ]
+                service._places_run_state.calls[
+                    "legacy_nearby_fixture"
+                ] = service._places_run_state.calls.get(
+                    "legacy_nearby_fixture", 0
+                ) + 1
+                service._places_run_state.results_received += len(places)
+                return places, True
+
+            quota_info = {
+                "is_limit_reached": False,
+                "monthly_limit": 10,
+                "registry_count": len(registry),
+            }
+            with contextlib.ExitStack() as patches:
+                patches.enter_context(patch.object(service, "mysql", database))
+                patches.enter_context(patch.object(
+                    service, "get_detection_quota_info", return_value=quota_info
+                ))
+                patches.enter_context(patch.object(
+                    service, "_ensure_place_types_column"))
+                patches.enter_context(patch.object(
+                    service, "_load_registry", return_value=registry
+                ))
+                patches.enter_context(patch.object(
+                    service, "reconcile_existing_flags"))
+                patches.enter_context(patch.object(
+                    service, "create_detection_run", return_value=1
+                ))
+                patches.enter_context(patch.object(
+                    service, "update_detection_run_status"))
+                patches.enter_context(patch.object(
+                    service, "_completed_points_this_cycle", return_value=set()
+                ))
+                patches.enter_context(patch.object(
+                    service, "_mark_point_done"))
+                patches.enter_context(patch.object(
+                    service, "_get_barangay_id_by_coords", return_value=1
+                ))
+                patches.enter_context(patch.object(
+                    service, "_detection_work_budget_reached", return_value=False
+                ))
+                patches.enter_context(patch.object(
+                    service, "_detection_radius_m", return_value=850
+                ))
+                patches.enter_context(patch.object(
+                    service, "_log_detection_summary", return_value={}
+                ))
+                patches.enter_context(patch.object(
+                    service, "set_cancel"
+                ))
+                patches.enter_context(patch.object(
+                    service, "is_cancelled", return_value=False
+                ))
+                patches.enter_context(patch.object(
+                    service.hub, "publish_to_admins"
+                ))
+                patches.enter_context(patch.object(
+                    service.test_mode, "get_config", return_value=config
+                ))
+                patches.enter_context(patch.object(
+                    service.quota_settings, "cap", return_value=0.009
+                ))
+                patches.enter_context(patch.object(
+                    service, "_fetch_point_results_for_mode",
+                    side_effect=fetch_fixture,
+                ))
+                started = time.perf_counter()
+                result, error = service.run_detection(mode=mode)
+                elapsed_ms = (time.perf_counter() - started) * 1000
+
+            self.assertIsNone(error)
+            summary = result["run_summary"]
+            results.append({
+                "mode": summary["detection_mode"],
+                "simulated_end_to_end_ms": round(elapsed_ms, 3),
+                "scan_elapsed_seconds": summary["scan_elapsed_seconds"],
+                "google_requests_consumed": summary["api_requests_consumed"],
+                "fixture_queries_replayed": summary[
+                    "fixture_requests_replayed"
+                ],
+                "unique_in_bound_pois": summary["unique_in_bound_pois"],
+                "actionable_candidates_per_query": summary[
+                    "actionable_candidates_per_nearby_query"
+                ],
+                "registry_match_time_seconds": summary[
+                    "registry_match_time_seconds"
+                ],
+                "registry_candidate_reduction_percent": summary[
+                    "registry_candidate_reduction_percent"
+                ],
+                "poi_processing_db_queries": summary[
+                    "poi_processing_db_queries"
+                ],
+                "poi_processing_db_commits": summary[
+                    "poi_processing_db_commits"
+                ],
+                "new_flags": result["new_flags"],
+            })
+
+        for mode in ("quick", "full"):
+            for _ in range(3):
+                run_mode(mode)
+
+        benchmarks = []
+        for offset, mode in ((0, "quick"), (3, "full")):
+            samples = results[offset:offset + 3]
+            benchmark = dict(samples[0])
+            benchmark["simulated_end_to_end_ms_median"] = round(
+                statistics.median(
+                    sample["simulated_end_to_end_ms"] for sample in samples
+                ),
+                3,
+            )
+            benchmark["timing_samples_ms"] = [
+                sample["simulated_end_to_end_ms"] for sample in samples
+            ]
+            benchmarks.append(benchmark)
+
+        self.assertEqual(benchmarks[0]["google_requests_consumed"], 0)
+        self.assertEqual(benchmarks[1]["google_requests_consumed"], 0)
+        self.assertLess(
+            benchmarks[0]["fixture_queries_replayed"],
+            benchmarks[1]["fixture_queries_replayed"],
+        )
+        self.assertLess(
+            benchmarks[0]["unique_in_bound_pois"],
+            benchmarks[1]["unique_in_bound_pois"],
+        )
+        self.assertGreater(
+            benchmarks[1]["registry_candidate_reduction_percent"], 0
+        )
+        print("FIXTURE_MODE_BENCHMARK=" +
+              json.dumps(benchmarks, sort_keys=True))
 
 
 if __name__ == "__main__":

@@ -70,6 +70,9 @@ def create_app():
     from api.notifications.routes import notifications_bp
     app.register_blueprint(notifications_bp, url_prefix="/api/notifications")
 
+    from api.admin_settings.routes import admin_settings_bp
+    app.register_blueprint(admin_settings_bp, url_prefix="/api/admin-settings")
+
     @app.route("/api/health", methods=["GET"])
     def health():
         return jsonify({"status": "ok"}), 200
