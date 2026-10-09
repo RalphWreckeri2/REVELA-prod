@@ -2,7 +2,10 @@ import math
 import unittest
 from unittest.mock import MagicMock, patch
 
+from shapely.affinity import scale
 from api.flags import service
+from shapely.geometry import Point
+from shapely.ops import unary_union
 
 
 class RunDetectionGridTests(unittest.TestCase):
@@ -95,6 +98,116 @@ class RunDetectionGridTests(unittest.TestCase):
 
         expected_buffer = (service.DETECTION_RADIUS_M / 111_320.0) * 1.1
         boundary.buffer.assert_called_once_with(expected_buffer)
+
+    def test_reduced_grid_circles_cover_buffered_municipality(self):
+        """
+        Guards the 850 m search-circle coverage of the whole municipality.
+
+        The `len(points)` assertion pins the current spacing to the current
+        boundary polygon. It is deliberately coupled to mataasnakahoy.json:
+        coverage is non-monotonic in the grid step, so if this fails after a
+        boundary edit, re-measure coverage at several candidate steps rather
+        than relaxing the expected count.
+        """
+        points = service._grid_points()
+        longitude_scale = 111_320.0 * math.cos(math.radians(13.98))
+        projected_boundary = scale(
+            service._MUNICIPALITY_WITH_TOLERANCE,
+            xfact=longitude_scale,
+            yfact=111_320.0,
+            origin=(0, 0),
+        )
+        search_circles = [
+            Point(longitude * longitude_scale, latitude * 111_320.0).buffer(
+                service.DETECTION_RADIUS_M + 2,
+                quad_segs=32,
+            )
+            for latitude, longitude in points
+        ]
+        uncovered_area = projected_boundary.difference(
+            unary_union(search_circles)
+        )
+
+        self.assertEqual(len(points), 70)
+        self.assertTrue(uncovered_area.is_empty)
+
+    def test_grid_step_env_tuning_is_guarded(self):
+        # A non-positive step would never terminate the lattice walk.
+        with patch.dict("os.environ",
+                        {"DETECTION_GRID_STEP_DEGREES": "0"}):
+            self.assertEqual(service._env_positive_float(
+                "DETECTION_GRID_STEP_DEGREES", 0.009, 0.001), 0.001)
+        with patch.dict("os.environ",
+                        {"DETECTION_GRID_STEP_DEGREES": "-0.5"}):
+            self.assertEqual(service._env_positive_float(
+                "DETECTION_GRID_STEP_DEGREES", 0.009, 0.001), 0.001)
+
+        # Garbage must fall back rather than raising at import time.
+        with patch.dict("os.environ",
+                        {"DETECTION_GRID_STEP_DEGREES": "wider"}):
+            self.assertEqual(service._env_positive_float(
+                "DETECTION_GRID_STEP_DEGREES", 0.009, 0.001), 0.009)
+
+        # A valid override is honoured.
+        with patch.dict("os.environ",
+                        {"DETECTION_GRID_STEP_DEGREES": "0.0075"}):
+            self.assertEqual(service._env_positive_float(
+                "DETECTION_GRID_STEP_DEGREES", 0.009, 0.001), 0.0075)
+
+        self.assertEqual(service.DETECTION_GRID_STEP_DEGREES, 0.009)
+
+    def test_wider_grid_steps_are_not_assumed_to_stay_covered(self):
+        """
+        Documents that coverage is non-monotonic: 0.0105 opens a hole that the
+        smaller 0.0100 step does not. Guards against someone "optimizing" the
+        step upward from the trend line alone.
+        """
+        def worst_boundary_gap(step):
+            min_lat, max_lat = 13.9450, 14.0125
+            min_lng, max_lng = 121.0120, 121.1260
+            buffer_degrees = (
+                service.DETECTION_RADIUS_M / 111_320.0
+            ) * 1.1
+            search_area = service._MUNICIPALITY_BOUNDARY.buffer(
+                buffer_degrees
+            )
+            centres, lat = [], min_lat
+            while lat <= max_lat + 1e-12:
+                lng = min_lng
+                while lng <= max_lng + 1e-12:
+                    if search_area.contains(Point(lng, lat)):
+                        centres.append((lat, lng))
+                    lng += step
+                lat += step
+
+            longitude_scale = 111_320.0 * math.cos(math.radians(13.98))
+            boundary = scale(
+                service._MUNICIPALITY_BOUNDARY,
+                xfact=longitude_scale,
+                yfact=111_320.0,
+                origin=(0, 0),
+            )
+            vertices = list(boundary.exterior.coords) + [
+                coord
+                for ring in boundary.interiors
+                for coord in ring.coords
+            ]
+            return max(
+                min(
+                    math.hypot(
+                        x - centre_lng * longitude_scale,
+                        y - centre_lat * 111_320.0,
+                    )
+                    for centre_lat, centre_lng in centres
+                )
+                for x, y in vertices
+            )
+
+        gap_0010 = worst_boundary_gap(0.0100)
+        gap_00105 = worst_boundary_gap(0.0105)
+
+        self.assertLess(gap_0010, service.DETECTION_RADIUS_M)
+        self.assertGreater(gap_00105, service.DETECTION_RADIUS_M)
 
     def test_municipality_predicate_uses_cached_tolerance_geometry(self):
         with patch.object(service, "_MUNICIPALITY_WITH_TOLERANCE") as prepared, \

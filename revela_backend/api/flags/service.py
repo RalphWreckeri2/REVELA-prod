@@ -52,6 +52,24 @@ RUN_DETECTION_MAX_SECONDS = max(
 RUN_DETECTION_MAX_REQUESTS = max(
     1, int(os.getenv("RUN_DETECTION_MAX_REQUESTS", "120"))
 )
+
+
+def _env_positive_float(name, default, minimum):
+    """
+    Parse a tunable float env var, falling back to the default when unusable.
+
+    A grid step drives `while lat <= max_lat: lat += step`, so a zero or
+    negative value would never terminate. Garbage input must not raise at
+    import time either, because this module is imported during app startup.
+    """
+    try:
+        return max(minimum, float(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        print(
+            f"[Run Detection] Ignoring invalid {name}; using {default}.")
+        return default
+
+
 RUN_DETECTION_NEARBY_API = os.getenv(
     "RUN_DETECTION_NEARBY_API", "legacy"
 ).strip().lower()
@@ -848,6 +866,16 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
 
 # ── Google Places fetch & checkpointed grid scan ───────────────────────────────
 DETECTION_RADIUS_M = 850
+# Tunable via env so staging can probe spacing without a redeploy. Coverage is
+# NOT monotonic in the step: the lattice is anchored to a fixed bounding-box
+# origin while the municipality polygon is arbitrary, so a larger step can slide
+# centers out of the inclusion buffer and OPEN a gap that a smaller step did not
+# have. 0.0105 degrees leaves a hole; 0.0109 does not. Re-run
+# test_reduced_grid_circles_cover_buffered_municipality for any new value
+# instead of extrapolating.
+DETECTION_GRID_STEP_DEGREES = _env_positive_float(
+    "DETECTION_GRID_STEP_DEGREES", 0.009, 0.001
+)
 NEARBY_RESULT_LIMIT = 60
 NEW_NEARBY_RESULT_LIMIT = 20
 MAX_ADAPTIVE_DEPTH = 2
@@ -860,7 +888,7 @@ def _grid_points():
     """Include nearby outside centers so search circles cover the municipal boundary."""
     min_lat, max_lat = 13.9450, 14.0125
     min_lng, max_lng = 121.0120, 121.1260
-    step = 0.0075
+    step = DETECTION_GRID_STEP_DEGREES
     search_buffer_degrees = (DETECTION_RADIUS_M / 111_320.0) * 1.1
     search_area = _MUNICIPALITY_BOUNDARY.buffer(search_buffer_degrees)
     points = []

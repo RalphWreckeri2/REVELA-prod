@@ -322,6 +322,10 @@ If a time/request limit or API error interrupts the scan, it returns resumable `
 5. Enable New Nearby Search for a small, explicitly bounded set of cells in staging or a controlled production run. Keep the legacy switch available for immediate rollback.
 6. Inspect live Cloud metrics and the DB ledger after the test. Confirm actual method/SKU usage aligns with app counts.
 
+**Grid spacing update:** Run Detection now uses a 0.009-degree grid step, reducing the current municipal grid from 101 roots at 0.0075 degrees to 70. A geometric coverage regression verifies that the union of 850 m search circles covers the buffered municipality. Coverage is **not** monotonic in the step: the lattice is anchored to a fixed bounding-box origin while the municipality polygon is arbitrary, so a larger step can slide centres out of the inclusion buffer and open a gap that a smaller step did not have. Measured worst boundary-point gaps against the 850 m radius: 0.0100 is 766.5 m (covered), 0.0105 is 1037.9 m (**gap**), 0.0109 is 824.1 m (covered), 0.0120 is 860.1 m (**gap**). Never extrapolate coverage from step size; re-run the coverage test for each candidate value. Spacing is tunable via `DETECTION_GRID_STEP_DEGREES` so staging can probe without a redeploy.
+
+Reducing roots does not proportionally reduce Places requests, because a saturated cell costs up to `1 + MAX_ADAPTIVE_QUERIES_PER_POINT` = 13 requests. At full saturation 70 roots is roughly 910 requests against a 120-request work slice. Measure the live saturation rate before assuming a scan now fits in a single request.
+
 **Gate:** acceptance threshold for matching accuracy and maximum query count per cell is written down and met; quota display and rollback tested.
 
 ### Phase 5 — Full rollout and legacy retirement decision
@@ -388,6 +392,7 @@ BATCH_LIMIT=50
 RUN_DETECTION_NEARBY_API=legacy # initially; switch only after rollout gates
 RUN_DETECTION_MAX_SECONDS=90    # maximum work slice per synchronous run request
 RUN_DETECTION_MAX_REQUESTS=120 # includes retries and adaptive requests
+DETECTION_GRID_STEP_DEGREES=0.009 # widen only after re-running the coverage test
 NEW_NEARBY_DAILY_CAP=<approved conservative value>
 NEW_NEARBY_MONTHLY_CAP=<approved conservative value>
 ```
