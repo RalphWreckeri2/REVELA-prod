@@ -272,8 +272,12 @@ def _geocode_fallback(address, barangay, get=requests.get):
 
 def resolve_location(name, address, barangay, business_id=None, barangay_id=None,
                      line_of_business='', reserve_geocode=None, refresh_geocode=False,
-                     _post=requests.post, _get=requests.get):
-    """Returns (lat, lng, meta). (None, None, None) when unresolved/over budget (row still saved)."""
+                     force=False, _post=requests.post, _get=requests.get):
+    """Returns (lat, lng, meta). (None, None, None) when unresolved/over budget (row still saved).
+
+    force=True skips the resolveKey cache so an already-attempted record is looked up again
+    (used by api.registry.reverify).
+    """
     if not os.getenv("GOOGLE_MAPS_API_KEY") or _halted:
         return None, None, None
 
@@ -285,7 +289,7 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     )
 
     # 2. Check if resolveKey in DB matches: skip API call if unchanged
-    if business_id:
+    if business_id and not force:
         cur = mysql.connection.cursor()
         try:
             cur.execute(

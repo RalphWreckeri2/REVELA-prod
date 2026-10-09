@@ -75,6 +75,47 @@ def snap_unresolved():
     return jsonify({"message": f"Snap started for up to {limit} businesses. Watch SSE for progress."}), 202
 
 
+# ── GET /api/registry/reverify-preview ───────────────────────────────────────
+@registry_bp.route("/reverify-preview", methods=["GET"])
+@admin_required()
+def reverify_preview():
+    """Free dry run: which existing pins look wrong (no Google calls)."""
+    from api.registry import reverify
+    try:
+        return jsonify(reverify.preview()), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# ── POST /api/registry/reverify  body: {"limit": 200} ────────────────────────
+@registry_bp.route("/reverify", methods=["POST"])
+@admin_required()
+def reverify_run():
+    """Re-check pins that already have coordinates against Google Places (background job)."""
+    from api.registry import reverify
+    if not os.getenv("GOOGLE_MAPS_API_KEY"):
+        return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
+    if reverify.is_running():
+        return jsonify({"error": "A re-verify run is already in progress."}), 409
+
+    body = request.get_json(silent=True) or {}
+    limit = max(1, min(int(body.get("limit", 200)), 500))
+    app_instance = current_app._get_current_object()
+
+    def _go():
+        with app_instance.app_context():
+            try:
+                reverify.run(limit=limit)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
+    threading.Thread(target=_go, daemon=True).start()
+    return jsonify({"message": f"Re-verify started for up to {limit} pins. Watch the progress window."}), 202
+
+
 # ── POST /api/registry/upload ─────────────────────────────────────────────────
 @registry_bp.route("/upload", methods=["POST"])
 @admin_required()

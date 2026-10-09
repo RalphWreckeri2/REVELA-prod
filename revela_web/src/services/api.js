@@ -1126,6 +1126,35 @@ export async function cleanupEvidenceStorageRequest(filter, token) {
   }
 }
 
+/** GET /api/registry/reverify-preview - free dry run: how many pins look wrong and why */
+export async function reverifyPreviewRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/registry/reverify-preview`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/registry/reverify - re-check existing pins against Google Places (background job) */
+export async function reverifyPinsRequest(token, limit = 200) {
+  try {
+    const res = await fetch(`${BASE_URL}/registry/reverify`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ limit }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 /** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
 export async function snapUnresolvedPinsRequest(token, limit = 200) {
   try {

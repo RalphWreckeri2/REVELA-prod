@@ -34,6 +34,8 @@ import {
   getPlacesUsageRequest,
   reconcileFlagsRequest,
   snapUnresolvedPinsRequest,
+  reverifyPreviewRequest,
+  reverifyPinsRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -2688,6 +2690,56 @@ export default function MapPage() {
     placesUsage?.today && placesUsage.today.remaining <= 0
   );
 
+  const handleReverifyPins = async () => {
+    let preview;
+    try {
+      preview = await reverifyPreviewRequest(token);
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: 'Could not check pins', text: err.message, confirmButtonColor: '#ef4444' });
+      return;
+    }
+    const total = preview?.total ?? 0;
+    if (total === 0) {
+      await Swal.fire({
+        icon: 'info',
+        title: 'Nothing to re-verify',
+        text: 'No pins look wrong (no shared points, address-only geocodes or pins without a recorded source).',
+        confirmButtonColor: '#059669',
+      });
+      return;
+    }
+    const reasons = preview.byReason || {};
+    const stacks = (preview.largestStacks || [])
+      .map((x) => `${x.businesses} businesses on one point`)
+      .join(', ');
+    const batch = Math.min(total, 200);
+    const confirm = await Swal.fire({
+      title: 'Re-verify existing pins?',
+      html: `
+        <div style="text-align:left; font-size:13.5px; line-height:1.55; color:var(--color-ink, #0f172a);">
+          <p style="margin-bottom:10px;"><strong>${total}</strong> pin(s) look unreliable
+            (${reasons.stacked ?? 0} sharing one point, ${reasons.address_geocode ?? 0} address-only, ${reasons.no_provenance ?? 0} with no recorded source).</p>
+          ${stacks ? `<p style="margin-bottom:10px; color:#b45309;">Largest stacks: ${stacks}.</p>` : ''}
+          <p style="margin-bottom:10px;">This run checks up to <strong>${batch}</strong> of them against Google Places (about ${batch} lookups) and moves confident matches onto the real business. Uncertain matches go to the review queue. Manual and approved pins are never changed, and every move is logged so it can be undone.</p>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#059669',
+      cancelButtonColor: 'var(--color-muted, #64748b)',
+      confirmButtonText: 'Start Re-verify',
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+      snapDismissedRef.current = false;
+      setSnapProgress({ stage: 'running', percentage: 0, status: 'Re-verifying pins against Google Places...', snapped: 0, failed: 0, cached: 0, total: batch });
+      await reverifyPinsRequest(token, 200);
+    } catch (err) {
+      setSnapProgress(null);
+      Swal.fire({ icon: 'error', title: 'Re-verify Failed', text: err.message, confirmButtonColor: '#ef4444' });
+    }
+  };
+
   const handleSnapUnresolved = async () => {
     if (isSnapMonthlyMaxed) {
       await Swal.fire({
@@ -3284,6 +3336,34 @@ export default function MapPage() {
                         : isSnapDailyMaxed
                           ? 'Snap Pins (Daily Cap)'
                           : 'Snap Pins'}
+                  </button>
+                  <button
+                    className="ghost-btn"
+                    type="button"
+                    onClick={handleReverifyPins}
+                    disabled={
+                      runDetectionLoading ||
+                      reconcileProgress?.stage === 'running' ||
+                      snapProgress?.stage === 'running' ||
+                      isSnapMonthlyMaxed ||
+                      isSnapDailyMaxed
+                    }
+                    title="Re-check pins that already have coordinates and move wrong ones onto the real Google place"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      height: 38,
+                      borderRadius: "var(--radius-md)",
+                      background: "var(--color-input-bg)",
+                      color: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "var(--color-muted)" : "var(--color-ink)",
+                      borderColor: "var(--color-border)",
+                      opacity: (isSnapMonthlyMaxed || isSnapDailyMaxed || snapProgress?.stage === 'running') ? 0.5 : 1,
+                      cursor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "not-allowed" : "pointer",
+                      transition: "all 0.2s"
+                    }}
+                  >
+                    Re-verify Pins
                   </button>
                 </div>
               )}
