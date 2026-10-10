@@ -154,10 +154,25 @@ The Flutter mobile application runs on inspectors' physical Android devices and 
    The behaviour comes from `revela_web/vercel.json`, which excludes the retired paths
    from the SPA catch-all with a negative lookahead:
    ```json
-   { "source": "^/(?!revela\\.apk$)(?!__retired__/).*", "destination": "/index.html" }
+   { "source": "/((?!revela\\.apk$)(?!__retired__/).*)", "destination": "/index.html" }
    ```
    Every path that matches is served the SPA shell; `/revela.apk` and anything under
    `/__retired__/` match nothing, so Vercel answers them with its own 404.
+
+   **The `source` is a path-to-regexp pattern, not a raw regular expression.**
+   The whole match must be a single *unnamed group* whose body is the regex you
+   actually want. Vercel compiles the source itself and supplies the `^`/`$`
+   anchors, so you must not add them. For the source above Vercel builds:
+   ```
+   ^(?:/((?!revela\.apk$)(?!__retired__/).*))$
+   ```
+   A previous revision used `^/(?!revela\.apk$)(?!__retired__/).*`, which is a
+   perfectly valid JavaScript regex but **fails deployment** with
+   `Invalid route source pattern` -- the compiler rejects the leading `^` and then
+   `TypeError: Pattern cannot start with "?" at 3` on the `(?!`. Never validate a
+   `source` with `JSON.parse` or `new RegExp(...)` alone; both accept patterns that
+   Vercel rejects. Validate with `@vercel/routing-utils`, which wraps the exact
+   `path-to-regexp` pair Vercel uses (`sourceToRegex()` / `getTransformedRoutes()`).
 
    **Why not a rewrite to a non-existent path?** An earlier revision used
    `{ "source": "/revela.apk", "destination": "/__retired__/revela.apk" }` placed ahead
@@ -167,8 +182,23 @@ The Flutter mobile application runs on inspectors' physical Android devices and 
    wins, then 404" -- when a rewrite destination does not resolve, evaluation continues
    and the catch-all still matches. Excluding the path is the reliable way to get a 404.
 
-   Static assets are unaffected: `rewrites` check the filesystem first, so
-   `/assets/*` and `/data/*` are served from the build output before any rewrite applies.
+   Static assets are unaffected. `getTransformedRoutes()` emits the filesystem
+   handler ahead of the rewrite, so `/assets/*` and `/data/*` are served from the
+   build output before any rewrite applies:
+   ```json
+   { "handle": "filesystem" }
+   { "src": "^(?:/((?!revela\\.apk$)(?!__retired__/).*))$", "dest": "/index.html", "check": true }
+   ```
+
+   **Known gap:** the lookahead anchors on the exact string `revela.apk`, so
+   `/revela.apk/` (trailing slash) and `/REVELA.apk` (Vercel compiles `source` with
+   `sensitive: true`, so matching is case-sensitive) still match the catch-all and
+   return the SPA shell with a `200`. The bare link `https://revelasys.site/revela.apk`
+   still returns a genuine `404`. To close the trailing-slash variant, change the
+   first lookahead's anchor from `$` to `(?:/|$)`:
+   ```json
+   { "source": "/((?!revela\\.apk(?:/|$))(?!__retired__/).*)", "destination": "/index.html" }
+   ```
 
    If APK hosting is reintroduced, remove the lookahead from `source` and add a
    `redirects` entry for `/revela.apk` -- note that a rewrite cannot override a redirect,
