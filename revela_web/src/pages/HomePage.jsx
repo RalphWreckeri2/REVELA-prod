@@ -9,6 +9,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
+import Footer from "../components/Footer";
 import KpiCard from "../components/KpiCard";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
@@ -549,108 +550,131 @@ function VisualCalendarWidget({ inspections, navigate }) {
     : activeTasksWithDeadline.sort((a, b) => new Date(a.deadline) - new Date(b.deadline)).slice(0, 3);
 
   return (
-    <div className="dashboard-widget frosted-glass saas-card" style={{ padding: "20px 0" }}>
-      <div className="widget-header" style={{ padding: "0 20px", marginBottom: 16 }}>
-        <h3 style={{ display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
+    <div className="dashboard-widget frosted-glass saas-card calendar-widget">
+      {/* Header: the month title stays prominent, the secondary "View Full
+          Calendar" action and the grouped month arrows wrap to their own row
+          instead of pushing the card wider than its column. */}
+      <div className="widget-header calendar-widget-header">
+        <h3 className="calendar-widget-title">
+          <svg className="calendar-widget-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+            <line x1="16" y1="2" x2="16" y2="6" />
+            <line x1="8" y1="2" x2="8" y2="6" />
+            <line x1="3" y1="10" x2="21" y2="10" />
           </svg>
-          {monthName}
+          <span>{monthName}</span>
         </h3>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+
+        <div className="calendar-widget-controls">
           <button
-            className="ghost-btn"
+            className="calendar-widget-link"
             type="button"
             onClick={() => navigate("/inspections/calendar")}
-            style={{ padding: "4px 8px", whiteSpace: "nowrap" }}
+            title="Open the full inspection calendar"
           >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
             View Full Calendar
           </button>
-          <button className="ghost-btn" onClick={prevMonth} style={{ padding: "4px 8px" }}>&larr;</button>
-          <button className="ghost-btn" onClick={nextMonth} style={{ padding: "4px 8px" }}>&rarr;</button>
+
+          <div className="calendar-widget-nav" role="group" aria-label="Month navigation">
+            <button type="button" onClick={prevMonth} aria-label="Previous month" title="Previous month">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+            <button type="button" onClick={nextMonth} aria-label="Next month" title="Next month">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" aria-hidden="true">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div style={{ padding: "0 20px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 4, marginBottom: 8 }}>
-          {weekDays.map(day => (
-            <div key={day} style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase" }}>{day}</div>
-          ))}
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, textAlign: "center" }}>
-          {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`} />)}
-          {Array.from({ length: daysInMonth }).map((_, i) => {
-            const day = i + 1;
-            const status = statusByDate[day];
-            const isToday = new Date().getDate() === day && new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
-            const isSelected = selectedDay === day;
-
-            let color = isToday ? "var(--color-primary)" : "var(--color-ink)";
-            let dotColor = null;
-            if (status === 'overdue') {
-              dotColor = "var(--color-danger)";
-            } else if (status === 'upcoming') {
-              dotColor = "var(--color-primary)";
-            }
-
-            let bg = isSelected ? "var(--color-border-soft)" : "transparent";
-
-            return (
-              <div key={day} style={{
-                padding: "4px 0",
-                fontSize: 13,
-                fontWeight: isToday || isSelected ? 700 : 500,
-                color: color,
-                background: bg,
-                borderRadius: "8px",
-                cursor: "pointer",
-                width: 28,
-                height: 32,
-                margin: "0 auto",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                justifyContent: "center",
-                boxShadow: isSelected ? "0 0 0 1px var(--color-border-soft)" : "none",
-                transform: isSelected ? "scale(1.1)" : "scale(1)",
-                transition: "all 0.15s"
-              }}
-                onClick={() => setSelectedDay(day === selectedDay ? null : day)}
-              >
-                <span style={{ lineHeight: 1 }}>{day}</span>
-                <span style={{ width: 4, height: 4, borderRadius: "50%", background: dotColor || "transparent", marginTop: 2 }} />
-              </div>
-            );
-          })}
-        </div>
+      <div className="calendar-widget-weekdays">
+        {weekDays.map(day => (
+          <span key={day}>{day}</span>
+        ))}
       </div>
 
-      <div style={{ padding: "20px 20px 0", marginTop: 16, borderTop: "1px solid var(--color-border-soft)" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+      <div className="calendar-widget-grid">
+        {Array.from({ length: firstDay }).map((_, i) => <span key={`empty-${i}`} />)}
+        {Array.from({ length: daysInMonth }).map((_, i) => {
+          const day = i + 1;
+          const status = statusByDate[day];
+          const now = new Date();
+          const isToday =
+            now.getDate() === day &&
+            now.getMonth() === currentDate.getMonth() &&
+            now.getFullYear() === currentDate.getFullYear();
+          const isSelected = selectedDay === day;
+          const taskCount = tasksByDate[day]?.length ?? 0;
+
+          const classes = [
+            "calendar-widget-day",
+            status === "overdue" ? "is-overdue" : "",
+            status === "upcoming" ? "is-upcoming" : "",
+            isToday ? "is-today" : "",
+            isSelected ? "is-selected" : "",
+          ].filter(Boolean).join(" ");
+
+          return (
+            <button
+              key={day}
+              type="button"
+              className={classes}
+              onClick={() => setSelectedDay(day === selectedDay ? null : day)}
+              aria-pressed={isSelected}
+              aria-label={`${monthName} ${day}${isToday ? " (today)" : ""}, ${
+                taskCount === 0
+                  ? "no scheduled tasks"
+                  : `${taskCount} scheduled ${taskCount === 1 ? "task" : "tasks"}${status === "overdue" ? ", overdue" : ""}`
+              }`}
+            >
+              <span className="calendar-widget-day-number">{day}</span>
+              <span
+                className={`calendar-widget-day-dot${status ? ` is-${status}` : ""}`}
+                aria-hidden="true"
+              />
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="calendar-widget-tasks">
+        <div className="calendar-widget-tasks-header">
+          <h4>
             {selectedDay ? `Tasks for ${monthName.split(' ')[0]} ${selectedDay}` : "Upcoming Tasks"}
           </h4>
-          {selectedDay && <button className="ghost-btn" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => setSelectedDay(null)}>Clear</button>}
+          {selectedDay && (
+            <button className="ghost-btn" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => setSelectedDay(null)}>Clear</button>
+          )}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="calendar-widget-task-list">
           {displayedTasks.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "10px 0", color: "var(--color-muted)", fontSize: 13 }}>No tasks for this date.</div>
+            <div className="calendar-widget-empty">No tasks for this date.</div>
           ) : displayedTasks.map(task => {
             const isOverdue = new Date(task.deadline) < new Date();
             return (
-              <div
+              <button
+                type="button"
                 key={task.reportID}
-                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--color-hover)", border: "1px solid var(--color-border-soft)", borderLeft: isOverdue ? "4px solid var(--color-danger)" : "4px solid var(--color-primary)", padding: "10px 12px", borderRadius: 10, cursor: "pointer" }}
+                className={`calendar-widget-task${isOverdue ? " is-overdue" : ""}`}
                 onClick={() => navigate('/inspections')}
               >
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>{task.detectedName}</div>
-                  <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Inspector: {task.inspectorName || "Unknown"}</div>
-                </div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: isOverdue ? "var(--color-danger)" : "var(--color-primary)" }}>
+                <span className="calendar-widget-task-main">
+                  <span className="calendar-widget-task-name">{task.detectedName}</span>
+                  <span className="calendar-widget-task-meta">Inspector: {task.inspectorName || "Unknown"}</span>
+                </span>
+                <span className="calendar-widget-task-due">
                   {isOverdue ? "⚠ Overdue" : new Date(task.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                </div>
-              </div>
+                </span>
+              </button>
             );
           })}
         </div>
@@ -1084,19 +1108,7 @@ export default function HomePage() {
       </div>
 
       {/* Footer */}
-      <footer className="saas-footer frosted-glass" style={{ marginTop: 32, width: "100%", boxSizing: "border-box" }}>
-        <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
-        <p className="footer-links">
-          <span>BPLO Portal</span> &bull; <span>System Settings</span> &bull;{" "}
-          <button
-            type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent("revela:open-about"))}
-            style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
-          >
-            About &amp; Credits
-          </button>
-        </p>
-      </footer>
+      <Footer style={{ marginTop: 32, width: "100%", boxSizing: "border-box" }} />
 
       {/* Modals */}
       <InspectorReportsModal

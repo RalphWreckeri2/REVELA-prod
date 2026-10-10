@@ -156,6 +156,8 @@ body {
   cursor: pointer;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
   transition: all var(--duration-normal);
+  /* Anchors styled as buttons must never keep the UA link underline. */
+  text-decoration: none;
 }
 .ghost-btn svg {
   width: 16px;
@@ -813,10 +815,14 @@ body {
   border-radius: var(--radius-md);
   padding: 22px 32px;
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 8px 24px;
+  min-width: 0;
 }
 .saas-footer p {
+  min-width: 0;
   font-size: 13px;
   color: #4b5563;
   font-weight: 500;
@@ -2094,6 +2100,47 @@ html.theme-dark .legal-action-pill-btn:hover {
   cursor: not-allowed;
 }
 
+/* Green-accented toolbar navigation (e.g. "Calendar View"). Matches the size and
+   radius of .quick-refresh-btn so it sits naturally in the page toolbar, but is
+   never a <a> styled like body text — it must not inherit link underlines. */
+.toolbar-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-primary-light);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease-out;
+}
+.toolbar-nav-btn svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+.toolbar-nav-btn:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+.toolbar-nav-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+.toolbar-nav-btn:active {
+  transform: translateY(0);
+}
+
 .quick-refresh-icon-btn {
   width: 34px;
   height: 34px;
@@ -2261,6 +2308,11 @@ html.theme-dark .upload-column-badge {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  min-width: 0;
+}
+.inspection-calendar-page-header-text {
   min-width: 0;
 }
 .inspection-calendar-page-header .page-title {
@@ -2273,13 +2325,26 @@ html.theme-dark .upload-column-badge {
   display: inline-flex;
   align-items: center;
   gap: 7px;
+  max-width: 100%;
   color: var(--color-primary);
   font-size: 13px;
   font-weight: 650;
   text-decoration: none;
 }
+.inspection-calendar-back svg {
+  flex: 0 0 auto;
+  transition: transform var(--duration-fast);
+}
 .inspection-calendar-back:hover {
   text-decoration: underline;
+}
+.inspection-calendar-back:hover svg {
+  transform: translateX(-2px);
+}
+.inspection-calendar-back:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
 }
 .registry-workflow-summary {
   width: 100%;
@@ -2408,22 +2473,19 @@ html.theme-dark .upload-column-badge {
   margin: 0;
   line-height: 1.55;
 }
-.inspection-calendar-header,
-.inspection-calendar-month,
 .inspection-calendar-activities-header,
-.inspection-calendar-event-top {
+.inspection-calendar-activity-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
-.inspection-calendar-header {
-  margin-bottom: 22px;
-  flex-wrap: wrap;
-}
+
+/* Two columns: a deliberately narrow calendar next to a wider activity panel,
+   so the date cells stay compact instead of growing into tall squares. */
 .inspection-calendar-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.3fr);
+  grid-template-columns: minmax(0, 420px) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
@@ -2436,19 +2498,69 @@ html.theme-dark .upload-column-badge {
   background: var(--color-modal-bg);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
 }
+.inspection-calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-bottom: 16px;
+}
 .inspection-calendar-month {
-  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.inspection-calendar-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.inspection-calendar-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-input-bg);
+  color: var(--color-ink);
+  cursor: pointer;
+  transition: all var(--duration-fast);
+}
+.inspection-calendar-nav button:hover {
+  background: var(--color-hover);
+  border-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+.inspection-calendar-nav button:active {
+  transform: scale(0.94);
+}
+.inspection-calendar-nav button:focus-visible,
+.inspection-calendar-day:focus-visible,
+.inspection-calendar-tools .ghost-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 .inspection-calendar-tools {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
-  margin: -8px 0 12px;
+  min-width: 0;
+  /* Right-aligns the tools when the toolbar wraps them onto their own row. */
+  margin-left: auto;
 }
 .inspection-calendar-tools .ghost-btn {
-  min-height: 30px;
-  padding: 4px 10px;
+  min-height: 32px;
+  padding: 4px 12px;
   font-size: 12px;
+  white-space: nowrap;
 }
 .inspection-calendar-month h2,
 .inspection-calendar-activities-header h2 {
@@ -2456,82 +2568,112 @@ html.theme-dark .upload-column-badge {
   color: var(--color-ink);
   font-size: 18px;
 }
-.inspection-calendar-month button {
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-input-bg);
-  color: var(--color-ink);
-  font-size: 23px;
-  line-height: 1;
-  cursor: pointer;
+.inspection-calendar-month h2 {
+  min-width: 0;
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .inspection-calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
 }
 .inspection-calendar-weekdays {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-align: center;
 }
 .inspection-calendar-weekdays span {
-  padding: 6px 0;
+  padding: 4px 0;
 }
+/* Moderately rectangular cells: short rows, but never so flat they stop reading
+   as a calendar. `aspect-ratio` keeps every row the same height. */
 .inspection-calendar-empty,
 .inspection-calendar-day {
   min-width: 0;
-  aspect-ratio: 1;
+  aspect-ratio: 1.15;
 }
 .inspection-calendar-day {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   border: 1px solid transparent;
-  border-radius: 11px;
+  border-radius: 10px;
   background: transparent;
   color: var(--color-ink);
   font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
   cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
 }
 .inspection-calendar-day:hover {
   background: var(--color-hover);
 }
-.inspection-calendar-day.is-selected {
-  border-color: var(--color-primary);
-  background: rgba(31, 173, 127, 0.1);
-  color: var(--color-primary);
+.inspection-calendar-day.is-today {
+  border-color: var(--color-primary-light);
+  background: var(--color-primary-light);
   font-weight: 700;
 }
-.inspection-calendar-day small {
-  min-width: 17px;
-  padding: 1px 4px;
+.inspection-calendar-day.is-selected {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+  font-weight: 700;
+}
+.inspection-calendar-day-number {
+  display: block;
+  line-height: 1;
+}
+/* Subtle activity indicator. Counted days show the number so the marker stays
+   legible at these cell sizes; single-event days show a plain dot. */
+.inspection-calendar-day-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 5px;
+  height: 5px;
+  padding: 0;
   border-radius: 999px;
   background: var(--color-primary);
-  color: #fff;
+  color: transparent;
+  font-size: 0;
+}
+.inspection-calendar-day-dot.is-count {
+  min-width: 15px;
+  height: 13px;
+  padding: 0 4px;
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
   font-size: 9px;
-  line-height: 1.3;
+  font-weight: 800;
+  line-height: 1;
 }
 .inspection-calendar-key {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
-  margin: 18px 0 0;
+  margin: 16px 0 0;
   color: var(--color-muted);
   font-size: 11px;
+  line-height: 1.5;
 }
-.inspection-calendar-key span,
-.inspection-calendar-event-dot {
-  width: 9px;
-  height: 9px;
+.inspection-calendar-key-dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 4px;
   border-radius: 50%;
   flex: 0 0 auto;
+  background: var(--color-primary);
 }
 .inspection-calendar-eyebrow {
   margin: 0 0 5px;
@@ -2539,6 +2681,18 @@ html.theme-dark .upload-column-badge {
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.inspection-calendar-activities-header {
+  gap: 12px 16px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.inspection-calendar-activities-heading {
+  min-width: 0;
+}
+.inspection-calendar-activities-header h2 {
+  overflow-wrap: anywhere;
 }
 .inspection-calendar-count {
   padding: 6px 10px;
@@ -2547,60 +2701,203 @@ html.theme-dark .upload-column-badge {
   color: var(--color-muted);
   font-size: 12px;
   white-space: nowrap;
+  flex: 0 0 auto;
+}
+/* Compact status breakdown for the selected day, derived from the activity list
+   that is already loaded — no additional request. */
+.inspection-calendar-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 0;
+}
+.inspection-calendar-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-card-alt);
+}
+.inspection-calendar-summary-item dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inspection-calendar-summary-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.inspection-calendar-summary-item dd {
+  margin: 0;
+  color: var(--color-ink);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
 }
 .inspection-calendar-list {
   display: grid;
-  gap: 0;
-  margin: 20px 0 0;
+  gap: 10px;
+  margin: 18px 0 0;
   padding: 0;
   list-style: none;
 }
-.inspection-calendar-list li {
+.inspection-calendar-activity {
   display: flex;
   gap: 12px;
-  padding: 15px 0;
-  border-top: 1px solid var(--color-border-soft);
-}
-.inspection-calendar-event-dot {
-  margin-top: 5px;
-}
-.inspection-calendar-event-content {
   min-width: 0;
-  flex: 1;
+  padding: 13px 14px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
 }
-.inspection-calendar-event-top strong {
-  color: var(--color-ink);
-  font-size: 13px;
+.inspection-calendar-activity-rail {
+  width: 3px;
+  border-radius: 999px;
+  flex: 0 0 3px;
+  align-self: stretch;
 }
-.inspection-calendar-event-top time,
-.inspection-calendar-event-content small {
+.inspection-calendar-activity-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.inspection-calendar-activity-top {
+  gap: 10px;
+}
+.inspection-calendar-activity-top time {
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
-.inspection-calendar-event-content p {
-  margin: 5px 0;
+.inspection-calendar-status {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspection-calendar-activity-name {
+  margin: 8px 0 0;
   color: var(--color-ink);
-  font-size: 13px;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
-.inspection-calendar-event-content small {
-  display: block;
-  margin-top: 4px;
+.inspection-calendar-activity-meta {
+  margin: 4px 0 0;
+  color: var(--color-muted);
+  font-size: 11.5px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.inspection-calendar-activity-remark {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--color-border);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--color-card-alt);
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.inspection-calendar-activity-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+.inspection-calendar-flag {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 .inspection-calendar-record-link {
-  display: inline-block;
-  margin-top: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
   color: var(--color-primary);
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 650;
   text-decoration: none;
+}
+.inspection-calendar-record-link::after {
+  content: "→";
+  transition: transform var(--duration-fast);
 }
 .inspection-calendar-record-link:hover {
   text-decoration: underline;
 }
+.inspection-calendar-record-link:hover::after {
+  transform: translateX(2px);
+}
+.inspection-calendar-record-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.inspection-calendar-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding: 32px 20px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-alt);
+  text-align: center;
+}
+.inspection-calendar-empty-state img {
+  height: 72px;
+  width: auto;
+  object-fit: contain;
+  opacity: 0.9;
+}
+.inspection-calendar-empty-title {
+  margin: 4px 0 0;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.inspection-calendar-empty-text {
+  margin: 0;
+  max-width: 34ch;
+  color: var(--color-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
 .inspection-calendar-state {
-  margin: 24px 0 0;
+  margin: 20px 0 0;
   color: var(--color-muted);
   font-size: 13px;
 }
@@ -2633,9 +2930,22 @@ html.theme-dark .upload-column-badge {
   border: 0;
 }
 
+/* Below ~1200px the activity panel no longer has room beside a 420px calendar,
+   so the two panels stack and the calendar keeps a capped, compact width. */
+@media (max-width: 1200px) {
+  .inspection-calendar-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .inspection-calendar-panel {
+    max-width: 520px;
+  }
+}
 @media (max-width: 900px) {
   .inspection-calendar-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .inspection-calendar-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 520px) {
@@ -2656,9 +2966,18 @@ html.theme-dark .upload-column-badge {
     border-radius: 8px;
     font-size: 12px;
   }
+  .inspection-calendar-toolbar {
+    align-items: flex-start;
+  }
+  .inspection-calendar-tools {
+    justify-content: flex-start;
+  }
   .inspection-calendar-activities-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+  .inspection-calendar-summary {
+    grid-template-columns: minmax(0, 1fr);
   }
   .desktop-access-card {
     padding: 28px 22px;

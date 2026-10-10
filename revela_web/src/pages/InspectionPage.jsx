@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useContext } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
+import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
 import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
 import {
@@ -113,6 +114,14 @@ const Icon = {
       <polyline points="21 8 21 21 3 21 3 8" />
       <rect x="1" y="3" width="22" height="5" />
       <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  ),
+  Calendar: () => (
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
     </svg>
   ),
 };
@@ -1253,7 +1262,8 @@ export default function InspectionPage() {
                 ))}
               </select>
             )}
-            <Link className="ghost-btn" to="/inspections/calendar">
+            <Link className="toolbar-nav-btn" to="/inspections/calendar">
+              <Icon.Calendar />
               Calendar View
             </Link>
           </div>
@@ -1336,19 +1346,7 @@ export default function InspectionPage() {
       )}
 
       {/* Footer */}
-      <footer className="saas-footer frosted-glass">
-        <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
-        <p className="footer-links">
-          <span>BPLO Portal</span> &bull; <span>System Settings</span> &bull;{" "}
-          <button
-            type="button"
-            onClick={() => window.dispatchEvent(new CustomEvent("revela:open-about"))}
-            style={{ background: "none", border: "none", padding: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
-          >
-            About &amp; Credits
-          </button>
-        </p>
-      </footer>
+      <Footer />
 
       {/* Assign Modal */}
       <AnimatePresence isVisible={!!assignTarget}>

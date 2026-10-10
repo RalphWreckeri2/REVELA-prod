@@ -1,6 +1,7 @@
 import { useContext } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
+import Footer from "../components/Footer";
 import InspectionCalendar from "../components/InspectionCalendar";
 import { AuthContext } from "../context/authContext";
 
@@ -26,9 +27,23 @@ export default function InspectionCalendarPage() {
       user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}
     >
       <header className="inspection-calendar-page-header">
-        <div>
+        <div className="inspection-calendar-page-header-text">
           <Link className="inspection-calendar-back" to="/inspections">
-            <span aria-hidden="true">←</span> Back to Dispatch
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="19" y1="12" x2="5" y2="12" />
+              <polyline points="12 19 5 12 12 5" />
+            </svg>
+            Back to Dispatch
           </Link>
           <h1 className="page-title">Inspection Calendar</h1>
           <p className="page-subtitle">
@@ -36,7 +51,10 @@ export default function InspectionCalendarPage() {
           </p>
         </div>
       </header>
+
       <InspectionCalendar token={token} initialDate={initialDate} />
+
+      <Footer />
     </DashboardLayout>
   );
 }
