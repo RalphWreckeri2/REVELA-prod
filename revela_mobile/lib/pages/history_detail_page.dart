@@ -400,18 +400,7 @@ class HistoryDetailPage extends StatelessWidget {
                           if (absoluteUrl == null) return const SizedBox();
                           return ClipRRect(
                             borderRadius: BorderRadius.circular(10),
-                            child: Image.network(
-                              absoluteUrl,
-                              height: 180,
-                              width: 140,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => Container(
-                                height: 180,
-                                width: 140,
-                                color: Colors.grey[200],
-                                child: Icon(Icons.broken_image_outlined, color: Colors.grey),
-                              ),
-                            ),
+                            child: _AuthorizedEvidenceImage(url: absoluteUrl),
                           );
                         },
                       ),
@@ -448,6 +437,54 @@ class HistoryDetailPage extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _AuthorizedEvidenceImage extends StatefulWidget {
+  final String url;
+
+  const _AuthorizedEvidenceImage({required this.url});
+
+  @override
+  State<_AuthorizedEvidenceImage> createState() =>
+      _AuthorizedEvidenceImageState();
+}
+
+class _AuthorizedEvidenceImageState extends State<_AuthorizedEvidenceImage> {
+  late final Future<String?> _tokenFuture =
+      const FlutterSecureStorage().read(key: 'jwt_token');
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<String?>(
+      future: _tokenFuture,
+      builder: (context, snapshot) {
+        final token = snapshot.data;
+        if (snapshot.connectionState != ConnectionState.done || token == null) {
+          return Container(
+            height: 180,
+            width: 140,
+            color: Colors.grey[200],
+            alignment: Alignment.center,
+            child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+          );
+        }
+        return Image.network(
+          widget.url,
+          headers: {'Authorization': 'Bearer $token'},
+          height: 180,
+          width: 140,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => Container(
+            height: 180,
+            width: 140,
+            color: Colors.grey[200],
+            alignment: Alignment.center,
+            child: const Icon(Icons.broken_image_outlined, color: Colors.grey),
+          ),
+        );
+      },
     );
   }
 }

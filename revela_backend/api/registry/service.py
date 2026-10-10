@@ -1426,6 +1426,10 @@ def snap_unresolved_pins(limit: int = 200):
     """
     from api.notifications import hub
     from api.models.geospatial import insert_green_flag
+    from api.registry.audit import (
+        ensure_registry_workflow_events,
+        record_registry_workflow_event,
+    )
 
     places_resolver.reset_run_state()
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
@@ -1445,6 +1449,7 @@ def snap_unresolved_pins(limit: int = 200):
         return None, err
 
     try:
+        ensure_registry_workflow_events()
         cursor = mysql.connection.cursor()
 
         # Filter cached pins in Python before applying the per-run candidate limit.
@@ -1741,6 +1746,16 @@ def snap_unresolved_pins(limit: int = 200):
                     )
                     _sync_flag_color(cur2, brgy_id, name, app_status, lat, lng,
                                      address, business_id=bid)
+                    record_registry_workflow_event(
+                        cur2,
+                        bid,
+                        "snapped",
+                        result_status=match_status,
+                        place_id=place_id,
+                        latitude=lat,
+                        longitude=lng,
+                        match_score=match_score,
+                    )
                     mysql.connection.commit()
                     snapped += 1
                 else:

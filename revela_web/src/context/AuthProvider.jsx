@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from "react";
-import { loginRequest, getMeRequest } from "../services/api";
+import { loginRequest, getMeRequest, logoutRequest } from "../services/api";
 import { AuthContext } from "./authContext";
+
+const isDevPreviewToken = (value) =>
+  import.meta.env.DEV && value === "dev-admin-token";
 
 export function AuthProvider({ children }) {
   const [token, setTokenState] = useState(() => localStorage.getItem("revela_token"));
-  const [user, setUser] = useState(() => token === "dev-admin-token"
+  const [user, setUser] = useState(() => isDevPreviewToken(token)
     ? { id: 1, fullName: "BPLO Administrator", role: "Admin", email: "admin@mataasnakahoy.gov.ph" }
     : null);
 
@@ -18,7 +21,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    if (!token || user || token === "dev-admin-token") return undefined;
+    if (!token || user || isDevPreviewToken(token)) return undefined;
 
     let isCurrent = true;
     const hydrateUser = async () => {
@@ -97,9 +100,14 @@ export function AuthProvider({ children }) {
   }, [token, refreshUser]);
 
   const logout = useCallback(() => {
+    if (token && !isDevPreviewToken(token)) {
+      void logoutRequest(token).catch((error) => {
+        console.error("Failed to revoke server session during logout", error);
+      });
+    }
     setToken(null);
     setUser(null);
-  }, [setToken]);
+  }, [token, setToken]);
 
   return (
     <AuthContext.Provider value={{ token, user, login, completeLogin, logout, refreshUser }}>

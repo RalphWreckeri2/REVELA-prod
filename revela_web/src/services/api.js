@@ -92,7 +92,7 @@ export async function loginRequest(email, password) {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, source: "web" }),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -104,6 +104,14 @@ export async function loginRequest(email, password) {
     }
     throw err;
   }
+}
+
+export async function logoutRequest(token) {
+  const res = await fetch(`${BASE_URL}/auth/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return await handleResponse(res);
 }
 
 export async function getMeRequest(token) {
@@ -883,6 +891,32 @@ export async function getInspectionsRequest(params = {}, token) {
   }
 }
 
+export async function getInspectionCalendarRequest(month, date, token) {
+  try {
+    const qs = new URLSearchParams({ month, date });
+    const res = await fetch(`${BASE_URL}/inspections/calendar?${qs}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getRegistryWorkflowSummaryRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/registry/workflow-summary`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+    throw err;
+  }
+}
+
 /**
  * GET /api/users (reuse if you already have this, otherwise add it)
  * Fetch inspector list for the assign dropdown.
@@ -1048,6 +1082,21 @@ export async function getAnalyticsOverviewRequest(arg1, arg2) {
       ? `${BASE_URL}/analytics/all?${q}`
       : `${BASE_URL}/analytics/all`;
     const res = await fetch(url, {
+      method: "GET",
+      headers: authHeaders(token),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getDemographicReportsRequest(token) {
+  try {
+    if (!token) {
+      throw new Error("Missing authentication token.");
+    }
+    const res = await fetch(`${BASE_URL}/analytics/demographic-reports`, {
       method: "GET",
       headers: authHeaders(token),
     });

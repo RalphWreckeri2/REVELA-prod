@@ -7,6 +7,8 @@ from api.middleware.decorators import jwt_required
 from api.models.user import find_user_by_id, find_user_by_email, enable_user_2fa, update_user_2fa_secret, get_user_2fa_secret, set_reset_requested, update_fcm_token, clear_fcm_token
 from api.notifications.service import get_email_inspection_alerts, set_email_inspection_alerts, notify_password_reset_request
 from datetime import timedelta
+import re
+from api.auth.sessions import issue_session_token, revoke_session
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -21,13 +23,26 @@ def login():
     if not data or not data.get("email") or not data.get("password"):
         return jsonify({"error": "email and password are required"}), 400
 
+    source = data.get("source", "web")
+    if source not in ("web", "mobile"):
+        return jsonify({"error": "Unsupported login client."}), 400
+    if source == "web" and re.search(
+        r"Android|iPhone|iPad|iPod|Mobile|Windows Phone",
+        request.headers.get("User-Agent", ""),
+        re.IGNORECASE,
+    ):
+        return jsonify({
+            "code": "desktop_access_required",
+            "error": "The REVELA web portal is available on desktop or laptop browsers.",
+        }), 403
+
     email = data["email"].strip().lower() if isinstance(data["email"], str) else ""
     password = data["password"]
     if not email or not isinstance(password, str):
         return jsonify({"error": "email and password are required"}), 400
 
     try:
-        token, error = login_user(email, password)
+        _authenticated, error = login_user(email, password)
 
         if error:
             # Keep this response generic to avoid revealing which emails exist.
@@ -45,7 +60,6 @@ def login():
         return jsonify({"error": "Unable to process login at this time"}), 500
 
     # ── Role gate ──
-    source = data.get("source")
     if source == "mobile":
         if user and user.get("userRole") != "Inspector":
             return jsonify({"error": "Access denied. Mobile app is for Inspectors only."}), 403
@@ -57,7 +71,10 @@ def login():
     if user and user.get("is_2fa_enabled"):
         temp_token = create_access_token(
             identity=str(user["userID"]),
-            additional_claims={"2fa_pending": True},
+            additional_claims={
+                "2fa_pending": True,
+                "client_type": source,
+            },
             expires_delta=timedelta(minutes=5)
         )
         return jsonify({
@@ -65,6 +82,12 @@ def login():
             "tempToken": temp_token,
             "userId": user["userID"]
         }), 200
+
+    try:
+        token = issue_session_token(user, source)
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "Unable to start a secure session at this time."}), 503
 
     return jsonify({
         "access_token": token,
@@ -83,8 +106,15 @@ def login():
 @auth_bp.route("/logout", methods=["POST"])
 @jwt_required()
 def logout():
-    """Clear the device token only when the user explicitly logs out."""
-    clear_fcm_token(int(get_jwt_identity()))
+    """Revoke this exact session; an older device cannot revoke a newer login."""
+    user_id = int(get_jwt_identity())
+    claims = get_jwt()
+    try:
+        revoke_session(user_id, claims.get("session_id"))
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "Unable to securely end this session."}), 503
+    clear_fcm_token(user_id)
     return jsonify({"message": "Logged out"}), 200
 
 
@@ -368,11 +398,10 @@ def verify_2fa_login():
         return jsonify({"error": "Invalid 2FA code or 2FA not enabled"}), 400
 
     # Code is valid, provide the real access token for the dashboard
-    token = create_access_token(
-        identity=str(user["userID"]),
-        additional_claims={
-            "role": user["userRole"],
-            "mustChangePassword": bool(user.get("mustChangePassword", False))
-        }
-    )
+    client_type = claims.get("client_type", "web")
+    try:
+        token = issue_session_token(user, client_type)
+    except Exception:
+        traceback.print_exc()
+        return jsonify({"error": "Unable to start a secure session at this time."}), 503
     return jsonify({"access_token": token}), 200

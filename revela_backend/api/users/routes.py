@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 from flask_jwt_extended import get_jwt_identity
 from api.middleware.decorators import admin_required
 from api.models.user import (get_all_users, get_users_by_role, find_user_by_email,
@@ -7,7 +7,6 @@ from api.models.user import (get_all_users, get_users_by_role, find_user_by_emai
 import bcrypt
 import re
 import secrets
-import traceback
 
 users_bp = Blueprint("users", __name__)
 
@@ -201,9 +200,9 @@ def reset_user_password_route(user_id):
             "message": f"Password for user {user_to_reset['fullName']} has been reset.",
             "tempPassword": new_password
         }), 200
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+    except Exception:
+        current_app.logger.exception("Failed to reset user password")
+        return jsonify({"error": "Internal server error"}), 500
 
 
 # ── DELETE /api/users/:id ─────────────────────────────────────────────────────

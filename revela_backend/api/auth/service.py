@@ -11,7 +11,6 @@ from api.models.otp import (
     invalidate_user_otps,
     get_daily_otp_count,
 )
-from flask_jwt_extended import create_access_token
 import pyotp
 
 
@@ -47,16 +46,7 @@ def login_user(email, password):
     # Stamp last login
     update_last_login(user["userID"])
 
-    # Create JWT — additional_claims carries role and application-specific states
-    token = create_access_token(
-        identity=str(user["userID"]),
-        additional_claims={
-            "role": user["userRole"],
-            "mustChangePassword": bool(user.get("mustChangePassword", False))
-        }
-    )
-
-    return token, None
+    return True, None
 
 
 def request_otp(identifier):

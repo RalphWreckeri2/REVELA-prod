@@ -124,10 +124,46 @@ def reconcile_flags_route():
             return jsonify({"error": "Cannot reconcile: The official business registry is empty. Please import business records first."}), 400
 
         if red_count == 0:
-            return jsonify({"message": "No Red flags to reconcile. All existing flags are already reconciled.", "converted": 0, "total": 0}), 200
+            return jsonify({
+                "message": "No Red flags to reconcile. All existing flags are already reconciled.",
+                "converted": 0,
+                "reconciled_records": 0,
+                "total": 0,
+            }), 200
+
+        from api.registry.audit import ensure_registry_workflow_events
+        ensure_registry_workflow_events()
+        cursor = mysql.connection.cursor()
+        cursor.execute("SELECT COALESCE(MAX(eventID), 0) AS last_event_id FROM registry_workflow_events")
+        event_row = cursor.fetchone()
+        last_event_id = (
+            event_row.get("last_event_id")
+            if isinstance(event_row, dict)
+            else event_row[0]
+        ) if event_row else 0
+        cursor.close()
 
         converted = reconcile_existing_flags(force=True)
-        return jsonify({"message": f"{converted} flag(s) reconciled out of {red_count} Red flag(s).", "converted": converted, "total": red_count}), 200
+
+        cursor = mysql.connection.cursor()
+        cursor.execute("""
+            SELECT COUNT(DISTINCT businessID) AS total
+            FROM registry_workflow_events
+            WHERE eventType = 'reconciled' AND eventID > %s
+        """, (last_event_id,))
+        reconciled_row = cursor.fetchone()
+        reconciled_records = (
+            reconciled_row.get("total")
+            if isinstance(reconciled_row, dict)
+            else reconciled_row[0]
+        ) if reconciled_row else 0
+        cursor.close()
+        return jsonify({
+            "message": f"{converted} flag(s) reconciled out of {red_count} Red flag(s).",
+            "converted": converted,
+            "reconciled_records": int(reconciled_records),
+            "total": red_count,
+        }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

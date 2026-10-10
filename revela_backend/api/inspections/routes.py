@@ -1,6 +1,8 @@
 import os
 import uuid
 import threading
+import re
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Blueprint, request, jsonify, send_from_directory, send_file, after_this_request, current_app
 from flask_jwt_extended import get_jwt_identity
@@ -14,17 +16,22 @@ from api.inspections.service import (
     reassign_submitted_report,
     verify_inspection,
     get_all_inspections,
+    get_inspection_calendar,
+    user_can_access_inspection_evidence,
     get_evidence_storage_stats,
     generate_evidence_archive_zip,
     cleanup_archived_evidence,
 )
 from api.middleware.decorators import jwt_required, admin_required
+from api.models.user import find_user_by_id
 from api.notifications.service import (
     notify_inspection_assigned,
     notify_inspection_submitted,
 )
 
 inspections_bp = Blueprint("inspections", __name__)
+_PHILIPPINE_TIMEZONE = timezone(timedelta(hours=8))
+_MAX_EVIDENCE_UPLOAD_BYTES = 10 * 1024 * 1024
 
 _EVIDENCE_DIR = os.path.abspath(
     os.path.join(
@@ -74,6 +81,11 @@ def upload_evidence():
     if not file or file.filename == "":
         return jsonify({"error": "Empty file"}), 400
 
+    contents = file.stream.read(_MAX_EVIDENCE_UPLOAD_BYTES + 1)
+    if len(contents) > _MAX_EVIDENCE_UPLOAD_BYTES:
+        return jsonify({"error": "Evidence images must be 10 MB or smaller"}), 413
+    file.stream.seek(0)
+
     orig = secure_filename(file.filename) or "evidence.jpg"
     ext = os.path.splitext(orig)[1].lower()
     if ext not in (".jpg", ".jpeg", ".png", ".webp"):
@@ -90,15 +102,29 @@ def upload_evidence():
 
 # ── GET /api/inspections/public-evidence/<name> ───────────────────────────────
 @inspections_bp.route("/public-evidence/<filename>", methods=["GET"])
+@jwt_required()
 def download_public_evidence(filename):
-    """Serve inspection images (unguessable filenames). No auth for <img> tags."""
-    if not filename or ".." in filename or "/" in filename or "\\" in filename:
-        return jsonify({"error": "Invalid filename"}), 400
+    """Serve evidence only to its inspector or a currently authorized admin."""
+    if not re.fullmatch(r"[0-9a-f]{32}\.(?:jpg|jpeg|png|webp)", filename):
+        return jsonify({"error": "Not found"}), 404
+
+    user_id = get_jwt_identity()
+    user = find_user_by_id(int(user_id))
+    if not user:
+        return jsonify({"error": "Not found"}), 404
+    current_role = user.get("userRole") or user.get("role")
+    is_admin = current_role in ("Admin", "SUPER_ADMIN", "System Administrator")
+    if not user_can_access_inspection_evidence(filename, user_id, is_admin=is_admin):
+        return jsonify({"error": "Not found"}), 404
+
     folder = _ensure_evidence_dir()
     path = os.path.join(folder, filename)
     if not os.path.isfile(path):
         return jsonify({"error": "Not found"}), 404
-    return send_from_directory(folder, filename)
+    response = send_from_directory(folder, filename)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 # ── POST /api/inspections/assign ──────────────────────────────────────────────
@@ -255,6 +281,41 @@ def verify(report_id):
 
 
 # ── GET /api/inspections ──────────────────────────────────────────────────────
+@inspections_bp.route("/calendar", methods=["GET"])
+@jwt_required()
+def inspection_calendar():
+    today = datetime.now(_PHILIPPINE_TIMEZONE).date()
+    month_value = request.args.get("month", today.strftime("%Y-%m"))
+    selected_value = request.args.get("date", today.isoformat())
+    try:
+        month_start = date.fromisoformat(f"{month_value}-01")
+        selected_date = date.fromisoformat(selected_value)
+        if selected_date.strftime("%Y-%m") != month_start.strftime("%Y-%m"):
+            raise ValueError("Selected day is not in requested month")
+        if month_start.month == 12:
+            month_end = date(month_start.year + 1, 1, 1)
+        else:
+            month_end = date(month_start.year, month_start.month + 1, 1)
+    except ValueError:
+        return jsonify({"error": "Provide a valid month (YYYY-MM) and date (YYYY-MM-DD)."}), 400
+
+    identity = get_jwt_identity()
+    current_user = find_user_by_id(int(identity))
+    current_role = (current_user or {}).get("userRole") or (current_user or {}).get("role")
+    user_id = (
+        None
+        if current_role in ("Admin", "SUPER_ADMIN", "System Administrator")
+        else identity
+    )
+    result, error = get_inspection_calendar(
+        month_start, month_end, selected_date, user_id=user_id
+    )
+    if error:
+        current_app.logger.exception("Inspection calendar query failed: %s", error)
+        return jsonify({"error": "Unable to load inspection calendar."}), 500
+    return jsonify(result), 200
+
+
 @inspections_bp.route("", methods=["GET"])
 @inspections_bp.route("/", methods=["GET"])
 @admin_required()

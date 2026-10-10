@@ -52,6 +52,8 @@ class RegistrySnapTests(unittest.TestCase):
             select_cursor, update_cursor]
 
         with (
+            patch("api.registry.audit.ensure_registry_workflow_events"),
+            patch("api.registry.audit.record_registry_workflow_event"),
             patch.object(service, "mysql", mock_mysql),
             patch.object(service, "GOOGLE_MAPS_API_KEY", "dummy_test_key"),
             patch.object(service.places_resolver,
@@ -125,6 +127,8 @@ class RegistrySnapTests(unittest.TestCase):
         }
 
         with (
+            patch("api.registry.audit.ensure_registry_workflow_events"),
+            patch("api.registry.audit.record_registry_workflow_event"),
             patch.object(service, "mysql", mock_mysql),
             patch.object(service, "GOOGLE_MAPS_API_KEY", "dummy_test_key"),
             patch.object(service.places_resolver, "reset_run_state"),

@@ -614,7 +614,121 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
+    final screenWidth = MediaQuery.of(context).size.width;
     final paddingTop = MediaQuery.of(context).padding.top;
+    final compactHeader = screenWidth < 380;
+    final hasCount = !_loadingTasks &&
+        (_dockerTab == 'tasks' ? _tasks.isNotEmpty : _myFlags.isNotEmpty);
+    final hasSort = !_loadingTasks && _tasks.isNotEmpty;
+
+    final dockerTitle = _isFirstLoad
+        ? Text(
+            "Saan ang Sinsay?",
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: context.adaptiveTextDark,
+            ),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(
+                onTap: () => setState(() => _dockerTab = 'tasks'),
+                child: Text(
+                  "Tasks",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: _dockerTab == 'tasks'
+                        ? context.adaptiveTextDark
+                        : Colors.grey,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              GestureDetector(
+                onTap: () => setState(() => _dockerTab = 'flags'),
+                child: Text(
+                  "My Flags",
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: _dockerTab == 'flags'
+                        ? context.adaptiveTextDark
+                        : Colors.grey,
+                  ),
+                ),
+              ),
+            ],
+          );
+    final countBadge = hasCount
+        ? Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: context.isDarkMode
+                  ? Colors.black
+                  : AppColors.darkGreen.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _dockerTab == 'tasks'
+                  ? '${_tasks.length} task${_tasks.length != 1 ? 's' : ''}'
+                  : '${_myFlags.length} flag${_myFlags.length != 1 ? 's' : ''}',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: context.isDarkMode ? Colors.white : AppColors.darkGreen,
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
+    final sortControl = hasSort
+        ? GestureDetector(
+            onTap: () => setState(
+              () => _sortBy = _sortBy == 'newest' ? 'oldest' : 'newest',
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: context.isDarkMode
+                    ? Colors.black
+                    : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: context.isDarkMode
+                      ? Colors.white
+                      : Colors.transparent,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _sortBy == 'newest'
+                        ? Icons.arrow_downward_rounded
+                        : Icons.arrow_upward_rounded,
+                    size: 12,
+                    color: context.isDarkMode
+                        ? Colors.white
+                        : const Color(0xFF64748B),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _sortBy == 'newest' ? 'Newest' : 'Oldest',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: context.isDarkMode
+                          ? Colors.white
+                          : const Color(0xFF64748B),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : const SizedBox.shrink();
 
     // Reactively update map style if theme changes while map is already created
     
@@ -842,119 +956,51 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // Header row
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: _isFirstLoad ? Text(
-                                    "Saan ang Sinsay?",
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
+                            if (compactHeader) ...[
+                              Row(
+                                children: [
+                                  Expanded(child: dockerTitle),
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.close_rounded,
                                       color: context.adaptiveTextDark,
                                     ),
-                                  ) : Row(
+                                    onPressed: _toggleDocker,
+                                  ),
+                                ],
+                              ),
+                              if (hasCount || hasSort)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Row(
                                     children: [
-                                      GestureDetector(
-                                        onTap: () => setState(() => _dockerTab = 'tasks'),
-                                        child: Text(
-                                          "Tasks",
-                                          style: TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold,
-                                            color: _dockerTab == 'tasks' ? context.adaptiveTextDark : Colors.grey,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      GestureDetector(
-                                        onTap: () => setState(() => _dockerTab = 'flags'),
-                                        child: Text(
-                                          "My Flags",
-                                          style: TextStyle(
-                                            fontSize: 20,
-                                            fontWeight: FontWeight.bold,
-                                            color: _dockerTab == 'flags' ? context.adaptiveTextDark : Colors.grey,
-                                          ),
-                                        ),
-                                      ),
+                                      countBadge,
+                                      const Spacer(),
+                                      sortControl,
                                     ],
                                   ),
                                 ),
-                                // Task count badge
-                                if (!_loadingTasks && (_dockerTab == 'tasks' ? _tasks.isNotEmpty : _myFlags.isNotEmpty))
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
+                            ] else
+                              Row(
+                                children: [
+                                  Expanded(child: dockerTitle),
+                                  if (hasCount) ...[
+                                    const SizedBox(width: 8),
+                                    countBadge,
+                                  ],
+                                  if (hasSort) ...[
+                                    const SizedBox(width: 8),
+                                    sortControl,
+                                  ],
+                                  IconButton(
+                                    icon: Icon(
+                                      Icons.close_rounded,
+                                      color: context.adaptiveTextDark,
                                     ),
-                                    decoration: BoxDecoration(
-                                      color: context.isDarkMode ? Colors.black : AppColors.darkGreen.withValues(alpha: 
-                                        0.1,
-                                      ),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      _dockerTab == 'tasks' ? '${_tasks.length} task${_tasks.length != 1 ? 's' : ''}' : '${_myFlags.length} flag${_myFlags.length != 1 ? 's' : ''}',
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                        color: context.isDarkMode ? Colors.white : AppColors.darkGreen,
-                                      ),
-                                    ),
-                                  ),
-                                // Sort toggle
-                                if (!_loadingTasks && _tasks.isNotEmpty) ...[
-                                  const SizedBox(width: 8),
-                                  GestureDetector(
-                                    onTap: () => setState(
-                                      () => _sortBy = _sortBy == 'newest'
-                                          ? 'oldest'
-                                          : 'newest',
-                                    ),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: context.isDarkMode ? Colors.black : const Color(0xFFF1F5F9),
-                                        borderRadius: BorderRadius.circular(12),
-                                        border: Border.all(color: context.isDarkMode ? Colors.white : Colors.transparent),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            _sortBy == 'newest'
-                                                ? Icons.arrow_downward_rounded
-                                                : Icons.arrow_upward_rounded,
-                                            size: 12,
-                                            color: context.isDarkMode ? Colors.white : const Color(0xFF64748B),
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            _sortBy == 'newest'
-                                                ? 'Newest'
-                                                : 'Oldest',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                              color: context.isDarkMode ? Colors.white : const Color(0xFF64748B),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
+                                    onPressed: _toggleDocker,
                                   ),
                                 ],
-                                IconButton(
-                                  icon: Icon(Icons.close_rounded, color: context.adaptiveTextDark),
-                                  onPressed: _toggleDocker,
-                                ),
-                              ],
-                            ),
+                              ),
                             const SizedBox(height: 16),
 
                             // Task list

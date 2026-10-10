@@ -11,6 +11,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { GoogleMap, Data } from "@react-google-maps/api";
 import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import DashboardLayout from "../components/DashboardLayout";
+import "../styles/MapPage.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import ApiUsageSettingsPanel from "../components/ApiUsageSettingsPanel";
 import { AuthContext } from "../context/authContext";
@@ -38,6 +39,7 @@ import {
   cancelRunDetection,
   getDetectionQuotaRequest,
   getPlacesUsageRequest,
+  getRegistryWorkflowSummaryRequest,
   reconcileFlagsRequest,
   snapUnresolvedPinsRequest,
   reverifyPreviewRequest,
@@ -163,6 +165,19 @@ const Icon = {
       <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
     </svg>
   ),
+};
+
+const escapeHtml = (value) => String(value ?? "")
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;")
+  .replaceAll("'", "&#39;");
+
+const formatWorkflowDate = (value) => {
+  if (!value) return "—";
+  const parsed = new Date(String(value).replace(" ", "T"));
+  return Number.isNaN(parsed.getTime()) ? escapeHtml(value) : escapeHtml(parsed.toLocaleString());
 };
 
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1480,7 +1495,7 @@ function MapCanvas({
               etrText = `~${total_steps * 2}s remaining`;
             }
           } else if (stage === "matching") {
-            etrText = "Finishing up...";
+            etrText = "Matching records...";
           } else if (stage === "completed" || percentage >= 100) {
             etrText = "Scan Complete!";
           }
@@ -1499,7 +1514,7 @@ function MapCanvas({
             zIndex: 200,
             transition: "all 0.3s ease"
           }}>
-            <div style={{
+            <div className="map-detection-progress-card" style={{
               display: "flex",
               flexDirection: "column",
               gap: 16,
@@ -1544,7 +1559,14 @@ function MapCanvas({
                 </div>
 
                 {/* Progress bar */}
-                <div style={{ width: "100%", height: 8, background: "rgba(15, 23, 42, 0.6)", borderRadius: 10, overflow: "hidden", border: "1px solid var(--color-input-bg)" }}>
+                <div
+                  role="progressbar"
+                  aria-label="Geospatial scan progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={detectionProgress?.percentage ?? 0}
+                  style={{ width: "100%", height: 8, background: "rgba(15, 23, 42, 0.6)", borderRadius: 10, overflow: "hidden", border: "1px solid var(--color-input-bg)" }}
+                >
                   <div
                     style={{
                       width: `${detectionProgress?.percentage ?? 0}%`,
@@ -1564,8 +1586,8 @@ function MapCanvas({
               </div>
 
               {/* Footer with clock and ETR */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", borderTop: "1px solid var(--color-input-bg)", paddingTop: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div className="map-detection-progress-footer" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", borderTop: "1px solid var(--color-input-bg)", paddingTop: 12 }}>
+                <div className="map-detection-progress-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--color-muted)", fontSize: 11, fontWeight: 500 }}>
                     <span style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: "#10b981", boxShadow: "0 0 8px #10b981" }} />
                     <span>Elapsed: {elapsedTime}s</span>
@@ -2032,6 +2054,7 @@ export default function MapPage() {
 
   const mapRef = useRef(null);
   const detailModalCameraRef = useRef(null);
+  const workflowSummaryShownRef = useRef(true);
 
   const [flags, setFlags] = useState([]);
   const [barangayRiskLevels, setBarangayRiskLevels] = useState({});
@@ -2047,6 +2070,7 @@ export default function MapPage() {
   const [reconcileProgress, setReconcileProgress] = useState(null);
   const reconcileProgressRef = useRef(null);
   const [snapProgress, setSnapProgress] = useState(null);
+  const snapRunModeRef = useRef("snap");
   const [showReviewQueue, setShowReviewQueue] = useState(false);
   const [reviewQueue, setReviewQueue] = useState(null);
   const [reviewQueuePage, setReviewQueuePage] = useState(1);
@@ -2062,6 +2086,95 @@ export default function MapPage() {
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const [opsRankings, setOpsRankings] = useState([]);
+
+  const showWorkflowOperationSummary = useCallback(async (operation, outcome = {}) => {
+    const config = {
+      reconcile: { title: "Reconcile Complete", section: "reconciled", label: "Reconciled" },
+      snap: { title: "Snap Pins Complete", section: "snapped", label: "Snapped to Map" },
+      reverify: { title: "Re-verify Complete", section: "reverified", label: "Reverified" },
+    }[operation];
+    if (!config) return;
+
+    let savedSection = null;
+    let detailsUnavailable = false;
+    try {
+      const summary = await getRegistryWorkflowSummaryRequest(token);
+      savedSection = summary?.[config.section] || { count: 0, records: [] };
+    } catch {
+      detailsUnavailable = true;
+    }
+
+    const operationCount = operation === "reconcile"
+      ? Number(outcome.reconciled_records ?? outcome.converted ?? 0)
+      : operation === "reverify"
+        ? Number(outcome.resolved ?? outcome.snapped ?? 0)
+        : Number(outcome.snapped ?? 0);
+    const extraCounts = [
+      ["No match", outcome.no_match],
+      ["Skipped by quota", outcome.skipped_quota],
+      ["API errors", outcome.api_error],
+    ].filter(([, value]) => value !== undefined && value !== null);
+    const countMarkup = [
+      `<p><strong>${escapeHtml(config.label)} this run:</strong> ${Number.isFinite(operationCount) ? operationCount : 0}</p>`,
+      ...extraCounts.map(([label, value]) => `<p><strong>${escapeHtml(label)}:</strong> ${Number(value) || 0}</p>`),
+    ].join("");
+    const latestRecords = operationCount > 0 && Array.isArray(savedSection?.records)
+      ? savedSection.records
+      : [];
+    const detailMarkup = latestRecords.length
+      ? `<div style="max-height:60vh;overflow:auto;text-align:left"><table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr><th style="text-align:left;padding:8px">Business</th><th style="text-align:left;padding:8px">Status</th><th style="text-align:left;padding:8px">Date</th><th style="text-align:left;padding:8px">Address / location</th></tr></thead>
+          <tbody>${latestRecords.map((record) => {
+            const location = [
+              record.latitude ?? record.newLat,
+              record.longitude ?? record.newLng,
+            ].every((value) => value !== null && value !== undefined)
+              ? `${record.latitude ?? record.newLat}, ${record.longitude ?? record.newLng}`
+              : "";
+            const placeDetails = [record.businessAddress, location].filter(Boolean).join(" · ") || "—";
+            return `<tr>
+              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px"><strong>${escapeHtml(record.businessName || "Unnamed business")}</strong><br><small>${escapeHtml(record.businessID || "")}</small></td>
+              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px">${escapeHtml(record.resultStatus || record.failReason || record.reason || "Recorded")}</td>
+              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px">${formatWorkflowDate(record.eventAt)}</td>
+              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px">${escapeHtml(placeDetails)}</td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table></div>
+        <p style="text-align:left;font-size:11px;color:#64748b">Showing the latest saved database records for this workflow (up to ${latestRecords.length}). The count above is from this run.</p>`
+      : `<p>${operationCount === 0 ? "No database records were affected by this run." : "No saved detail records are available for this workflow yet."}</p>`;
+
+    const result = await Swal.fire({
+      icon: "success",
+      title: config.title,
+      html: `${countMarkup}${detailsUnavailable
+        ? '<p>Saved record details could not be loaded. Please try again from Maps &amp; Flags.</p>'
+        : '<p>The run counts above come from the completed operation. Use View details to inspect saved database records.</p>'}`,
+      showDenyButton: true,
+      confirmButtonText: "Close",
+      denyButtonText: "View details",
+      confirmButtonColor: "#059669",
+      denyButtonColor: "#6366f1",
+    });
+
+    if (result.isDenied) {
+      if (detailsUnavailable) {
+        await Swal.fire({
+          icon: "error",
+          title: "Details unavailable",
+          text: "The operation completed, but saved database records could not be loaded. Refresh and try again.",
+          confirmButtonColor: "#ef4444",
+        });
+        return;
+      }
+      await Swal.fire({
+        title: `${config.label} — Saved Records`,
+        html: detailMarkup,
+        width: 900,
+        confirmButtonText: "Close",
+        confirmButtonColor: "#6366f1",
+      });
+    }
+  }, [token]);
 
   const [layers, setLayers] = useState({ base: true, flags: true, barangay: false, diagnostics: false });
   const [selectedFlag, setSelectedFlag] = useState(null);   // logID of selected flag
@@ -2130,6 +2243,9 @@ export default function MapPage() {
   const [filterSource, setFilterSource] = useState("all");
 
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
+  const priorityDispatchQueue = opsRankings
+    .filter((ranking) => ranking.flagged_count > 0)
+    .slice(0, 3);
 
   const [showYellowModal, setShowYellowModal] = useState(false);
   const [isPickingYellowLocation, setIsPickingYellowLocation] = useState(false);
@@ -2352,6 +2468,22 @@ export default function MapPage() {
         snapDismissedRef.current = false;
         fetchFlags(true);
         fetchPlacesUsage();
+        if (!workflowSummaryShownRef.current) {
+          workflowSummaryShownRef.current = true;
+          if (d?.error) {
+            void Swal.fire({
+              icon: "error",
+              title: snapRunModeRef.current === "reverify" ? "Re-verify Failed" : "Snap Pins Failed",
+              text: d.error,
+              confirmButtonColor: "#ef4444",
+            });
+          } else {
+            const operation = d.mode === "reverify" || snapRunModeRef.current === "reverify"
+              ? "reverify"
+              : "snap";
+            void showWorkflowOperationSummary(operation, d);
+          }
+        }
         if (dismissTimer) clearTimeout(dismissTimer);
         dismissTimer = d?.error
           ? null
@@ -2363,7 +2495,7 @@ export default function MapPage() {
       window.removeEventListener("revela:snap-progress", handleSnap);
       if (dismissTimer) clearTimeout(dismissTimer);
     };
-  }, [fetchFlags, fetchPlacesUsage]);
+  }, [fetchFlags, fetchPlacesUsage, showWorkflowOperationSummary]);
 
   // Real-time flag and inspection event listeners + 20s background polling
   useEffect(() => {
@@ -2808,7 +2940,7 @@ export default function MapPage() {
         await fetchFlags();
       }
       setTimeout(() => { setReconcileProgress(null); reconcileProgressRef.current = null; }, 3000);
-      Swal.fire({ icon: 'success', title: 'Reconcile Complete', text: res?.message || 'Done.', confirmButtonColor: '#6366f1' });
+      await showWorkflowOperationSummary("reconcile", res);
     } catch (err) {
       setReconcileProgress(null);
       reconcileProgressRef.current = null;
@@ -2945,9 +3077,12 @@ export default function MapPage() {
     if (!confirm.isConfirmed) return;
     try {
       snapDismissedRef.current = false;
+      workflowSummaryShownRef.current = false;
+      snapRunModeRef.current = "reverify";
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Re-verifying pins against Google Places...', snapped: 0, failed: 0, cached: 0, total: batch });
       await reverifyPinsRequest(token, batch);
     } catch (err) {
+      workflowSummaryShownRef.current = true;
       setSnapProgress(null);
       Swal.fire({ icon: 'error', title: 'Re-verify Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
@@ -3091,9 +3226,12 @@ export default function MapPage() {
     if (!confirm.isConfirmed) return;
     try {
       snapDismissedRef.current = false;
+      workflowSummaryShownRef.current = false;
+      snapRunModeRef.current = "snap";
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting Places name search...', snapped: 0, failed: 0, cached: 0, total: unsnappedCount });
       await snapUnresolvedPinsRequest(token, 200);
     } catch (err) {
+      workflowSummaryShownRef.current = true;
       setSnapProgress(null);
       Swal.fire({ icon: 'error', title: 'Snap Failed', text: err.message, confirmButtonColor: '#ef4444' });
     }
@@ -3420,7 +3558,7 @@ export default function MapPage() {
     <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
 
       {/* Page Header */}
-      <div className="page-header">
+      <div className="page-header map-page-header">
         <div>
           <h1 className="page-title">Map &amp; Flags</h1>
           <p className="page-subtitle">
@@ -3432,7 +3570,7 @@ export default function MapPage() {
             </p>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", whiteSpace: "nowrap" }}>
+        <div className="map-page-actions" style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <button
             className="quick-refresh-btn"
             type="button"
@@ -3585,7 +3723,7 @@ export default function MapPage() {
                 </svg>
               </button>
               {showAdvancedTools && (
-                <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <div className="map-advanced-tools" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
                   <button
                     className="ghost-btn"
                     type="button"
@@ -3731,7 +3869,7 @@ export default function MapPage() {
       )}
 
       {/* Map layout */}
-      <div style={styles.mapLayout}>
+      <div className="map-layout" style={styles.mapLayout}>
 
         {/* Left: map + layer controls */}
         <div style={styles.mapColumn}>
@@ -3742,7 +3880,7 @@ export default function MapPage() {
               <Icon.Layers />
               <span style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", whiteSpace: "nowrap" }}>Layers</span>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflowX: "auto", flex: "1 1 300px", minWidth: 0 }}>
+            <div className="map-layer-options" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap", overflowX: "auto", flex: "1 1 300px", minWidth: 0 }}>
               {LAYER_OPTIONS.map(l => {
                 const isActive = l.id === "base" ? satellite : layers[l.id];
                 return (
@@ -3775,7 +3913,7 @@ export default function MapPage() {
                 );
               })}
             </div>
-            <div style={styles.layerSearch}>
+            <div className="map-layer-search" style={styles.layerSearch}>
               <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
                 <Icon.Search />
               </div>
@@ -3802,7 +3940,7 @@ export default function MapPage() {
           </div>
 
           {/* Map */}
-          <div className="frosted-glass" style={styles.mapWrapper}>
+          <div className="frosted-glass map-canvas-container" style={styles.mapWrapper}>
             <MapCanvas
               isDark={isDark}
               isLoaded={isLoaded}
@@ -3888,7 +4026,7 @@ export default function MapPage() {
           </div>
 
           {/* Stats strip */}
-          <div style={styles.statsStrip}>
+          <div className="map-stats-strip" style={styles.statsStrip}>
             {[
               { label: "Total Flags", value: flags.length, color: "var(--color-ink)" },
               { label: "Active Businesses", value: counts.Green, color: isDark ? "#4ade80" : "#22c55e" },
@@ -3937,7 +4075,7 @@ export default function MapPage() {
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
 
             {/* Legend / Filter List */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {["all", "in_inspection", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"].map(c => {
                 const isSelected = filterColor === c;
                 const dotColor = c === "all" ? "var(--color-ink)" : (FLAG_COLORS[c]?.marker ?? "var(--color-ink)");
@@ -4027,7 +4165,7 @@ export default function MapPage() {
           </div>
 
           {/* Priority Dispatch Queue */}
-          {isAdmin && opsRankings.length > 0 && (
+          {isAdmin && (
             <div className="priority-dispatch-queue" style={{ marginBottom: 14, background: "var(--color-input-bg)", padding: 12, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
                 <div className="priority-dispatch-icon" style={{ color: "var(--color-primary)", display: "flex" }}><Icon.AlertTriangle /></div>
@@ -4036,7 +4174,11 @@ export default function MapPage() {
                 </h4>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {opsRankings.filter(r => r.flagged_count > 0).slice(0, 3).map((r, i) => (
+                {priorityDispatchQueue.length === 0 ? (
+                  <p className="priority-dispatch-empty">
+                    No barangays with active flags detected.
+                  </p>
+                ) : priorityDispatchQueue.map((r, i) => (
                   <div className="priority-dispatch-item" key={r.barangayID} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--color-modal-bg)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--color-border-soft)" }}>
                     <div>
                       <div className="priority-dispatch-name" style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", marginBottom: 2 }}>{i + 1}. {r.barangayName}</div>

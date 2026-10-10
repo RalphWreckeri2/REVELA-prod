@@ -2,6 +2,45 @@ from functools import wraps
 from flask import current_app, jsonify, request
 from flask_jwt_extended import verify_jwt_in_request, get_jwt, get_jwt_identity
 from api.models.user import find_user_by_id
+from api.auth.sessions import is_active_session
+
+
+def _verify_user_and_session(identity, claims, require_admin=False):
+    if identity is None:
+        return None
+    try:
+        user = find_user_by_id(int(identity))
+        if not user or not user.get("isActive", user.get("is_active", True)):
+            return jsonify({
+                "error": "Unauthorized",
+                "message": "Account has been deactivated or removed.",
+            }), 401
+        if claims.get("2fa_pending"):
+            if request.endpoint != "auth.verify_2fa_login":
+                return jsonify({
+                    "error": "Unauthorized",
+                    "message": "Complete two-factor authentication first.",
+                }), 401
+            return None
+        if not is_active_session(identity, claims.get("session_id")):
+            return jsonify({
+                "error": "Unauthorized",
+                "message": (
+                    "This session ended because the account signed in on another "
+                    "device or logged out."
+                ),
+            }), 401
+        if require_admin:
+            current_role = user.get("userRole") or user.get("role")
+            if current_role and current_role != claims.get("role"):
+                return jsonify({
+                    "error": "Unauthorized",
+                    "message": "Account permissions changed. Sign in again.",
+                }), 401
+    except Exception:
+        current_app.logger.exception("Could not verify authenticated session.")
+        return jsonify({"error": "Authorization could not be verified."}), 503
+    return None
 
 
 def jwt_required():
@@ -22,27 +61,9 @@ def jwt_required():
                 return jsonify({"error": "Unauthorized", "message": str(e)}), 401
 
             identity = get_jwt_identity()
-            if identity is not None:
-                try:
-                    user = find_user_by_id(int(identity))
-                    if not user:
-                        return jsonify({
-                            "error": "Unauthorized",
-                            "message": "Account has been removed by an administrator."
-                        }), 401
-
-                    if not user.get("isActive", user.get("is_active", True)):
-                        return jsonify({
-                            "error": "Unauthorized",
-                            "message": "Account has been deactivated by an administrator."
-                        }), 401
-                except Exception:
-                    current_app.logger.exception(
-                        "Could not verify account status for authenticated request."
-                    )
-                    return jsonify({
-                        "error": "Authorization could not be verified."
-                    }), 503
+            error = _verify_user_and_session(identity, get_jwt())
+            if error:
+                return error
 
             return fn(*args, **kwargs)
         return wrapper
@@ -74,27 +95,11 @@ def admin_required():
 
             identity = get_jwt_identity()
             role = get_current_role()
-            if identity is not None:
-                try:
-                    user = find_user_by_id(int(identity))
-                    if not user or not user.get("isActive", user.get("is_active", True)):
-                        return jsonify({
-                            "error": "Unauthorized",
-                            "message": "Account has been deactivated or removed."
-                        }), 401
-                    current_role = user.get("userRole") or user.get("role")
-                    if current_role and current_role != role:
-                        return jsonify({
-                            "error": "Unauthorized",
-                            "message": "Account permissions changed. Sign in again."
-                        }), 401
-                except Exception:
-                    current_app.logger.exception(
-                        "Could not verify account status for admin request."
-                    )
-                    return jsonify({
-                        "error": "Authorization could not be verified."
-                    }), 503
+            error = _verify_user_and_session(
+                identity, get_jwt(), require_admin=True
+            )
+            if error:
+                return error
 
             if role not in ("Admin", "SUPER_ADMIN", "System Administrator"):
                 return jsonify({"error": "Forbidden", "message": "Admins only"}), 403

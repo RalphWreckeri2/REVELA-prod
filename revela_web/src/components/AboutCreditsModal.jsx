@@ -10,7 +10,7 @@ const TEAM_MEMBERS = [
     color: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
   },
   {
-    name: "Reymark Levitare",
+    name: "Reymark Levita",
     initials: "RL",
     role: null,
     color: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",

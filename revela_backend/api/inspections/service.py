@@ -6,7 +6,7 @@ import re
 import html
 import tempfile
 import zipfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from app import mysql
 from api.models.inspection_lifecycle_events import (
@@ -23,6 +23,93 @@ def _as_user_id(user_id):
         return int(user_id)
     except (TypeError, ValueError):
         return user_id
+
+
+def get_inspection_calendar(month_start, month_end, selected_date, user_id=None):
+    """Return persisted lifecycle events for one month and the selected day."""
+    try:
+        cursor = mysql.connection.cursor()
+        scope_sql = ""
+        scope_params = ()
+        if user_id is not None:
+            scope_sql = " AND (e.assignedToUserID = %s OR e.actorUserID = %s)"
+            scope_params = (user_id, user_id)
+
+        cursor.execute(f"""
+            SELECT DATE(e.eventTimestamp) AS activityDate, COUNT(*) AS activityCount
+            FROM inspection_lifecycle_events e
+            WHERE e.eventTimestamp >= %s AND e.eventTimestamp < %s
+            {scope_sql}
+            GROUP BY DATE(e.eventTimestamp)
+            ORDER BY activityDate
+        """, (month_start, month_end, *scope_params))
+        day_counts = cursor.fetchall()
+
+        cursor.execute(f"""
+            SELECT e.eventID, e.reportID, e.targetLogID, e.cycleID, e.eventType,
+                   e.eventTimestamp, e.flagColorAtEvent, e.inspectionResult,
+                   e.remarks, g.detectedName, b.barangayName,
+                   actor.fullName AS actorName, assigned.fullName AS assignedToName
+            FROM inspection_lifecycle_events e
+            LEFT JOIN geospatial_logs g ON g.logID = e.targetLogID
+            LEFT JOIN barangays b ON b.barangayID = g.barangayID
+            LEFT JOIN users actor ON actor.userID = e.actorUserID
+            LEFT JOIN users assigned ON assigned.userID = e.assignedToUserID
+            WHERE e.eventTimestamp >= %s AND e.eventTimestamp < %s
+              AND DATE(e.eventTimestamp) = %s
+            {scope_sql}
+            ORDER BY e.eventTimestamp, e.eventID
+        """, (month_start, month_end, selected_date, *scope_params))
+        activities = cursor.fetchall()
+        cursor.close()
+
+        for event in activities:
+            timestamp = event.get("eventTimestamp")
+            if timestamp:
+                event["eventTimestamp"] = timestamp.isoformat(sep=" ")
+        return {
+            "month": month_start.strftime("%Y-%m"),
+            "selectedDate": selected_date.isoformat(),
+            "days": [
+                {
+                    "date": row["activityDate"].isoformat(),
+                    "count": int(row["activityCount"]),
+                }
+                for row in day_counts
+            ],
+            "activities": activities,
+        }, None
+    except Exception as exc:
+        return None, str(exc)
+
+
+def user_can_access_inspection_evidence(filename, user_id, is_admin=False):
+    """Check that an active evidence file belongs to a visible inspection report."""
+    cursor = mysql.connection.cursor()
+    try:
+        if is_admin:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM inspection_reports
+                WHERE photoPath LIKE %s
+                LIMIT 1
+                """,
+                (f"%{filename}%",),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM inspection_reports
+                WHERE photoPath LIKE %s AND userID = %s
+                LIMIT 1
+                """,
+                (f"%{filename}%", _as_user_id(user_id)),
+            )
+        return cursor.fetchone() is not None
+    finally:
+        cursor.close()
 
 
 def _validated_inspection_gps(latitude, longitude, accuracy=None):

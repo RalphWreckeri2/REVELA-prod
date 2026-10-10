@@ -1491,7 +1491,7 @@ class _LoginPageState extends State<LoginPage> {
                                         ),
                                         recognizer: TapGestureRecognizer()
                                           ..onTap = () => _openLegalUrl(
-                                            'https://ralphwreckeri2.github.io/revela_cookies/',
+                                            'https://revelasys.site/cookies',
                                           ),
                                       ),
                                       const TextSpan(text: '.'),

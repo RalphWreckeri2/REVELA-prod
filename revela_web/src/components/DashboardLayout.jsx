@@ -149,7 +149,7 @@ function NavBadge({ variant = "red", count }) {
   return <span className={`badge badge--${variant}`}>{count}</span>;
 }
 
-function Sidebar({ onLogout, onOpenAbout }) {
+function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin }) {
   const location = useLocation();
 
   return (
@@ -160,16 +160,31 @@ function Sidebar({ onLogout, onOpenAbout }) {
           <img src={myLogo} alt="REVELA Logo" className="logo-img" />
         </div>
         <h2>REVELA</h2>
+        <button
+          type="button"
+          className="sidebar-collapse-toggle"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d={collapsed ? "M9 18l6-6-6-6" : "M15 18l-6-6 6-6"} />
+          </svg>
+        </button>
       </div>
 
       {/* Nav groups */}
       <div className="sidebar-scroll">
-        {NAV_ITEMS.map(({ group, items }, gi) => (
+        {NAV_ITEMS.map(({ group, items }, gi) => {
+          const visibleItems = items.filter((item) => !item.adminOnly || isAdmin);
+          if (visibleItems.length === 0) return null;
+          return (
           <div key={group}>
             {gi > 0 && <div className="menu-divider" />}
             <span className="menu-group-label">{group}</span>
 
-            {items.map(({ label, href, path, badge, icon }) => {
+            {visibleItems.map(({ label, href, path, badge, icon }) => {
               const isActive = path && location.pathname === path;
               return path ? (
                 <Link
@@ -178,19 +193,20 @@ function Sidebar({ onLogout, onOpenAbout }) {
                   className={`menu-item${isActive ? " active" : ""}`}
                 >
                   {icon}
-                  {label}
+                  <span className="menu-item-label">{label}</span>
                   {badge && <NavBadge variant={badge.variant} count={badge.count} />}
                 </Link>
               ) : (
                 <a key={label} href={href} className="menu-item">
                   {icon}
-                  {label}
+                  <span className="menu-item-label">{label}</span>
                   {badge && <NavBadge variant={badge.variant} count={badge.count} />}
                 </a>
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Logout & System Info */}
@@ -201,7 +217,7 @@ function Sidebar({ onLogout, onOpenAbout }) {
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
-          Logout
+          <span className="menu-item-label">Logout</span>
         </button>
         <div style={{ marginTop: 4, textAlign: "left" }}>
           <button
@@ -752,14 +768,18 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 // ── Public export ──────────────────────────────────────────
 
 /**
- * @param {{ children: React.ReactNode, user?: object, onLogout?: () => void }} props
+ * @param {{ children: React.ReactNode, user?: object, onLogout?: () => void, className?: string }} props
  */
-export default function DashboardLayout({ children, onLogout }) {
+export default function DashboardLayout({ children, onLogout, className = "" }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    () => localStorage.getItem("revela_sidebar_collapsed") === "true",
+  );
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
   const navigate = useNavigate();
   const { user: authUser, logout } = useAuth();
+  const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(authUser?.role);
 
   useEffect(() => {
     const handleOpenAbout = () => setShowAboutModal(true);
@@ -787,6 +807,13 @@ export default function DashboardLayout({ children, onLogout }) {
       }
     });
   };
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((current) => {
+      const next = !current;
+      localStorage.setItem("revela_sidebar_collapsed", String(next));
+      return next;
+    });
+  };
 
   const displayUser = {
     initials: authUser?.fullName 
@@ -796,7 +823,7 @@ export default function DashboardLayout({ children, onLogout }) {
   };
 
   return (
-    <div className={`saas-root ${isMobileMenuOpen ? "mobile-open" : ""}`}>
+    <div className={`saas-root${className ? ` ${className}` : ""}${isMobileMenuOpen ? " mobile-open" : ""}${isSidebarCollapsed ? " sidebar-collapsed" : ""}`}>
       
       <button 
         className="mobile-toggle" 
@@ -806,7 +833,13 @@ export default function DashboardLayout({ children, onLogout }) {
         {isMobileMenuOpen ? "✕" : "☰"}
       
       </button>
-      <Sidebar onLogout={handleLogout} onOpenAbout={() => setShowAboutModal(true)} />
+      <Sidebar
+        onLogout={handleLogout}
+        onOpenAbout={() => setShowAboutModal(true)}
+        collapsed={isSidebarCollapsed}
+        onToggleCollapsed={toggleSidebar}
+        isAdmin={isAdmin}
+      />
 
       <div className="saas-main">
         <div className="ambient-bg-mesh" />

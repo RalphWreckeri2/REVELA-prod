@@ -8,6 +8,8 @@ import { useState, useEffect, useCallback, useContext } from "react";
 import { createPortal } from "react-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { AuthContext } from "../context/authContext";
+import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
+import InspectionCalendar from "../components/InspectionCalendar";
 import {
   getInspectionsRequest,
   getInspectorTasksRequest,
@@ -431,9 +433,10 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing }) {
               {live.length > 0 && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
                   {live.map((item, i) => (
-                    <img
+                    <AuthenticatedEvidenceImage
                       key={i}
-                      src={item.url}
+                      url={item.url}
+                      token={token}
                       alt={`Inspection evidence ${i + 1}`}
                       style={{
                         width: "100%",
@@ -507,7 +510,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing }) {
 }
 
 // ── Detail Modal ───────────────────────────────────────────────────────────────
-function InspectionDetailModal({ report, isAdmin, onAssign, onVerify, onClose, isClosing }) {
+function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onClose, isClosing }) {
   const [enlargedImage, setEnlargedImage] = useState(null);
   
   const flagMeta    = FLAG_COLOR[report.flagColor]   ?? FLAG_COLOR.Red;
@@ -621,9 +624,10 @@ function InspectionDetailModal({ report, isAdmin, onAssign, onVerify, onClose, i
               {live.length > 0 && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
                   {live.map((item, i) => (
-                    <img
+                    <AuthenticatedEvidenceImage
                       key={i}
-                      src={item.url}
+                      url={item.url}
+                      token={token}
                       alt={`Evidence ${i + 1}`}
                       onClick={() => setEnlargedImage(item.url)}
                       style={{
@@ -710,7 +714,13 @@ function InspectionDetailModal({ report, isAdmin, onAssign, onVerify, onClose, i
             style={{ position: "fixed", inset: 0, zIndex: 100000, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}
             onClick={(e) => { e.stopPropagation(); setEnlargedImage(null); }}
           >
-            <img src={enlargedImage} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12, boxShadow: "0 25px 50px rgba(0,0,0,0.5)" }} onClick={e => e.stopPropagation()} />
+            <AuthenticatedEvidenceImage
+              url={enlargedImage}
+              token={token}
+              alt="Enlarged inspection evidence"
+              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 12, boxShadow: "0 25px 50px rgba(0,0,0,0.5)" }}
+              onClick={e => e.stopPropagation()}
+            />
             <button 
               style={{ position: "absolute", top: 24, right: 24, background: "rgba(255,255,255,0.1)", border: "none", color: "#fff", width: 48, height: 48, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.2s" }}
               onMouseOver={e => e.currentTarget.style.background = "rgba(255,255,255,0.2)"}
@@ -1066,6 +1076,7 @@ export default function InspectionPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
   const fetchReports = useCallback(async (isSilent = false) => {
@@ -1170,7 +1181,10 @@ export default function InspectionPage() {
     : ["Assigned", "Reassigned"];
 
   return (
-    <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
+    <DashboardLayout
+      className="inspection-page-shell"
+      user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}
+    >
 
       {/* Page header */}
       <div className="page-header" style={{ flexWrap: "wrap", gap: 16, alignItems: "flex-start", marginBottom: 20 }}>
@@ -1226,19 +1240,29 @@ export default function InspectionPage() {
             </span>
           )}
 
-          {/* Status filter — admin only */}
-          {isAdmin && (
-            <select
-              style={s.filterSelect}
-              value={filterStatus}
-              onChange={e => setFilterStatus(e.target.value)}
+          <div className="inspection-view-control-group">
+            {/* Status filter — admin only */}
+            {isAdmin && (
+              <select
+                style={s.filterSelect}
+                value={filterStatus}
+                onChange={e => setFilterStatus(e.target.value)}
+              >
+                <option value="">All Statuses</option>
+                {STATUS_COLS.map(st => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
+              </select>
+            )}
+            <button
+              className="ghost-btn"
+              type="button"
+              onClick={() => setShowCalendar((visible) => !visible)}
+              aria-pressed={showCalendar}
             >
-              <option value="">All Statuses</option>
-              {STATUS_COLS.map(st => (
-                <option key={st} value={st}>{st}</option>
-              ))}
-            </select>
-          )}
+              {showCalendar ? "Hide Calendar" : "Calendar View"}
+            </button>
+          </div>
 
           {/* Live Search Bar */}
           <div className="search-bar" style={{ width: 240, maxWidth: "100%", minWidth: 180, flex: "1 1 auto", position: "relative" }}>
@@ -1277,14 +1301,14 @@ export default function InspectionPage() {
       </div>
 
 
-      {/* Error */}
+      {showCalendar && <InspectionCalendar token={token} />}
+
       {error && (
         <div style={s.errorBanner}>
           <Icon.AlertCircle /> &nbsp;{error}
         </div>
       )}
 
-      {/* Kanban board */}
       {loading ? (
         <div style={s.loadingState}>Loading inspections…</div>
       ) : (
@@ -1359,6 +1383,7 @@ export default function InspectionPage() {
       <AnimatePresence isVisible={!!detailTarget}>
         <InspectionDetailModal
           report={detailTarget}
+          token={token}
           isAdmin={isAdmin}
           onAssign={(r) => { setDetailTarget(null); setAssignTarget(r); }}
           onVerify={(r) => { setDetailTarget(null); setVerifyTarget(r); }}

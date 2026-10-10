@@ -1,6 +1,8 @@
 from api.utils.cancellation import set_cancel
 import os
 import threading
+from datetime import date, datetime
+from decimal import Decimal
 from flask import Blueprint, request, jsonify, current_app
 from app import mysql
 from api.registry.service import (
@@ -19,6 +21,70 @@ from api.utils.quota_config import API_QUOTA_CONFIG
 registry_bp = Blueprint("registry", __name__)
 
 
+def _workflow_summary_rows(event_type):
+    cur = mysql.connection.cursor()
+    try:
+        cur.execute("""
+            SELECT COUNT(DISTINCT e.businessID) AS total
+            FROM registry_workflow_events e
+            WHERE e.eventType = %s
+        """, (event_type,))
+        count_row = cur.fetchone()
+        total = int(count_row.get("total") if isinstance(count_row, dict) else count_row[0])
+        cur.execute("""
+            SELECT e.businessID, r.businessName, r.businessAddress,
+                   e.resultStatus, e.placeID, e.latitude, e.longitude,
+                   e.matchScore, e.eventAt
+            FROM registry_workflow_events e
+            JOIN (
+                SELECT businessID, MAX(eventID) AS latestEventID
+                FROM registry_workflow_events
+                WHERE eventType = %s
+                GROUP BY businessID
+            ) latest ON latest.latestEventID = e.eventID
+            LEFT JOIN official_registry r ON r.businessID = e.businessID
+            WHERE e.eventType = %s
+            ORDER BY e.eventAt DESC, e.eventID DESC
+            LIMIT 100
+        """, (event_type, event_type))
+        records = cur.fetchall()
+        return total, records
+    finally:
+        cur.close()
+
+
+def _reverification_summary():
+    from api.registry.reverify import _ensure_history_table
+
+    cur = mysql.connection.cursor()
+    try:
+        _ensure_history_table(cur)
+        cur.execute("""
+            SELECT COUNT(DISTINCT businessID) AS total
+            FROM registry_pin_history
+        """)
+        count_row = cur.fetchone()
+        total = int(count_row.get("total") if isinstance(count_row, dict) else count_row[0])
+        cur.execute("""
+            SELECT h.businessID, r.businessName, r.businessAddress,
+                   h.outcome AS resultStatus, h.reason, h.failReason,
+                   h.attemptedAt AS eventAt, h.oldLat, h.oldLng,
+                   h.newLat, h.newLng, h.placeID, h.score AS matchScore
+            FROM registry_pin_history h
+            JOIN (
+                SELECT businessID, MAX(id) AS latestID
+                FROM registry_pin_history
+                GROUP BY businessID
+            ) latest ON latest.latestID = h.id
+            LEFT JOIN official_registry r ON r.businessID = h.businessID
+            ORDER BY h.attemptedAt DESC, h.id DESC
+            LIMIT 100
+        """)
+        return total, cur.fetchall()
+    finally:
+        cur.close()
+
+
 def _registry_count():
     cur = mysql.connection.cursor()
     try:
@@ -30,6 +96,67 @@ def _registry_count():
 
 
 _EMPTY_REGISTRY_MSG = "The official business registry is empty. Please import business records first."
+
+
+@registry_bp.route("/workflow-summary", methods=["GET"])
+@admin_required()
+def workflow_summary():
+    from api.registry.audit import ensure_registry_workflow_events
+
+    try:
+        ensure_registry_workflow_events()
+        reconciled_total, reconciled = _workflow_summary_rows("reconciled")
+        snapped_total, snapped = _workflow_summary_rows("snapped")
+        reverified_total, reverified = _reverification_summary()
+
+        def serialize(rows, columns):
+            return [
+                {
+                    key: (
+                        value.isoformat()
+                        if isinstance(value, (date, datetime))
+                        else float(value)
+                        if isinstance(value, Decimal)
+                        else value
+                    )
+                    for key, value in (
+                        row.items() if isinstance(row, dict)
+                        else zip(columns, row)
+                    )
+                } for row in rows
+            ]
+
+        return jsonify({
+            "reconciled": {
+                "count": reconciled_total,
+                "records": serialize(reconciled, (
+                    "businessID", "businessName", "businessAddress",
+                    "resultStatus", "placeID", "latitude", "longitude",
+                    "matchScore", "eventAt",
+                )),
+            },
+            "snapped": {
+                "count": snapped_total,
+                "records": serialize(snapped, (
+                    "businessID", "businessName", "businessAddress",
+                    "resultStatus", "placeID", "latitude", "longitude",
+                    "matchScore", "eventAt",
+                )),
+            },
+            "reverified": {
+                "count": reverified_total,
+                "records": serialize(reverified, (
+                    "businessID", "businessName", "businessAddress",
+                    "resultStatus", "reason", "failReason", "eventAt",
+                    "oldLat", "oldLng", "newLat", "newLng",
+                    "placeID", "matchScore",
+                )),
+            },
+            "recordLimit": 100,
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to load registry workflow summary")
+        return jsonify({"error": "Failed to load workflow summary"}), 500
 
 
 def _text_search_monthly_limit_response():

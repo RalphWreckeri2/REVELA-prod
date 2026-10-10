@@ -14,8 +14,14 @@ import SettingsPage from './pages/SettingsPage';
 import TermsPage from './components/TermsPage';
 import PrivacyPage from './components/PrivacyPage';
 import CookiePolicyPage from './components/CookiePolicyPage';
+import DesktopAccessRequired from './components/DesktopAccessRequired';
+import { isMobileBrowser } from './components/mobileDetection';
 
 export default function App() {
+  if (isMobileBrowser()) {
+    return <DesktopAccessRequired />;
+  }
+
   return (
     <AuthProvider>
       <ThemeProvider>

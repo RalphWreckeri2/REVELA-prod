@@ -6,6 +6,7 @@ import {
   ScatterChart, Scatter, ZAxis, ReferenceLine
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
+import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
 import { useAuth } from "../context/authContext";
 import {
@@ -834,11 +835,13 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("descriptive"); // descriptive, diagnostic, prescriptive
+  const [leaderboardCardHeight, setLeaderboardCardHeight] = useState(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
   const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
 
   const tabMarkerRef = useRef(null);
+  const leaderboardCardRef = useRef(null);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -852,6 +855,28 @@ export default function AnalyticsPage() {
     }
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const leaderboardCard = leaderboardCardRef.current;
+    if (activeTab !== "descriptive" || !leaderboardCard) return undefined;
+
+    const updateCardHeight = () => {
+      const nextHeight = leaderboardCard.getBoundingClientRect().height;
+      if (nextHeight > 0) {
+        setLeaderboardCardHeight((currentHeight) =>
+          currentHeight != null && Math.abs(currentHeight - nextHeight) < 0.5
+            ? currentHeight
+            : nextHeight
+        );
+      }
+    };
+
+    updateCardHeight();
+    const observer = new ResizeObserver(updateCardHeight);
+    observer.observe(leaderboardCard);
+    return () => observer.disconnect();
+  }, [activeTab]);
+
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
   const [savingWlc, setSavingWlc] = useState(false);
@@ -2248,7 +2273,12 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(max(400px, calc(50% - 24px)), 1fr))", gap: 24 }}>
+                <div
+                  className="analytics-demographic-grid"
+                  style={leaderboardCardHeight == null ? undefined : {
+                    "--analytics-reference-card-height": `${leaderboardCardHeight}px`,
+                  }}
+                >
                   {/* Geographic & Sector Spread */}
                   <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, gridColumn: "1 / -1", display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -2282,17 +2312,17 @@ export default function AnalyticsPage() {
                   </div>
 
                   {/* Top Sectors Overall */}
-                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--top-sectors" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Top Sectors</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Highest volume business lines</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={220} /> : sectoralData.length === 0 ? (
-                      <EmptyState h={220} title="No Sector Data" />
+                    {loading ? <Skeleton h={260} /> : sectoralData.length === 0 ? (
+                      <EmptyState h={260} title="No Sector Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={sectoralData.slice(0, 5)} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(226,232,240,0.4)" />
@@ -2311,17 +2341,17 @@ export default function AnalyticsPage() {
                   </div>
 
                   {/* Business Size Profile */}
-                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--business-size" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Business Size Profile</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Distribution by enterprise scale</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={220} /> : sizeData.length === 0 ? (
-                      <EmptyState h={220} title="No Size Data" />
+                    {loading ? <Skeleton h={260} /> : sizeData.length === 0 ? (
+                      <EmptyState h={260} title="No Size Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center" }}>
+                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center" }}>
                         <ResponsiveContainer width="50%" height="100%">
                           <PieChart>
                             <Pie
@@ -2356,17 +2386,17 @@ export default function AnalyticsPage() {
                   </div>
 
                   {/* Business Legal Structure */}
-                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--legal-structure" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Business Legal Structure</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Distribution by business type</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={220} /> : typeData.length === 0 ? (
-                      <EmptyState h={220} title="No Type Data" />
+                    {loading ? <Skeleton h={260} /> : typeData.length === 0 ? (
+                      <EmptyState h={260} title="No Type Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center" }}>
+                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center" }}>
                         <ResponsiveContainer width="50%" height="100%">
                           <PieChart>
                             <Pie
@@ -2401,17 +2431,17 @@ export default function AnalyticsPage() {
                   </div>
 
                   {/* Registration Lifecycle (New vs Renewal) */}
-                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--registration-lifecycle" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registration Lifecycle</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>New businesses vs Renewals</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={220} /> : regTypeData.length === 0 ? (
-                      <EmptyState h={220} title="No Registration Type Data" />
+                    {loading ? <Skeleton h={260} /> : regTypeData.length === 0 ? (
+                      <EmptyState h={260} title="No Registration Type Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center" }}>
+                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center" }}>
                         <ResponsiveContainer width="50%" height="100%">
                           <PieChart>
                             <Pie
@@ -2446,17 +2476,17 @@ export default function AnalyticsPage() {
                   </div>
 
                   {/* Compliance by Business Size */}
-                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--compliance-size" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Compliance by Business Size</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Active vs Non-Active comparison</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={220} /> : complianceBySizeData.length === 0 ? (
-                      <EmptyState h={220} title="No Compliance Data" />
+                    {loading ? <Skeleton h={260} /> : complianceBySizeData.length === 0 ? (
+                      <EmptyState h={260} title="No Compliance Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={complianceBySizeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
@@ -2567,7 +2597,7 @@ export default function AnalyticsPage() {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24, marginBottom: 24 }}>
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                <div ref={leaderboardCardRef} className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Barangay Compliance Leaderboard</h3>
                   <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Ranked compliance rates based on registered vs flagged entities.</p>
                   <div style={{ flexGrow: 1, minHeight: 260, overflowY: "auto" }}>

@@ -8,7 +8,7 @@ import hashlib
 import numpy as np
 from collections import Counter
 from sklearn.cluster import DBSCAN
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from google import genai
 from google.genai import types
@@ -86,6 +86,20 @@ def invalidate_analytics_cache():
     _analytics_cache.clear()
 
 
+def _registry_has_registration_type(cursor):
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS column_count
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'official_registry'
+          AND COLUMN_NAME = 'registrationType'
+        """
+    )
+    row = cursor.fetchone()
+    return bool(row and row["column_count"])
+
+
 analytics_bp = Blueprint("analytics", __name__)
 
 
@@ -143,8 +157,9 @@ def get_all_analytics():
 
         data["new_year_rollover"] = rollover_info
         return jsonify(data), status_code
-    except Exception as e:
-        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
+    except Exception:
+        current_app.logger.exception("Failed to load analytics")
+        return jsonify({"error": "Failed to load analytics"}), 500
 
 
 def _get_all_analytics_inner(F=None):
@@ -160,7 +175,8 @@ def _get_all_analytics_inner(F=None):
     # It is no longer called inline so reads don't pay write-operation cost.
     cur = mysql.connection.cursor()
 
-    Fx = F or {}
+    Fx = dict(F or {})
+    Fx["registration_type_supported"] = _registry_has_registration_type(cur)
     reg_all, reg_all_p = registry_sql("official_registry", Fx)
     reg_no_status, reg_no_status_p = registry_sql(
         "official_registry", filters_without(Fx, "application_status"))
@@ -240,19 +256,22 @@ def _get_all_analytics_inner(F=None):
     )
     upcoming_year_renewal_count = cur.fetchone()["n"]
 
-    cur.execute(
-        "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'New'"
-        + reg_all,
-        reg_all_p,
-    )
-    new_registration_count = cur.fetchone()["n"]
+    new_registration_count = 0
+    renewal_registration_count = 0
+    if Fx["registration_type_supported"]:
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'New'"
+            + reg_all,
+            reg_all_p,
+        )
+        new_registration_count = cur.fetchone()["n"]
 
-    cur.execute(
-        "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'Renewal'"
-        + reg_all,
-        reg_all_p,
-    )
-    renewal_registration_count = cur.fetchone()["n"]
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'Renewal'"
+            + reg_all,
+            reg_all_p,
+        )
+        renewal_registration_count = cur.fetchone()["n"]
 
     current_year_count = current_year_registered_count
 
@@ -398,18 +417,20 @@ def _get_all_analytics_inner(F=None):
         for row in cur.fetchall()
     ]
 
-    # Registration Type (New vs Renewal)
-    cur.execute(f"""
-        SELECT COALESCE(registrationType, 'Unspecified') AS type_label, COUNT(*) AS count
-        FROM official_registry
-        WHERE 1=1 {reg_all}
-        GROUP BY registrationType
-        ORDER BY count DESC
-    """, reg_all_p)
-    registration_type_dist = [
-        {"type_label": row["type_label"], "count": row["count"]}
-        for row in cur.fetchall()
-    ]
+    # Registration lifecycle is optional in registry schemas predating this field.
+    registration_type_dist = []
+    if Fx["registration_type_supported"]:
+        cur.execute(f"""
+            SELECT COALESCE(registrationType, 'Unspecified') AS type_label, COUNT(*) AS count
+            FROM official_registry
+            WHERE 1=1 {reg_all}
+            GROUP BY registrationType
+            ORDER BY count DESC
+        """, reg_all_p)
+        registration_type_dist = [
+            {"type_label": row["type_label"], "count": row["count"]}
+            for row in cur.fetchall()
+        ]
 
     # Compliance by Business Size
     cur.execute(f"""
@@ -987,6 +1008,246 @@ def _get_all_analytics_inner(F=None):
     }, 200
 
 
+@analytics_bp.route("/demographic-reports", methods=["GET"])
+@jwt_required()
+def get_demographic_reports():
+    """Return official-registry-backed data used by Export Reports and its exports."""
+    cur = mysql.connection.cursor()
+    try:
+        filters = parse_analytics_filters(request.args)
+        filters["registration_type_supported"] = _registry_has_registration_type(cur)
+        reg_all, reg_all_params = registry_sql("o", filters)
+
+        cur.execute(
+            "SELECT COUNT(*) AS n FROM official_registry o WHERE 1=1" + reg_all,
+            reg_all_params,
+        )
+        total_businesses = cur.fetchone()["n"]
+
+        cur.execute(
+            """
+            SELECT
+                SUM(applicationStatus = 'Active') AS active_count,
+                SUM(applicationStatus = 'Expired') AS expired_count,
+                SUM(applicationStatus = 'Closed') AS closed_count,
+                SUM(applicationStatus = 'Pending') AS pending_count,
+                SUM(applicationStatus = 'Revoked') AS revoked_count
+            FROM official_registry o
+            WHERE 1=1
+            """ + reg_all,
+            reg_all_params,
+        )
+        status_counts = cur.fetchone()
+        status_counts = {
+            key: status_counts[key] or 0
+            for key in (
+                "active_count",
+                "expired_count",
+                "closed_count",
+                "pending_count",
+                "revoked_count",
+            )
+        }
+
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM official_registry o
+            WHERE YEAR(lastRenewalDate) = YEAR(CURDATE())
+            """ + reg_all,
+            reg_all_params,
+        )
+        current_year_count = cur.fetchone()["n"]
+
+        cur.execute(
+            """
+            SELECT COUNT(*) AS n
+            FROM official_registry o
+            WHERE (
+                (YEAR(lastRenewalDate) = YEAR(CURDATE()) AND applicationStatus = 'Active')
+                OR YEAR(lastRenewalDate) = YEAR(CURDATE()) + 1
+            )
+            """ + reg_all,
+            reg_all_params,
+        )
+        upcoming_year_renewal_count = cur.fetchone()["n"]
+
+        registration_type_dist = []
+        new_registration_count = 0
+        renewal_registration_count = 0
+        if filters["registration_type_supported"]:
+            cur.execute(
+                """
+                SELECT COALESCE(registrationType, 'Unspecified') AS type_label,
+                       COUNT(*) AS count
+                FROM official_registry o
+                WHERE 1=1
+                """ + reg_all + """
+                GROUP BY registrationType
+                ORDER BY count DESC
+                """,
+                reg_all_params,
+            )
+            registration_type_dist = [
+                {"type_label": row["type_label"], "count": row["count"]}
+                for row in cur.fetchall()
+            ]
+            cur.execute(
+                """
+                SELECT
+                    SUM(registrationType = 'New') AS new_count,
+                    SUM(registrationType = 'Renewal') AS renewal_count
+                FROM official_registry o
+                WHERE 1=1
+                """ + reg_all,
+                reg_all_params,
+            )
+            registration_counts = cur.fetchone()
+            new_registration_count = registration_counts["new_count"] or 0
+            renewal_registration_count = registration_counts["renewal_count"] or 0
+
+        cur.execute(
+            """
+            SELECT COALESCE(businessSize, 'Unknown') AS size_label, COUNT(*) AS count
+            FROM official_registry o
+            WHERE 1=1
+            """ + reg_all + """
+            GROUP BY businessSize
+            ORDER BY count DESC
+            """,
+            reg_all_params,
+        )
+        business_size_dist = [
+            {"size_label": row["size_label"], "count": row["count"]}
+            for row in cur.fetchall()
+        ]
+
+        cur.execute(
+            """
+            SELECT COALESCE(businessType, 'Unknown') AS type_label, COUNT(*) AS count
+            FROM official_registry o
+            WHERE 1=1
+            """ + reg_all + """
+            GROUP BY businessType
+            ORDER BY count DESC
+            """,
+            reg_all_params,
+        )
+        business_type_dist = [
+            {"type_label": row["type_label"], "count": row["count"]}
+            for row in cur.fetchall()
+        ]
+
+        cur.execute(
+            """
+            SELECT COALESCE(lineOfBusiness, 'Unclassified') AS sector, COUNT(*) AS count
+            FROM official_registry o
+            WHERE 1=1
+            """ + reg_all + """
+            GROUP BY lineOfBusiness
+            ORDER BY count DESC
+            """,
+            reg_all_params,
+        )
+        sectoral_distribution = [
+            {"sector": row["sector"], "count": row["count"]}
+            for row in cur.fetchall()
+        ]
+
+        cur.execute(
+            """
+            SELECT COALESCE(b.barangayName, 'Unknown') AS barangayName,
+                   COUNT(*) AS total
+            FROM official_registry o
+            LEFT JOIN barangays b ON o.barangayID = b.barangayID
+            WHERE 1=1
+            """ + reg_all + """
+            GROUP BY b.barangayName
+            ORDER BY b.barangayName
+            """,
+            reg_all_params,
+        )
+        nature_per_barangay = [
+            {"barangayName": row["barangayName"], "total": row["total"]}
+            for row in cur.fetchall()
+        ]
+
+        cur.execute(
+            """
+            SELECT COALESCE(businessSize, 'Unknown') AS size_label,
+                   SUM(CASE WHEN applicationStatus = 'Active' THEN 1 ELSE 0 END) AS active_count,
+                   SUM(CASE WHEN applicationStatus <> 'Active' THEN 1 ELSE 0 END) AS inactive_count
+            FROM official_registry o
+            WHERE 1=1
+            """ + reg_all + """
+            GROUP BY businessSize
+            """,
+            reg_all_params,
+        )
+        compliance_by_size = [
+            {
+                "size_label": row["size_label"],
+                "active_count": row["active_count"] or 0,
+                "inactive_count": row["inactive_count"] or 0,
+            }
+            for row in cur.fetchall()
+        ]
+
+        cur.execute(
+            """
+            SELECT DATE_FORMAT(lastRenewalDate, '%%Y-%%m') AS month,
+                   SUM(CASE WHEN applicationStatus = 'Active' THEN 1 ELSE 0 END) AS active_count,
+                   SUM(CASE WHEN applicationStatus <> 'Active' THEN 1 ELSE 0 END) AS non_active_count
+            FROM official_registry o
+            WHERE lastRenewalDate >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+            """ + reg_all + """
+            GROUP BY month
+            ORDER BY month
+            """,
+            reg_all_params,
+        )
+        compliance_timeline = [
+            {
+                "month": row["month"],
+                "active_count": row["active_count"] or 0,
+                "non_active_count": row["non_active_count"] or 0,
+            }
+            for row in cur.fetchall()
+        ]
+
+        active_count = status_counts["active_count"]
+        return jsonify({
+            "data_source": "official_registry",
+            "descriptive": {
+                "kpis": {
+                    "total_businesses": total_businesses,
+                    **status_counts,
+                    "new_registration_count": new_registration_count,
+                    "renewal_registration_count": renewal_registration_count,
+                    "current_year_count": current_year_count,
+                    "current_year_registered_count": current_year_count,
+                    "upcoming_year_renewal_count": upcoming_year_renewal_count,
+                    "compliance_rate": round(
+                        active_count / total_businesses * 100, 1
+                    ) if total_businesses else 0,
+                },
+                "registration_type_available": filters["registration_type_supported"],
+                "business_size_dist": business_size_dist,
+                "business_type_dist": business_type_dist,
+                "registration_type_dist": registration_type_dist,
+                "sectoral_distribution": sectoral_distribution,
+                "nature_per_barangay": nature_per_barangay,
+                "compliance_by_size": compliance_by_size,
+                "compliance_timeline": compliance_timeline,
+            },
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to load demographic report data")
+        return jsonify({"error": "Failed to load demographic report data"}), 500
+    finally:
+        cur.close()
+
+
 @analytics_bp.route("/filter-metadata", methods=["GET"])
 @jwt_required()
 def analytics_filter_metadata():
@@ -1032,14 +1293,16 @@ def analytics_filter_metadata():
     )
     business_sizes = [r["v"] for r in cur.fetchall()]
 
-    cur.execute(
-        """
-        SELECT DISTINCT registrationType AS v FROM official_registry
-        WHERE registrationType IS NOT NULL AND TRIM(registrationType) <> ''
-        ORDER BY registrationType
-        """
-    )
-    registration_types = [r["v"] for r in cur.fetchall()]
+    registration_types = []
+    if _registry_has_registration_type(cur):
+        cur.execute(
+            """
+            SELECT DISTINCT registrationType AS v FROM official_registry
+            WHERE registrationType IS NOT NULL AND TRIM(registrationType) <> ''
+            ORDER BY registrationType
+            """
+        )
+        registration_types = [r["v"] for r in cur.fetchall()]
 
     cur.execute(
         """

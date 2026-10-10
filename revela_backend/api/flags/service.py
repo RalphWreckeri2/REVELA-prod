@@ -705,6 +705,7 @@ def _match_registry_to_google(
     poi_types=(),
     poi_address=None,
     commit=True,
+    operation_type=None,
 ):
     """
     Updates or inserts the geospatial log for an existing registry business 
@@ -715,6 +716,9 @@ def _match_registry_to_google(
     serialized_types = json.dumps(
         sorted(set(poi_types))) if poi_types else None
     cursor = mysql.connection.cursor()
+    if operation_type == "reconciled":
+        from api.registry.audit import ensure_registry_workflow_events
+        ensure_registry_workflow_events()
 
     if match_status is None:
         if match_score is not None:
@@ -847,6 +851,19 @@ def _match_registry_to_google(
             target_color, place_id, poi_address, serialized_types
         ))
 
+    if operation_type == "reconciled":
+        from api.registry.audit import record_registry_workflow_event
+        record_registry_workflow_event(
+            cursor,
+            business_id,
+            "reconciled",
+            result_status=match_status,
+            place_id=place_id,
+            latitude=lat,
+            longitude=lng,
+            match_score=match_score,
+        )
+
     if commit:
         _detection_commit()
     cursor.close()
@@ -882,6 +899,8 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
         _last_reconcile_time = now
 
         _ensure_place_types_column()
+        from api.registry.audit import ensure_registry_workflow_events
+        ensure_registry_workflow_events()
         cursor = mysql.connection.cursor()
         cursor.execute("""
             SELECT logID, businessID, placeID, detectedName, latitude, longitude, barangayID,
@@ -982,6 +1001,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                     match_score=score,
                     poi_types=_decode_place_types(flag.get("placeTypes")),
                     poi_address=flag.get("nearestLandmark"),
+                    operation_type="reconciled",
                 )
                 converted_count += 1
 

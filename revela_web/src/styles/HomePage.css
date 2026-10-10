@@ -541,11 +541,28 @@
 .hero-status-row-value--ok   { color: var(--color-primary-dark); }
 .hero-status-row-value--wait { color: var(--color-gold-dark); }
 
+.overview-dashboard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(260px, 1fr);
+  gap: 24px;
+  align-items: start;
+  min-width: 0;
+}
+
+.overview-dashboard-layout > * {
+  min-width: 0;
+}
+
 /* ── Responsive overrides ── */
 @media (max-width: 1100px) {
+  .overview-dashboard-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .hero-banner { grid-template-columns: 1fr; }
   .widget-grid { grid-template-columns: 1fr; }
 }
+
 @media (max-width: 900px) {
   .kpi-grid { grid-template-columns: 1fr; }
 }

@@ -14,8 +14,13 @@ import {
   Area
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
+import "../styles/ExportReportsPage.css";
 import { useAuth } from "../context/authContext";
-import { getAnalyticsOverviewRequest, getFlagsRequest } from "../services/api";
+import {
+  getAnalyticsOverviewRequest,
+  getDemographicReportsRequest,
+  getFlagsRequest,
+} from "../services/api";
 import Papa from "papaparse";
 import { saveAs } from "file-saver";
 import Swal from "sweetalert2";
@@ -128,6 +133,8 @@ export default function ExportReportsPage() {
   const { token, user } = useAuth();
   const [analyticsData, setAnalyticsData] = useState(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(true);
+  const [analyticsError, setAnalyticsError] = useState("");
+  const [analyticsReloadKey, setAnalyticsReloadKey] = useState(0);
   const [exportingImageId, setExportingImageId] = useState(null);
   const [exportingPdfId, setExportingPdfId] = useState(null);
   const [operationalLoadingId, setOperationalLoadingId] = useState(null);
@@ -145,13 +152,23 @@ export default function ExportReportsPage() {
         return;
       }
       setLoadingAnalytics(true);
+      setAnalyticsError("");
       try {
-        const data = await getAnalyticsOverviewRequest(token);
-        if (!cancelled && data) {
+        const data = await getDemographicReportsRequest(token);
+        if (!data?.descriptive) {
+          throw new Error("The report API returned no demographic data.");
+        }
+        if (!cancelled) {
           setAnalyticsData(data);
         }
       } catch (err) {
         console.warn("Analytics overview request failed:", err);
+        if (!cancelled) {
+          setAnalyticsData(null);
+          setAnalyticsError(
+            err.message || "Unable to load official registry report data.",
+          );
+        }
       } finally {
         if (!cancelled) setLoadingAnalytics(false);
       }
@@ -160,7 +177,7 @@ export default function ExportReportsPage() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, analyticsReloadKey]);
 
   // Handle native printing when printReport state changes
   useEffect(() => {
@@ -265,7 +282,7 @@ export default function ExportReportsPage() {
   }));
   const hasTimelineData = timelineData.some((t) => t.Active > 0 || t["Non-Active"] > 0);
 
-  const isRegistryEmpty = (kpis?.total_businesses ?? 0) === 0;
+  const isRegistryEmpty = analyticsData != null && (kpis?.total_businesses ?? 0) === 0;
 
   // ── High-Resolution Image (PNG) Export ──────────────────────────────────────
   const exportChartAsImage = async (chartId, chartTitle, hasData) => {
@@ -398,6 +415,7 @@ export default function ExportReportsPage() {
 
   // ── Master Demographic Dossier (Complete PDF) ──────────────────────────────
   const exportCompleteDemographicPdf = async () => {
+    if (!analyticsData || analyticsError) return;
     try {
       setPrintReport({
         type: "demographic-complete",
@@ -428,6 +446,12 @@ export default function ExportReportsPage() {
             Count: t.value,
             Percentage: `${Math.round((t.value / (totalByType || 1)) * 100)}%`
           })),
+          registrationLifecycle: regTypeData.map((t) => ({
+            Status: t.name,
+            Count: t.value,
+            Percentage: `${Math.round((t.value / (totalByRegType || 1)) * 100)}%`
+          })),
+          registrationTypeAvailable: desc?.registration_type_available !== false,
           topSectors: sectoralData.slice(0, 10).map((sec, idx) => ({
             Rank: idx + 1,
             Sector: sec.name,
@@ -444,6 +468,11 @@ export default function ExportReportsPage() {
             Active: c.Active,
             "Non-Active": c["Non-Active"],
             "Compliance Rate": `${c.rate}%`
+          })),
+          complianceTimeline: timelineData.map((t) => ({
+            Month: t.month,
+            "Active Renewals": t.Active,
+            "Non-Active Gap": t["Non-Active"]
           }))
         }
       });
@@ -459,6 +488,7 @@ export default function ExportReportsPage() {
 
   // ── Master Demographic Raw Data (CSV) Export ───────────────────────────────
   const exportDemographicCsv = () => {
+    if (!analyticsData || analyticsError) return;
     try {
       const csvSections = [];
 
@@ -469,6 +499,7 @@ export default function ExportReportsPage() {
       csvSections.push({ Section: "KPI", Metric: "Expired Permits", Value: kpis?.expired_count ?? 0 });
       csvSections.push({ Section: "KPI", Metric: "Pending Review", Value: kpis?.pending_count ?? 0 });
       csvSections.push({ Section: "KPI", Metric: "Closed Establishments", Value: kpis?.closed_count ?? 0 });
+      csvSections.push({ Section: "KPI", Metric: "Revoked Permits", Value: kpis?.revoked_count ?? 0 });
       csvSections.push({ Section: "KPI", Metric: "Compliance Rate", Value: `${kpis?.compliance_rate ?? 0}%` });
 
       // Section 2: Business Size
@@ -501,7 +532,29 @@ export default function ExportReportsPage() {
         });
       }
 
-      // Section 4: Top Sectors
+      // Section 4: Registration lifecycle
+      csvSections.push({ Section: "=== REGISTRATION LIFECYCLE ===", Metric: "", Value: "" });
+      if (desc?.registration_type_available === false) {
+        csvSections.push({
+          Section: "Registration Lifecycle",
+          Metric: "Unavailable: registry has no registration type field",
+          Value: "",
+          Share: ""
+        });
+      } else if (regTypeData.length === 0) {
+        csvSections.push({ Section: "Registration Lifecycle", Metric: "No records found", Value: 0, Share: "0%" });
+      } else {
+        regTypeData.forEach((record) => {
+          csvSections.push({
+            Section: "Registration Lifecycle",
+            Metric: record.name,
+            Value: record.value,
+            Share: `${Math.round((record.value / (totalByRegType || 1)) * 100)}%`
+          });
+        });
+      }
+
+      // Section 5: Top Sectors
       csvSections.push({ Section: "=== TOP ECONOMIC SECTORS ===", Metric: "", Value: "" });
       if (sectoralData.length === 0) {
         csvSections.push({ Section: "Economic Sector", Metric: "No records found", Value: 0, Share: "0%" });
@@ -516,7 +569,7 @@ export default function ExportReportsPage() {
         });
       }
 
-      // Section 5: Barangay Spread
+      // Section 6: Barangay Spread
       csvSections.push({ Section: "=== BARANGAY DENSITY SPREAD ===", Metric: "", Value: "" });
       if (barangaySpreadData.length === 0) {
         csvSections.push({ Section: "Barangay Spread", Metric: "No records found", Value: 0, Share: "0%" });
@@ -527,6 +580,50 @@ export default function ExportReportsPage() {
             Metric: b.fullName,
             Value: b.total,
             Share: `${Math.round((b.total / (totalBusinessesAcrossBarangays || 1)) * 100)}%`
+          });
+        });
+      }
+
+      // Section 7: Compliance by business size
+      csvSections.push({ Section: "=== COMPLIANCE BY BUSINESS SIZE ===", Metric: "", Value: "" });
+      if (complianceBySizeData.length === 0) {
+        csvSections.push({
+          Section: "Compliance by Business Size",
+          Metric: "No records found",
+          Value: 0,
+          Active: 0,
+          NonActive: 0,
+          ComplianceRate: "0%"
+        });
+      } else {
+        complianceBySizeData.forEach((record) => {
+          csvSections.push({
+            Section: "Compliance by Business Size",
+            Metric: record.name,
+            Value: record.total,
+            Active: record.Active,
+            NonActive: record["Non-Active"],
+            ComplianceRate: `${record.rate}%`
+          });
+        });
+      }
+
+      // Section 8: Monthly renewal and compliance trend
+      csvSections.push({ Section: "=== 12-MONTH RENEWAL & COMPLIANCE TREND ===", Metric: "", Value: "" });
+      if (!hasTimelineData) {
+        csvSections.push({
+          Section: "Renewal & Compliance Trend",
+          Metric: "No renewal timeline records found",
+          Active: 0,
+          NonActive: 0
+        });
+      } else {
+        timelineData.forEach((record) => {
+          csvSections.push({
+            Section: "Renewal & Compliance Trend",
+            Metric: record.month,
+            Active: record.Active,
+            NonActive: record["Non-Active"]
           });
         });
       }
@@ -734,6 +831,7 @@ export default function ExportReportsPage() {
                   type="button"
                   className="secondary-btn"
                   onClick={exportDemographicCsv}
+                  disabled={loadingAnalytics || Boolean(analyticsError)}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -759,6 +857,7 @@ export default function ExportReportsPage() {
                   type="button"
                   className="primary-btn"
                   onClick={exportCompleteDemographicPdf}
+                  disabled={loadingAnalytics || Boolean(analyticsError)}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -833,6 +932,35 @@ export default function ExportReportsPage() {
             </div>
 
             {/* Empty Registry Notice Banner (displays when database has 0 registered records) */}
+            {analyticsError && !loadingAnalytics && (
+              <div
+                role="alert"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 16,
+                  padding: "14px 18px",
+                  marginBottom: 20,
+                  border: "1px solid rgba(239, 68, 68, 0.24)",
+                  borderRadius: 10,
+                  background: "rgba(239, 68, 68, 0.06)",
+                  color: "var(--color-ink)"
+                }}
+              >
+                <span>
+                  Report data could not be loaded. {analyticsError}
+                </span>
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={() => setAnalyticsReloadKey((key) => key + 1)}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
             {isRegistryEmpty && !loadingAnalytics && (
               <div
                 style={{
@@ -878,7 +1006,7 @@ export default function ExportReportsPage() {
                   Total Registered
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-ink)", marginTop: 4 }}>
-                  {kpis?.total_businesses ?? 0}
+                  {analyticsError ? "—" : kpis?.total_businesses ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "#10b981", marginTop: 2, fontWeight: 600 }}>Active Municipality-wide</div>
               </div>
@@ -888,7 +1016,7 @@ export default function ExportReportsPage() {
                   Active &amp; Compliant
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", marginTop: 4 }}>
-                  {kpis?.active_count ?? 0}
+                  {analyticsError ? "—" : kpis?.active_count ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Current year valid permits</div>
               </div>
@@ -898,7 +1026,7 @@ export default function ExportReportsPage() {
                   Expired / Lapsed
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#ef4444", marginTop: 4 }}>
-                  {kpis?.expired_count ?? 0}
+                  {analyticsError ? "—" : kpis?.expired_count ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Awaiting renewal</div>
               </div>
@@ -908,7 +1036,7 @@ export default function ExportReportsPage() {
                   Pending Review
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b", marginTop: 4 }}>
-                  {kpis?.pending_count ?? 0}
+                  {analyticsError ? "—" : kpis?.pending_count ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>In processing queue</div>
               </div>
@@ -918,14 +1046,15 @@ export default function ExportReportsPage() {
                   Compliance Rate
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#3b82f6", marginTop: 4 }}>
-                  {kpis?.compliance_rate != null ? `${kpis.compliance_rate}%` : "0%"}
+                  {analyticsError ? "—" : kpis?.compliance_rate != null ? `${kpis.compliance_rate}%` : "0%"}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Active vs Total Ratio</div>
               </div>
             </div>
 
-            {/* Demographic Charts Grid (3 columns side by side) */}
+            {/* Demographic Charts Grid (3-2-2 on wide screens) */}
             <div
+              className="export-report-demographic-grid"
               style={{
                 display: "grid",
                 gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
@@ -1042,6 +1171,8 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading demographic data...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : sizeData.length === 0 ? (
                     <ChartEmptyState
                       title="No Business Size Data"
@@ -1100,7 +1231,7 @@ export default function ExportReportsPage() {
                               flexShrink: 0
                             }}
                           />
-                          <span style={{ color: "var(--color-muted)", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <span style={{ color: "var(--color-muted)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                             {s.name}
                           </span>
                           <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
@@ -1222,6 +1353,8 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading legal structure data...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : typeData.length === 0 ? (
                     <ChartEmptyState
                       title="No Legal Structure Data"
@@ -1280,7 +1413,7 @@ export default function ExportReportsPage() {
                               flexShrink: 0
                             }}
                           />
-                          <span style={{ color: "var(--color-muted)", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <span style={{ color: "var(--color-muted)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                             {t.name}
                           </span>
                           <strong style={{ color: "var(--color-ink)" }}>{t.value}</strong>
@@ -1314,7 +1447,34 @@ export default function ExportReportsPage() {
                       New establishments vs. renewed permits
                     </p>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div className="no-export" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button
+                      type="button"
+                      title="Export chart as high-resolution PNG image"
+                      onClick={() => exportChartAsImage("reg-type", "Registration_Lifecycle", regTypeData.length > 0)}
+                      disabled={exportingImageId === "reg-type" || regTypeData.length === 0}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11.5,
+                        fontWeight: 600,
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        background: regTypeData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
+                        color: regTypeData.length > 0 ? "#2563eb" : "#94a3b8",
+                        border: "1px solid rgba(59, 130, 246, 0.25)",
+                        cursor: regTypeData.length > 0 ? "pointer" : "not-allowed",
+                        opacity: regTypeData.length > 0 ? 1 : 0.6
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                        <circle cx="8.5" cy="8.5" r="1.5" />
+                        <polyline points="21 15 16 10 5 21" />
+                      </svg>
+                      {exportingImageId === "reg-type" ? "Saving..." : "Export PNG"}
+                    </button>
                     <button
                       type="button"
                       title="Export chart as printable official PDF document"
@@ -1363,10 +1523,16 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading registration type data...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : regTypeData.length === 0 ? (
                     <ChartEmptyState
-                      title="No Registration Lifecycle Data"
-                      message="New businesses and renewals will appear here once registered."
+                      title={desc?.registration_type_available === false
+                        ? "Registration Lifecycle Unavailable"
+                        : "No Registration Lifecycle Data"}
+                      message={desc?.registration_type_available === false
+                        ? "The official registry has no registration type field, so New versus Renewal records cannot be reported."
+                        : "No registration lifecycle records are currently available."}
                     />
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
@@ -1420,7 +1586,7 @@ export default function ExportReportsPage() {
                               flexShrink: 0
                             }}
                           />
-                          <span style={{ color: "var(--color-muted)", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <span style={{ color: "var(--color-muted)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                             {t.name}
                           </span>
                           <strong style={{ color: "var(--color-ink)" }}>{t.value}</strong>
@@ -1543,6 +1709,8 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading sectoral data...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : sectoralData.length === 0 ? (
                     <ChartEmptyState
                       title="No Sector Data Available"
@@ -1714,6 +1882,8 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading geographic distribution...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : barangaySpreadData.length === 0 ? (
                     <ChartEmptyState
                       title="No Barangay Data Available"
@@ -1872,6 +2042,8 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading compliance data...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : complianceBySizeData.length === 0 ? (
                     <ChartEmptyState
                       title="No Compliance Data"
@@ -2035,6 +2207,8 @@ export default function ExportReportsPage() {
                     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
                       Loading trend data...
                     </div>
+                  ) : analyticsError ? (
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
                   ) : !hasTimelineData ? (
                     <ChartEmptyState
                       title="No Renewal Trend Logged"
@@ -2699,6 +2873,76 @@ export default function ExportReportsPage() {
                             <td>{c.Active}</td>
                             <td>{c["Non-Active"]}</td>
                             <td style={{ fontWeight: "700" }}>{c["Compliance Rate"]}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ marginBottom: 20 }} className="page-break-avoid">
+                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    VII. Registration Lifecycle
+                  </h3>
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th style={{ background: "#6366f1", color: "#fff" }}>Registration Type</th>
+                        <th style={{ background: "#6366f1", color: "#fff", width: "120px" }}>Registered Count</th>
+                        <th style={{ background: "#6366f1", color: "#fff", width: "120px" }}>Percentage Share</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!printReport.data.registrationTypeAvailable ? (
+                        <tr>
+                          <td colSpan={3} style={{ textAlign: "center", padding: "14px", color: "#64748b", fontStyle: "italic", background: "#f8fafc" }}>
+                            Registration lifecycle is unavailable because the official registry schema has no registration type field.
+                          </td>
+                        </tr>
+                      ) : printReport.data.registrationLifecycle.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} style={{ textAlign: "center", padding: "14px", color: "#64748b", fontStyle: "italic", background: "#f8fafc" }}>
+                            No registration lifecycle records currently found in the registry.
+                          </td>
+                        </tr>
+                      ) : (
+                        printReport.data.registrationLifecycle.map((record, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: "600" }}>{record.Status}</td>
+                            <td>{record.Count}</td>
+                            <td style={{ fontWeight: "600" }}>{record.Percentage}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ marginBottom: 20 }} className="page-break-avoid">
+                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    VIII. 12-Month Renewal &amp; Compliance Trend
+                  </h3>
+                  <table className="print-table">
+                    <thead>
+                      <tr>
+                        <th style={{ background: "#0ea5e9", color: "#fff" }}>Month</th>
+                        <th style={{ background: "#0ea5e9", color: "#fff", width: "140px" }}>Active Renewals</th>
+                        <th style={{ background: "#0ea5e9", color: "#fff", width: "140px" }}>Non-Active Gap</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {printReport.data.complianceTimeline.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} style={{ textAlign: "center", padding: "14px", color: "#64748b", fontStyle: "italic", background: "#f8fafc" }}>
+                            No renewal timeline records currently found in the registry.
+                          </td>
+                        </tr>
+                      ) : (
+                        printReport.data.complianceTimeline.map((record, idx) => (
+                          <tr key={idx}>
+                            <td style={{ fontWeight: "600" }}>{record.Month}</td>
+                            <td>{record["Active Renewals"]}</td>
+                            <td>{record["Non-Active Gap"]}</td>
                           </tr>
                         ))
                       )}

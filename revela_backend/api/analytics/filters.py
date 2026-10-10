@@ -79,8 +79,11 @@ def registry_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
         params.append(F["application_status"])
 
     if F.get("registration_type"):
-        parts.append(f"{alias}.registrationType = %s")
-        params.append(F["registration_type"])
+        if F.get("registration_type_supported") is False:
+            parts.append("1=0")
+        else:
+            parts.append(f"{alias}.registrationType = %s")
+            params.append(F["registration_type"])
 
     if F.get("line_of_business"):
         parts.append(f"{alias}.lineOfBusiness = %s")

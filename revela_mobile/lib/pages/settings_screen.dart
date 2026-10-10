@@ -545,7 +545,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       color: context.adaptiveTextLight,
                                     ),
                                     onTap: () => _openLegalUrl(
-                                      'https://ralphwreckeri2.github.io/revela_cookies/',
+                                      'https://revelasys.site/cookies',
                                     ),
                                   ),
                                 ],
