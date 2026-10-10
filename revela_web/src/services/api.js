@@ -62,6 +62,7 @@ async function handleResponse(res) {
       const msg =
         [data.message, data.error].filter(Boolean).join(": ") ||
         `Request failed with status ${res.status}`;
+      notifySessionInvalidation(res, msg);
       throw new Error(msg);
     }
     return data;
@@ -73,6 +74,28 @@ async function handleResponse(res) {
     }
     throw err;
   }
+}
+
+function notifySessionInvalidation(response, message) {
+  if (
+    response.status !== 401 ||
+    typeof window === "undefined" ||
+    !window.localStorage.getItem("revela_token")
+  ) {
+    return;
+  }
+
+  const path = new URL(response.url, window.location.origin).pathname;
+  if (path.endsWith("/auth/login") || path.endsWith("/auth/verify-2fa-login")) {
+    return;
+  }
+
+  const notice = /another device|session ended|logged out/i.test(message)
+    ? "Your session ended because this account signed in on another device or logged out. Please sign in again."
+    : "Your session has expired or is no longer active. Please sign in again.";
+  window.dispatchEvent(
+    new CustomEvent("revela:session-invalid", { detail: { notice } }),
+  );
 }
 
 function connectionGuard(err) {
@@ -151,6 +174,10 @@ export async function streamNotificationsRequest(
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => null);
+    notifySessionInvalidation(
+      res,
+      errorData?.message || errorData?.error || "",
+    );
     throw new Error(
       errorData?.message ||
         errorData?.error ||

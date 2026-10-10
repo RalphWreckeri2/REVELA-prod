@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:mobile-detection": "node --test src/components/mobileDetection.test.js",
     "verify:contexts": "node scripts/verify-contexts.mjs",
     "verify": "npm run lint && npm run verify:contexts && npm run build",
     "preview": "vite preview"

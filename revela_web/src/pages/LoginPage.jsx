@@ -109,7 +109,11 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [loginError, setLoginError] = useState(null);
+  const [loginError, setLoginError] = useState(() => {
+    const notice = sessionStorage.getItem("revela_session_notice");
+    if (notice) sessionStorage.removeItem("revela_session_notice");
+    return notice;
+  });
   const [loginLoading, setLoginLoading] = useState(false);
 
   // ── Forgot password state ──

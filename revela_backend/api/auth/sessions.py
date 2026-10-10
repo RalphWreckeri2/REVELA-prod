@@ -4,6 +4,7 @@ import threading
 from flask_jwt_extended import create_access_token
 
 from app import mysql
+from api.notifications import hub
 
 
 _session_table_ready = False
@@ -65,6 +66,14 @@ def issue_session_token(user, client_type):
         raise
     finally:
         cursor.close()
+    hub.publish_to_user(
+        user_id,
+        {
+            "type": "session_replaced",
+            "title": "Account signed in on another device",
+            "body": "This session ended because the account signed in on another device. Please sign in again.",
+        },
+    )
     return token
 
 

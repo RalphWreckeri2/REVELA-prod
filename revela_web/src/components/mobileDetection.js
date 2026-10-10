@@ -1,6 +1,12 @@
-const MOBILE_USER_AGENT =
-  /Android|iPhone|iPad|iPod|Mobile|Windows Phone|Tablet/i;
+const MOBILE_USER_AGENT = /iPhone|iPod|Mobile|Windows Phone/i;
 
 export function isMobileBrowser() {
-  return typeof navigator !== "undefined" && MOBILE_USER_AGENT.test(navigator.userAgent);
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  return (
+    navigator.userAgentData?.mobile === true ||
+    MOBILE_USER_AGENT.test(navigator.userAgent)
+  );
 }

@@ -27,7 +27,7 @@ def login():
     if source not in ("web", "mobile"):
         return jsonify({"error": "Unsupported login client."}), 400
     if source == "web" and re.search(
-        r"Android|iPhone|iPad|iPod|Mobile|Windows Phone",
+        r"iPhone|iPod|Mobile|Windows Phone",
         request.headers.get("User-Agent", ""),
         re.IGNORECASE,
     ):

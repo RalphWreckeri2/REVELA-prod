@@ -5,20 +5,182 @@
 }
 
 .map-page-header {
-  align-items: center;
-  gap: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
 }
 
 .map-page-header > :first-child {
-  flex: 1 1 340px;
+  flex: 0 0 auto;
+  width: 100%;
   min-width: 0;
 }
 
-.map-page-actions {
+.map-page-heading-row,
+.map-page-utilities,
+.map-action-toolbar,
+.map-toolbar-secondary,
+.map-detection-controls {
+  display: flex;
+  align-items: center;
+}
+
+.map-page-heading-row {
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.map-page-utilities {
+  flex: 0 0 auto;
+  gap: 10px;
+}
+
+.map-inactive-flags {
+  white-space: nowrap;
+}
+
+.map-action-toolbar {
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.map-toolbar-secondary {
   flex: 0 1 auto;
-  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.map-toolbar-button {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.map-more-actions {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.map-more-actions-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.map-more-actions-trigger::-webkit-details-marker {
+  display: none;
+}
+
+.map-more-actions-trigger svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform var(--duration-fast) ease;
+}
+
+.map-more-actions[open] .map-more-actions-trigger svg {
+  transform: rotate(180deg);
+}
+
+.map-more-actions-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-modal-bg);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+}
+
+.map-more-actions-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.map-detection-controls {
+  flex: 0 0 auto;
   justify-content: flex-end;
-  white-space: normal;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.map-detection-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-input-bg);
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.map-detection-mode select {
+  max-width: 172px;
+  height: 28px;
+  padding: 0 20px 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink);
+  font: 600 13px var(--font-base);
+  cursor: pointer;
+}
+
+.map-detection-mode select:focus-visible,
+.map-more-actions-trigger:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.map-run-detection {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.map-detection-quota {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
 }
 
 .map-advanced-tools {
@@ -77,26 +239,13 @@
 }
 
 @media (max-width: 1200px) {
-  .map-page-header {
+  .map-action-toolbar {
     align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
+    flex-wrap: wrap;
   }
 
-  .map-page-header > :first-child {
-    width: 100%;
-  }
-
-  .map-page-actions {
-    display: flex;
-    width: 100%;
-    max-width: 100%;
-    flex-wrap: wrap !important;
-    white-space: normal !important;
-  }
-
-  .map-page-actions > * {
-    max-width: 100%;
+  .map-detection-controls {
+    margin-left: auto;
   }
 
   .map-layout {
@@ -143,12 +292,19 @@
     font-size: clamp(24px, 7vw, 28px);
   }
 
-  .map-page-actions {
-    gap: 8px !important;
+  .map-page-heading-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
   }
 
-  .map-page-actions > * {
-    flex: 0 1 auto;
+  .map-toolbar-secondary,
+  .map-detection-controls {
+    flex-wrap: wrap;
+  }
+
+  .map-detection-controls {
+    margin-left: 0;
   }
 
   .map-canvas-container {

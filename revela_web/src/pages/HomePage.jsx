@@ -557,7 +557,15 @@ function VisualCalendarWidget({ inspections, navigate }) {
           </svg>
           {monthName}
         </h3>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            className="ghost-btn"
+            type="button"
+            onClick={() => navigate("/inspections/calendar")}
+            style={{ padding: "4px 8px", whiteSpace: "nowrap" }}
+          >
+            View Full Calendar
+          </button>
           <button className="ghost-btn" onClick={prevMonth} style={{ padding: "4px 8px" }}>&larr;</button>
           <button className="ghost-btn" onClick={nextMonth} style={{ padding: "4px 8px" }}>&rarr;</button>
         </div>

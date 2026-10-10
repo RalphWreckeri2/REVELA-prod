@@ -185,7 +185,10 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin 
             <span className="menu-group-label">{group}</span>
 
             {visibleItems.map(({ label, href, path, badge, icon }) => {
-              const isActive = path && location.pathname === path;
+              const isActive = path && (
+                location.pathname === path ||
+                (path === "/inspections" && location.pathname.startsWith("/inspections/"))
+              );
               return path ? (
                 <Link
                   key={label}
@@ -340,6 +343,17 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
             return;
           }
           setIsLiveConnected(true);
+
+          if (data.type === "session_replaced") {
+            window.dispatchEvent(
+              new CustomEvent("revela:session-invalid", {
+                detail: {
+                  notice: "Your session ended because this account signed in on another device. Please sign in again.",
+                },
+              }),
+            );
+            return;
+          }
 
           if (data.type !== "detection_progress" && data.type !== "reconcile_progress" && data.type !== "snap_progress") {
             refreshNotifications();

@@ -27,14 +27,27 @@ def publish_to_admins(event: Dict[str, Any]) -> None:
     """Push a JSON-serializable event to every connected admin stream."""
     with _lock:
         for _, q in _subscribers:
-            try:
-                q.put_nowait(event)
-            except queue.Full:
-                try:
-                    q.get_nowait()
-                except queue.Empty:
-                    pass
-                try:
-                    q.put_nowait(event)
-                except queue.Full:
-                    pass
+            _publish(q, event)
+
+
+def publish_to_user(user_id: str | int, event: Dict[str, Any]) -> None:
+    """Push an event only to streams authenticated as the specified user."""
+    normalized_user_id = str(user_id)
+    with _lock:
+        for subscriber_user_id, q in _subscribers:
+            if subscriber_user_id == normalized_user_id:
+                _publish(q, event)
+
+
+def _publish(q: queue.Queue, event: Dict[str, Any]) -> None:
+    try:
+        q.put_nowait(event)
+    except queue.Full:
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            q.put_nowait(event)
+        except queue.Full:
+            pass

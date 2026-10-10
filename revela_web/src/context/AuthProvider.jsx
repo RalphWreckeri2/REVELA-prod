@@ -44,6 +44,26 @@ export function AuthProvider({ children }) {
     return () => { isCurrent = false; };
   }, [token, user, setToken]);
 
+  useEffect(() => {
+    const invalidateSession = (event) => {
+      const notice = event.detail?.notice;
+      if (notice) {
+        try {
+          window.sessionStorage.setItem("revela_session_notice", notice);
+        } catch (error) {
+          console.error("Could not preserve the session-ended notice", error);
+        }
+      }
+      setToken(null);
+      setUser(null);
+    };
+
+    window.addEventListener("revela:session-invalid", invalidateSession);
+    return () => {
+      window.removeEventListener("revela:session-invalid", invalidateSession);
+    };
+  }, [setToken]);
+
   async function login(email, password) {
     const data = await loginRequest(email, password);
 

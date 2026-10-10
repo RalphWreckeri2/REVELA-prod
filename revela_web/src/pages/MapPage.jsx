@@ -2080,7 +2080,6 @@ export default function MapPage() {
   const [reviewQueueNotice, setReviewQueueNotice] = useState("");
   const [reviewQueueActionId, setReviewQueueActionId] = useState(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
-  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [placesUsage, setPlacesUsage] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
@@ -3559,183 +3558,83 @@ export default function MapPage() {
 
       {/* Page Header */}
       <div className="page-header map-page-header">
-        <div>
-          <h1 className="page-title">Map &amp; Flags</h1>
-          <p className="page-subtitle">
-            Geospatial view of flagged and unregistered establishments in Mataasnakahoy.
-          </p>
-          {(flagsError || actionError) && (
-            <p style={{ fontSize: 13, marginTop: 6, color: actionError && !flagsError ? "var(--color-primary)" : "var(--color-danger)" }}>
-              {flagsError || actionError}
+        <div className="map-page-heading-row">
+          <div>
+            <h1 className="page-title">Map &amp; Flags</h1>
+            <p className="page-subtitle">
+              Geospatial view of flagged and unregistered establishments in Mataasnakahoy.
             </p>
-          )}
-        </div>
-        <div className="map-page-actions" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            className="quick-refresh-btn"
-            type="button"
-            onClick={() => fetchFlags(false)}
-            disabled={isRefreshing}
-            title="Refresh map pins and flags"
-          >
-            <svg
-              className={isRefreshing ? "spin-icon" : ""}
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            {(flagsError || actionError) && (
+              <p style={{ fontSize: 13, marginTop: 6, color: actionError && !flagsError ? "var(--color-primary)" : "var(--color-danger)" }}>
+                {flagsError || actionError}
+              </p>
+            )}
+          </div>
+          <div className="map-page-utilities">
+            <button
+              className="quick-refresh-btn"
+              type="button"
+              onClick={() => fetchFlags(false)}
+              disabled={isRefreshing}
+              title="Refresh map pins and flags"
             >
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-            </svg>
-            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
-          </button>
+              <svg
+                className={isRefreshing ? "spin-icon" : ""}
+                viewBox="0 0 24 24"
+                width="14"
+                height="14"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+              </svg>
+              <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
+            </button>
+            <span className="map-inactive-flags" style={styles.livePill}>
+              <span style={styles.liveDot} />
+              {flags.filter(f => f.color !== "Green").length} Inactive Flags
+            </span>
+          </div>
+        </div>
 
-          <span style={styles.livePill}>
-            <span style={styles.liveDot} />
-            {flags.filter(f => f.color !== "Green").length} Inactive Flags
-          </span>
-          {isAdmin && (
-            <>
-              <button className="ghost-btn" type="button" onClick={() => setShowYellowModal(true)}>
+        {isAdmin && (
+          <div className="map-action-toolbar">
+            <div className="map-toolbar-secondary">
+              <button
+                className="ghost-btn map-toolbar-button"
+                type="button"
+                onClick={() => setShowYellowModal(true)}
+              >
                 + Add Flag
               </button>
-              <div
-                role="group"
-                aria-label="Run detection mode"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 3,
-                  padding: 3,
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius-md)",
-                  background: "var(--color-input-bg)",
-                }}
-              >
-                {[
-                  { value: "quick", label: "Quick Discovery" },
-                  { value: "full", label: "Full Coverage" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    aria-pressed={runDetectionMode === option.value}
-                    disabled={runDetectionLoading}
-                    onClick={() => setRunDetectionMode(option.value)}
-                    style={{
-                      minHeight: 30,
-                      padding: "4px 8px",
-                      border: 0,
-                      borderRadius: "calc(var(--radius-md) - 2px)",
-                      background: runDetectionMode === option.value
-                        ? "var(--color-primary)"
-                        : "transparent",
-                      color: runDetectionMode === option.value
-                        ? "#fff"
-                        : "var(--color-ink)",
-                      fontSize: 11,
-                      fontWeight: 700,
-                      whiteSpace: "nowrap",
-                      cursor: runDetectionLoading ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
               <button
-                className="primary-btn"
+                className="ghost-btn map-toolbar-button"
                 type="button"
-                onClick={handleRunDetection}
-                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached}
-                title={
-                  runDetectionLoading
-                    ? "Detection scan in progress…"
-                    : detectionQuota && detectionQuota.registry_count === 0
-                      ? "Official registry is empty. Import business permits first before running detection."
-                      : detectionQuota && detectionQuota.remaining_this_month === 0
-                        ? `Monthly limit reached (0/${detectionQuota.monthly_limit ?? 10} remaining). Resets on ${detectionQuota.resets_on}`
-                        : isDetectionPlacesQuotaReached
-                          ? `Nearby Search app quota reached (${activeDetectionPlacesQuota?.used_today ?? 0}/${activeDetectionPlacesQuota?.daily_cap ?? 0} daily, ${activeDetectionPlacesQuota?.used_month ?? 0}/${activeDetectionPlacesQuota?.monthly_cap ?? 0} monthly).`
-                          : `Run geospatial detection scan (max ${detectionQuota?.monthly_limit ?? 10}x/month)`
-                }
-                style={{
-                  opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? 0.6 : 1,
-                  cursor: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? "not-allowed" : "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "7px"
+                onClick={handleOpenReviewQueue}
+                disabled={reviewQueueLoading}
+                title="Review uncertain Re-verify pin suggestions"
+              >
+                Review Pin Suggestions
+              </button>
+
+              <details
+                className="map-more-actions"
+                onToggle={(event) => {
+                  if (event.currentTarget.open) fetchPlacesUsage();
                 }}
               >
-                <span>{runDetectionLoading ? "Running…" : "Run Detection"}</span>
-                {detectionQuota && (
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      padding: "1px 7px",
-                      borderRadius: "10px",
-                      background: detectionQuota.remaining_this_month === 0 ? "rgba(0, 0, 0, 0.3)" : "rgba(255, 255, 255, 0.22)",
-                      color: "#ffffff",
-                      fontWeight: 700,
-                      letterSpacing: "0.02em",
-                      lineHeight: 1.4,
-                      display: "inline-flex",
-                      alignItems: "center"
-                    }}
-                  >
-                    {detectionQuota.remaining_this_month}/{detectionQuota.monthly_limit ?? 10}
-                  </span>
-                )}
-              </button>
-              <button
-                className={`ghost-btn ${showAdvancedTools ? 'active' : ''}`}
-                type="button"
-                onClick={() => {
-                  setShowAdvancedTools(prev => {
-                    const next = !prev;
-                    if (next) fetchPlacesUsage();
-                    return next;
-                  });
-                }}
-                title="Advanced Tools"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: "8px 12px",
-                  height: 38,
-                  borderRadius: "var(--radius-md)",
-                  background: showAdvancedTools ? "var(--color-primary-light)" : "var(--color-input-bg)",
-                  color: showAdvancedTools ? "var(--color-primary)" : "var(--color-ink)",
-                  borderColor: showAdvancedTools ? "var(--color-primary)" : "var(--color-border)",
-                  cursor: "pointer",
-                  transition: "all 0.15s ease"
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="1"></circle>
-                  <circle cx="19" cy="12" r="1"></circle>
-                  <circle cx="5" cy="12" r="1"></circle>
-                </svg>
-              </button>
-              {showAdvancedTools && (
-                <div className="map-advanced-tools" style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <summary className="ghost-btn map-toolbar-button map-more-actions-trigger">
+                  More Actions
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m4 6 4 4 4-4" />
+                  </svg>
+                </summary>
+                <div className="map-more-actions-menu" aria-label="More map actions">
                   <button
-                    className="ghost-btn"
-                    type="button"
-                    onClick={handleOpenReviewQueue}
-                    disabled={reviewQueueLoading}
-                    title="Review uncertain Re-verify pin suggestions"
-                    style={{ height: 38, borderRadius: "var(--radius-md)" }}
-                  >
-                    Review Pin Suggestions
-                  </button>
-                  <button
-                    className="ghost-btn"
+                    className="ghost-btn map-more-actions-item"
                     type="button"
                     onClick={handleReconcile}
                     disabled={runDetectionLoading || reconcileProgress?.stage === 'running' || snapProgress?.stage === 'running'}
@@ -3747,21 +3646,13 @@ export default function MapPage() {
                           : `Re-check ${counts.Red} Red flag(s) against the registry and fix mis-colored pins`
                     }
                     style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      height: 38,
-                      borderRadius: "var(--radius-md)",
-                      background: "var(--color-input-bg)",
-                      color: "var(--color-ink)",
-                      borderColor: "var(--color-border)",
                       opacity: reconcileProgress?.stage === 'running' ? 0.55 : 1
                     }}
                   >
                     {reconcileProgress?.stage === 'running' ? 'Reconciling...' : 'Reconcile'}
                   </button>
                   <button
-                    className="ghost-btn"
+                    className="ghost-btn map-more-actions-item"
                     type="button"
                     onClick={handleSnapUnresolved}
                     disabled={
@@ -3781,17 +3672,11 @@ export default function MapPage() {
                           : "Geocode registry businesses that have no map coordinates yet"
                     }
                     style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      height: 38,
-                      borderRadius: "var(--radius-md)",
                       background: snapProgress?.stage === 'running' ? "rgba(5,150,105,0.12)" : "var(--color-input-bg)",
                       color: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "var(--color-muted)" : (snapProgress?.stage === 'running' ? "#059669" : "var(--color-ink)"),
                       borderColor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "var(--color-border)" : (snapProgress?.stage === 'running' ? "#059669" : "var(--color-border)"),
                       opacity: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? 0.5 : (snapProgress?.stage === 'running' ? 0.85 : 1),
-                      cursor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "not-allowed" : "pointer",
-                      transition: "all 0.2s"
+                      cursor: (isSnapMonthlyMaxed || isSnapDailyMaxed) ? "not-allowed" : "pointer"
                     }}
                   >
                     {snapProgress?.stage === 'running'
@@ -3803,7 +3688,7 @@ export default function MapPage() {
                           : 'Snap Pins'}
                   </button>
                   <button
-                    className="ghost-btn"
+                    className="ghost-btn map-more-actions-item"
                     type="button"
                     onClick={handleReverifyPins}
                     disabled={
@@ -3823,26 +3708,68 @@ export default function MapPage() {
                         : "Re-check pins that already have coordinates and move wrong ones onto the real Google place"
                     }
                     style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "6px",
-                      height: 38,
-                      borderRadius: "var(--radius-md)",
-                      background: "var(--color-input-bg)",
                       color: (isSnapMonthlyMaxed || isReverifyDailyMaxed) ? "var(--color-muted)" : "var(--color-ink)",
-                      borderColor: "var(--color-border)",
                       opacity: (isSnapMonthlyMaxed || isReverifyDailyMaxed || snapProgress?.stage === 'running') ? 0.5 : 1,
-                      cursor: (isSnapMonthlyMaxed || isReverifyDailyMaxed) ? "not-allowed" : "pointer",
-                      transition: "all 0.2s"
+                      cursor: (isSnapMonthlyMaxed || isReverifyDailyMaxed) ? "not-allowed" : "pointer"
                     }}
                   >
                     Re-verify Pins
                   </button>
                 </div>
-              )}
-            </>
-          )}
-        </div>
+              </details>
+            </div>
+
+            <div className="map-detection-controls">
+              <label className="map-detection-mode">
+                <span>Mode</span>
+                <select
+                  aria-label="Detection mode"
+                  value={runDetectionMode}
+                  disabled={runDetectionLoading}
+                  onChange={(event) => setRunDetectionMode(event.target.value)}
+                >
+                  <option value="quick">Quick Discovery</option>
+                  <option value="full">Full Coverage</option>
+                </select>
+              </label>
+              <button
+                className="primary-btn map-run-detection"
+                type="button"
+                onClick={handleRunDetection}
+                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached}
+                title={
+                  runDetectionLoading
+                    ? "Detection scan in progress…"
+                    : detectionQuota && detectionQuota.registry_count === 0
+                      ? "Official registry is empty. Import business permits first before running detection."
+                      : detectionQuota && detectionQuota.remaining_this_month === 0
+                        ? `Monthly limit reached (0/${detectionQuota.monthly_limit ?? 10} remaining). Resets on ${detectionQuota.resets_on}`
+                        : isDetectionPlacesQuotaReached
+                          ? `Nearby Search app quota reached (${activeDetectionPlacesQuota?.used_today ?? 0}/${activeDetectionPlacesQuota?.daily_cap ?? 0} daily, ${activeDetectionPlacesQuota?.used_month ?? 0}/${activeDetectionPlacesQuota?.monthly_cap ?? 0} monthly).`
+                          : `Run geospatial detection scan (max ${detectionQuota?.monthly_limit ?? 10}x/month)`
+                }
+                style={{
+                  opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? 0.6 : 1,
+                  cursor: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? "not-allowed" : "pointer"
+                }}
+              >
+                <span>{runDetectionLoading ? "Running…" : "Run Detection"}</span>
+                {detectionQuota && (
+                  <span
+                    className="map-detection-quota"
+                    style={{
+                      background: detectionQuota.remaining_this_month === 0
+                        ? "rgba(0, 0, 0, 0.3)"
+                        : "rgba(255, 255, 255, 0.22)"
+                    }}
+                  >
+                    {detectionQuota.remaining_this_month}/{detectionQuota.monthly_limit ?? 10}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Banner showing when picking location */}

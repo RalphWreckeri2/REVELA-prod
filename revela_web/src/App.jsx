@@ -8,6 +8,7 @@ import MapPage from './pages/MapPage';
 import RegistryPage from './pages/RegistryPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import InspectionPage from './pages/InspectionPage';
+import InspectionCalendarPage from './pages/InspectionCalendarPage';
 import UserManagementPage from './pages/UserManagementPage';
 import ExportReportsPage from './pages/ExportReportsPage';
 import SettingsPage from './pages/SettingsPage';
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
             <Route path="/registry" element={<ProtectedRoute><RegistryPage /></ProtectedRoute>} />
             <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
+            <Route path="/inspections/calendar" element={<ProtectedRoute><InspectionCalendarPage /></ProtectedRoute>} />
             <Route path="/inspections" element={<ProtectedRoute><InspectionPage /></ProtectedRoute>} />
             <Route path="/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><ExportReportsPage /></ProtectedRoute>} />

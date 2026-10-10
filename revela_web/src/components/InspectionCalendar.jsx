@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { getInspectionCalendarRequest } from "../services/api";
 
 const EVENT_LABELS = {
@@ -27,12 +28,12 @@ const toIsoDate = (date) => {
 const formatMonth = (date) =>
   new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(date);
 
-export default function InspectionCalendar({ token }) {
+export default function InspectionCalendar({ token, initialDate }) {
   const [visibleMonth, setVisibleMonth] = useState(() => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    const date = initialDate ? new Date(`${initialDate}T00:00:00`) : new Date();
+    return new Date(date.getFullYear(), date.getMonth(), 1);
   });
-  const [selectedDate, setSelectedDate] = useState(() => toIsoDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => initialDate || toIsoDate(new Date()));
   const [calendar, setCalendar] = useState({ days: [], activities: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -98,6 +99,16 @@ export default function InspectionCalendar({ token }) {
             <button type="button" aria-label="Previous month" onClick={() => selectMonth(-1)}>‹</button>
             <h2>{formatMonth(visibleMonth)}</h2>
             <button type="button" aria-label="Next month" onClick={() => selectMonth(1)}>›</button>
+          </div>
+          <div className="inspection-calendar-tools">
+            <button type="button" className="ghost-btn" onClick={() => {
+              const today = new Date();
+              setVisibleMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+              setSelectedDate(toIsoDate(today));
+            }}>Today</button>
+            <button type="button" className="ghost-btn" onClick={() => void fetchCalendar()} disabled={loading}>
+              {loading ? "Refreshing…" : "Refresh"}
+            </button>
           </div>
           <div className="inspection-calendar-grid inspection-calendar-weekdays" aria-hidden="true">
             {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
@@ -186,6 +197,14 @@ export default function InspectionCalendar({ token }) {
                     </small>
                     {activity.inspectionResult && (
                       <small>Result: {activity.inspectionResult}</small>
+                    )}
+                    {activity.targetLogID != null && (
+                      <Link
+                        className="inspection-calendar-record-link"
+                        to={`/inspections?search=${encodeURIComponent(activity.targetLogID)}`}
+                      >
+                        Open dispatch record
+                      </Link>
                     )}
                   </div>
                 </li>

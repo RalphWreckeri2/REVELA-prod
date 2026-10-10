@@ -313,23 +313,11 @@ body {
 .saas-root {
   display: flex;
   height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   font-family: var(--font-base);
   color: var(--color-ink);
-}
-
-.saas-root.inspection-page-shell {
-  height: auto;
-  min-height: 100vh;
-  overflow: visible;
-}
-.saas-root.inspection-page-shell .saas-main {
-  min-height: 100vh;
-}
-.saas-root.inspection-page-shell .saas-content {
-  min-height: calc(100vh - var(--navbar-height));
-  overflow-x: clip;
-  overflow-y: visible;
 }
 
 .saas-root.sidebar-collapsed {
@@ -339,6 +327,9 @@ body {
 /* ── SIDEBAR ── */
 .saas-sidebar {
   width: var(--sidebar-width);
+  height: 100%;
+  min-height: 0;
+  flex: 0 0 var(--sidebar-width);
   transition: width 0.2s ease;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(16px);
@@ -352,6 +343,7 @@ body {
 
 .sidebar-brand {
   height: var(--navbar-height);
+  flex-shrink: 0;
   padding: 0 24px;
   display: flex;
   align-items: center;
@@ -405,7 +397,9 @@ body {
 
 .sidebar-scroll {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px 0;
   display: flex;
   flex-direction: column;
@@ -474,6 +468,7 @@ body {
 }
 
 .sidebar-footer {
+  flex-shrink: 0;
   padding: 16px 24px;
   border-top: 1px solid var(--color-border-soft);
 }
@@ -509,6 +504,7 @@ body {
   background: var(--color-surface);
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 .saas-root.sidebar-collapsed .sidebar-brand {
   justify-content: center;
@@ -567,6 +563,7 @@ body {
 /* ── TOP NAVBAR ── */
 .top-navbar {
   height: var(--navbar-height);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -780,6 +777,7 @@ body {
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 40px 48px;
   display: flex;
   flex-direction: column;
@@ -1246,16 +1244,6 @@ html.theme-dark .ambient-bg-mesh {
 
 /* ── 5. RESPONSIVE ────────────────────────────────────────── */
 @media (max-width: 1200px) {
-  .map-page-header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .map-page-actions {
-    width: 100%;
-    flex-wrap: wrap !important;
-    white-space: normal !important;
-  }
   .map-layout {
     grid-template-columns: minmax(0, 1fr) !important;
   }
@@ -1332,53 +1320,69 @@ html.theme-dark .ambient-bg-mesh {
   .mobile-toggle {
     display: none;
   }
+}
 
-  .desktop-access-required {
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-    background:
-      radial-gradient(circle at 15% 15%, rgba(31, 173, 127, 0.14), transparent 38%),
-      var(--color-bg);
-    color: var(--color-ink);
-  }
-  .desktop-access-card {
-    width: min(100%, 520px);
-    padding: 40px;
-    border: 1px solid var(--color-border);
-    border-radius: 24px;
-    background: var(--color-modal-bg);
-    box-shadow: 0 24px 80px rgba(15, 23, 42, 0.12);
-    text-align: center;
-  }
-  .desktop-access-icon {
-    width: 58px;
-    height: 58px;
-    display: grid;
-    place-items: center;
-    margin: 0 auto 22px;
-    border-radius: 18px;
-    background: rgba(31, 173, 127, 0.12);
-    color: var(--color-primary);
-    font-size: 30px;
-  }
-  .desktop-access-eyebrow {
-    margin: 0 0 8px;
-    color: var(--color-primary);
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.14em;
-  }
-  .desktop-access-card h1 {
-    margin: 0 0 12px;
-    font-size: clamp(24px, 5vw, 32px);
-  }
-  .desktop-access-card p:last-child {
-    margin: 0;
-    color: var(--color-muted);
-    line-height: 1.65;
-  }
+.desktop-access-required {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  overflow-x: hidden;
+  padding: clamp(20px, 5vw, 48px);
+  background:
+    radial-gradient(circle at 15% 15%, rgba(86, 171, 47, 0.12), transparent 42%),
+    var(--color-page-bg);
+  color: var(--color-ink);
+}
+.desktop-access-card {
+  width: min(100%, 560px);
+  padding: clamp(26px, 5vw, 46px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-modal-bg);
+  box-shadow: 0 20px 64px rgba(15, 23, 42, 0.1);
+  text-align: center;
+}
+.desktop-access-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 22px;
+  border-radius: 18px;
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+.desktop-access-icon svg {
+  width: 30px;
+  height: 30px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.desktop-access-eyebrow {
+  margin: 0 0 9px;
+  color: var(--color-primary-dark);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+.desktop-access-card h1 {
+  margin: 0 0 14px;
+  font-size: clamp(26px, 5vw, 34px);
+  line-height: 1.2;
+}
+.desktop-access-message,
+.desktop-access-mobile-note {
+  color: var(--color-muted);
+  font-size: 16px;
+  line-height: 1.65;
+}
+.desktop-access-mobile-note {
+  margin-top: 14px;
+  font-size: 14px;
 }
 
 /* spin keyframe — defined once in the unified animations section above */
@@ -2253,6 +2257,30 @@ html.theme-dark .upload-column-badge {
   width: 100%;
   min-width: 0;
 }
+.inspection-calendar-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  min-width: 0;
+}
+.inspection-calendar-page-header .page-title {
+  margin: 8px 0 0;
+}
+.inspection-calendar-page-header .page-subtitle {
+  margin: 7px 0 0;
+}
+.inspection-calendar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.inspection-calendar-back:hover {
+  text-decoration: underline;
+}
 .registry-workflow-summary {
   width: 100%;
   min-width: 0;
@@ -2411,6 +2439,17 @@ html.theme-dark .upload-column-badge {
 .inspection-calendar-month {
   margin-bottom: 20px;
 }
+.inspection-calendar-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: -8px 0 12px;
+}
+.inspection-calendar-tools .ghost-btn {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
 .inspection-calendar-month h2,
 .inspection-calendar-activities-header h2 {
   margin: 0;
@@ -2549,6 +2588,17 @@ html.theme-dark .upload-column-badge {
   margin-top: 4px;
   line-height: 1.5;
 }
+.inspection-calendar-record-link {
+  display: inline-block;
+  margin-top: 7px;
+  color: var(--color-primary);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.inspection-calendar-record-link:hover {
+  text-decoration: underline;
+}
 .inspection-calendar-state {
   margin: 24px 0 0;
   color: var(--color-muted);
@@ -2641,9 +2691,6 @@ html.theme-dark .upload-column-badge {
 }
 
 @media (max-width: 520px) {
-  .map-page-actions {
-    gap: 6px !important;
-  }
   .map-stats-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }

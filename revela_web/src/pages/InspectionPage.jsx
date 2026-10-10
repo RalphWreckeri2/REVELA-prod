@@ -6,10 +6,10 @@
 
 import { useState, useEffect, useCallback, useContext } from "react";
 import { createPortal } from "react-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { AuthContext } from "../context/authContext";
 import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
-import InspectionCalendar from "../components/InspectionCalendar";
 import {
   getInspectionsRequest,
   getInspectorTasksRequest,
@@ -1045,6 +1045,7 @@ function KanbanColumn({ status, reports, isAdmin, onAssign, onVerify, onViewDeta
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function InspectionPage() {
   const { token, user } = useContext(AuthContext);
+  const [searchParams] = useSearchParams();
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
 
   const [reports,   setReports]   = useState([]);
@@ -1074,9 +1075,8 @@ export default function InspectionPage() {
 
   // Filter state (admin only)
   const [filterStatus, setFilterStatus] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showCalendar, setShowCalendar] = useState(false);
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
   const fetchReports = useCallback(async (isSilent = false) => {
@@ -1182,7 +1182,6 @@ export default function InspectionPage() {
 
   return (
     <DashboardLayout
-      className="inspection-page-shell"
       user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}
     >
 
@@ -1254,14 +1253,9 @@ export default function InspectionPage() {
                 ))}
               </select>
             )}
-            <button
-              className="ghost-btn"
-              type="button"
-              onClick={() => setShowCalendar((visible) => !visible)}
-              aria-pressed={showCalendar}
-            >
-              {showCalendar ? "Hide Calendar" : "Calendar View"}
-            </button>
+            <Link className="ghost-btn" to="/inspections/calendar">
+              Calendar View
+            </Link>
           </div>
 
           {/* Live Search Bar */}
@@ -1299,9 +1293,6 @@ export default function InspectionPage() {
           </div>
         </div>
       </div>
-
-
-      {showCalendar && <InspectionCalendar token={token} />}
 
       {error && (
         <div style={s.errorBanner}>
