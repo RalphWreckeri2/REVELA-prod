@@ -49,7 +49,7 @@ NEW_NEARBY_MONTHLY_CAP = API_QUOTA_CONFIG.nearby_new.monthly
 NEW_NEARBY_URL = "https://places.googleapis.com/v1/places:searchNearby"
 NEW_NEARBY_FIELD_MASK = (
     "places.id,places.displayName,places.location,"
-    "places.primaryType,places.businessStatus"
+    "places.primaryType,places.businessStatus,places.formattedAddress"
 )
 NEW_NEARBY_EXCLUDED_TYPES = (
     "place_of_worship", "school", "primary_school", "secondary_school",
@@ -502,6 +502,13 @@ def _within_municipality(lat: float, lng: float) -> bool:
     if lat is None or lng is None:
         return False
     return _MUNICIPALITY_WITH_TOLERANCE.contains(Point(lng, lat))
+
+
+def is_within_municipality_boundary(lat: float, lng: float) -> bool:
+    """Check the unbuffered Mataasnakahoy boundary for imported coordinates."""
+    if lat is None or lng is None:
+        return False
+    return _MUNICIPALITY_BOUNDARY.covers(Point(lng, lat))
 
 
 def _normalize_business_name(name: str) -> str:

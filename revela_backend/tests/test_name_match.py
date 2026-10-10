@@ -138,6 +138,21 @@ class NameMatchRegressionTests(unittest.TestCase):
         tokens, _ = parse_name("Jardín del Edén Event Venue")
         self.assertEqual(tokens, ["jardin", "eden"])
 
+    def test_unicode_name_normalization_handles_accent_variants_and_casefolding(self):
+        accented, _ = parse_name("Café de Ángel")
+        plain, _ = parse_name("Cafe de Angel")
+        sharp_s, _ = parse_name("Straße Café")
+        expanded, _ = parse_name("STRASSE Cafe")
+        self.assertEqual(accented, plain)
+        self.assertEqual(sharp_s, expanded)
+
+    def test_unicode_only_names_and_full_width_punctuation_are_preserved(self):
+        tokens, _ = parse_name("東京商店")
+        full_width, _ = parse_name("ＡＢＣ・商店")
+        normalized, _ = parse_name("ABC 商店")
+        self.assertEqual(tokens, ["東京商店"])
+        self.assertEqual(full_width, normalized)
+
     def test_parse_name_cache_does_not_share_mutable_results(self):
         tokens, groups = parse_name("Silva Pharmacy")
         tokens.append("contaminated")

@@ -20,6 +20,114 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertIsNone(service._parse_coordinate_pair("13.96", "inf"))
         self.assertIsNone(service._parse_coordinate_pair("13.96", None))
 
+    def test_import_boundary_accepts_municipal_center_and_rejects_outside(self):
+        self.assertTrue(
+            service._coordinate_pair_within_municipality((13.9667, 121.1167))
+        )
+        self.assertFalse(
+            service._coordinate_pair_within_municipality((13.9667, 121.2))
+        )
+
+    def test_upload_keeps_valid_business_and_ignores_out_of_bounds_coordinates(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        cursor.rowcount = 1
+        mysql = MagicMock()
+        mysql.connection.cursor.return_value = cursor
+        frame = pd.DataFrame([{
+            "Business ID": "BIZ-OUTSIDE",
+            "businessName": "Café de Ángel",
+            "businessAddress": "Main Street",
+            "barangay": "Barangay I",
+            "latitude": "13.9667",
+            "longitude": "121.2",
+            "applicationStatus": None,
+        }])
+        usage = {
+            "text_search": {"day": 0, "month": 0},
+            "details": {"day": 0, "month": 0},
+            "geocoding": {"day": 0, "month": 0},
+        }
+        with (
+            patch.object(service, "mysql", mysql),
+            patch.object(service, "GOOGLE_MAPS_API_KEY", None),
+            patch.object(service.pd, "read_csv", return_value=frame),
+            patch.object(service, "_load_barangay_lookup", return_value={"barangay i": 1}),
+            patch.object(service, "_resolve_barangay_id", return_value=1),
+            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(service.places_resolver, "reset_run_state"),
+            patch.object(service.places_resolver, "compute_resolve_key", return_value="key"),
+            patch.object(
+                service,
+                "_resolve_location",
+                return_value=(None, None, {"reason": "no_geocode_results"}),
+            ) as resolve_location,
+            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service, "insert_green_flag"),
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.upload_registry(BytesIO(b"csv"), ".csv")
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["inserted"], 1)
+        self.assertEqual(summary["coordinates_out_of_bounds"], 1)
+        self.assertIn("outside the Mataasnakahoy boundary", summary["errors"][0])
+        resolve_location.assert_called_once()
+        insert_call = next(
+            call for call in cursor.execute.call_args_list
+            if "INSERT IGNORE INTO official_registry" in call.args[0]
+        )
+        values = insert_call.args[1]
+        self.assertEqual(values[2], "CAFÉ DE ÁNGEL")
+        self.assertIsNone(values[6])
+        self.assertIsNone(values[7])
+        self.assertEqual(values[8], "Pending")
+
+    def test_sync_defaults_missing_status_to_pending_and_preserves_caps(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        cursor.rowcount = 1
+        mysql = MagicMock()
+        mysql.connection.cursor.return_value = cursor
+        frame = pd.DataFrame([{
+            "Business ID": "BIZ-NEW",
+            "businessName": "Café de Ángel",
+            "businessAddress": "Main Street",
+            "barangay": "Barangay I",
+            "latitude": "13.9667",
+            "longitude": "121.1167",
+            "applicationStatus": None,
+        }])
+        usage = {
+            "text_search": {"day": 0, "month": 0},
+            "details": {"day": 0, "month": 0},
+            "geocoding": {"day": 0, "month": 0},
+        }
+        with (
+            patch.object(service, "mysql", mysql),
+            patch.object(service.pd, "read_csv", return_value=frame),
+            patch.object(service, "_load_barangay_lookup", return_value={"barangay i": 1}),
+            patch.object(service, "_resolve_barangay_id", return_value=1),
+            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(service.places_resolver, "reset_run_state"),
+            patch.object(service.places_resolver, "compute_resolve_key", return_value="key"),
+            patch.object(service.places_resolver, "record_coord_meta"),
+            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service, "insert_green_flag"),
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.sync_registry(BytesIO(b"csv"), ".csv")
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["inserted"], 1)
+        insert_call = next(
+            call for call in cursor.execute.call_args_list
+            if "INSERT INTO official_registry" in call.args[0]
+        )
+        values = insert_call.args[1]
+        self.assertEqual(values[2], "CAFÉ DE ÁNGEL")
+        self.assertEqual(values[8], "Pending")
+
     def test_transient_resolver_failures_do_not_become_cache_keys(self):
         for meta in (
             {"reason": "api_error"},

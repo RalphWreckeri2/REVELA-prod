@@ -101,9 +101,11 @@ def _ascii_fold(raw: str) -> str:
 
 @lru_cache(maxsize=32768)
 def _parse_name_cached(raw: str) -> tuple[tuple[str, ...], frozenset[str]]:
-    s = _ascii_fold(raw).lower().replace('&', ' and ')
-    s = re.sub(r'[\u2019\x27`]s\b', '', s)
-    s = re.sub(r'[^a-z0-9 ]+', ' ', s)
+    s = unicodedata.normalize('NFKD', unicodedata.normalize('NFKC', raw or ''))
+    s = ''.join(char for char in s if not unicodedata.combining(char))
+    s = s.casefold().replace('&', ' and ')
+    s = re.sub(r'[\u2018\u2019\x27\u0060]s\b', '', s)
+    s = ''.join(char if char.isalnum() else ' ' for char in s)
 
     groups = set()
     for rx, group in CATEGORY_PATTERNS:

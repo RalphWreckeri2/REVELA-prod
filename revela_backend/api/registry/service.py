@@ -165,6 +165,14 @@ def _parse_coordinate_pair(raw_lat, raw_lng):
     return lat, lng
 
 
+def _coordinate_pair_within_municipality(coordinate_pair):
+    if coordinate_pair is None:
+        return False
+    from api.flags.service import is_within_municipality_boundary
+
+    return is_within_municipality_boundary(*coordinate_pair)
+
+
 def _preserve_import_coordinates(coord_source, match_status, has_csv_coords):
     """Keep manual/approved pins, and trusted CSV pins absent a replacement coordinate."""
     source = (coord_source or "").strip().lower()
@@ -698,13 +706,22 @@ def upload_registry(file, ext: str):
         # Count rows that actually need geocoding (those without valid pre-filled coordinates, with an address, and not duplicates)
         has_valid_coords = pd.Series(False, index=df.index)
         if "latitude" in df.columns and "longitude" in df.columns:
+            coordinate_pairs = [
+                _parse_coordinate_pair(lat, lng)
+                for lat, lng in zip(df["latitude"], df["longitude"])
+            ]
             has_valid_coords = pd.Series(
-                [
-                    _parse_coordinate_pair(lat, lng) is not None
-                    for lat, lng in zip(df["latitude"], df["longitude"])
-                ],
+                [_coordinate_pair_within_municipality(pair)
+                 for pair in coordinate_pairs],
                 index=df.index,
             )
+            has_out_of_bounds_coords = pd.Series(
+                [pair is not None and not _coordinate_pair_within_municipality(pair)
+                 for pair in coordinate_pairs],
+                index=df.index,
+            )
+        else:
+            has_out_of_bounds_coords = pd.Series(False, index=df.index)
 
         has_address = pd.Series(True, index=df.index)
         if "businessAddress" in df.columns:
@@ -723,7 +740,10 @@ def upload_registry(file, ext: str):
         is_new = ~biz_ids.isin(existing_db_ids)
         is_first_occurrence = ~biz_ids.duplicated()
 
-        needs_geo = ~has_valid_coords & has_address & is_new & is_first_occurrence
+        needs_geo = (
+            ~has_valid_coords & ~has_out_of_bounds_coords
+            & has_address & is_new & is_first_occurrence
+        )
         rows_needing_geocode = int(needs_geo.sum())
 
         if GOOGLE_MAPS_API_KEY and rows_needing_geocode > 0 and not places_resolver.enabled():
@@ -747,6 +767,7 @@ def upload_registry(file, ext: str):
         inserted = 0
         geocoded_ok = 0
         geocoded_failed = 0
+        coordinates_out_of_bounds = 0
         no_match_count = 0
         skipped_quota = 0
         api_error_count = 0
@@ -825,6 +846,15 @@ def upload_registry(file, ext: str):
             coordinate_pair = _parse_coordinate_pair(
                 row.get("latitude"), row.get("longitude")
             )
+            if (
+                coordinate_pair is not None
+                and not _coordinate_pair_within_municipality(coordinate_pair)
+            ):
+                coordinate_pair = None
+                coordinates_out_of_bounds += 1
+                errors.append(
+                    f"Row {idx + 2}: coordinates are outside the Mataasnakahoy boundary — ignored"
+                )
             if coordinate_pair:
                 lat, lng = coordinate_pair
                 geocoded_ok += 1
@@ -948,6 +978,7 @@ def upload_registry(file, ext: str):
             "inserted_ids":     inserted_ids,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,
+            "coordinates_out_of_bounds": coordinates_out_of_bounds,
             "resolved":         geocoded_ok,
             "no_match":         no_match_count,
             "skipped_quota":    skipped_quota,
@@ -999,6 +1030,7 @@ def sync_registry(file, ext: str):
         skipped = 0
         geocoded_ok = 0
         geocoded_failed = 0
+        coordinates_out_of_bounds = 0
         no_match_count = 0
         cache_hits = 0
         skipped_quota = 0
@@ -1097,6 +1129,16 @@ def sync_registry(file, ext: str):
             coordinate_pair = _parse_coordinate_pair(
                 row.get("latitude"), row.get("longitude")
             )
+            coordinate_out_of_bounds = (
+                coordinate_pair is not None
+                and not _coordinate_pair_within_municipality(coordinate_pair)
+            )
+            if coordinate_out_of_bounds:
+                coordinate_pair = None
+                coordinates_out_of_bounds += 1
+                errors.append(
+                    f"Row {idx + 2}: coordinates are outside the Mataasnakahoy boundary — ignored"
+                )
             csv_has_coords = coordinate_pair is not None
             if existing:
                 is_locked = _preserve_import_coordinates(
@@ -1159,7 +1201,7 @@ def sync_registry(file, ext: str):
 
             status_raw = (
                 row.get("applicationStatus")
-                or "Active"
+                or "Pending"
             )
             if geo_meta is None and lat is not None and not reused_existing:
                 # coordinates came from the uploaded file
@@ -1395,6 +1437,7 @@ def sync_registry(file, ext: str):
             "updated":          updated,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,
+            "coordinates_out_of_bounds": coordinates_out_of_bounds,
             "resolved":         geocoded_ok,
             "no_match":         no_match_count,
             "skipped_quota":    skipped_quota,

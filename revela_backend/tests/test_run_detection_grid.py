@@ -425,6 +425,7 @@ class RunDetectionGridTests(unittest.TestCase):
                 "location": {"latitude": 13.9667, "longitude": 121.1167},
                 "primaryType": "convenience_store",
                 "businessStatus": "CLOSED_PERMANENTLY",
+                "formattedAddress": "Barangay I, Mataasnakahoy, Batangas",
             }]
         }
         post.return_value = response
@@ -441,6 +442,11 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(results[0]["place_id"], "places/test-id")
         self.assertEqual(results[0]["name"], "Test Store")
         self.assertEqual(results[0]["business_status"], "CLOSED_PERMANENTLY")
+        self.assertEqual(
+            results[0]["vicinity"],
+            "Barangay I, Mataasnakahoy, Batangas",
+        )
+        self.assertIn("places.formattedAddress", service.NEW_NEARBY_FIELD_MASK)
         self.assertFalse(service._is_non_business_place(results[0]))
         args, kwargs = post.call_args
         self.assertEqual(args[0], service.NEW_NEARBY_URL)
