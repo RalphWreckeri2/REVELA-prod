@@ -8,7 +8,13 @@ from api.models.user import find_user_by_id, find_user_by_email, enable_user_2fa
 from api.notifications.service import get_email_inspection_alerts, set_email_inspection_alerts, notify_password_reset_request
 from datetime import timedelta
 import re
-from api.auth.sessions import issue_session_token, revoke_session, ActiveSessionConflict
+from api.auth.sessions import (
+    issue_session_token,
+    revoke_session,
+    ActiveSessionConflict,
+    record_session_activity,
+    IDLE_SESSION_MESSAGE,
+)
 
 auth_bp = Blueprint("auth", __name__)
 
@@ -116,6 +122,19 @@ def login():
             "mustChangePassword": bool(user.get("mustChangePassword", False))
         }
     }), 200
+
+
+@auth_bp.route("/activity", methods=["POST"])
+@jwt_required()
+def record_activity():
+    """Reset the inactivity window after genuine user interaction.
+
+    The portal calls this only for real input (clicks, keys, scrolling, touch,
+    navigation). Dashboard polling and the notification stream never call it, so
+    background traffic cannot keep an abandoned session alive.
+    """
+    record_session_activity(get_jwt().get("session_id"))
+    return jsonify({"message": "Activity recorded"}), 200
 
 
 # ── POST /api/auth/logout ─────────────────────────────────────────────────────

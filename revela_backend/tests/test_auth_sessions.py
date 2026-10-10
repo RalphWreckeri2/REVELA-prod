@@ -17,6 +17,7 @@ from api.notifications import hub
 
 
 SESSION_LIFETIME_HOURS = 12
+IDLE_LIMIT_MINUTES = 30
 
 
 def _duplicate_entry():
@@ -37,11 +38,17 @@ class InMemorySessionStore:
             row = self.rows.get(int(user_id))
             if row is None or row[0] != session_id:
                 return False
-            return row[2] < SESSION_LIFETIME_HOURS
+            return row[2] < SESSION_LIFETIME_HOURS * 60
 
     def session_of(self, user_id):
         with self.lock:
             return self.rows.get(int(user_id))
+
+    def age_session(self, user_id, minutes):
+        """Age a stored row, simulating the passage of time."""
+        with self.lock:
+            row = self.rows[int(user_id)]
+            self.rows[int(user_id)] = (row[0], row[1], minutes)
 
 
 class InMemorySessionCursor:
@@ -69,8 +76,35 @@ class InMemorySessionCursor:
             user_id, lifetime_hours = params
             with self.store.lock:
                 row = self.store.rows.get(int(user_id))
-                if row is not None and row[2] < lifetime_hours:
+                if row is not None and row[2] < lifetime_hours * 60:
                     self.result = {"sessionID": row[0], "clientType": row[1]}
+
+        elif (
+            normalized.startswith("select 1 from user_active_sessions")
+            and "interval %s second" in normalized
+        ):
+            # Inactivity bootstrap: issued more than N seconds ago?
+            user_id, session_id, idle_seconds = params
+            with self.store.lock:
+                row = self.store.rows.get(int(user_id))
+                aged_out = (
+                    row is not None
+                    and row[0] == session_id
+                    and row[2] >= (idle_seconds / 60.0)
+                )
+                self.result = (1,) if aged_out else None
+
+        elif normalized.startswith("select 1 from user_active_sessions"):
+            # JWT-lifetime liveness check.
+            user_id, session_id, lifetime_hours = params
+            with self.store.lock:
+                row = self.store.rows.get(int(user_id))
+                live = (
+                    row is not None
+                    and row[0] == session_id
+                    and row[2] < lifetime_hours * 60
+                )
+                self.result = (1,) if live else None
 
         elif normalized.startswith("delete from user_active_sessions where userid = %s and issuedat <="):
             # Expiry cleanup: the predicate can never match a live session.
@@ -78,23 +112,12 @@ class InMemorySessionCursor:
             with self.store.lock:
                 key = int(user_id)
                 row = self.store.rows.get(key)
-                if row is not None and row[2] >= lifetime_hours:
+                if row is not None and row[2] >= lifetime_hours * 60:
                     del self.store.rows[key]
                     self.rowcount = 1
 
-        elif normalized.startswith("select 1 from user_active_sessions"):
-            user_id, session_id, lifetime_hours = params
-            with self.store.lock:
-                row = self.store.rows.get(int(user_id))
-                live = (
-                    row is not None
-                    and row[0] == session_id
-                    and row[2] < lifetime_hours
-                )
-                self.result = (1,) if live else None
-
         elif normalized.startswith("delete from user_active_sessions"):
-            # Logout: revoke only the presented session.
+            # Logout / idle eviction: revoke only the presented session.
             user_id, session_id = params
             with self.store.lock:
                 row = self.store.rows.get(int(user_id))
@@ -305,7 +328,7 @@ class ActiveSessionTests(unittest.TestCase):
                 # issuedAt ages past the 12h JWT lifetime.
                 with store.lock:
                     old = store.rows[12]
-                    store.rows[12] = (old[0], old[1], SESSION_LIFETIME_HOURS + 1)
+                    store.rows[12] = (old[0], old[1], SESSION_LIFETIME_HOURS * 60 + 1)
 
                 # The expired session no longer holds the slot.
                 token = sessions.issue_session_token(user, "mobile")
@@ -487,12 +510,19 @@ class ActiveSessionTests(unittest.TestCase):
         self.connection.commit.assert_called_once()
 
     def test_active_session_requires_exact_session_id(self):
-        self.cursor.fetchone.return_value = (1,)
-        self.assertTrue(sessions.is_active_session("12", "current-session"))
+        store = InMemorySessionStore()
+        user = {"userID": 12, "userRole": "Inspector"}
 
-        self.cursor.fetchone.return_value = None
-        self.assertFalse(sessions.is_active_session("12", "old-session"))
-        self.assertFalse(sessions.is_active_session("12", None))
+        with patch.object(sessions, "mysql", InMemorySessionMySQL(store)), patch.object(
+            sessions, "create_access_token", return_value="signed-token"
+        ):
+            with self._store_app().app_context():
+                sessions.issue_session_token(user, "web")
+                current = store.rows[12][0]
+
+                self.assertTrue(sessions.is_active_session(12, current))
+                self.assertFalse(sessions.is_active_session(12, "old-session"))
+                self.assertFalse(sessions.is_active_session(12, None))
 
     def test_web_login_rejects_phone_user_agent(self):
         app = Flask(__name__)
@@ -680,7 +710,9 @@ class ActiveSessionTests(unittest.TestCase):
         with app.test_request_context("/api/auth/verify-2fa-login"):
             with patch.object(
                 decorators, "find_user_by_id", return_value={"isActive": True}
-            ), patch.object(decorators, "is_active_session", return_value=False):
+            ), patch.object(
+                decorators, "check_active_session", return_value=(True, None)
+            ):
                 self.assertIsNone(decorators._verify_user_and_session(
                     "12", {"2fa_pending": True}
                 ))
@@ -688,7 +720,9 @@ class ActiveSessionTests(unittest.TestCase):
         with app.test_request_context("/api/private"):
             with patch.object(
                 decorators, "find_user_by_id", return_value={"isActive": True}
-            ), patch.object(decorators, "is_active_session", return_value=False):
+            ), patch.object(
+                decorators, "check_active_session", return_value=(False, "session_ended")
+            ):
                 response, status = decorators._verify_user_and_session(
                     "12", {"2fa_pending": True}
                 )
@@ -717,7 +751,7 @@ class ActiveSessionTests(unittest.TestCase):
         ), patch.object(
             decorators, "find_user_by_id", return_value={"isActive": True}
         ), patch.object(
-            decorators, "is_active_session", return_value=True
+            decorators, "check_active_session", return_value=(True, None)
         ), patch.object(
             inspection_routes, "get_jwt_identity", return_value="12"
         ), patch.object(

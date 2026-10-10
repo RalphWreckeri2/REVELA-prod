@@ -1,5 +1,6 @@
 import secrets
 import threading
+import time
 from datetime import timedelta
 
 from flask import current_app, has_app_context
@@ -61,6 +62,124 @@ _CLIENT_LABELS = {
     "web": "a web browser",
     "mobile": "a mobile device",
 }
+
+
+# ── Inactivity auto-logout (web portal) ───────────────────────────────────────
+#
+# A session idle for longer than this is refused by the backend.  This is a
+# separate, shorter window than the 12-hour JWT expiry, which stays the hard
+# ceiling.
+#
+# Only genuine user interaction reports activity (POST /api/auth/activity).
+# Background traffic -- dashboard polling, notification SSE heartbeats, silent
+# refreshes -- deliberately does NOT report activity, so it can never keep an
+# abandoned session alive.
+#
+# ``_last_activity`` holds sessionID -> time.monotonic().  This is in-process
+# state, the same single-worker model the SSE hub already relies on (see the
+# Dockerfile note on ``--workers 1``).  When this process has not seen a session
+# before -- a fresh login, or any session predating a restart -- the decision
+# falls back to the database clock, so a restart never grants free grace.
+DEFAULT_IDLE_TIMEOUT = timedelta(minutes=30)
+
+_activity_lock = threading.Lock()
+_last_activity = {}
+
+# Message shown by the portal when the backend refuses an idle session.
+IDLE_SESSION_MESSAGE = (
+    "Your session ended due to inactivity. Please sign in again."
+)
+
+
+def idle_timeout_seconds():
+    """Inactivity window in seconds, read from ``SESSION_IDLE_TIMEOUT``."""
+    if has_app_context():
+        configured = current_app.config.get("SESSION_IDLE_TIMEOUT")
+        if isinstance(configured, timedelta):
+            return max(configured.total_seconds(), 0.0)
+        if isinstance(configured, (int, float)):
+            return max(float(configured), 0.0)
+    return DEFAULT_IDLE_TIMEOUT.total_seconds()
+
+
+def record_session_activity(session_id):
+    """Mark a session as active right now (called on real user interaction)."""
+    if not session_id:
+        return
+    now = time.monotonic()
+    # Prune entries that can no longer influence any decision, so the map stays
+    # bounded by the number of live sessions rather than growing forever.
+    cutoff = idle_timeout_seconds() * 2
+    with _activity_lock:
+        for stale in [sid for sid, seen in _last_activity.items() if now - seen > cutoff]:
+            del _last_activity[stale]
+        _last_activity[session_id] = now
+
+
+def seconds_since_activity(session_id):
+    """Seconds since the last interaction, or ``None`` if unknown here."""
+    if not session_id:
+        return None
+    now = time.monotonic()
+    with _activity_lock:
+        seen = _last_activity.get(session_id)
+    if seen is None:
+        return None
+    return max(now - seen, 0.0)
+
+
+def is_session_idle(session_id):
+    """True only when this process *knows* the session has idled too long.
+
+    Unknown sessions report False so callers fail closed (treat as active)
+    rather than evicting a session on missing information.
+    """
+    elapsed = seconds_since_activity(session_id)
+    if elapsed is None:
+        return False
+    return elapsed > idle_timeout_seconds()
+
+
+def forget_session(session_id):
+    if not session_id:
+        return
+    with _activity_lock:
+        _last_activity.pop(session_id, None)
+
+
+def _session_idle_since_issue(user_id, session_id):
+    """Bootstrap check for a session this process has not seen.
+
+    Compared with the database's ``CURRENT_TIMESTAMP`` rather than a Python
+    timestamp: ``issuedAt`` is written with ``CURRENT_TIMESTAMP`` in the
+    database's own timezone, so only the database can compare the two safely.
+    """
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute("""
+            SELECT 1 FROM user_active_sessions
+            WHERE userID = %s AND sessionID = %s
+              AND issuedAt <= CURRENT_TIMESTAMP - INTERVAL %s SECOND
+        """, (int(user_id), session_id, idle_timeout_seconds()))
+        return cursor.fetchone() is not None
+    finally:
+        cursor.close()
+
+
+def _reject_if_idle(user_id, session_id):
+    """True when the session must be refused for inactivity."""
+    elapsed = seconds_since_activity(session_id)
+    if elapsed is None:
+        # First sighting in this process: only the stored issue time can decide.
+        if _session_idle_since_issue(user_id, session_id):
+            forget_session(session_id)
+            return True
+        record_session_activity(session_id)
+        return False
+    if elapsed > idle_timeout_seconds():
+        forget_session(session_id)
+        return True
+    return False
 
 
 class ActiveSessionConflict(Exception):
@@ -163,7 +282,21 @@ def claim_active_session(user_id, session_id, client_type):
             """, (user_id, lifetime_hours))
             active = cursor.fetchone()
             if active is not None:
-                raise ActiveSessionConflict(_row_value(active, "clientType", 1))
+                active_session_id = _row_value(active, "sessionID", 0)
+                if not is_session_idle(active_session_id):
+                    raise ActiveSessionConflict(_row_value(active, "clientType", 1))
+
+                # The previous session has already been idle past the inactivity
+                # limit, so it no longer holds the slot -- otherwise a device
+                # that walked away could lock the account out for the full 12
+                # hours. Clear exactly that row and let this login claim it.
+                cursor.execute("""
+                    DELETE FROM user_active_sessions
+                    WHERE userID = %s AND sessionID = %s
+                """, (user_id, active_session_id))
+                mysql.connection.commit()
+                forget_session(active_session_id)
+                continue
 
             # Nothing valid is holding the slot, so drop only expired rows.  The
             # expiry predicate means this can never remove a live session, even
@@ -209,13 +342,18 @@ def issue_session_token(user, client_type):
     # first device keeps its session and never receives a "session replaced"
     # notice.
     claim_active_session(user_id, session_id, client_type)
+    record_session_activity(session_id)
     return token
 
 
-def is_active_session(user_id, session_id):
-    """True only while this exact session is the account's live session."""
+def check_active_session(user_id, session_id):
+    """Return ``(is_active, code)``; ``code`` explains why a session is not active.
+
+    ``session_idle``  -- refused for inactivity; the slot has been released.
+    ``session_ended`` -- no such session (logged out, replaced, or expired).
+    """
     if not session_id:
-        return False
+        return False, "session_ended"
     _ensure_session_table()
     cursor = mysql.connection.cursor()
     try:
@@ -224,9 +362,26 @@ def is_active_session(user_id, session_id):
             WHERE userID = %s AND sessionID = %s
               AND issuedAt > CURRENT_TIMESTAMP - INTERVAL %s HOUR
         """, (int(user_id), session_id, session_lifetime_hours()))
-        return cursor.fetchone() is not None
+        row_exists = cursor.fetchone() is not None
     finally:
         cursor.close()
+
+    if not row_exists:
+        forget_session(session_id)
+        return False, "session_ended"
+
+    if _reject_if_idle(int(user_id), session_id):
+        # Release the slot immediately so another device can sign in instead of
+        # waiting out the remaining JWT lifetime.
+        revoke_session(user_id, session_id)
+        return False, "session_idle"
+    return True, None
+
+
+def is_active_session(user_id, session_id):
+    """True only while this exact session is the account's live, non-idle session."""
+    active, _ = check_active_session(user_id, session_id)
+    return active
 
 
 def revoke_session(user_id, session_id):
@@ -245,3 +400,4 @@ def revoke_session(user_id, session_id):
         raise
     finally:
         cursor.close()
+        forget_session(session_id)

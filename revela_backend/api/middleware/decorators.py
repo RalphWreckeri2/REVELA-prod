@@ -2,7 +2,7 @@ from functools import wraps
 from flask import current_app, jsonify, request
 from flask_jwt_extended import verify_jwt_in_request, get_jwt, get_jwt_identity
 from api.models.user import find_user_by_id
-from api.auth.sessions import is_active_session
+from api.auth.sessions import check_active_session, IDLE_SESSION_MESSAGE
 
 
 def _verify_user_and_session(identity, claims, require_admin=False):
@@ -22,7 +22,16 @@ def _verify_user_and_session(identity, claims, require_admin=False):
                     "message": "Complete two-factor authentication first.",
                 }), 401
             return None
-        if not is_active_session(identity, claims.get("session_id")):
+        session_active, session_code = check_active_session(
+            identity, claims.get("session_id")
+        )
+        if not session_active:
+            if session_code == "session_idle":
+                return jsonify({
+                    "code": "session_idle",
+                    "error": "Unauthorized",
+                    "message": IDLE_SESSION_MESSAGE,
+                }), 401
             return jsonify({
                 "error": "Unauthorized",
                 "message": (

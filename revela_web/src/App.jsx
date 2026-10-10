@@ -16,6 +16,7 @@ import TermsPage from './components/TermsPage';
 import PrivacyPage from './components/PrivacyPage';
 import CookiePolicyPage from './components/CookiePolicyPage';
 import DesktopAccessRequired from './components/DesktopAccessRequired';
+import InactivityProvider from './components/InactivityProvider';
 import { isMobileBrowser } from './components/mobileDetection';
 
 export default function App() {
@@ -27,6 +28,8 @@ export default function App() {
     <AuthProvider>
       <ThemeProvider>
         <BrowserRouter>
+          {/* Inside the router so route changes count as activity. */}
+          <InactivityProvider>
           <Routes>
             {/* Public & Legal */}
             <Route path="/" element={<LoginPage />} />
@@ -46,6 +49,7 @@ export default function App() {
             <Route path="/reports" element={<ProtectedRoute><ExportReportsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           </Routes>
+          </InactivityProvider>
         </BrowserRouter>
       </ThemeProvider>
     </AuthProvider>

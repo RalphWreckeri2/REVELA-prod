@@ -2,6 +2,10 @@ export const API_ORIGIN =
   import.meta.env.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
 const BASE_URL = `${API_ORIGIN}/api`;
 
+/** Shown when the backend refuses a session for inactivity. */
+export const INACTIVITY_LOGOUT_NOTICE =
+  "You have been logged out due to 30 minutes of inactivity. Please sign in again.";
+
 /** Absolute URL for inspection evidence (relative path from API). */
 export function inspectionEvidenceUrl(photoPath) {
   if (!photoPath) return null;
@@ -62,8 +66,12 @@ async function handleResponse(res) {
       const msg =
         [data.message, data.error].filter(Boolean).join(": ") ||
         `Request failed with status ${res.status}`;
-      notifySessionInvalidation(res, msg);
-      throw new Error(msg);
+      notifySessionInvalidation(res, msg, data.code);
+      const error = new Error(msg);
+      // Carry the machine-readable code so callers can react to specific
+      // reasons (e.g. "session_idle") instead of matching on prose.
+      error.code = data.code;
+      throw error;
     }
     return data;
   } catch (err) {
@@ -76,7 +84,7 @@ async function handleResponse(res) {
   }
 }
 
-function notifySessionInvalidation(response, message) {
+function notifySessionInvalidation(response, message, code) {
   if (
     response.status !== 401 ||
     typeof window === "undefined" ||
@@ -86,13 +94,23 @@ function notifySessionInvalidation(response, message) {
   }
 
   const path = new URL(response.url, window.location.origin).pathname;
-  if (path.endsWith("/auth/login") || path.endsWith("/auth/verify-2fa-login")) {
+  // Login and 2FA verification are pre-session; /auth/logout is an intentional
+  // sign-out, where a 401 is the expected outcome and must not replace the
+  // reason the user is already being shown.
+  if (
+    path.endsWith("/auth/login") ||
+    path.endsWith("/auth/verify-2fa-login") ||
+    path.endsWith("/auth/logout")
+  ) {
     return;
   }
 
-  const notice = /another device|session ended|logged out/i.test(message)
-    ? "Your session ended because this account signed in on another device or logged out. Please sign in again."
-    : "Your session has expired or is no longer active. Please sign in again.";
+  const notice =
+    code === "session_idle"
+      ? INACTIVITY_LOGOUT_NOTICE
+      : /another device|session ended|logged out/i.test(message)
+        ? "Your session ended because this account signed in on another device or logged out. Please sign in again."
+        : "Your session has expired or is no longer active. Please sign in again.";
   window.dispatchEvent(
     new CustomEvent("revela:session-invalid", { detail: { notice } }),
   );
@@ -131,6 +149,21 @@ export async function loginRequest(email, password) {
 
 export async function logoutRequest(token) {
   const res = await fetch(`${BASE_URL}/auth/logout`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return await handleResponse(res);
+}
+
+/**
+ * Report genuine user interaction so the backend resets the inactivity window.
+ *
+ * Only real input calls this. Dashboard polling, notification SSE frames and
+ * silent refreshes must never do so, otherwise background traffic would keep an
+ * abandoned session alive forever.
+ */
+export async function recordActivityRequest(token) {
+  const res = await fetch(`${BASE_URL}/auth/activity`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -177,6 +210,7 @@ export async function streamNotificationsRequest(
     notifySessionInvalidation(
       res,
       errorData?.message || errorData?.error || "",
+      errorData?.code,
     );
     throw new Error(
       errorData?.message ||

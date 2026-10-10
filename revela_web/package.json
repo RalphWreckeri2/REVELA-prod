@@ -8,8 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "test:mobile-detection": "node --test src/components/mobileDetection.test.js",
+    "test:inactivity": "node --test src/components/inactivityPolicy.test.js",
     "verify:contexts": "node scripts/verify-contexts.mjs",
-    "verify": "npm run lint && npm run verify:contexts && npm run build",
+    "verify": "npm run lint && npm run verify:contexts && npm run test:mobile-detection && npm run test:inactivity && npm run build",
     "preview": "vite preview"
   },
   "dependencies": {
