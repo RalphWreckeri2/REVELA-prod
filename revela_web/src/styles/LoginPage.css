@@ -92,7 +92,9 @@
 /* ── Light Frosted Glass Card ── */
 .login-card {
   display: flex;
-  width: 800px;
+  /* Fluid cap so an 800-820px tablet viewport (e.g. iPad portrait) is not
+     left flush against the card edge. No visual change on wider screens. */
+  width: min(800px, 92%);
   min-height: 500px;
   border-radius: 20px;
   overflow: hidden;

@@ -19,6 +19,37 @@ from api.auth.sessions import (
 auth_bp = Blueprint("auth", __name__)
 
 
+# ── Device-access usability gate (web client only) ────────────────────────────
+#
+# This is NOT authentication or authorization. It only keeps phone-sized clients
+# out of a dashboard that is not usable on them; role checks, JWT validation and
+# session policy remain the only authorities. It is also trivially bypassable,
+# since a user agent can be spoofed.
+#
+# Tablets must never be caught here. On iPadOS every browser -- Safari included,
+# unless the user enables "Request Desktop Website" -- sends `Mobile/15E148`, so
+# matching a bare `Mobile` token used to reject every iPad. Tablets therefore
+# take precedence over phones.
+_TABLET_USER_AGENT = re.compile(
+    r"iPad|Tablet|PlayBook|Silk|Kindle|Nexus (?:7|9|10)|Android(?![\s\S]*Mobile)",
+    re.IGNORECASE,
+)
+_PHONE_USER_AGENT = re.compile(
+    r"iPhone|iPod|Android[\s\S]*Mobile|Windows Phone|IEMobile|Opera Mini"
+    r"|BlackBerry|BB10|webOS|Mobile/\d",
+    re.IGNORECASE,
+)
+
+
+def _is_phone_user_agent(user_agent):
+    """True only for phone-class clients; never for a tablet."""
+    if not user_agent:
+        return False
+    if _TABLET_USER_AGENT.search(user_agent):
+        return False
+    return bool(_PHONE_USER_AGENT.search(user_agent))
+
+
 def _active_session_conflict_response(conflict):
     """First-login-wins rejection.
 
@@ -46,10 +77,8 @@ def login():
     source = data.get("source", "web")
     if source not in ("web", "mobile"):
         return jsonify({"error": "Unsupported login client."}), 400
-    if source == "web" and re.search(
-        r"iPhone|iPod|Mobile|Windows Phone",
-        request.headers.get("User-Agent", ""),
-        re.IGNORECASE,
+    if source == "web" and _is_phone_user_agent(
+        request.headers.get("User-Agent", "")
     ):
         return jsonify({
             "code": "desktop_access_required",

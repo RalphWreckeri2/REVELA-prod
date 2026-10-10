@@ -1328,68 +1328,8 @@ html.theme-dark .ambient-bg-mesh {
   }
 }
 
-.desktop-access-required {
-  width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  overflow-x: hidden;
-  padding: clamp(20px, 5vw, 48px);
-  background:
-    radial-gradient(circle at 15% 15%, rgba(86, 171, 47, 0.12), transparent 42%),
-    var(--color-page-bg);
-  color: var(--color-ink);
-}
-.desktop-access-card {
-  width: min(100%, 560px);
-  padding: clamp(26px, 5vw, 46px);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--color-modal-bg);
-  box-shadow: 0 20px 64px rgba(15, 23, 42, 0.1);
-  text-align: center;
-}
-.desktop-access-icon {
-  width: 58px;
-  height: 58px;
-  display: grid;
-  place-items: center;
-  margin: 0 auto 22px;
-  border-radius: 18px;
-  background: var(--color-primary-light);
-  color: var(--color-primary-dark);
-}
-.desktop-access-icon svg {
-  width: 30px;
-  height: 30px;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-}
-.desktop-access-eyebrow {
-  margin: 0 0 9px;
-  color: var(--color-primary-dark);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.13em;
-}
-.desktop-access-card h1 {
-  margin: 0 0 14px;
-  font-size: clamp(26px, 5vw, 34px);
-  line-height: 1.2;
-}
-.desktop-access-message,
-.desktop-access-mobile-note {
-  color: var(--color-muted);
-  font-size: 16px;
-  line-height: 1.65;
-}
-.desktop-access-mobile-note {
-  margin-top: 14px;
-  font-size: 14px;
-}
+/* Restricted-access notice styles live in styles/DesktopAccessRequired.css,
+   next to the login page tokens they reuse. */
 
 /* spin keyframe — defined once in the unified animations section above */
 
@@ -2978,9 +2918,6 @@ html.theme-dark .upload-column-badge {
   }
   .inspection-calendar-summary {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .desktop-access-card {
-    padding: 28px 22px;
   }
 }
 

@@ -1,0 +1,322 @@
+/* ── Restricted-access notice ────────────────────────────────────────────────
+   Reuses the REVELA login page's tokens (LoginPage.css): off-white base,
+   topographic grid overlay, green/gold ambient orbs, frosted glass card,
+   forest-green headings (#1a3a1a), gold accent (#d4af37) and primary green
+   (#56ab2f). Values are copied, not re-invented, so the two pages stay
+   visually identical. */
+
+/* LoginPage.css owns the app-wide `box-sizing: border-box` reset, but this page
+   does not load it. Scope the same reset here so padding is included in the
+   card's width -- otherwise the card overflows the viewport on phones. Kept
+   scoped to this page so nothing leaks into the rest of the application. */
+.restricted-root,
+.restricted-root *,
+.restricted-root *::before,
+.restricted-root *::after {
+  box-sizing: border-box;
+}
+
+.restricted-root {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  /* An explicit 1fr track is required: with the default implicit `auto`
+     track, `width: 100%` on the card is circular and the track grows to the
+     heading's max-content width, pushing the card off-screen on phones. */
+  grid-template-columns: minmax(0, 1fr);
+  place-items: center;
+  background: #f0f4f0;
+  font-family:
+    "Inter",
+    -apple-system,
+    sans-serif;
+  color: #1a202c;
+  /* Respect notches in portrait and in landscape. */
+  padding: max(20px, env(safe-area-inset-top))
+    max(20px, env(safe-area-inset-right))
+    max(20px, env(safe-area-inset-bottom))
+    max(20px, env(safe-area-inset-left));
+}
+
+/* Decorative bleed is clipped here, not on .restricted-root, so no global
+   overflow:hidden is needed and nothing about the layout is masked. */
+.restricted-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.restricted-topo {
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M54.627 0l.83.83v58.34l-.83.83H5.373l-.83-.83V.83l.83-.83h49.254zm-1.66 2.49H7.033v55.02h45.934V2.49z' fill='%231a3a1a' fill-opacity='0.4' fill-rule='evenodd'/%3E%3C/svg%3E");
+}
+
+.restricted-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+}
+
+.restricted-orb-tl {
+  width: 400px;
+  height: 400px;
+  background: rgba(168, 224, 99, 0.35);
+  top: -100px;
+  left: -50px;
+}
+
+.restricted-orb-br {
+  width: 350px;
+  height: 350px;
+  background: rgba(247, 201, 72, 0.3);
+  bottom: -100px;
+  right: -50px;
+}
+
+.restricted-orb-mid {
+  width: 250px;
+  height: 250px;
+  background: rgba(86, 171, 47, 0.15);
+  top: 30%;
+  right: 25%;
+}
+
+/* ── Card ─────────────────────────────────────────────────────────────────── */
+.restricted-card {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 440px);
+  max-width: 100%;
+  padding: clamp(24px, 6vw, 36px);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255, 255, 255, 1);
+  box-shadow:
+    0 25px 50px rgba(26, 58, 26, 0.1),
+    0 5px 15px rgba(0, 0, 0, 0.05);
+  text-align: center;
+  /* Keeps the page from growing taller than the screen on landscape phones. */
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ── Branding ────────────────────────────────────────────────────────────── */
+.restricted-seal-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.restricted-seal {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.restricted-muni {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(26, 58, 26, 0.6);
+}
+
+.restricted-gold-bar {
+  width: 32px;
+  height: 4px;
+  background: #d4af37;
+  border-radius: 2px;
+  margin: 0 auto 18px;
+}
+
+.restricted-powered {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: rgba(26, 58, 26, 0.5);
+  margin-bottom: 6px;
+}
+
+.restricted-wordmark {
+  font-size: clamp(28px, 8vw, 34px);
+  font-weight: 800;
+  letter-spacing: 2px;
+  line-height: 1;
+  color: #1a3a1a;
+  margin-bottom: 10px;
+}
+
+.restricted-portal-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #1a3a1a;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(86, 171, 47, 0.1);
+  border: 1px solid rgba(86, 171, 47, 0.25);
+}
+
+.restricted-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(26, 58, 26, 0.15),
+    transparent 70%
+  );
+  margin: 22px 0;
+}
+
+/* ── Message ─────────────────────────────────────────────────────────────── */
+.restricted-icon {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 16px;
+  border-radius: 16px;
+  background: rgba(212, 175, 55, 0.12);
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  color: #a8842c;
+}
+
+.restricted-icon svg {
+  width: 28px;
+  height: 28px;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.restricted-title {
+  font-size: clamp(20px, 5.5vw, 24px);
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  line-height: 1.25;
+  color: #1a3a1a;
+  margin-bottom: 10px;
+}
+
+.restricted-message {
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgba(26, 58, 26, 0.7);
+}
+
+.restricted-note {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(26, 58, 26, 0.1);
+  font-size: 12.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: rgba(26, 58, 26, 0.6);
+}
+
+/* ── Landscape phones ──────────────────────────────────────────────────────
+   A single column cannot fit in ~390px of height, so the card switches to two
+   columns and uses the width landscape provides. This keeps every line visible
+   without scrolling. */
+@media (max-height: 560px) and (orientation: landscape) {
+  .restricted-card {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: 24px;
+    width: min(100%, 700px);
+    padding: 20px 24px;
+  }
+
+  /* The divider only makes sense between stacked sections. */
+  .restricted-divider {
+    display: none;
+  }
+
+  .restricted-seal-row {
+    justify-content: center;
+    margin-bottom: 10px;
+  }
+
+  .restricted-seal {
+    width: 28px;
+    height: 28px;
+  }
+
+  .restricted-gold-bar {
+    margin-bottom: 10px;
+  }
+
+  .restricted-powered {
+    display: none;
+  }
+
+  .restricted-wordmark {
+    font-size: 26px;
+    margin-bottom: 8px;
+  }
+
+  .restricted-icon {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 10px;
+  }
+
+  .restricted-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .restricted-title {
+    font-size: 18px;
+    margin-bottom: 6px;
+  }
+
+  .restricted-message {
+    font-size: 13px;
+  }
+
+  .restricted-note {
+    margin-top: 10px;
+    padding-top: 10px;
+  }
+}
+
+/* Narrow landscape phones fall back to one compact column. */
+@media (max-height: 560px) and (orientation: landscape) and (max-width: 620px) {
+  .restricted-card {
+    display: block;
+    width: min(100%, 440px);
+    padding: 16px 20px;
+  }
+  .restricted-divider {
+    display: block;
+    margin: 12px 0;
+  }
+  .restricted-seal-row,
+  .restricted-gold-bar {
+    margin-bottom: 8px;
+  }
+  .restricted-wordmark {
+    font-size: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .restricted-card {
+    animation: reveala-slide-up 0.35s var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+  }
+}

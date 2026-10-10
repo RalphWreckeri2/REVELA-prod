@@ -17,10 +17,15 @@ import PrivacyPage from './components/PrivacyPage';
 import CookiePolicyPage from './components/CookiePolicyPage';
 import DesktopAccessRequired from './components/DesktopAccessRequired';
 import InactivityProvider from './components/InactivityProvider';
-import { isMobileBrowser } from './components/mobileDetection';
+import { useDeviceAccess } from './hooks/useDeviceAccess';
 
 export default function App() {
-  if (isMobileBrowser()) {
+  // Usability gate only: phone-sized screens get the restricted-access notice.
+  // Tablets, laptops and desktops fall through to the normal application.
+  // This re-evaluates on rotate/resize, so no orientation is stuck.
+  const { restricted } = useDeviceAccess();
+
+  if (restricted) {
     return <DesktopAccessRequired />;
   }
 

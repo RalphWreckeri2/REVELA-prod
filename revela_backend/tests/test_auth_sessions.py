@@ -591,6 +591,128 @@ class ActiveSessionTests(unittest.TestCase):
         self.assertEqual(response.get_json()["access_token"], "signed-token")
         issue_session.assert_called_once_with(user, "web")
 
+    def test_web_login_allows_every_ipad_browser(self):
+        """REGRESSION: iPadOS sends `Mobile/15E148` even in Safari.
+
+        The previous /Mobile/ pattern rejected every iPad, locking tablets out
+        of the portal. Tablets must take precedence over the phone markers.
+        """
+        ipad_user_agents = [
+            "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) FxiOS/120.0 Mobile/15E148 Safari/605.1.15",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+            "Mozilla/5.0 (Linux; Android 14; SM-X200) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        ]
+        for user_agent in ipad_user_agents:
+            self.assertFalse(
+                auth_routes._is_phone_user_agent(user_agent),
+                f"tablet must not be classified as a phone: {user_agent[:60]}",
+            )
+
+    def test_web_login_rejects_phone_user_agents_including_desktop_site_mode(self):
+        phone_user_agents = [
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+            "Mobile/15E148 Safari/604.1",
+            # "Request Desktop Website" inflates the layout viewport but keeps
+            # the Mobile/15E148 token.
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+            "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+        ]
+        for user_agent in phone_user_agents:
+            self.assertTrue(
+                auth_routes._is_phone_user_agent(user_agent),
+                f"phone must be rejected: {user_agent[:60]}",
+            )
+
+    def test_device_gate_does_not_alter_authentication_or_roles(self):
+        """The gate is a usability check; role rules stay authoritative."""
+        app = Flask(__name__)
+        app.register_blueprint(auth_routes.auth_bp, url_prefix="/api/auth")
+        inspector = {
+            "userID": 24,
+            "userRole": "Inspector",
+            "fullName": "Field Inspector",
+            "email": "inspector@example.com",
+            "phone": "",
+            "mustChangePassword": False,
+            "is_2fa_enabled": False,
+        }
+        with app.test_client() as client:
+            with patch.object(
+                auth_routes, "login_user", return_value=(True, None)
+            ), patch.object(
+                auth_routes, "find_user_by_email", return_value=inspector
+            ):
+                response = client.post(
+                    "/api/auth/login",
+                    json={
+                        "email": "inspector@example.com",
+                        "password": "password",
+                        "source": "web",
+                    },
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) "
+                            "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                            "Version/17.0 Mobile/15E148 Safari/604.1"
+                        )
+                    },
+                )
+        # A tablet passes the device gate, then hits the unchanged web role gate.
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Admin and Super Admin", response.get_json()["error"])
+
+    def test_mobile_source_bypasses_the_web_device_gate_entirely(self):
+        app = Flask(__name__)
+        app.register_blueprint(auth_routes.auth_bp, url_prefix="/api/auth")
+        inspector = {
+            "userID": 24,
+            "userRole": "Inspector",
+            "fullName": "Field Inspector",
+            "email": "inspector@example.com",
+            "phone": "",
+            "mustChangePassword": False,
+            "is_2fa_enabled": False,
+        }
+        with app.test_client() as client:
+            with patch.object(
+                auth_routes, "login_user", return_value=(True, None)
+            ), patch.object(
+                auth_routes, "find_user_by_email", return_value=inspector
+            ), patch.object(
+                auth_routes, "issue_session_token", return_value="mobile-token"
+            ):
+                response = client.post(
+                    "/api/auth/login",
+                    json={
+                        "email": "inspector@example.com",
+                        "password": "password",
+                        "source": "mobile",
+                    },
+                    headers={
+                        "User-Agent": (
+                            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+                            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 "
+                            "Mobile/15E148 Safari/604.1"
+                        )
+                    },
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["access_token"], "mobile-token")
+
+    def test_empty_user_agent_is_not_treated_as_a_phone(self):
+        self.assertFalse(auth_routes._is_phone_user_agent(""))
+        self.assertFalse(auth_routes._is_phone_user_agent(None))
+
     def test_mobile_client_authenticates_with_a_phone_user_agent(self):
         app = self._store_app(include_auth_routes=True)
         store = InMemorySessionStore()
