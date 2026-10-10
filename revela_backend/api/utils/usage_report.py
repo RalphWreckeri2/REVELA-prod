@@ -76,8 +76,8 @@ def _estimate_cost(method, used_month):
     """
     Estimated monthly cost for one method.
 
-    Returns None when no pricing is recorded, so the UI can say "pricing not
-    available" instead of showing a fabricated zero.
+    The UI must not show a numeric total until both the SKU price and free-call
+    allowance are verified; an unknown allowance is not evidence of $0 cost.
     """
     sku_key = sku_for(method)
     pricing = SKU_PRICING.get(sku_key)
@@ -85,6 +85,24 @@ def _estimate_cost(method, used_month):
         return None
     free = pricing.get("free_monthly")
     rate = pricing.get("overage_per_1000")
+    if (
+        not pricing.get("verified", False)
+        or free is None
+        or rate is None
+    ):
+        return {
+            "sku": sku_key,
+            "sku_label": pricing["label"],
+            "free_monthly_calls": free,
+            "billable_calls": None,
+            "overage_per_1000": rate,
+            "estimated_cost_usd": None,
+            "pricing_verified": False,
+            "note": (
+                "Internal estimate unavailable: current SKU pricing and free "
+                "allowance have not been verified."
+            ),
+        }
     billable = 0 if free is None else max(0, used_month - free)
     cost = (billable / 1000.0) * rate
     return {
@@ -196,9 +214,10 @@ def build_usage_report():
     priced = 0
     for report in methods:
         estimate = report["cost_estimate"]
-        if estimate:
+        if estimate and estimate["estimated_cost_usd"] is not None:
             total_estimate += estimate["estimated_cost_usd"]
             priced += 1
+    complete_cost_estimate = priced == len(methods)
 
     return {
         "generated_at": datetime.now().isoformat(sep=" ", timespec="seconds"),
@@ -215,8 +234,12 @@ def build_usage_report():
         "totals": {
             "methods_reported": len(methods),
             "methods_with_pricing": priced,
-            "estimated_monthly_cost_usd": round(total_estimate, 2),
+            "estimated_monthly_cost_usd": (
+                round(total_estimate, 2)
+                if complete_cost_estimate else None
+            ),
             "pricing_is_estimate": True,
+            "pricing_verified": complete_cost_estimate,
         },
         "legend": {
             "google_cloud_quota": "Limit Google imposes. Not editable here.",

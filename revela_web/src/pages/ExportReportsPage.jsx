@@ -83,7 +83,11 @@ const OPERATIONAL_REPORTS = [
 ];
 
 // ── Reusable Empty State Component for Visual Chart Cards ─────────────────────
-function ChartEmptyState({ title = "No Data Recorded", message = "No registered business records available in this category yet." }) {
+function ChartEmptyState({
+  title = "No Data Recorded",
+  message = "No registered business records available in this category yet.",
+  showIllustration = true,
+}) {
   return (
     <div
       style={{
@@ -100,25 +104,33 @@ function ChartEmptyState({ title = "No Data Recorded", message = "No registered 
         border: "1px dashed rgba(226, 232, 240, 0.9)"
       }}
     >
-      <div
-        style={{
-          width: 44,
-          height: 44,
-          borderRadius: "50%",
-          background: "rgba(100, 116, 139, 0.08)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          marginBottom: 10,
-          color: "var(--color-muted, #64748b)"
-        }}
-      >
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.75">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="8" x2="12" y2="12" />
-          <line x1="12" y1="16" x2="12.01" y2="16" />
-        </svg>
-      </div>
+      {showIllustration ? (
+        <img
+          alt="Empty"
+          src="/searching.png"
+          style={{ height: 80, objectFit: "contain", opacity: 0.8, marginBottom: 10 }}
+        />
+      ) : (
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: "50%",
+            background: "rgba(100, 116, 139, 0.08)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: 10,
+            color: "var(--color-muted, #64748b)"
+          }}
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.75">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+        </div>
+      )}
       <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--color-ink, #0f172a)", marginBottom: 3 }}>
         {title}
       </div>
@@ -1172,7 +1184,7 @@ export default function ExportReportsPage() {
                       Loading demographic data...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sizeData.length === 0 ? (
                     <ChartEmptyState
                       title="No Business Size Data"
@@ -1354,7 +1366,7 @@ export default function ExportReportsPage() {
                       Loading legal structure data...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : typeData.length === 0 ? (
                     <ChartEmptyState
                       title="No Legal Structure Data"
@@ -1524,7 +1536,7 @@ export default function ExportReportsPage() {
                       Loading registration type data...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : regTypeData.length === 0 ? (
                     <ChartEmptyState
                       title={desc?.registration_type_available === false
@@ -1710,7 +1722,7 @@ export default function ExportReportsPage() {
                       Loading sectoral data...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sectoralData.length === 0 ? (
                     <ChartEmptyState
                       title="No Sector Data Available"
@@ -1883,7 +1895,7 @@ export default function ExportReportsPage() {
                       Loading geographic distribution...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : barangaySpreadData.length === 0 ? (
                     <ChartEmptyState
                       title="No Barangay Data Available"
@@ -2043,7 +2055,7 @@ export default function ExportReportsPage() {
                       Loading compliance data...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : complianceBySizeData.length === 0 ? (
                     <ChartEmptyState
                       title="No Compliance Data"
@@ -2208,7 +2220,7 @@ export default function ExportReportsPage() {
                       Loading trend data...
                     </div>
                   ) : analyticsError ? (
-                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} />
+                    <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : !hasTimelineData ? (
                     <ChartEmptyState
                       title="No Renewal Trend Logged"

@@ -759,6 +759,17 @@ class UsageReportTests(unittest.TestCase):
     def test_totals_are_labelled_as_estimates(self):
         self.assertTrue(self.report["totals"]["pricing_is_estimate"])
 
+    def test_unverified_pricing_never_reports_a_zero_cost(self):
+        self.assertIsNone(
+            self.report["totals"]["estimated_monthly_cost_usd"])
+        self.assertFalse(self.report["totals"]["pricing_verified"])
+        for method in self.report["methods"]:
+            if method["cost_estimate"] is not None:
+                self.assertIsNone(
+                    method["cost_estimate"]["estimated_cost_usd"])
+                self.assertFalse(
+                    method["cost_estimate"]["pricing_verified"])
+
 
 class MatchingDryRunTests(unittest.TestCase):
 

@@ -1,19 +1,20 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
 import {
   getApiUsageReportRequest,
   getApiQuotaSettingsRequest,
+  getDetectionQuotaRequest,
   updateApiQuotaSettingsRequest,
   resetApiQuotaSettingsRequest,
   getTestModeSettingsRequest,
   updateTestModeSettingsRequest,
   resetTestModeSettingsRequest,
   purgeTestFixturesRequest,
-  matchingDryRunRequest,
 } from "../services/api";
 
 /**
- * Admin-only "API Usage & Testing" section for the Maps page.
+ * Admin-only API Usage & Limits modal for the Maps page.
  *
  * Design notes, matching the rest of the app:
  *  - Surfaces (`saas-card`, `frosted-glass`, `primary-btn`, `ghost-btn`,
@@ -53,6 +54,14 @@ const LIMIT_META = {
     border: "rgba(100, 116, 139, 0.28)",
     hint: "REVELA's client-side delay. Unrelated to either limit.",
   },
+};
+
+const METHOD_LABELS = {
+  text_search: "Business lookup (Text Search)",
+  place_details: "Map pin refresh (Place Details)",
+  nearby_search_legacy: "Run Detection (Nearby Search)",
+  nearby_search_new: "Run Detection (Nearby Search New)",
+  geocoding: "Address fallback (Geocoding)",
 };
 
 function Section({ title, description, action, children }) {
@@ -104,32 +113,6 @@ function Section({ title, description, action, children }) {
       </div>
       {children}
     </section>
-  );
-}
-
-function LegendPill({ kind }) {
-  const meta = LIMIT_META[kind];
-  return (
-    <span
-      title={meta.hint}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        fontSize: 10.5,
-        fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: "0.03em",
-        color: meta.color,
-        background: meta.bg,
-        border: `1px solid ${meta.border}`,
-        borderRadius: 6,
-        padding: "2px 7px",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {meta.label}
-    </span>
   );
 }
 
@@ -290,6 +273,7 @@ function editableTestModeDraft(config = {}) {
 export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }) {
   const [open, setOpen] = useState(false);
   const [usage, setUsage] = useState(null);
+  const [detectionQuota, setDetectionQuota] = useState(null);
   const [quota, setQuota] = useState(null);
   const [testMode, setTestMode] = useState(null);
   const [draft, setDraft] = useState({});
@@ -297,22 +281,19 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [dryRunText, setDryRunText] = useState(
-    '[\n  {"name": "Mabini Store", "lat": 13.9667, "lng": 121.1167, "types": ["store"]}\n]',
-  );
-  const [dryRunResult, setDryRunResult] = useState(null);
-
   const load = useCallback(async () => {
     if (!token || !isAdmin) return;
     setLoading(true);
     setError("");
     try {
-      const [usageData, quotaData, testData] = await Promise.all([
+      const [usageData, quotaData, testData, detectionData] = await Promise.all([
         getApiUsageReportRequest(token),
         getApiQuotaSettingsRequest(token),
         getTestModeSettingsRequest(token),
+        getDetectionQuotaRequest(token),
       ]);
       setUsage(usageData);
+      setDetectionQuota(detectionData);
       setQuota(quotaData);
       setTestMode(testData);
       setDraft(quotaData?.fields ?? {});
@@ -324,8 +305,31 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
     }
   }, [token, isAdmin]);
 
-  // Loaded when the panel is opened rather than in an effect: the data is only
-  // needed while it is visible, and loading on click avoids a cascading render.
+  useEffect(() => {
+    if (!token || !isAdmin) return undefined;
+    let active = true;
+    getTestModeSettingsRequest(token)
+      .then((testData) => {
+        if (active) setTestMode(testData);
+      })
+      .catch((err) => {
+        if (active) setError(err.message || "Could not load Test Mode status.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [token, isAdmin]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
+
+  // Load only when the modal opens; the content is only needed while visible.
   const handleToggle = () => {
     setOpen((prev) => {
       if (!prev) load();
@@ -342,6 +346,14 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
         && String(draft[key]) !== String(field.baseline);
     });
   }, [draft, quota]);
+  const requestsUsedToday = (usage?.methods ?? []).reduce(
+    (total, method) => total + method.revela_app_cap.used_today,
+    0,
+  );
+  const requestsRemainingToday = (usage?.methods ?? []).reduce(
+    (total, method) => total + method.revela_app_cap.daily_remaining,
+    0,
+  );
 
   const handleSaveQuota = async () => {
     const payload = {};
@@ -392,6 +404,7 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
       setQuota({ fields: result.fields });
       setDraft(result.fields);
       await load();
+      onUsageChanged?.();
     } catch (err) {
       setError(err.message);
     }
@@ -443,108 +456,54 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
     }
   };
 
-  const handleDryRun = async () => {
-    let candidates;
-    try {
-      candidates = JSON.parse(dryRunText);
-    } catch (err) {
-      Swal.fire({
-        icon: "error",
-        title: "Invalid JSON",
-        text: err.message,
-        confirmButtonColor: "#ef4444",
-      });
-      return;
-    }
-    if (!Array.isArray(candidates) || candidates.length === 0) {
-      Swal.fire({
-        icon: "error",
-        title: "Expected a non-empty array",
-        confirmButtonColor: "#ef4444",
-      });
-      return;
-    }
-    try {
-      setDryRunResult(await matchingDryRunRequest(candidates, token));
-    } catch (err) {
-      Swal.fire({
-        icon: "error",
-        title: "Dry run failed",
-        text: err.message,
-        confirmButtonColor: "#ef4444",
-      });
-    }
-  };
-
   if (!isAdmin) return null;
 
   return (
-    <div className="saas-card frosted-glass" style={{ padding: 20 }}>
+    <>
       <button
         type="button"
         onClick={handleToggle}
         aria-expanded={open}
-        style={{
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          background: "none",
-          border: "none",
-          cursor: "pointer",
-          padding: 0,
-          textAlign: "left",
-          fontFamily: "inherit",
-        }}
+        aria-haspopup="dialog"
+        className="primary-btn api-usage-trigger"
       >
-        <div>
-          <h3
-            style={{
-              margin: "0 0 4px",
-              fontSize: 16,
-              fontWeight: 750,
-              color: "var(--color-ink)",
-            }}
-          >
-            API Usage &amp; Testing
-          </h3>
-          <p style={{ margin: 0, fontSize: 12.5, color: "var(--color-muted)" }}>
-            Google Cloud quotas, REVELA application caps, and request pacing —
-            reported separately. Administrator only.
-          </p>
-        </div>
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--color-muted)",
-          }}
-        >
-          {open ? "Hide" : "Show"}
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            style={{
-              transition: "transform var(--duration-normal, 0.2s)",
-              transform: open ? "rotate(180deg)" : "rotate(0deg)",
-            }}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </span>
+        API Usage &amp; Limits
+        {testMode?.config?.["test_mode.enabled"] && (
+          <span className="api-usage-active-badge">Test Mode active</span>
+        )}
       </button>
 
-      {open && (
-        <div style={{ marginTop: 18, display: "grid", gap: 16 }}>
+      {open && createPortal(
+        <div
+          className="api-usage-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
+          <section
+            className="api-usage-modal saas-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="api-usage-modal-title"
+          >
+            <header className="api-usage-modal-header">
+              <div>
+                <h2 id="api-usage-modal-title">API Usage &amp; Limits</h2>
+                <p>
+                  REVELA-tracked Google requests and application budgets.
+                  Figures are shared across all administrator accounts.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => setOpen(false)}
+                aria-label="Close API usage and limits"
+              >
+                Close
+              </button>
+            </header>
+            <div className="api-usage-modal-content">
           {error && (
             <div
               role="alert"
@@ -562,9 +521,6 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
           )}
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {Object.keys(LIMIT_META).map((kind) => (
-              <LegendPill key={kind} kind={kind} />
-            ))}
             <button
               type="button"
               className="ghost-btn"
@@ -576,10 +532,52 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
             </button>
           </div>
 
+          <div className="api-usage-overview">
+            <div className="api-usage-overview-card">
+              <span>Requests used today</span>
+              <strong>{loading && !usage ? "…" : requestsUsedToday.toLocaleString()}</strong>
+              <small>{requestsRemainingToday.toLocaleString()} remaining across separate method budgets</small>
+            </div>
+            <div className="api-usage-overview-card">
+              <span>Requests this month</span>
+              <strong>
+                {loading && !usage
+                  ? "…"
+                  : (usage?.methods ?? []).reduce(
+                    (total, method) => total + method.revela_app_cap.used_month,
+                    0,
+                  ).toLocaleString()}
+              </strong>
+              <small>Tracked by API method; each method has its own limit</small>
+            </div>
+            <div className="api-usage-overview-card">
+              <span>Estimated API cost</span>
+              <strong>
+                {usage?.totals?.estimated_monthly_cost_usd == null
+                  ? "Unavailable"
+                  : `$${usage.totals.estimated_monthly_cost_usd.toFixed(2)}`}
+              </strong>
+              <small>Internal estimate only — not Google billing data</small>
+            </div>
+            <div className="api-usage-overview-card">
+              <span>Run Detection scans</span>
+              <strong>
+                {detectionQuota
+                  ? `${detectionQuota.used_this_month} / ${detectionQuota.monthly_limit}`
+                  : "…"}
+              </strong>
+              <small>
+                {detectionQuota
+                  ? `${detectionQuota.remaining_this_month} scan(s) remaining this month`
+                  : "Monthly scan allowance"}
+              </small>
+            </div>
+          </div>
+
           {/* ── Usage per method ─────────────────────────────────────────── */}
           <Section
             title="Usage by API method"
-            description="Every real Google request is reserved before it is sent, so these counters only ever describe billable calls. Fixture replays are never counted."
+            description="Requests are counted in REVELA's shared application ledger. Budgets are independent by method; this is not Google Cloud billing data."
           >
             {loading && !usage ? (
               <div style={{ fontSize: 12.5, color: "var(--color-muted)" }}>Loading usage…</div>
@@ -606,7 +604,7 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                       }}
                     >
                       <strong style={{ fontSize: 13.5, color: "var(--color-ink)" }}>
-                        {method.label}
+                        {METHOD_LABELS[method.method] ?? method.label}
                       </strong>
                       {method.revela_app_cap.disabled && (
                         <span className="badge badge--black">Disabled</span>
@@ -614,11 +612,47 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                       {method.revela_app_cap.daily_quota_exceeded && (
                         <span className="badge badge--red">Daily cap reached</span>
                       )}
+                      {!method.revela_app_cap.daily_quota_exceeded
+                        && method.revela_app_cap.daily_cap > 0
+                        && method.revela_app_cap.used_today / method.revela_app_cap.daily_cap >= 0.8 && (
+                          <span className="badge badge--gold">Near daily limit</span>
+                        )}
+                      {method.revela_app_cap.monthly_quota_exceeded && (
+                        <span className="badge badge--red">Monthly cap reached</span>
+                      )}
+                      {!method.revela_app_cap.monthly_quota_exceeded
+                        && method.revela_app_cap.monthly_cap > 0
+                        && method.revela_app_cap.used_month / method.revela_app_cap.monthly_cap >= 0.8 && (
+                          <span className="badge badge--gold">Near monthly limit</span>
+                        )}
                       {method.revela_app_cap.over_cloud_ceiling && (
                         <span className="badge badge--red">Above Cloud quota</span>
                       )}
                     </div>
 
+                    <div className="api-usage-method-summary">
+                      <div>
+                        <span>Today</span>
+                        <strong>
+                          {method.revela_app_cap.used_today} / {method.revela_app_cap.daily_cap}
+                        </strong>
+                        <small>{method.revela_app_cap.daily_remaining} remaining</small>
+                      </div>
+                      <div>
+                        <span>This month</span>
+                        <strong>
+                          {method.revela_app_cap.used_month} / {method.revela_app_cap.monthly_cap}
+                        </strong>
+                        <small>{method.revela_app_cap.monthly_remaining} remaining</small>
+                      </div>
+                    </div>
+                    <Meter
+                      used={method.revela_app_cap.used_today}
+                      cap={method.revela_app_cap.daily_cap}
+                    />
+
+                    <details className="api-usage-technical-details">
+                      <summary>Advanced quota details</summary>
                     <div
                       style={{
                         display: "grid",
@@ -661,6 +695,10 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                             value: `${method.revela_app_cap.used_month} / ${method.revela_app_cap.monthly_cap}`,
                           },
                           {
+                            label: "Monthly left",
+                            value: method.revela_app_cap.monthly_remaining,
+                          },
+                          {
                             label: "Daily left",
                             value: method.revela_app_cap.daily_remaining,
                           },
@@ -696,11 +734,7 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                         note={method.request_pacing.note}
                       />
                     </div>
-
-                    <Meter
-                      used={method.revela_app_cap.used_today}
-                      cap={method.revela_app_cap.daily_cap}
-                    />
+                    </details>
 
                     {method.cost_estimate ? (
                       <div
@@ -712,13 +746,15 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                         }}
                       >
                         <strong style={{ color: "var(--color-ink)" }}>
-                          Estimated cost this month: $
-                          {method.cost_estimate.estimated_cost_usd.toFixed(2)}
+                          Internal estimate this month:{" "}
+                          {method.cost_estimate.estimated_cost_usd == null
+                            ? "unavailable"
+                            : `$${method.cost_estimate.estimated_cost_usd.toFixed(2)}`}
                         </strong>{" "}
                         · SKU {method.cost_estimate.sku_label} ·{" "}
-                        {method.cost_estimate.free_monthly_calls == null
-                          ? "no free allowance recorded"
-                          : `${method.cost_estimate.free_monthly_calls.toLocaleString()} free calls/month`}{" "}
+                        {method.cost_estimate.pricing_verified
+                          ? `${method.cost_estimate.free_monthly_calls.toLocaleString()} free calls/month`
+                          : "pricing and free allowance unverified"}{" "}
                         · {method.cost_estimate.note}
                       </div>
                     ) : (
@@ -747,10 +783,12 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                     <div className="saas-card" style={{ padding: "12px 14px", borderRadius: 10 }}>
                       <div style={labelStyle}>Estimated month total</div>
                       <div style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)" }}>
-                        ${usage.totals.estimated_monthly_cost_usd.toFixed(2)}
+                        {usage.totals.estimated_monthly_cost_usd == null
+                          ? "Unavailable"
+                          : `$${usage.totals.estimated_monthly_cost_usd.toFixed(2)}`}
                       </div>
                       <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>
-                        Estimate only — confirm against current Google pricing.
+                        Internal estimate only; pricing and free allowances must be verified. This is not Google billing data.
                       </div>
                     </div>
                     <div className="saas-card" style={{ padding: "12px 14px", borderRadius: 10 }}>
@@ -759,8 +797,11 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
                         {usage.run_detection.work_slice_seconds}s /{" "}
                         {usage.run_detection.work_slice_requests} requests
                         <br />
-                        grid step {usage.run_detection.grid_step_degrees}°,{" "}
-                        {usage.run_detection.monthly_scan_limit} scans/month
+                        {detectionQuota?.used_this_month ?? 0} /{" "}
+                        {detectionQuota?.monthly_limit ??
+                          usage.run_detection.monthly_scan_limit} scans used this month
+                        {" · "}
+                        {detectionQuota?.remaining_this_month ?? 0} remaining
                       </div>
                     </div>
                   </div>
@@ -768,6 +809,14 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
               </div>
             )}
           </Section>
+
+          <details className="api-usage-advanced">
+            <summary>
+              Advanced / Testing
+              {testMode?.config?.["test_mode.enabled"] && (
+                <span className="api-usage-active-badge">Test Mode active</span>
+              )}
+            </summary>
 
           {/* ── Workflow allocations ─────────────────────────────────────── */}
           {usage?.text_search_workflows && (
@@ -803,7 +852,7 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
           {/* ── Quota settings ───────────────────────────────────────────── */}
           <Section
             title="Application quota caps"
-            description="These are REVELA's budgets. They can be lowered freely, but can never be raised above the recorded Google Cloud quota — that limit lives in Cloud Console, not here."
+            description="These are REVELA's request budgets. Limits can be lowered; raising a cap above its baseline requires a verified Google Cloud limit. Google Cloud limits are not changed here."
             action={
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button
@@ -1181,104 +1230,12 @@ export default function ApiUsageSettingsPanel({ token, isAdmin, onUsageChanged }
             </div>
           </Section>
 
-          {/* ── Matching dry run ─────────────────────────────────────────── */}
-          <Section
-            title="Matching dry run"
-            description="Replay candidate businesses through the matcher against the live registry. No Google request is made, no usage row is written, and no flag is created."
-            action={
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={handleDryRun}
-                style={{ fontSize: 12, padding: "7px 14px" }}
-              >
-                Run dry run
-              </button>
-            }
-          >
-            <textarea
-              value={dryRunText}
-              onChange={(e) => setDryRunText(e.target.value)}
-              spellCheck={false}
-              aria-label="Candidates JSON"
-              style={{
-                ...inputStyle,
-                minHeight: 120,
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                fontSize: 12,
-                resize: "vertical",
-              }}
-            />
-            {dryRunResult && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, color: "var(--color-muted)", marginBottom: 8 }}>
-                  {dryRunResult.candidates_evaluated} candidate(s) against{" "}
-                  {dryRunResult.registry_size} registry entries ·{" "}
-                  {dryRunResult.google_requests_made} Google requests ·{" "}
-                  {dryRunResult.usage_rows_written} usage rows written
-                </div>
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                      <tr
-                        style={{
-                          color: "var(--color-muted)",
-                          fontSize: 11,
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Name</th>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Decision</th>
-                        <th style={{ textAlign: "right", padding: "6px 8px" }}>Score</th>
-                        <th style={{ textAlign: "right", padding: "6px 8px" }}>Distance</th>
-                        <th style={{ textAlign: "left", padding: "6px 8px" }}>Matched</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dryRunResult.results.map((row) => (
-                        <tr
-                          key={row.index}
-                          style={{ borderTop: "1px solid var(--color-border-soft)" }}
-                        >
-                          <td style={{ padding: "6px 8px", fontSize: 12, color: "var(--color-ink)" }}>
-                            {row.error ?? row.name ?? "—"}
-                          </td>
-                          <td style={{ padding: "6px 8px", fontSize: 12 }}>
-                            {row.match_status ? (
-                              <span
-                                className={
-                                  row.match_status === "auto"
-                                    ? "badge badge--green"
-                                    : row.match_status === "no_match"
-                                      ? "badge badge--black"
-                                      : "badge badge--gold"
-                                }
-                              >
-                                {row.match_status}
-                              </span>
-                            ) : (
-                              <span style={{ color: "var(--color-danger)" }}>{row.error}</span>
-                            )}
-                          </td>
-                          <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right" }}>
-                            {row.score ?? "—"}
-                          </td>
-                          <td style={{ padding: "6px 8px", fontSize: 12, textAlign: "right" }}>
-                            {row.distance_m != null ? `${row.distance_m} m` : "—"}
-                          </td>
-                          <td style={{ padding: "6px 8px", fontSize: 12, color: "var(--color-muted)" }}>
-                            {row.matched_business_name ?? "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </Section>
-        </div>
+          </details>
+            </div>
+          </section>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }

@@ -1,6 +1,9 @@
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from unittest.mock import MagicMock, patch
 
+from api.flags import service as flags_service
 from api.utils import places_quota
 
 
@@ -164,6 +167,136 @@ class PlacesQuotaLedgerTests(unittest.TestCase):
 
         connection.rollback.assert_called_once()
         connection.commit.assert_not_called()
+
+    def test_concurrent_admin_requests_share_one_atomic_global_budget(self):
+        """Independent request connections cannot reserve past a shared cap."""
+        state = {"rows": {}, "lock": threading.RLock()}
+
+        class SharedLedgerCursor:
+            def __init__(self, connection):
+                self.connection = connection
+                self.rowcount = 0
+                self.result = None
+
+            def execute(self, sql, params=()):
+                if sql.startswith("SELECT requestCount FROM places_api_usage"):
+                    period = "month" if "DATE_SUB(" in sql else "day"
+                    self.result = {
+                        "requestCount": state["rows"].get(
+                            (period, params[0]), 0)
+                    }
+                    return
+                if sql.startswith("INSERT IGNORE"):
+                    self.rowcount = 1
+                    return
+                if "UPDATE places_api_usage SET requestCount" not in sql:
+                    raise AssertionError(f"Unexpected query: {sql}")
+                kind, cap = params
+                period = "month" if "DATE_SUB(" in sql else "day"
+                key = (period, kind)
+                used = state["rows"].get(key, 0)
+                if used < cap:
+                    state["rows"][key] = used + 1
+                    self.rowcount = 1
+                else:
+                    self.rowcount = 0
+
+            def fetchone(self):
+                return self.result
+
+            def close(self):
+                pass
+
+        class SharedLedgerConnection:
+            def __init__(self):
+                self.snapshot = None
+
+            def begin(self):
+                state["lock"].acquire()
+                self.snapshot = dict(state["rows"])
+
+            def cursor(self):
+                return SharedLedgerCursor(self)
+
+            def commit(self):
+                self.snapshot = None
+                state["lock"].release()
+
+            def rollback(self):
+                state["rows"] = self.snapshot
+                self.snapshot = None
+                state["lock"].release()
+
+        def reserve_as_admin(_admin_role):
+            # Each account/request receives its own DB connection, but both
+            # reserve against the same application-wide database ledger.
+            connection = SharedLedgerConnection()
+            return places_quota.reserve_usage_slot(
+                connection, "imp_ts_month", "imp_ts_day", 10, 10
+            )[0]
+
+        with patch.object(places_quota, "_ensure_table"):
+            with ThreadPoolExecutor(max_workers=24) as executor:
+                outcomes = list(executor.map(
+                    reserve_as_admin,
+                    ["Admin", "SUPER_ADMIN"] * 50,
+                ))
+
+        self.assertEqual(sum(outcomes), 10)
+        self.assertEqual(state["rows"][("month", "imp_ts_month")], 10)
+        self.assertEqual(state["rows"][("day", "imp_ts_day")], 10)
+        with patch.object(places_quota, "_ensure_table"):
+            admin_views = [
+                places_quota.read_usage(
+                    SharedLedgerConnection(), "imp_ts_month", "imp_ts_day")
+                for _role in ("Admin", "SUPER_ADMIN")
+            ]
+        self.assertEqual(admin_views[0], admin_views[1])
+        self.assertEqual(admin_views[0], {"month": 10, "day": 10})
+
+    def test_places_usage_reports_effective_admin_overrides(self):
+        caps = {
+            "quota.geocoding.daily": 21,
+            "quota.geocoding.monthly": 210,
+            "quota.text_search.daily": 22,
+            "quota.text_search.monthly": 220,
+            "quota.place_details.daily": 23,
+            "quota.place_details.monthly": 230,
+            "quota.text_search.workflow.registry_import": 5,
+            "quota.text_search.workflow.snap_pins": 6,
+            "quota.text_search.workflow.reverify": 7,
+            "quota.legacy_nearby.daily": 24,
+            "quota.legacy_nearby.monthly": 240,
+            "quota.nearby_new.daily": 25,
+            "quota.nearby_new.monthly": 250,
+            "run_detection.monthly_scan_limit": 8,
+        }
+
+        def usage_for(_connection, monthly_kind, daily_kind):
+            return {"month": 40, "day": 4}
+
+        with patch.object(flags_service, "_ensure_budget_tables"), \
+                patch.object(flags_service, "mysql", MagicMock()), \
+                patch.object(flags_service, "_places_usage_count",
+                             side_effect=lambda _cursor, _kind,
+                             today=False: 4 if today else 40), \
+                patch.object(flags_service, "read_usage",
+                             side_effect=usage_for), \
+                patch.object(flags_service, "read_daily_usage", return_value=2), \
+                patch.object(flags_service.quota_settings, "cap",
+                             side_effect=caps.__getitem__), \
+                patch.object(flags_service, "_nearby_api_mode",
+                             return_value="legacy"):
+            report = flags_service.get_places_usage_today()
+
+        self.assertEqual(report["text_search_day"]["cap"], 22)
+        self.assertEqual(report["text_search_month"]["cap"], 220)
+        self.assertEqual(report["text_search_workflows"]["snap_pins"]["daily_cap"], 6)
+        self.assertEqual(report["geocode"]["cap"], 21)
+        self.assertEqual(report["place_details_day"]["cap"], 23)
+        self.assertEqual(report["nearby_search_active"]["daily_cap"], 24)
+        self.assertEqual(
+            report["quota_settings"]["run_detection_monthly_scan_limit"], 8)
 
 
 if __name__ == "__main__":

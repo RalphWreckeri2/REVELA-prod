@@ -205,34 +205,30 @@ def get_places_usage_today():
         m_used = _places_usage_count(cur, "month")
         d_used = _places_usage_count(cur, "day", today=True)
 
-        from api.registry.service import (
-            GEOCODE_DAILY_CAP,
-            GEOCODE_MONTHLY_CAP,
-            get_geocode_remaining_month,
-            get_geocode_remaining_today,
-        )
-        geo_remaining_day = get_geocode_remaining_today()
-        geo_remaining_month = get_geocode_remaining_month()
+        geo_daily_cap = quota_settings.cap("quota.geocoding.daily")
+        geo_monthly_cap = quota_settings.cap("quota.geocoding.monthly")
+        geocoding = read_usage(mysql.connection, "geo_month", "geo_day")
         geo_info = {
-            "cap": GEOCODE_DAILY_CAP,
-            "remaining": geo_remaining_day,
-            "used": max(0, GEOCODE_DAILY_CAP - geo_remaining_day),
-            "monthly_cap": GEOCODE_MONTHLY_CAP,
-            "monthly_remaining": geo_remaining_month,
-            "used_month": max(0, GEOCODE_MONTHLY_CAP - geo_remaining_month),
+            "cap": geo_daily_cap,
+            "remaining": max(0, geo_daily_cap - geocoding["day"]),
+            "used": geocoding["day"],
+            "monthly_cap": geo_monthly_cap,
+            "monthly_remaining": max(0, geo_monthly_cap - geocoding["month"]),
+            "used_month": geocoding["month"],
         }
 
-        from api.registry.places_resolver import (
-            TS_DAILY_CAP, TS_MONTHLY_CAP, PD_DAILY_CAP, PD_MONTHLY_CAP,
-            TEXT_SEARCH_WORKFLOW_LEDGER,
-        )
+        from api.registry.places_resolver import TEXT_SEARCH_WORKFLOW_LEDGER
+        ts_daily_cap = quota_settings.cap("quota.text_search.daily")
+        ts_monthly_cap = quota_settings.cap("quota.text_search.monthly")
+        pd_daily_cap = quota_settings.cap("quota.place_details.daily")
+        pd_monthly_cap = quota_settings.cap("quota.place_details.monthly")
         text_search = read_usage(
             mysql.connection, "imp_ts_month", "imp_ts_day")
         details = read_usage(mysql.connection, "imp_pd_month", "imp_pd_day")
         text_search_workflows = {}
         for scope, ledger_kind in TEXT_SEARCH_WORKFLOW_LEDGER.items():
             used = read_daily_usage(mysql.connection, ledger_kind)
-            cap = API_QUOTA_CONFIG.text_search_workflow_daily[scope]
+            cap = quota_settings.cap(f"quota.text_search.workflow.{scope}")
             text_search_workflows[scope] = {
                 "used_today": used,
                 "daily_cap": cap,
@@ -242,36 +238,42 @@ def get_places_usage_today():
         nearby_new = read_usage(
             mysql.connection, "new_nearby_month", "new_nearby_day"
         )
+        legacy_nearby_daily_cap = quota_settings.cap(
+            "quota.legacy_nearby.daily")
+        legacy_nearby_monthly_cap = quota_settings.cap(
+            "quota.legacy_nearby.monthly")
+        nearby_new_daily_cap = quota_settings.cap("quota.nearby_new.daily")
+        nearby_new_monthly_cap = quota_settings.cap("quota.nearby_new.monthly")
         nearby_legacy = {
             "enabled": True,
             "used_today": d_used,
-            "daily_cap": PLACES_DAILY_CAP,
-            "daily_remaining": max(0, PLACES_DAILY_CAP - d_used),
+            "daily_cap": legacy_nearby_daily_cap,
+            "daily_remaining": max(0, legacy_nearby_daily_cap - d_used),
             "used_month": m_used,
-            "monthly_cap": PLACES_MONTHLY_CAP,
-            "monthly_remaining": max(0, PLACES_MONTHLY_CAP - m_used),
-            "daily_quota_exceeded": d_used >= PLACES_DAILY_CAP,
-            "monthly_quota_exceeded": m_used >= PLACES_MONTHLY_CAP,
+            "monthly_cap": legacy_nearby_monthly_cap,
+            "monthly_remaining": max(0, legacy_nearby_monthly_cap - m_used),
+            "daily_quota_exceeded": d_used >= legacy_nearby_daily_cap,
+            "monthly_quota_exceeded": m_used >= legacy_nearby_monthly_cap,
         }
         nearby_new_status = {
             "enabled": (
-                NEW_NEARBY_DAILY_CAP > 0 and NEW_NEARBY_MONTHLY_CAP > 0
+                nearby_new_daily_cap > 0 and nearby_new_monthly_cap > 0
             ),
             "used_today": nearby_new["day"],
-            "daily_cap": NEW_NEARBY_DAILY_CAP,
-            "daily_remaining": max(0, NEW_NEARBY_DAILY_CAP - nearby_new["day"]),
+            "daily_cap": nearby_new_daily_cap,
+            "daily_remaining": max(0, nearby_new_daily_cap - nearby_new["day"]),
             "used_month": nearby_new["month"],
-            "monthly_cap": NEW_NEARBY_MONTHLY_CAP,
+            "monthly_cap": nearby_new_monthly_cap,
             "monthly_remaining": max(
-                0, NEW_NEARBY_MONTHLY_CAP - nearby_new["month"]
+                0, nearby_new_monthly_cap - nearby_new["month"]
             ),
             "daily_quota_exceeded": (
-                NEW_NEARBY_DAILY_CAP > 0
-                and nearby_new["day"] >= NEW_NEARBY_DAILY_CAP
+                nearby_new_daily_cap > 0
+                and nearby_new["day"] >= nearby_new_daily_cap
             ),
             "monthly_quota_exceeded": (
-                NEW_NEARBY_MONTHLY_CAP > 0
-                and nearby_new["month"] >= NEW_NEARBY_MONTHLY_CAP
+                nearby_new_monthly_cap > 0
+                and nearby_new["month"] >= nearby_new_monthly_cap
             ),
         }
         active_nearby_usage = (
@@ -283,45 +285,45 @@ def get_places_usage_today():
         return {
             "month": {
                 "used": m_used,
-                "cap": PLACES_MONTHLY_CAP,
-                "remaining": max(0, PLACES_MONTHLY_CAP - m_used),
+                "cap": legacy_nearby_monthly_cap,
+                "remaining": max(0, legacy_nearby_monthly_cap - m_used),
             },
             "monthly": {
                 "used": m_used,
-                "cap": PLACES_MONTHLY_CAP,
-                "remaining": max(0, PLACES_MONTHLY_CAP - m_used),
+                "cap": legacy_nearby_monthly_cap,
+                "remaining": max(0, legacy_nearby_monthly_cap - m_used),
             },
             "today": {
                 "used": d_used,
-                "cap": PLACES_DAILY_CAP,
-                "remaining": max(0, PLACES_DAILY_CAP - d_used),
+                "cap": legacy_nearby_daily_cap,
+                "remaining": max(0, legacy_nearby_daily_cap - d_used),
             },
             "geocode": geo_info,
             "text_search_month": {
                 "used": text_search["month"],
-                "cap": TS_MONTHLY_CAP,
-                "remaining": max(0, TS_MONTHLY_CAP - text_search["month"]),
-                "monthly_quota_exceeded": text_search["month"] >= TS_MONTHLY_CAP,
+                "cap": ts_monthly_cap,
+                "remaining": max(0, ts_monthly_cap - text_search["month"]),
+                "monthly_quota_exceeded": text_search["month"] >= ts_monthly_cap,
             },
             "text_search_day": {
                 "used": text_search["day"],
-                "cap": TS_DAILY_CAP,
-                "remaining": max(0, TS_DAILY_CAP - text_search["day"]),
-                "daily_quota_exceeded": text_search["day"] >= TS_DAILY_CAP,
+                "cap": ts_daily_cap,
+                "remaining": max(0, ts_daily_cap - text_search["day"]),
+                "daily_quota_exceeded": text_search["day"] >= ts_daily_cap,
             },
             "text_search_workflows": text_search_workflows,
-            "monthly_quota_exceeded": text_search["month"] >= TS_MONTHLY_CAP,
+            "monthly_quota_exceeded": text_search["month"] >= ts_monthly_cap,
             "place_details_day": {
                 "used": details["day"],
-                "cap": PD_DAILY_CAP,
-                "remaining": max(0, PD_DAILY_CAP - details["day"]),
-                "daily_quota_exceeded": details["day"] >= PD_DAILY_CAP,
+                "cap": pd_daily_cap,
+                "remaining": max(0, pd_daily_cap - details["day"]),
+                "daily_quota_exceeded": details["day"] >= pd_daily_cap,
             },
             "place_details_month": {
                 "used": details["month"],
-                "cap": PD_MONTHLY_CAP,
-                "remaining": max(0, PD_MONTHLY_CAP - details["month"]),
-                "monthly_quota_exceeded": details["month"] >= PD_MONTHLY_CAP,
+                "cap": pd_monthly_cap,
+                "remaining": max(0, pd_monthly_cap - details["month"]),
+                "monthly_quota_exceeded": details["month"] >= pd_monthly_cap,
             },
             "nearby_search_mode": _nearby_api_mode(),
             "nearby_search_legacy": nearby_legacy,
@@ -330,30 +332,32 @@ def get_places_usage_today():
             "quota_source": "application",
             "quota_settings": {
                 "text_search": {
-                    "daily_cap": TS_DAILY_CAP,
-                    "monthly_cap": TS_MONTHLY_CAP,
-                    "workflow_daily_caps": dict(
-                        API_QUOTA_CONFIG.text_search_workflow_daily
-                    ),
+                    "daily_cap": ts_daily_cap,
+                    "monthly_cap": ts_monthly_cap,
+                    "workflow_daily_caps": {
+                        scope: quota_settings.cap(
+                            f"quota.text_search.workflow.{scope}")
+                        for scope in TEXT_SEARCH_WORKFLOW_LEDGER
+                    },
                 },
                 "place_details": {
-                    "daily_cap": PD_DAILY_CAP,
-                    "monthly_cap": PD_MONTHLY_CAP,
+                    "daily_cap": pd_daily_cap,
+                    "monthly_cap": pd_monthly_cap,
                 },
                 "geocoding": {
-                    "daily_cap": GEOCODE_DAILY_CAP,
-                    "monthly_cap": GEOCODE_MONTHLY_CAP,
+                    "daily_cap": geo_daily_cap,
+                    "monthly_cap": geo_monthly_cap,
                 },
                 "nearby_search_legacy": {
-                    "daily_cap": PLACES_DAILY_CAP,
-                    "monthly_cap": PLACES_MONTHLY_CAP,
+                    "daily_cap": legacy_nearby_daily_cap,
+                    "monthly_cap": legacy_nearby_monthly_cap,
                 },
                 "nearby_search_new": {
-                    "daily_cap": NEW_NEARBY_DAILY_CAP,
-                    "monthly_cap": NEW_NEARBY_MONTHLY_CAP,
+                    "daily_cap": nearby_new_daily_cap,
+                    "monthly_cap": nearby_new_monthly_cap,
                 },
                 "run_detection_monthly_scan_limit": (
-                    API_QUOTA_CONFIG.run_detection_monthly_scans
+                    quota_settings.cap("run_detection.monthly_scan_limit")
                 ),
                 "quota_resets_enabled": (
                     API_QUOTA_CONFIG.allow_quota_resets

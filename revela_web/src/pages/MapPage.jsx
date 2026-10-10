@@ -167,6 +167,130 @@ const Icon = {
   ),
 };
 
+const DETECTION_MODES = [
+  { value: "quick", label: "Quick Discovery" },
+  { value: "full", label: "Full Coverage" },
+];
+
+function DetectionModeDropdown({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(() =>
+    Math.max(0, DETECTION_MODES.findIndex((mode) => mode.value === value)),
+  );
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  const activeMode = DETECTION_MODES.find((mode) => mode.value === value)
+    ?? DETECTION_MODES[0];
+  const activeOptionId = `detection-mode-option-${DETECTION_MODES[activeIndex].value}`;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsidePointer = (event) => {
+      if (!rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [open]);
+
+  const handleKeyDown = (event) => {
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    if (event.key === "Tab" && open) {
+      setOpen(false);
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) {
+        setActiveIndex(DETECTION_MODES.findIndex((mode) => mode.value === value));
+        setOpen(true);
+        return;
+      }
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) =>
+        (current + direction + DETECTION_MODES.length) % DETECTION_MODES.length,
+      );
+      return;
+    }
+
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(event.key === "Home" ? 0 : DETECTION_MODES.length - 1);
+      if (!open) setOpen(true);
+      return;
+    }
+
+    if (open && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      onChange(DETECTION_MODES[activeIndex].value);
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className={`map-detection-mode${open ? " is-open" : ""}`} ref={rootRef}>
+      <span id="detection-mode-label">Mode</span>
+      <button
+        ref={triggerRef}
+        className="map-detection-mode-trigger"
+        type="button"
+        role="combobox"
+        aria-label="Detection mode"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? "detection-mode-options" : undefined}
+        aria-activedescendant={open ? activeOptionId : undefined}
+        disabled={disabled}
+        onClick={() => {
+          if (!open) {
+            setActiveIndex(DETECTION_MODES.findIndex((mode) => mode.value === value));
+          }
+          setOpen((current) => !current);
+        }}
+        onKeyDown={handleKeyDown}
+      >
+        <span>{activeMode.label}</span>
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="m4 6 4 4 4-4" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          id="detection-mode-options"
+          className="map-detection-mode-menu"
+          role="listbox"
+          aria-labelledby="detection-mode-label"
+        >
+          {DETECTION_MODES.map((mode, index) => (
+            <div
+              id={`detection-mode-option-${mode.value}`}
+              key={mode.value}
+              className={`map-detection-mode-option${index === activeIndex ? " active" : ""}`}
+              role="option"
+              aria-selected={mode.value === value}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => {
+                onChange(mode.value);
+                setActiveIndex(index);
+                setOpen(false);
+                triggerRef.current?.focus();
+              }}
+            >
+              <span>{mode.label}</span>
+              {mode.value === value && <span aria-hidden="true">✓</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const escapeHtml = (value) => String(value ?? "")
   .replaceAll("&", "&amp;")
   .replaceAll("<", "&lt;")
@@ -3720,18 +3844,11 @@ export default function MapPage() {
             </div>
 
             <div className="map-detection-controls">
-              <label className="map-detection-mode">
-                <span>Mode</span>
-                <select
-                  aria-label="Detection mode"
-                  value={runDetectionMode}
-                  disabled={runDetectionLoading}
-                  onChange={(event) => setRunDetectionMode(event.target.value)}
-                >
-                  <option value="quick">Quick Discovery</option>
-                  <option value="full">Full Coverage</option>
-                </select>
-              </label>
+              <DetectionModeDropdown
+                value={runDetectionMode}
+                onChange={setRunDetectionMode}
+                disabled={runDetectionLoading}
+              />
               <button
                 className="primary-btn map-run-detection"
                 type="button"

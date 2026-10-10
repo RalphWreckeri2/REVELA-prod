@@ -1162,7 +1162,7 @@ export default function SettingsPage() {
                   </span>
                 </div>
                 <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13, maxWidth: 680, lineHeight: 1.5 }}>
-                  Official BPLO operating guidelines, regulatory access controls under R.A. 10175, automated detection scan quotas, dispatch Kanban lifecycle, and mobile field inspection protocols.
+                  Step-by-step help for the current registry, map, inspection, reporting, and account workflows.
                 </p>
               </div>
 
@@ -1197,50 +1197,50 @@ export default function SettingsPage() {
               {
                 id: "roles",
                 icon: "🏛️",
-                title: "Roles & R.A. 10175",
-                tag: "Governance",
-                summary: "Super Admin, Admin, and Inspector privileges. Mandatory audit logs, password reset rate limits (2/day), and legal safeguards under Republic Act 10175.",
-                btnLabel: "Read Chapter 2.0 →",
+                title: "Roles & Access",
+                tag: "Permissions",
+                summary: "See which features are available to Super Admins, Admins, and Inspectors.",
+                btnLabel: "Read guide →",
               },
               {
-                id: "web-portal",
+                id: "map",
                 icon: "🛰️",
-                title: "Detection & API Budgets",
-                tag: "Quotas",
-                summary: "Strict limit of 2 scans/month; 1,000 requests/day Places API budget with zero-overcharge partial progress saving to preserve municipal funds.",
-                btnLabel: "Read Chapter 3.4 →",
+                title: "Map & Detection",
+                tag: "Map workflows",
+                summary: "Review flag meanings and learn how to run detection, Snap Pins, Re-verify, and reconcile findings.",
+                btnLabel: "Read guide →",
               },
               {
-                id: "web-portal",
+                id: "registry",
                 icon: "📑",
-                title: "Registry & Geocoding Caps",
-                tag: "Data Ingestion",
-                summary: "Batch limit of 1,500 records per upload; 1,500 daily Google geocoding cap. Pre-populated latitude/longitude columns bypass geocoding limits.",
-                btnLabel: "Read Chapter 3.5 →",
+                title: "Business Registry",
+                tag: "Registry",
+                summary: "Search records, prepare an import file, and review the import summary.",
+                btnLabel: "Read guide →",
               },
               {
-                id: "web-portal",
+                id: "inspections",
                 icon: "📋",
-                title: "Kanban Dispatch & Redo",
-                tag: "Workflow",
-                summary: "Assigned ➔ Reassigned ➔ Submitted ➔ Verified. Past-deadline guards, inspector reassignment, and 'Send back' for blurry evidence.",
-                btnLabel: "Read Chapter 3.6 →",
+                title: "Inspections & Field Work",
+                tag: "Dispatch",
+                summary: "Assign visits, review field reports, verify submissions, and handle reassigned work.",
+                btnLabel: "Read guide →",
               },
               {
-                id: "mobile-app",
-                icon: "📱",
-                title: "Field App & Offline SQLite",
-                tag: "Mobile",
-                summary: "3-step wizard (Result, Photos, Review), mandatory biometric setup, local sqflite caching, and Mataasnakahoy boundary enforcement.",
-                btnLabel: "Read Chapter 4.0 →",
+                id: "analytics-reports",
+                icon: "📊",
+                title: "Analytics & Reports",
+                tag: "Reports",
+                summary: "Explore available summaries and export report files in supported formats.",
+                btnLabel: "Read guide →",
               },
               {
-                id: "wlc-policy",
-                icon: "⚖️",
-                title: "WLC Model & Coordinates",
-                tag: "Mathematical Model",
-                summary: "OPS = 68% Risk + 7% Sector + 25% Distance. BPLO reference center at 13.960413° N, 121.114547° E (Mataasnakahoy Municipal Hall).",
-                btnLabel: "Read Chapter 5.0 →",
+                id: "api-usage",
+                icon: "📈",
+                title: "API Usage & Limits",
+                tag: "Administrator",
+                summary: "Understand shared request budgets, scan counts, warnings, and estimated costs.",
+                btnLabel: "Read guide →",
               },
             ].map((card, idx) => (
               <div
