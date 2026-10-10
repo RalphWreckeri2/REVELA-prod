@@ -8,9 +8,23 @@ from api.models.user import find_user_by_id, find_user_by_email, enable_user_2fa
 from api.notifications.service import get_email_inspection_alerts, set_email_inspection_alerts, notify_password_reset_request
 from datetime import timedelta
 import re
-from api.auth.sessions import issue_session_token, revoke_session
+from api.auth.sessions import issue_session_token, revoke_session, ActiveSessionConflict
 
 auth_bp = Blueprint("auth", __name__)
+
+
+def _active_session_conflict_response(conflict):
+    """First-login-wins rejection.
+
+    409 is deliberate: both clients only treat 401/403/404 as a session
+    invalidation and purge their stored credentials on those codes.  A self
+    inflicted "already signed in elsewhere" must not wipe the rejected device's
+    own login state, so it must not use one of those statuses.
+    """
+    return jsonify({
+        "code": "account_in_use",
+        "message": str(conflict),
+    }), 409
 
 
 # ── POST /api/auth/login ──────────────────────────────────────────────────────
@@ -85,6 +99,8 @@ def login():
 
     try:
         token = issue_session_token(user, source)
+    except ActiveSessionConflict as conflict:
+        return _active_session_conflict_response(conflict)
     except Exception:
         traceback.print_exc()
         return jsonify({"error": "Unable to start a secure session at this time."}), 503
@@ -401,6 +417,8 @@ def verify_2fa_login():
     client_type = claims.get("client_type", "web")
     try:
         token = issue_session_token(user, client_type)
+    except ActiveSessionConflict as conflict:
+        return _active_session_conflict_response(conflict)
     except Exception:
         traceback.print_exc()
         return jsonify({"error": "Unable to start a secure session at this time."}), 503

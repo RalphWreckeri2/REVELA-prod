@@ -344,6 +344,17 @@ class AuthService extends ChangeNotifier {
       debugPrint(
         '2FA Login Verification error: ${e.response?.data ?? e.message}',
       );
+      // Surface the server's reason (e.g. the account is already signed in on
+      // another device). Without this every failure reads as a bad code and the
+      // inspector retries forever. The login page already renders
+      // lastAuthError for LoginResult.failed, so no new UI path is needed.
+      final serverMessage = (e.response?.data is Map)
+          ? ((e.response!.data['message'] ?? e.response!.data['error'])
+                  ?.toString()
+                  .trim() ??
+              '')
+          : '';
+      _lastAuthError = serverMessage.isNotEmpty ? serverMessage : null;
       return LoginResult.failed;
     }
   }
