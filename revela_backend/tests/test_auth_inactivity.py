@@ -27,7 +27,7 @@ from tests.test_auth_sessions import (
 IDLE_LIMIT_SECONDS = IDLE_LIMIT_MINUTES * 60
 
 
-def _make_app(include_auth_routes=False, idle_timeout_minutes=30):
+def _make_app(include_auth_routes=False, idle_timeout_minutes=IDLE_LIMIT_MINUTES):
     app = Flask(__name__)
     app.config.update(
         JWT_SECRET_KEY="test-secret",
@@ -92,7 +92,7 @@ class InactivityTests(unittest.TestCase):
                     sessions.record_session_activity(session_id)
                     self.assertTrue(sessions.is_active_session(12, session_id))
 
-    def test_backend_refuses_session_after_thirty_minutes_without_activity(self):
+    def test_backend_refuses_session_after_the_idle_limit_without_activity(self):
         token, session_id = self._login()
         with patch.object(sessions, "mysql", self.mysql):
             with self.app.app_context():

@@ -27,7 +27,7 @@ conn = MySQLdb.connect(
 cur = conn.cursor()
 failures = []
 
-IDLE_SECONDS = 30 * 60
+IDLE_SECONDS = 10 * 60
 
 
 def check(label, condition, detail=""):
@@ -99,25 +99,25 @@ check("fresh session is still live", cur.fetchone() is not None)
 
 print()
 print("=== 4. The boundary is exactly the 30 minute idle limit ===")
-cur.execute("UPDATE tmp_idle_probe SET issuedAt = issuedAt - INTERVAL 29 MINUTE WHERE userID=999101")
+cur.execute("UPDATE tmp_idle_probe SET issuedAt = issuedAt - INTERVAL 9 MINUTE WHERE userID=999101")
 conn.commit()
 cur.execute(IDLE, (999101, "a" * 32, IDLE_SECONDS))
-check("29 minutes idle is still inside the window", cur.fetchone() is None)
+check("9 minutes idle is still inside the window", cur.fetchone() is None)
 
 cur.execute("UPDATE tmp_idle_probe SET issuedAt = issuedAt - INTERVAL 2 MINUTE WHERE userID=999101")
 conn.commit()
 cur.execute(IDLE, (999101, "a" * 32, IDLE_SECONDS))
-check("31 minutes idle is outside the window", cur.fetchone() is not None)
+check("11 minutes idle is outside the window", cur.fetchone() is not None)
 
 # Within a couple of seconds of the boundary.
-cur.execute("UPDATE tmp_idle_probe SET issuedAt = CURRENT_TIMESTAMP - INTERVAL 1795 SECOND WHERE userID=999101")
+cur.execute("UPDATE tmp_idle_probe SET issuedAt = CURRENT_TIMESTAMP - INTERVAL 595 SECOND WHERE userID=999101")
 conn.commit()
 cur.execute(IDLE, (999101, "a" * 32, IDLE_SECONDS))
-check("1795s idle is inside the window", cur.fetchone() is None)
-cur.execute("UPDATE tmp_idle_probe SET issuedAt = CURRENT_TIMESTAMP - INTERVAL 1805 SECOND WHERE userID=999101")
+check("595s idle is inside the window", cur.fetchone() is None)
+cur.execute("UPDATE tmp_idle_probe SET issuedAt = CURRENT_TIMESTAMP - INTERVAL 605 SECOND WHERE userID=999101")
 conn.commit()
 cur.execute(IDLE, (999101, "a" * 32, IDLE_SECONDS))
-check("1805s idle is outside the window", cur.fetchone() is not None)
+check("605s idle is outside the window", cur.fetchone() is not None)
 
 print()
 print("=== 5. Idleness is independent of the 12h JWT ceiling ===")
@@ -199,17 +199,17 @@ from api.auth import sessions as S
 app = Flask(__name__)
 app.config.update(
     JWT_ACCESS_TOKEN_EXPIRES=timedelta(hours=12),
-    SESSION_IDLE_TIMEOUT=timedelta(minutes=30),
+    SESSION_IDLE_TIMEOUT=timedelta(minutes=10),
 )
 with app.app_context():
-    check("idle window is 30 minutes", S.idle_timeout_seconds() == 1800.0,
+    check("idle window is 10 minutes", S.idle_timeout_seconds() == 600.0,
           str(S.idle_timeout_seconds()))
     check("JWT ceiling is still 12 hours", S.session_lifetime_hours() == 12.0,
           str(S.session_lifetime_hours()))
 
 app2 = Flask(__name__)  # no SESSION_IDLE_TIMEOUT set
 with app2.app_context():
-    check("idle window falls back to 30 minutes", S.idle_timeout_seconds() == 1800.0,
+    check("idle window falls back to 10 minutes", S.idle_timeout_seconds() == 600.0,
           str(S.idle_timeout_seconds()))
 
 cur.execute("DROP TEMPORARY TABLE IF EXISTS tmp_idle_probe")

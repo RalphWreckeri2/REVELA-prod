@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
 
 /**
- * Shown at 29 minutes of inactivity.
+ * Shown at 9 minutes of inactivity.
  *
  * Deliberately has no close button and no backdrop-dismiss: the only two
  * outcomes are "Stay Logged In" or being logged out one minute later.

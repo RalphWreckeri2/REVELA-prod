@@ -17,7 +17,7 @@ from api.notifications import hub
 
 
 SESSION_LIFETIME_HOURS = 12
-IDLE_LIMIT_MINUTES = 30
+IDLE_LIMIT_MINUTES = 10
 
 
 def _duplicate_entry():
@@ -130,6 +130,9 @@ class InMemorySessionCursor:
 
     def fetchone(self):
         return self.result
+
+    def fetchall(self):
+        return [self.result] if self.result is not None else []
 
     def close(self):
         pass

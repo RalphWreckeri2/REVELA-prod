@@ -13,7 +13,7 @@ class Config:
     # Web portal inactivity auto-logout.  Sessions that go this long without
     # reported user interaction are refused by the backend.  Independent of the
     # JWT expiry above, which remains the hard 12-hour ceiling.
-    SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
+    SESSION_IDLE_TIMEOUT = timedelta(minutes=10)
 
     MYSQL_HOST = os.getenv("DB_HOST") or os.getenv("MYSQLHOST") or "localhost"
     MYSQL_PORT = int(os.getenv("DB_PORT") or os.getenv("MYSQLPORT") or 3306)

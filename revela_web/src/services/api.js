@@ -4,7 +4,7 @@ const BASE_URL = `${API_ORIGIN}/api`;
 
 /** Shown when the backend refuses a session for inactivity. */
 export const INACTIVITY_LOGOUT_NOTICE =
-  "You have been logged out due to 30 minutes of inactivity. Please sign in again.";
+  "You have been logged out due to 10 minutes of inactivity. Please sign in again.";
 
 /** Absolute URL for inspection evidence (relative path from API). */
 export function inspectionEvidenceUrl(photoPath) {

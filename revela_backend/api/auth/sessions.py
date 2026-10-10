@@ -80,7 +80,7 @@ _CLIENT_LABELS = {
 # Dockerfile note on ``--workers 1``).  When this process has not seen a session
 # before -- a fresh login, or any session predating a restart -- the decision
 # falls back to the database clock, so a restart never grants free grace.
-DEFAULT_IDLE_TIMEOUT = timedelta(minutes=30)
+DEFAULT_IDLE_TIMEOUT = timedelta(minutes=10)
 
 _activity_lock = threading.Lock()
 _last_activity = {}
@@ -92,13 +92,21 @@ IDLE_SESSION_MESSAGE = (
 
 
 def idle_timeout_seconds():
-    """Inactivity window in seconds, read from ``SESSION_IDLE_TIMEOUT``."""
+    """Inactivity window in seconds, read from ``SESSION_IDLE_TIMEOUT``.
+
+    Capped at the JWT lifetime. A session can only ever hold the account's slot
+    while its token is alive, so an inactivity window longer than that would let
+    a stale row block new logins for longer than the token that created it.
+    """
     if has_app_context():
         configured = current_app.config.get("SESSION_IDLE_TIMEOUT")
         if isinstance(configured, timedelta):
-            return max(configured.total_seconds(), 0.0)
-        if isinstance(configured, (int, float)):
-            return max(float(configured), 0.0)
+            value = configured.total_seconds()
+        elif isinstance(configured, (int, float)):
+            value = float(configured)
+        else:
+            value = DEFAULT_IDLE_TIMEOUT.total_seconds()
+        return max(min(value, session_lifetime_hours() * 3600.0), 0.0)
     return DEFAULT_IDLE_TIMEOUT.total_seconds()
 
 
@@ -168,17 +176,38 @@ def _session_idle_since_issue(user_id, session_id):
 
 def _reject_if_idle(user_id, session_id):
     """True when the session must be refused for inactivity."""
-    elapsed = seconds_since_activity(session_id)
-    if elapsed is None:
-        # First sighting in this process: only the stored issue time can decide.
-        if _session_idle_since_issue(user_id, session_id):
-            forget_session(session_id)
-            return True
-        record_session_activity(session_id)
-        return False
-    if elapsed > idle_timeout_seconds():
+    if session_is_idle(user_id, session_id, adopt=True):
         forget_session(session_id)
         return True
+    return False
+
+
+def session_is_idle(user_id, session_id, adopt=False):
+    """Has this session gone too long without reported user interaction?
+
+    Both the request path and the login path must answer this identically.
+    When they disagree the login path fails closed on a session the request path
+    would have already released, so a stale row keeps blocking new logins for
+    the whole JWT lifetime.
+
+    Falling back to the stored issue time is safe for the login path because the
+    activity map is populated by *every* authenticated request: an entry that is
+    missing means the session has made no request since this process started, so
+    it cannot be a device that is genuinely active right now.
+
+    Args:
+        adopt: stamp the session as active when it is not idle. Only for the
+            request path -- the login path must never extend someone else's
+            session just because another device attempted to sign in.
+    """
+    elapsed = seconds_since_activity(session_id)
+    if elapsed is not None:
+        return elapsed > idle_timeout_seconds()
+
+    if _session_idle_since_issue(user_id, session_id):
+        return True
+    if adopt:
+        record_session_activity(session_id)
     return False
 
 
@@ -203,9 +232,10 @@ def active_session_conflict_message(client_type):
     label = _CLIENT_LABELS.get(
         str(client_type or "").strip().lower(), "another device"
     )
+    minutes = max(int(idle_timeout_seconds() // 60), 1)
     return (
         f"This account is already signed in on {label}. Sign out on that device "
-        "first, or wait for the current session to expire."
+        f"first, or wait up to {minutes} minutes for that session to end on its own."
     )
 
 
@@ -283,19 +313,18 @@ def claim_active_session(user_id, session_id, client_type):
             active = cursor.fetchone()
             if active is not None:
                 active_session_id = _row_value(active, "sessionID", 0)
-                if not is_session_idle(active_session_id):
+                if not session_is_idle(user_id, active_session_id):
                     raise ActiveSessionConflict(_row_value(active, "clientType", 1))
 
-                # The previous session has already been idle past the inactivity
-                # limit, so it no longer holds the slot -- otherwise a device
-                # that walked away could lock the account out for the full 12
-                # hours. Clear exactly that row and let this login claim it.
-                cursor.execute("""
-                    DELETE FROM user_active_sessions
-                    WHERE userID = %s AND sessionID = %s
-                """, (user_id, active_session_id))
-                mysql.connection.commit()
-                forget_session(active_session_id)
+                # Either the previous session has already idled past the
+                # inactivity limit, or this process has no activity record for
+                # it and the stored issue time shows it is stale.  In both cases
+                # it no longer holds the slot -- otherwise a device that walked
+                # away could lock the account out for the full 12 hours.
+                # Reuse revoke_session so cleanup is identical to every other
+                # release path (explicit logout, inactivity eviction).
+                cursor.fetchall()
+                revoke_session(user_id, active_session_id)
                 continue
 
             # Nothing valid is holding the slot, so drop only expired rows.  The

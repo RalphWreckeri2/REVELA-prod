@@ -23,7 +23,7 @@ const T0 = 1_700_000_000_000;
 
 /**
  * A faithful model of what InactivityProvider does with these primitives,
- * driven by a virtual clock so a 30-minute session runs instantly.
+ * driven by a virtual clock so a 10-minute session runs instantly.
  */
 function createIdleSession({ now = T0 } = {}) {
   let clock = now;
@@ -97,7 +97,7 @@ test("a freshly logged-in user is active", () => {
   assert.equal(session.loggedOut, false);
 });
 
-test("active users remain logged in past 30 minutes", () => {
+test("active users remain logged in past 10 minutes", () => {
   const session = createIdleSession();
   for (let i = 0; i < 120; i += 1) {
     session.advance(MINUTE).interact();
@@ -109,16 +109,16 @@ test("active users remain logged in past 30 minutes", () => {
 
 test("interaction resets the window instead of accumulating", () => {
   const session = createIdleSession();
-  session.advance(29 * MINUTE).interact();
-  session.advance(29 * MINUTE).interact();
+  session.advance(9 * MINUTE).interact();
+  session.advance(9 * MINUTE).interact();
   assert.equal(idlePhase(session.clock, session.lastActivityAt), "active");
   assert.equal(session.loggedOut, false);
 });
 
-// ── Requirement 4: warning at 29 minutes ─────────────────────────────────────
-test("warning appears only at 29 minutes, not before", () => {
+// ── Requirement 4: warning at 9 minutes ─────────────────────────────────────
+test("warning appears only at 9 minutes, not before", () => {
   const session = createIdleSession();
-  session.advance(28 * MINUTE);
+  session.advance(8 * MINUTE);
   assert.equal(session.warning, false, "must not warn early");
 
   session.advance(1 * MINUTE);
@@ -126,13 +126,13 @@ test("warning appears only at 29 minutes, not before", () => {
   assert.equal(session.loggedOut, false, "warning must not log the user out");
 });
 
-test("warning fires exactly at the 29 minute mark", () => {
-  assert.equal(WARNING_AT_MS, 29 * MINUTE);
-  assert.equal(IDLE_LIMIT_MS, 30 * MINUTE);
+test("warning fires exactly at the 9 minute mark", () => {
+  assert.equal(WARNING_AT_MS, 9 * MINUTE);
+  assert.equal(IDLE_LIMIT_MS, 10 * MINUTE);
   assert.equal(
     delayUntil(WARNING_AT_MS, T0, T0),
-    29 * MINUTE,
-    "first warning is scheduled 29 minutes out",
+    9 * MINUTE,
+    "first warning is scheduled 9 minutes out",
   );
 });
 
@@ -145,27 +145,27 @@ test("warning modal text matches the required wording", () => {
 
 test("Stay Logged In dismisses the warning and pushes the deadline out", () => {
   const session = createIdleSession();
-  session.advance(29 * MINUTE);
+  session.advance(9 * MINUTE);
   assert.equal(session.warning, true);
 
   session.interact(); // "Stay Logged In"
   assert.equal(session.warning, false);
 
-  session.advance(29 * MINUTE);
-  assert.equal(session.loggedOut, false, "the reset must grant another 30 minutes");
+  session.advance(9 * MINUTE);
+  assert.equal(session.loggedOut, false, "the reset must grant another 10 minutes");
 });
 
-// ── Requirement 5 & 6: logout at 30 minutes ──────────────────────────────────
-test("an inactive user is logged out after 30 minutes", () => {
+// ── Requirement 5 & 6: logout at 10 minutes ──────────────────────────────────
+test("an inactive user is logged out after 10 minutes", () => {
   const session = createIdleSession();
-  session.advance(29 * MINUTE);
+  session.advance(9 * MINUTE);
   assert.equal(session.loggedOut, false);
 
   session.advance(1 * MINUTE);
   assert.equal(session.loggedOut, true);
 });
 
-test("logout happens at 30 minutes and not a second later", () => {
+test("logout happens at 10 minutes and not a second later", () => {
   const session = createIdleSession();
   session.advance(IDLE_LIMIT_MS - 1);
   assert.equal(session.loggedOut, false);
@@ -176,7 +176,7 @@ test("logout happens at 30 minutes and not a second later", () => {
 test("logout notice text matches the required wording", () => {
   assert.equal(
     INACTIVITY_NOTICE,
-    "You have been logged out due to 30 minutes of inactivity. Please sign in again.",
+    "You have been logged out due to 10 minutes of inactivity. Please sign in again.",
   );
 });
 
@@ -199,7 +199,7 @@ test("activity events cover clicks, keys, scrolling and touch", () => {
 
 test("an idle session is logged out even while requests keep arriving", () => {
   const session = createIdleSession();
-  session.advance(29 * MINUTE);
+  session.advance(9 * MINUTE);
   assert.equal(session.warning, true);
   // Requests continue in the background but nobody is interacting.
   session.poll().poll().poll();
@@ -219,7 +219,7 @@ test("activity in one tab keeps another tab alive", () => {
   );
   assert.ok(signal, "tab B must honour tab A's activity");
 
-  tabB.advance(29 * MINUTE);
+  tabB.advance(9 * MINUTE);
   assert.equal(tabB.loggedOut, false, "tab B survives thanks to tab A");
 });
 
@@ -261,31 +261,31 @@ test("activity broadcasts are throttled but never dropped entirely", () => {
 // ── Refresh, reopened tab, browser closure ───────────────────────────────────
 test("a refresh resumes the recorded idle time instead of restarting it", () => {
   const session = createIdleSession();
-  session.advance(20 * MINUTE);
+  session.advance(7 * MINUTE);
 
   // Reload: the provider restores the persisted timestamp.
   const restored = restoreActivity(session.lastActivityAt, session.clock);
   assert.equal(restored, session.lastActivityAt);
   assert.equal(idlePhase(session.clock, restored), "active");
 
-  // 10 more idle minutes finishes the original 30, it does not restart it.
-  session.advance(10 * MINUTE);
-  assert.equal(session.loggedOut, true, "a refresh must not grant a fresh 30 minutes");
+  // 4 more idle minutes finishes the original 10, it does not restart it.
+  session.advance(4 * MINUTE);
+  assert.equal(session.loggedOut, true, "a refresh must not grant a fresh 10 minutes");
 });
 
 test("reopening a closed browser resumes the original deadline", () => {
-  // Last interaction at T0; the tab is closed for 31 minutes and then reopened.
+  // Last interaction at T0; the tab is closed for 11 minutes and then reopened.
   const persisted = T0;
-  const now = T0 + 31 * MINUTE;
+  const now = T0 + 11 * MINUTE;
   const restored = restoreActivity(persisted, now);
   assert.equal(
     isExpired(now, restored),
     true,
-    "reopening after 31 idle minutes must not restore the session",
+    "reopening after 11 idle minutes must not restore the session",
   );
 
   // Reopened within the window, the remaining time carries over.
-  const soon = T0 + 25 * MINUTE;
+  const soon = T0 + 5 * MINUTE;
   assert.equal(isExpired(soon, restoreActivity(persisted, soon)), false);
 });
 
@@ -307,12 +307,12 @@ test("failed heartbeats do not reset the timer", () => {
   const session = createIdleSession();
   // The user interacts; the heartbeat is throttled but the timer still expires
   // because nothing else reports activity.
-  session.advance(10 * MINUTE).interact();
+  session.advance(4 * MINUTE).interact();
   assert.ok(session.heartbeats >= 1);
 
   // Connectivity drops: no further heartbeats succeed, but crucially no code
   // path treats the attempt as activity either.
-  session.advance(30 * MINUTE);
+  session.advance(10 * MINUTE);
   assert.equal(session.loggedOut, true, "a lost connection must not freeze the session");
 });
 

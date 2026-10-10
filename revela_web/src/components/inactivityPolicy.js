@@ -6,10 +6,10 @@
  * listeners and network calls; this module owns only the decisions.
  */
 
-export const IDLE_LIMIT_MS = 30 * 60 * 1000;
-export const WARNING_AT_MS = 29 * 60 * 1000;
+export const IDLE_LIMIT_MS = 10 * 60 * 1000;
+export const WARNING_AT_MS = 9 * 60 * 1000;
 
-// The backend window is 30 minutes, so one heartbeat a minute is ample.
+// The backend window is 10 minutes, so one heartbeat a minute is ample.
 export const HEARTBEAT_THROTTLE_MS = 60 * 1000;
 // Other tabs need to stay roughly in sync, not frame-accurate.
 export const CROSS_TAB_THROTTLE_MS = 5 * 1000;
@@ -21,7 +21,7 @@ export const SESSION_NOTICE_KEY = "revela_session_notice";
 export const WARNING_MESSAGE =
   "Your session is about to expire due to inactivity. You will be automatically logged out in 1 minute.";
 export const INACTIVITY_NOTICE =
-  "You have been logged out due to 30 minutes of inactivity. Please sign in again.";
+  "You have been logged out due to 10 minutes of inactivity. Please sign in again.";
 
 /**
  * Real user input only.

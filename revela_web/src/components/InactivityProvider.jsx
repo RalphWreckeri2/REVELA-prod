@@ -157,7 +157,7 @@ export default function InactivityProvider({ children }) {
       return undefined;
     }
     // A refresh or reopened tab resumes the recorded idle time, so a browser
-    // restart cannot silently hand out a fresh 30 minutes.
+    // restart cannot silently hand out a fresh 10 minutes.
     lastActivityRef.current = readPersistedActivity();
     schedule();
     return () => {
