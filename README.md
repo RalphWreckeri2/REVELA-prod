@@ -151,16 +151,28 @@ The Flutter mobile application runs on inspectors' physical Android devices and 
    SPA catch-all would return the dashboard HTML with a `200`, which looks like a
    working link but downloads a web page instead of an app.
 
-   The behaviour comes from `revela_web/vercel.json`, which lists a specific rewrite
-   ahead of the SPA catch-all:
+   The behaviour comes from `revela_web/vercel.json`, which excludes the retired paths
+   from the SPA catch-all with a negative lookahead:
    ```json
-   { "source": "/revela.apk", "destination": "/__retired__/revela.apk" }
+   { "source": "^/(?!revela\\.apk$)(?!__retired__/).*", "destination": "/index.html" }
    ```
-   Vercel matches rewrite rules in order and takes the first match, so this rule wins
-   over `/(.*)` -> `/index.html`. The destination does not exist, so the request
-   resolves to a 404. **If APK hosting is reintroduced later, delete that rewrite first** --
-   a redirect rule cannot override a rewrite, so a stale 404 rule would keep shadowing
-   any redirect you add.
+   Every path that matches is served the SPA shell; `/revela.apk` and anything under
+   `/__retired__/` match nothing, so Vercel answers them with its own 404.
+
+   **Why not a rewrite to a non-existent path?** An earlier revision used
+   `{ "source": "/revela.apk", "destination": "/__retired__/revela.apk" }` placed ahead
+   of a `/(.*)` catch-all. That was verified against the live site and it does **not**
+   work: Vercel resolved `/revela.apk` to the dashboard HTML with a `200` and
+   `Content-Disposition: inline; filename="index.html"`. Rewrites are not "first match
+   wins, then 404" -- when a rewrite destination does not resolve, evaluation continues
+   and the catch-all still matches. Excluding the path is the reliable way to get a 404.
+
+   Static assets are unaffected: `rewrites` check the filesystem first, so
+   `/assets/*` and `/data/*` are served from the build output before any rewrite applies.
+
+   If APK hosting is reintroduced, remove the lookahead from `source` and add a
+   `redirects` entry for `/revela.apk` -- note that a rewrite cannot override a redirect,
+   so a stale exclusion would keep shadowing it.
 
 No `VITE_APK_DOWNLOAD_URL` variable is needed or configured. If a download button is
 ever reintroduced in the UI, add the configuration then, together with the hosting
