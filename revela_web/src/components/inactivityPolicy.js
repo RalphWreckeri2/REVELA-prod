@@ -93,3 +93,7 @@ export function restoreActivity(persisted, now) {
   if (!Number.isFinite(parsed) || parsed <= 0) return now;
   return Math.min(parsed, now);
 }
+
+export function sessionActivityAtStart(isNewSession, persisted, now) {
+  return isNewSession ? now : restoreActivity(persisted, now);
+}

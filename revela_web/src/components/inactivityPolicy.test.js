@@ -13,6 +13,7 @@ import {
   isExpired,
   resolveActivitySignal,
   restoreActivity,
+  sessionActivityAtStart,
   shouldBroadcastActivity,
   shouldSendHeartbeat,
   shouldWarn,
@@ -293,6 +294,23 @@ test("a missing or corrupt stored value falls back to now", () => {
   for (const bad of [null, undefined, "", "abc", 0, -5, NaN]) {
     assert.equal(restoreActivity(bad, T0), T0);
   }
+});
+
+test("a new login starts a fresh inactivity window", () => {
+  const previousSessionActivity = T0 - 15 * MINUTE;
+  assert.equal(
+    sessionActivityAtStart(true, previousSessionActivity, T0),
+    T0,
+    "a new login must not inherit the previous session's expired timestamp",
+  );
+});
+
+test("an existing session resumes its persisted inactivity window", () => {
+  const previousSessionActivity = T0 - 7 * MINUTE;
+  assert.equal(
+    sessionActivityAtStart(false, previousSessionActivity, T0),
+    previousSessionActivity,
+  );
 });
 
 test("a stored time in the future is clamped and cannot buy extra time", () => {

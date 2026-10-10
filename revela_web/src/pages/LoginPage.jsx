@@ -233,18 +233,13 @@ export default function LoginPage() {
         setTempToken(response.tempToken);
         setLoginStep("2fa"); // Change the UI to show OTP input
       } else {
+        const showWelcome = !response?.user?.mustChangePassword;
         if (response?.user?.mustChangePassword) {
           await forcePasswordChange(response.access_token);
-        } else {
-          Swal.fire({
-            icon: 'success',
-            title: 'Welcome!',
-            text: 'Welcome back, BPLO Officer.',
-            timer: 2000,
-            showConfirmButton: false
-          });
         }
-        navigate("/home");
+        navigate("/home", {
+          state: showWelcome ? { showWelcome: true } : null,
+        });
       }
     } catch (err) {
       setLoginError(err.message);
@@ -350,18 +345,13 @@ export default function LoginPage() {
         setLoginError("Access denied. This portal is for Admin and Super Admin only.");
         return;
       }
+      const showWelcome = !me?.mustChangePassword;
       if (me?.mustChangePassword) {
         await forcePasswordChange(response.access_token);
-      } else {
-        Swal.fire({
-          icon: 'success',
-          title: 'Welcome!',
-          text: 'Welcome back, BPLO Officer.',
-          timer: 2000,
-          showConfirmButton: false
-        });
       }
-      navigate("/home");
+      navigate("/home", {
+        state: showWelcome ? { showWelcome: true } : null,
+      });
     } catch (err) {
       setLoginError(err.message || "Invalid code. Please try again.");
     } finally {

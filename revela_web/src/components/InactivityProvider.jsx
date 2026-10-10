@@ -21,6 +21,7 @@ import {
   isExpired,
   resolveActivitySignal,
   restoreActivity,
+  sessionActivityAtStart,
   shouldBroadcastActivity,
   shouldSendHeartbeat,
 } from "./inactivityPolicy";
@@ -44,6 +45,7 @@ export default function InactivityProvider({ children }) {
   // Seeded with "now" and replaced by the persisted value once the session
   // effect runs, so this ref is never briefly a non-timestamp.
   const lastActivityRef = useRef(() => Date.now());
+  const sessionTokenRef = useRef(token);
   const lastHeartbeatRef = useRef(0);
   const lastBroadcastRef = useRef(0);
   const endedRef = useRef(false);
@@ -151,20 +153,29 @@ export default function InactivityProvider({ children }) {
       // No setState here: the modal is already gated on `isAuthenticated`, so
       // clearing state would only trigger a redundant render.
       endedRef.current = false;
+      sessionTokenRef.current = null;
       lastActivityRef.current = Date.now();
       window.clearTimeout(warningTimerRef.current);
       window.clearTimeout(logoutTimerRef.current);
       return undefined;
     }
-    // A refresh or reopened tab resumes the recorded idle time, so a browser
-    // restart cannot silently hand out a fresh 10 minutes.
-    lastActivityRef.current = readPersistedActivity();
+    // A refresh resumes the existing session clock, but a new login must not
+    // inherit the timestamp from the session that was just logged out.
+    const isNewSession = sessionTokenRef.current === null;
+    sessionTokenRef.current = token;
+    const now = Date.now();
+    lastActivityRef.current = sessionActivityAtStart(
+      isNewSession,
+      isNewSession ? null : readPersistedActivity(),
+      now,
+    );
+    persistActivity(lastActivityRef.current);
     schedule();
     return () => {
       window.clearTimeout(warningTimerRef.current);
       window.clearTimeout(logoutTimerRef.current);
     };
-  }, [isAuthenticated, schedule]);
+  }, [isAuthenticated, persistActivity, schedule, token]);
 
   // Genuine user interaction.
   useEffect(() => {

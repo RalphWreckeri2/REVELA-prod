@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
 import Footer from "../components/Footer";
@@ -848,6 +848,8 @@ export default function HomePage() {
   const { token, user } = useAuth();
   const { theme, resolvedTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
+  const welcomeHandledRef = useRef(false);
 
   const isDark = resolvedTheme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
@@ -867,6 +869,21 @@ export default function HomePage() {
   const [opsRankings, setOpsRankings] = useState([]);
   const [opsLoading, setOpsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (!location.state?.showWelcome || !user || welcomeHandledRef.current) {
+      return;
+    }
+    welcomeHandledRef.current = true;
+    void Swal.fire({
+      icon: "success",
+      title: "Welcome!",
+      text: "Welcome back, BPLO Officer.",
+      timer: 2000,
+      showConfirmButton: false,
+    });
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate, user]);
 
   const fetchDashboardData = useCallback(async (isSilent = false) => {
     if (!token) return;

@@ -78,8 +78,8 @@ export function AuthProvider({ children }) {
       throw new Error("Access denied. This portal is for Admin and Super Admin only.");
     }
 
-    setToken(data.access_token);
     const me = await getMeRequest(data.access_token);
+    setToken(data.access_token);
     setUser(me);
     return { ...data, user: me };
   }
