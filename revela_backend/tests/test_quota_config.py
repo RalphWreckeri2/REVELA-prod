@@ -1,8 +1,19 @@
+import io
 import unittest
 from unittest.mock import patch
 
+from api.utils import quota_ceilings
 from api.utils.quota_config import load_api_quota_config
 from api.utils.quota_ceilings import CloudMethodQuota
+
+#: Method key -> the ApiQuotaConfig attribute holding its MethodQuota.
+_CONFIG_ATTR = {
+    "text_search": "text_search",
+    "place_details": "place_details",
+    "geocoding": "geocoding",
+    "nearby_search_legacy": "legacy_nearby",
+    "nearby_search_new": "nearby_new",
+}
 
 
 class ApiQuotaConfigTests(unittest.TestCase):
@@ -35,6 +46,68 @@ class ApiQuotaConfigTests(unittest.TestCase):
         self.assertEqual(
             sum(config.text_search_workflow_daily.values()), 80
         )
+
+    def test_a_clamped_override_is_reported_not_applied_silently(self):
+        """
+        `TS_DAILY_CAP=1000` in .env is dead configuration: the clamp keeps the
+        effective cap at the 80/day default. The operator must be able to see
+        that instead of believing the environment is in effect.
+        """
+        buffer = io.StringIO()
+        with patch("sys.stdout", buffer):
+            config = load_api_quota_config({"TS_DAILY_CAP": "1000"})
+
+        output = buffer.getvalue()
+        self.assertEqual(config.text_search.daily, 80)
+        self.assertIn("TS_DAILY_CAP=1000", output)
+        self.assertIn("clamped to 80", output)
+
+    def test_verifying_text_search_cannot_exceed_the_observed_cloud_quota(self):
+        """
+        The scenario the audit flagged: someone marks the Text Search quota
+        verified (or "corrects" the recorded number upward) and the dead
+        TS_DAILY_CAP=1000 suddenly takes effect. The unconditional observed
+        ceiling must still cap it at the 500/day Google allows.
+        """
+        over_optimistic = CloudMethodQuota(
+            daily=50_000, per_minute=600, verified=True,
+            source="a mistyped 'correction'",
+        )
+        with patch(
+            "api.utils.quota_config.cloud_quota_for",
+            return_value=over_optimistic,
+        ):
+            config = load_api_quota_config({"TS_DAILY_CAP": "1000"})
+
+        self.assertEqual(config.text_search.daily, 500)
+        self.assertEqual(
+            config.text_search.daily,
+            quota_ceilings.OBSERVED_DAILY_CEILINGS["text_search"],
+        )
+
+    def test_marking_text_search_verified_lands_exactly_on_the_cloud_quota(self):
+        verified_quota = CloudMethodQuota(
+            daily=500, per_minute=600, verified=True,
+            source="read from Cloud Console",
+        )
+        with patch(
+            "api.utils.quota_config.cloud_quota_for",
+            return_value=verified_quota,
+        ):
+            config = load_api_quota_config({"TS_DAILY_CAP": "1000"})
+
+        self.assertEqual(config.text_search.daily, 500)
+
+    def test_every_recorded_daily_ceiling_covers_a_usable_default(self):
+        """
+        A hard ceiling below the shipped default would silently lower a cap, so
+        assert the two never disagree that way.
+        """
+        config = load_api_quota_config({})
+        for method, ceiling in quota_ceilings.OBSERVED_DAILY_CEILINGS.items():
+            with self.subTest(method=method):
+                default = getattr(config, _CONFIG_ATTR[method]).daily
+                self.assertLessEqual(default, ceiling)
 
     def test_canonical_daily_cap_precedes_legacy_alias(self):
         config = load_api_quota_config({

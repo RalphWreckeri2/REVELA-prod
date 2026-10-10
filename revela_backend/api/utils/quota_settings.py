@@ -27,7 +27,7 @@ import time
 
 from api.models import app_settings
 from api.utils.quota_config import API_QUOTA_CONFIG
-from api.utils.quota_ceilings import cloud_quota_for
+from api.utils.quota_ceilings import cloud_quota_for, hard_ceiling_for
 
 
 # Re-read persisted overrides at most this often. Long enough that a 101-cell
@@ -221,9 +221,9 @@ def _coerce(key, raw):
     cloud = _ceiling_for(key)
     if cloud is not None and value > cloud:
         raise ValueError(
-            f"{spec['label']} cannot exceed the verified Google Cloud quota "
-            f"of {cloud} requests/day. Lower the Cloud-side limit in "
-            f"Cloud Console first, then update the ceiling in "
+            f"{spec['label']} cannot exceed the Google Cloud quota of "
+            f"{cloud} requests/day. Lower the Cloud-side limit in Cloud "
+            f"Console first, then update the ceiling in "
             f"api/utils/quota_ceilings.py."
         )
     cloud_method = spec.get("ceiling_method")
@@ -241,14 +241,36 @@ def _coerce(key, raw):
 
 
 def _ceiling_for(key):
+    """
+    Hard upper bound for one field, or None when nothing bounds it.
+
+    Two sources, combined by taking the stricter:
+      * the recorded Cloud quota, but only once it is marked verified; and
+      * `hard_ceiling_for()`, the unconditional per-method bound read off this
+        project's Cloud Console, which applies even while the quota is still
+        unverified.
+
+    That second source is what makes it impossible for a future
+    quota-verification edit to quietly raise an application cap above a limit
+    Google is already enforcing.
+    """
     spec = QUOTA_FIELDS[key]
     method = spec.get("ceiling_method")
     if not method:
         return None
     quota = cloud_quota_for(method)
-    if quota is None or not quota.verified:
+    verified_ceiling = None
+    if quota is not None and quota.verified:
+        verified_ceiling = getattr(quota, spec["ceiling_field"], None)
+
+    hard_ceiling = None
+    if spec["ceiling_field"] == "daily":
+        hard_ceiling = hard_ceiling_for(method)
+
+    ceilings = [c for c in (verified_ceiling, hard_ceiling) if c is not None]
+    if not ceilings:
         return None
-    return getattr(quota, spec["ceiling_field"], None)
+    return min(ceilings)
 
 
 # Resolve every ceiling once so validation, the snapshot, and the admin UI all

@@ -22,6 +22,13 @@ def make_client(case, role="Admin", authenticated=True):
     """
     Build a Flask test client with the blueprint and a stubbed JWT.
 
+    `verify_jwt_in_request` is stubbed out, so flask_jwt_extended never
+    establishes a real JWT context and `get_jwt()` would raise. Both decorators
+    used by this blueprint read the claims through `decorators.get_jwt`, so it
+    is stubbed here too, alongside the session check that would otherwise reach
+    for MySQL. Without this the route-level authorization tests could not run at
+    all -- the request raised before any role check happened.
+
     The decorator patches are started (not used as a `with` block) because the
     patches must stay active while the test issues its request, and are torn
     down via the test case's cleanup.
@@ -35,10 +42,13 @@ def make_client(case, role="Admin", authenticated=True):
         if not authenticated:
             raise RuntimeError("Missing Authorization Header")
 
+    claims = {"role": role, "session_id": "session-under-test"}
     for target, attribute, value in (
         (decorators, "verify_jwt_in_request", fake_verify),
         (decorators, "get_jwt_identity", lambda: 1),
+        (decorators, "get_jwt", lambda: claims),
         (decorators, "get_current_role", lambda: role),
+        (decorators, "check_active_session", lambda *_a, **_k: (True, None)),
         (decorators, "find_user_by_id", lambda _i: {"isActive": True}),
     ):
         patcher = patch.object(target, attribute, value)
@@ -47,6 +57,17 @@ def make_client(case, role="Admin", authenticated=True):
 
     app.config["TESTING"] = True
     return app.test_client()
+
+
+def stub_usage_report(case):
+    """Neutralise the read-only usage report so it never touches MySQL."""
+    patcher = patch.object(
+        admin_routes.usage_report,
+        "build_usage_report",
+        return_value={"generated_at": "stub", "methods": [], "totals": {}},
+    )
+    patcher.start()
+    case.addCleanup(patcher.stop)
 
 
 class QuotaValidationTests(unittest.TestCase):
@@ -94,7 +115,46 @@ class QuotaValidationTests(unittest.TestCase):
             clean, errors = quota_settings.validate_patch({key: 501})
         self.assertEqual(clean, {})
         self.assertTrue(errors)
-        self.assertIn("verified Google Cloud quota", errors[0])
+        self.assertIn("Google Cloud quota", errors[0])
+
+    def test_hard_ceiling_applies_even_while_the_quota_is_unverified(self):
+        """
+        Marking a Cloud quota verified must never be able to lift a cap past a
+        limit Google already enforces. The unconditional observed ceiling
+        applies either way.
+        """
+        key = "quota.text_search.daily"
+        clean, errors = quota_settings.validate_patch({key: 501})
+        self.assertEqual(clean, {})
+        self.assertTrue(errors)
+        self.assertIn("Google Cloud quota", errors[0])
+
+    def test_observed_ceiling_is_reported_for_every_daily_field(self):
+        quota_settings.invalidate()
+        snapshot = quota_settings.snapshot()
+        self.assertEqual(
+            snapshot["quota.text_search.daily"]["cloud_ceiling"],
+            quota_ceilings.OBSERVED_DAILY_CEILINGS["text_search"],
+        )
+        self.assertEqual(
+            snapshot["quota.geocoding.daily"]["cloud_ceiling"],
+            quota_ceilings.OBSERVED_DAILY_CEILINGS["geocoding"],
+        )
+
+    def test_geocoding_daily_cannot_be_raised_above_the_cloud_quota(self):
+        clean, errors = quota_settings.validate_patch({
+            "quota.geocoding.daily": 1501,
+        })
+        self.assertEqual(clean, {})
+        self.assertTrue(any("Google Cloud quota" in e for e in errors))
+
+    def test_lowering_geocoding_below_the_current_cap_is_allowed(self):
+        """The recommended headroom change must be reachable without a deploy."""
+        clean, errors = quota_settings.validate_patch({
+            "quota.geocoding.daily": 1400,
+        })
+        self.assertEqual(errors, [])
+        self.assertEqual(clean["quota.geocoding.daily"], 1400)
 
     def test_exactly_the_cloud_ceiling_is_accepted(self):
         verified = CloudMethodQuota(
@@ -262,10 +322,21 @@ class QuotaEnforcementTests(unittest.TestCase):
 
 
 class AuthenticationTests(unittest.TestCase):
-    """Every settings route is admin-only."""
+    """
+    Two authorization tiers.
 
-    ROUTES = (
+    Read-only monitoring stays available to every admin. Anything that changes
+    how REVELA spends Google quota or stores Google-derived data is Super Admin
+    only, because the frontend gate is cosmetic.
+    """
+
+    #: Read-only usage monitoring: every administrator may call these.
+    ADMIN_READ_ROUTES = (
         ("get", "/api/admin-settings/usage"),
+    )
+
+    #: Quota edits/resets, Test Mode config/resets, fixture purge.
+    SUPER_ADMIN_ONLY_ROUTES = (
         ("get", "/api/admin-settings/quota"),
         ("put", "/api/admin-settings/quota"),
         ("post", "/api/admin-settings/quota/reset"),
@@ -273,8 +344,14 @@ class AuthenticationTests(unittest.TestCase):
         ("put", "/api/admin-settings/test-mode"),
         ("post", "/api/admin-settings/test-mode/reset"),
         ("post", "/api/admin-settings/test-mode/fixtures/purge"),
+    )
+
+    #: Read-only and side-effect free, so it stays on the plain admin tier.
+    ADMIN_DRY_RUN_ROUTES = (
         ("post", "/api/admin-settings/matching-dry-run"),
     )
+
+    ROUTES = ADMIN_READ_ROUTES + SUPER_ADMIN_ONLY_ROUTES + ADMIN_DRY_RUN_ROUTES
 
     def test_unauthenticated_is_rejected_with_401(self):
         client = make_client(self, authenticated=False)
@@ -292,22 +369,141 @@ class AuthenticationTests(unittest.TestCase):
                 response = getattr(client, method)(path, json={})
                 self.assertEqual(response.status_code, 403)
 
-    def test_admin_reaches_read_routes(self):
+    def test_admin_reaches_read_only_usage_routes(self):
+        stub_usage_report(self)
+        client = make_client(self, role="Admin")
+        response = client.get("/api/admin-settings/usage")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_super_admin_reaches_read_only_usage_routes(self):
+        stub_usage_report(self)
+        client = make_client(self, role="SUPER_ADMIN")
+        response = client.get("/api/admin-settings/usage")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_cannot_read_restricted_settings(self):
+        """Hiding Advanced Settings in the UI is not the boundary."""
+        client = make_client(self, role="Admin")
+        for method, path in self.SUPER_ADMIN_ONLY_ROUTES:
+            with self.subTest(path=path):
+                response = getattr(client, method)(path, json={})
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(
+                    response.get_json()["message"], "Super Admin only"
+                )
+
+    def test_system_administrator_cannot_reach_restricted_settings(self):
+        client = make_client(self, role="System Administrator")
+        for method, path in self.SUPER_ADMIN_ONLY_ROUTES:
+            with self.subTest(path=path):
+                response = getattr(client, method)(path, json={})
+                self.assertEqual(response.status_code, 403)
+
+    def test_admin_cannot_modify_or_reset_quota(self):
         client = make_client(self, role="Admin")
         with patch.object(
-            quota_settings.app_settings, "load_all", return_value={}
-        ):
-            response = client.get("/api/admin-settings/quota")
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("fields", response.get_json())
+            quota_settings, "save"
+        ) as save, patch.object(
+            quota_settings, "clear_overrides"
+        ) as reset:
+            put = client.put(
+                "/api/admin-settings/quota",
+                json={"quota.text_search.daily": 10},
+            )
+            post = client.post("/api/admin-settings/quota/reset")
 
-    def test_super_admin_reaches_read_routes(self):
+        self.assertEqual(put.status_code, 403)
+        self.assertEqual(post.status_code, 403)
+        save.assert_not_called()
+        reset.assert_not_called()
+
+    def test_super_admin_can_modify_quota(self):
         client = make_client(self, role="SUPER_ADMIN")
         with patch.object(
             quota_settings.app_settings, "load_all", return_value={}
-        ):
-            response = client.get("/api/admin-settings/quota")
+        ), patch.object(
+            quota_settings.app_settings, "save_many", return_value=(1, None)
+        ) as save:
+            response = client.put(
+                "/api/admin-settings/quota",
+                json={"quota.geocoding.daily": 1400},
+            )
+
         self.assertEqual(response.status_code, 200)
+        save.assert_called_once()
+
+    def test_super_admin_can_reset_quota(self):
+        client = make_client(self, role="SUPER_ADMIN")
+        with patch.object(
+            quota_settings.app_settings, "load_all", return_value={}
+        ), patch.object(
+            quota_settings.app_settings, "delete_many", return_value=(1, None)
+        ):
+            response = client.post("/api/admin-settings/quota/reset")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_admin_cannot_change_test_mode_or_purge_fixtures(self):
+        client = make_client(self, role="Admin")
+        with patch.object(
+            test_mode, "save_config"
+        ) as save, patch.object(
+            test_mode, "reset_config"
+        ) as reset, patch.object(
+            test_mode, "purge_fixtures"
+        ) as purge:
+            put = client.put(
+                "/api/admin-settings/test-mode",
+                json={"test_mode.enabled": True},
+            )
+            reset_response = client.post("/api/admin-settings/test-mode/reset")
+            purge_response = client.post(
+                "/api/admin-settings/test-mode/fixtures/purge", json={}
+            )
+
+        self.assertEqual(put.status_code, 403)
+        self.assertEqual(reset_response.status_code, 403)
+        self.assertEqual(purge_response.status_code, 403)
+        save.assert_not_called()
+        reset.assert_not_called()
+        purge.assert_not_called()
+
+    def test_super_admin_can_change_test_mode(self):
+        client = make_client(self, role="SUPER_ADMIN")
+        with patch.object(test_mode, "save_config") as save:
+            save.return_value = ({"config": {"test_mode.enabled": True}}, None)
+            response = client.put(
+                "/api/admin-settings/test-mode",
+                json={"test_mode.enabled": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        save.assert_called_once()
+
+    def test_super_admin_can_purge_fixtures(self):
+        client = make_client(self, role="SUPER_ADMIN")
+        with patch.object(
+            test_mode, "purge_fixtures", return_value=(3, None)
+        ) as purge, patch.object(
+            test_mode, "fixture_stats", return_value={"total": 0}
+        ):
+            response = client.post(
+                "/api/admin-settings/test-mode/fixtures/purge", json={}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        purge.assert_called_once_with(older_than_days=None)
+
+    def test_admin_still_reaches_read_only_matching_dry_run(self):
+        client = make_client(self, role="Admin")
+        with patch.object(admin_routes, "_load_registry", return_value=[]):
+            response = client.post(
+                "/api/admin-settings/matching-dry-run", json={"candidates": []}
+            )
+
+        self.assertEqual(response.status_code, 400)
 
     def test_admin_request_fails_closed_when_account_lookup_errors(self):
         client = make_client(self, role="Admin")
@@ -329,7 +525,7 @@ class AuthenticationTests(unittest.TestCase):
             "find_user_by_id",
             return_value={"isActive": True, "userRole": "Inspector"},
         ):
-            response = client.get("/api/admin-settings/quota")
+            response = client.get("/api/admin-settings/usage")
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(
@@ -338,7 +534,7 @@ class AuthenticationTests(unittest.TestCase):
         )
 
     def test_empty_body_is_rejected_for_write_routes(self):
-        client = make_client(self, role="Admin")
+        client = make_client(self, role="SUPER_ADMIN")
         for method, path in (
             ("put", "/api/admin-settings/quota"),
             ("put", "/api/admin-settings/test-mode"),
@@ -389,8 +585,10 @@ class SettingsPersistenceTests(unittest.TestCase):
         self.assertEqual(quota_settings.cap("quota.geocoding.daily"), 250)
 
     def test_actor_id_is_recorded_on_write(self):
-        client = make_client(self, role="Admin")
+        client = make_client(self, role="SUPER_ADMIN")
         with patch.object(
+            quota_settings.app_settings, "load_all", return_value={}
+        ), patch.object(
             quota_settings.app_settings, "save_many",
             return_value=(1, None),
         ) as save, patch.object(
@@ -769,6 +967,125 @@ class UsageReportTests(unittest.TestCase):
                     method["cost_estimate"]["estimated_cost_usd"])
                 self.assertFalse(
                     method["cost_estimate"]["pricing_verified"])
+
+
+class GeocodingHeadroomTests(unittest.TestCase):
+    """
+    The Geocoding daily cap must be able to sit at 1,400 while Google Cloud
+    allows 1,500, via the persisted admin-setting mechanism.
+
+    This suite only exercises the mechanism against an in-memory store. The
+    production override is written by a Super Admin through Advanced Settings
+    (or the documented SQL), never by the application automatically.
+    """
+
+    KEY = "quota.geocoding.daily"
+    RECOMMENDED = 1400
+
+    def setUp(self):
+        quota_settings.invalidate()
+        self.store = {}
+
+        def fake_load():
+            return dict(self.store)
+
+        def fake_save(entries, user_id=None):
+            self.store.update(entries)
+            return len(entries), None
+
+        def fake_delete(keys):
+            removed = 0
+            for key in keys:
+                if key in self.store:
+                    del self.store[key]
+                    removed += 1
+            return removed, None
+
+        for patcher in (
+            patch.object(quota_settings.app_settings, "load_all", fake_load),
+            patch.object(quota_settings.app_settings, "save_many", fake_save),
+            patch.object(quota_settings.app_settings, "delete_many", fake_delete),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def tearDown(self):
+        quota_settings.invalidate()
+
+    def test_recommended_value_is_valid_and_below_the_cloud_quota(self):
+        clean, errors = quota_settings.validate_patch({self.KEY: self.RECOMMENDED})
+        self.assertEqual(errors, [])
+        self.assertEqual(clean[self.KEY], 1400)
+        self.assertLess(self.RECOMMENDED, 1500)
+
+    def test_override_is_persisted_and_becomes_the_effective_cap(self):
+        result, error = quota_settings.save(
+            {self.KEY: self.RECOMMENDED}, user_id=1,
+        )
+        self.assertIsNone(error)
+        self.assertEqual(result["saved"], 1)
+        self.assertEqual(self.store[self.KEY], 1400)
+
+        quota_settings.invalidate()          # simulate the TTL expiring
+        self.assertEqual(quota_settings.cap(self.KEY), 1400)
+
+    def test_override_survives_read_time_revalidation(self):
+        """
+        `cap()` re-validates every stored value on read. An override that no
+        longer validated would silently fall back to the 1,500 baseline and undo
+        the headroom, so assert the round trip explicitly.
+        """
+        quota_settings.save({self.KEY: self.RECOMMENDED})
+        quota_settings.invalidate()
+        for _ in range(3):                     # several TTL cycles
+            self.assertEqual(quota_settings.cap(self.KEY), 1400)
+            quota_settings.invalidate()
+
+    def test_snapshot_reports_it_as_a_custom_setting(self):
+        quota_settings.save({self.KEY: self.RECOMMENDED})
+        field = quota_settings.snapshot()[self.KEY]
+        self.assertEqual(field["value"], 1400)
+        self.assertEqual(field["source"], "admin_override")
+        self.assertEqual(field["baseline"], 1500)
+        self.assertEqual(field["cloud_ceiling"], 1500)
+
+    def test_value_above_the_cloud_quota_is_still_refused(self):
+        result, error = quota_settings.save({self.KEY: 1501})
+        self.assertIsNone(result)
+        self.assertIn("Google Cloud quota", error)
+        self.assertNotIn(self.KEY, self.store)
+
+    def test_raising_back_to_the_baseline_is_allowed_but_not_past_it(self):
+        """
+        Returning 1,400 -> 1,500 is legal (it is simply the baseline again),
+        but 1,501 is refused by the unconditional Cloud ceiling. So the headroom
+        can be restored deliberately but never exceeded by accident.
+        """
+        quota_settings.save({self.KEY: self.RECOMMENDED})
+
+        result, error = quota_settings.save({self.KEY: 1500})
+        self.assertIsNone(error)
+        self.assertEqual(result["saved"], 1)
+
+        _, error = quota_settings.save({self.KEY: 1501})
+        self.assertIn("Google Cloud quota", error)
+        self.assertEqual(self.store[self.KEY], 1500)
+
+    def test_restore_defaults_returns_to_the_1500_baseline(self):
+        quota_settings.save({self.KEY: self.RECOMMENDED})
+        result, error = quota_settings.clear_overrides(user_id=1)
+        self.assertIsNone(error)
+        self.assertEqual(result["removed"], 1)
+
+        quota_settings.invalidate()
+        self.assertEqual(
+            quota_settings.cap(self.KEY),
+            quota_settings.QUOTA_FIELDS[self.KEY]["baseline"],
+        )
+
+    def test_nothing_is_written_when_the_patch_is_refused(self):
+        quota_settings.save({self.KEY: 1501})
+        self.assertEqual(self.store, {})
 
 
 class MatchingDryRunTests(unittest.TestCase):

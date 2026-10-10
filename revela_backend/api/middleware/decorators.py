@@ -116,3 +116,48 @@ def admin_required():
             return fn(*args, **kwargs)
         return wrapper
     return decorator
+
+
+def super_admin_required():
+    """
+    Decorator for SUPER_ADMIN-only routes.
+
+    Identical authentication, session, and account-state checks to
+    `admin_required()`, plus a role check that rejects every other admin-grade
+    account with 403. Use this for settings that change how REVELA spends
+    Google quota or stores Google-derived data -- hiding those controls in the
+    frontend is not an authorization boundary.
+
+    Only the exact role string "SUPER_ADMIN" passes, which matches the
+    frontend gate in `ApiUsageSettingsPanel` and the User Management page. An
+    "Admin" or "System Administrator" account can still read usage, but cannot
+    touch these routes.
+    """
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if request.method == "OPTIONS":
+                return "", 204
+
+            try:
+                verify_jwt_in_request()
+            except Exception as e:
+                return jsonify({"error": "Unauthorized", "message": str(e)}), 401
+
+            identity = get_jwt_identity()
+            role = get_current_role()
+            error = _verify_user_and_session(
+                identity, get_jwt(), require_admin=True
+            )
+            if error:
+                return error
+
+            if role != "SUPER_ADMIN":
+                return jsonify({
+                    "error": "Forbidden",
+                    "message": "Super Admin only",
+                }), 403
+
+            return fn(*args, **kwargs)
+        return wrapper
+    return decorator

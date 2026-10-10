@@ -6,7 +6,7 @@ This repository contains the production code for the REVELA system. Based on mod
 - **Backend API & Database** are hosted on **Railway** (Flask REST API run in Docker + MySQL 8.x).
 - **Web Frontend** is hosted on **Vercel** (React.js Admin Dashboard).
 - **Domain Routing & DNS** is managed via **Namecheap** (`revelasys.site`).
-- **Mobile Client (Flutter)** is compiled as a release APK and distributed directly via static hosting on Vercel.
+- **Mobile Client (Flutter)** is compiled as a release APK and sideloaded manually. It is not bundled into the web deployment.
 
 ---
 
@@ -21,7 +21,7 @@ This repository contains the production code for the REVELA system. Based on mod
           URL: https://revelasys.site                      URL: https://api.revelasys.site
                      │                                                 │
           Hosts: React Admin Dashboard                                 │ (REST API & Analytics)
-          Hosts: revela.apk (Static Download)                          ▼
+          Hosts: (APK is no longer hosted here)                       ▼
                                                               [ Railway MySQL DB ]
                                                                (Internal Network)
                                                                        ▲
@@ -129,16 +129,39 @@ PhilSMS provides SMS delivery across Philippine mobile carriers (Globe, Smart, D
 
 ---
 
-## Part 6: Mobile Client Distribution (Sideloaded APK)
+## Part 6: Mobile Client (Flutter APK)
 
-The Flutter mobile application runs on inspectors' physical Android devices. Because it is sideloaded, it is distributed directly from the admin dashboard:
+The Flutter mobile application runs on inspectors' physical Android devices and is sideloaded manually. **The APK is not part of the web deployment and is not hosted by Vercel.**
+
+> **Why:** the APK used to be committed at `revela_web/public/revela.apk`. Vite copies everything in `public/` into `dist/` on every build, so each deployment retained an extra ~69 MB. `*.apk` is now git-ignored and the binary is never committed or bundled.
 
 1. **Compile the APK locally**:
-   Open a terminal in the development repository under `revela_mobile` and build the release build with the production API endpoint:
+   Open a terminal in the development repository under `revela_mobile`:
    ```bash
    flutter build apk --release --dart-define=API_BASE=https://api.revelasys.site
    ```
-2. **Host the APK**:
-   - Copy the compiled APK (`build/app/outputs/flutter-apk/app-release.apk`) to `revela_web/public/revela.apk` inside your repository.
-   - Commit and push `revela.apk` to the production repository.
-   - When Vercel redeploys, inspectors can access and download it directly from `https://revelasys.site/revela.apk` or by clicking the **"Download Field App"** button on the dashboard login screen.
+   The artifact is written to `revela_mobile/build/app/outputs/flutter-apk/app-release.apk`.
+   That folder is git-ignored, so the binary is never committed.
+
+2. **Distribute it yourself.** Transfer the APK to the devices by whatever channel
+   suits (USB, shared drive, messaging app). No hosting configuration is required.
+
+3. **The old download endpoint is retired.** `https://revelasys.site/revela.apk` now
+   returns a genuine HTTP 404. This is deliberate: a request that falls through to the
+   SPA catch-all would return the dashboard HTML with a `200`, which looks like a
+   working link but downloads a web page instead of an app.
+
+   The behaviour comes from `revela_web/vercel.json`, which lists a specific rewrite
+   ahead of the SPA catch-all:
+   ```json
+   { "source": "/revela.apk", "destination": "/__retired__/revela.apk" }
+   ```
+   Vercel matches rewrite rules in order and takes the first match, so this rule wins
+   over `/(.*)` -> `/index.html`. The destination does not exist, so the request
+   resolves to a 404. **If APK hosting is reintroduced later, delete that rewrite first** --
+   a redirect rule cannot override a rewrite, so a stale 404 rule would keep shadowing
+   any redirect you add.
+
+No `VITE_APK_DOWNLOAD_URL` variable is needed or configured. If a download button is
+ever reintroduced in the UI, add the configuration then, together with the hosting
+decision it depends on.

@@ -1,5 +1,5 @@
 """
-Google Cloud Console request quotas — the hard ceiling REVELA must never exceed.
+Google Cloud Console request quotas -- the hard ceiling REVELA must never exceed.
 
 These values are deliberately NOT editable from the admin UI. The admin settings
 surface can lower an application cap freely, but an override can never raise a
@@ -11,6 +11,17 @@ Provenance matters. Each entry records whether the number was confirmed in the
 project's Cloud Console or is still a reported/unverified figure. Unverified
 ceilings are surfaced as such in the UI so an operator does not mistake an
 assumption for a measurement.
+
+Two independent safety nets
+---------------------------
+* `CLOUD_QUOTAS` -- the *reported* quota per method. `verified` controls whether
+  REVELA will let an operator RAISE a cap above the current baseline.
+* `OBSERVED_DAILY_CEILINGS` -- an unconditional upper bound applied to every
+  daily application cap regardless of `verified`. This exists so that flipping
+  `verified` to True later (or correcting a recorded number) can never silently
+  lift a cap above a limit Google is already enforcing. Raising a cap beyond an
+  observed ceiling requires deliberately editing this table, which is a visible
+  code change rather than an invisible flag flip.
 
 Change a value here only after re-checking it in Cloud Console, per the
 operational checklist in PLACES_API_AND_PIN_ACCURACY_IMPLEMENTATION_PLAN.md.
@@ -35,8 +46,15 @@ class CloudMethodQuota:
     source: str
 
 
-_UNVERIFIED = "Reported by project owner; confirm in Cloud Console > Quotas"
 _VERIFIED = "Read from Cloud Console"
+
+#: Figures observed in this project's Cloud Console by the owner and reported
+#: back. `verified` is still False because nobody has signed these off in code
+#: yet -- but the numbers are no longer guesses, so the wording says so.
+_OBSERVED = (
+    "Read from this project's Cloud Console by the project owner and reported "
+    "for reconciliation. Confirm the API key's project before raising a cap."
+)
 
 
 def _env_override(name, fallback):
@@ -61,39 +79,57 @@ def _method(daily, per_minute, verified, source, daily_env, minute_env):
     )
 
 
-# Text Search (New) Pro and Place Details (New) Essentials were both reported
-# against this project. Nearby Search (New) Pro has not been enabled (its app
-# caps default to 0), so its ceiling is recorded but unused until rollout.
-# Legacy Nearby Search was never confirmed — the plan doc explicitly warns not
-# to infer its limits from the New API method quotas.
+# Reported against this project by the owner from Cloud Console:
+#   Text Search (New)            500/day,   600/minute
+#   Place Details (New)      125,000/day,   600/minute
+#   Nearby Search (New)       75,000/day,   600/minute
+#   Places API (Legacy)         1,000/day,    60/minute
+#   Geocoding API              1,500/day,  3,000/minute
+#
+# `verified` stays False across the board: nothing here has been signed off in
+# code, and flipping it would let an operator raise caps. The daily figures are
+# nevertheless enforced as hard ceilings via OBSERVED_DAILY_CEILINGS below.
 CLOUD_QUOTAS = MappingProxyType({
     "text_search": _method(
-        500, None, False,
-        "User screenshot shows 500/day; earlier 80/day report conflicts. "
-        "Confirm the API key project in Cloud Console.",
+        500, 600, False, _OBSERVED,
         "CLOUD_QUOTA_TEXT_SEARCH_DAILY", "CLOUD_QUOTA_TEXT_SEARCH_PER_MINUTE",
     ),
     "place_details": _method(
-        95, None, False, _UNVERIFIED,
+        125_000, 600, False, _OBSERVED,
         "CLOUD_QUOTA_PLACE_DETAILS_DAILY",
         "CLOUD_QUOTA_PLACE_DETAILS_PER_MINUTE",
     ),
     "nearby_search_legacy": _method(
-        None, None, False,
-        "Never confirmed. Do not infer from Nearby Search (New).",
+        1_000, 60, False, _OBSERVED,
         "CLOUD_QUOTA_NEARBY_LEGACY_DAILY",
         "CLOUD_QUOTA_NEARBY_LEGACY_PER_MINUTE",
     ),
     "nearby_search_new": _method(
-        None, None, False,
-        "Not enabled yet; caps are 0 until the rollout gate passes.",
+        75_000, 600, False, _OBSERVED,
         "CLOUD_QUOTA_NEARBY_NEW_DAILY", "CLOUD_QUOTA_NEARBY_NEW_PER_MINUTE",
     ),
     "geocoding": _method(
-        None, None, False,
-        "Separate billing SKU from Places; not part of the Places counters.",
+        1_500, 3_000, False, _OBSERVED,
         "CLOUD_QUOTA_GEOCODING_DAILY", "CLOUD_QUOTA_GEOCODING_PER_MINUTE",
     ),
+})
+
+#: Unconditional upper bound on each method's daily application cap.
+#:
+#: Unlike `CLOUD_QUOTAS[...].verified`, this is applied even while a quota is
+#: still marked unverified, because these numbers came from the project's own
+#: console: they can be too conservative, never too permissive. Without this,
+#: marking a quota verified later would be enough to lift a cap past a limit
+#: Google is already enforcing.
+#:
+#: The only way to raise a cap beyond one of these is to edit this table, which
+#: shows up in review as an intentional act.
+OBSERVED_DAILY_CEILINGS = MappingProxyType({
+    "text_search": 500,
+    "place_details": 125_000,
+    "nearby_search_legacy": 1_000,
+    "nearby_search_new": 75_000,
+    "geocoding": 1_500,
 })
 
 #: Billing SKUs and their monthly free-call allowance. Per-SKU only: free calls
@@ -148,31 +184,42 @@ METHOD_SKU = MappingProxyType({
 #: limit Google imposes.
 REQUEST_PACING = MappingProxyType({
     "nearby_search_legacy": {
-        "min_interval_ms": 300,
+        # Mirrors LEGACY_NEARBY_LIMITER's configured interval (60 / 48 requests
+        # per minute). A unit test asserts the two stay equal, because the admin
+        # panel reports this number to operators while
+        # api/utils/places_rate_limit.py is what actually enforces it.
+        "min_interval_ms": 1250,
         "enforced": True,
-        "note": "Shared request lock enforces at least 300 ms between "
-        "legacy Nearby calls; page-token requests also retain Google's "
-        "2-second wait.",
+        "note": "A shared GCRA pacer holds the process to 48 requests/minute "
+                "against Google's 60/minute Places API (Legacy) quota; no two "
+                "requests, from any thread, are closer than 1.25 s. Page-token "
+                "requests also retain Google's 2-second wait.",
     },
     "nearby_search_new": {
         "min_interval_ms": 300,
         "enforced": True,
-        "note": "Serialised behind a lock with a 300-500 ms jittered delay.",
+        "note": "Serialised behind a lock with a 300-500 ms jittered delay; "
+                "well inside the 600/minute Nearby Search (New) quota.",
     },
     "text_search": {
         "min_interval_ms": 0,
         "enforced": False,
-        "note": "One reservation per candidate; no client pacing.",
+        "note": "One reservation per candidate; no client pacing. Resolver "
+                "calls share a 300-500 ms jittered lock, inside the "
+                "600/minute quota.",
     },
     "place_details": {
         "min_interval_ms": 0,
         "enforced": False,
-        "note": "One reservation per refresh; no client pacing.",
+        "note": "One reservation per refresh; no client pacing. Shares the "
+                "resolver's jittered lock.",
     },
     "geocoding": {
         "min_interval_ms": 0,
         "enforced": False,
-        "note": "One reservation per geocode attempt; no client pacing.",
+        "note": "One reservation per geocode attempt; no client pacing. The "
+                "3,000/minute Geocoding quota is far above what a serial "
+                "registry import can send.",
     },
 })
 
@@ -180,6 +227,18 @@ REQUEST_PACING = MappingProxyType({
 def cloud_quota_for(method):
     """Return the recorded Cloud quota for an app-side method key."""
     return CLOUD_QUOTAS.get(method)
+
+
+def hard_ceiling_for(method):
+    """
+    Unconditional upper bound for a method's daily application cap.
+
+    Applied whether or not the recorded quota is marked verified, so flipping
+    `verified` later cannot lift a cap past a limit Google already enforces.
+    Returns None when no console figure has been recorded for the method, in
+    which case only the verified ceiling applies.
+    """
+    return OBSERVED_DAILY_CEILINGS.get(method)
 
 
 def pacing_for(method):

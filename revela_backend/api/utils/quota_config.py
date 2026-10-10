@@ -5,7 +5,7 @@ import os
 from types import MappingProxyType
 from typing import Mapping
 
-from api.utils.quota_ceilings import cloud_quota_for
+from api.utils.quota_ceilings import cloud_quota_for, hard_ceiling_for
 
 
 @dataclass(frozen=True)
@@ -47,15 +47,47 @@ def _int_setting(environ, name, default, aliases=(), minimum=0):
 
 
 def _daily_cap(environ, name, default, method, aliases=()):
+    """
+    Resolve one daily cap: min(configured value, whatever ceiling applies).
+
+    Three ceilings, in order of strictness:
+
+    1. `default` -- while the method's Cloud quota is still unverified, a cap
+       may not be raised above the shipped default at all.
+    2. The recorded Cloud quota -- used once it is marked verified.
+    3. `hard_ceiling_for(method)` -- the unconditional bound taken from this
+       project's Cloud Console. Applied in both cases, so marking a quota
+       verified later can never lift a cap above a limit Google is already
+       enforcing. See `quota_ceilings.OBSERVED_DAILY_CEILINGS`.
+
+    The configured value is only ever clamped, never raised: a stale or
+    over-optimistic environment variable can make REVELA more conservative, and
+    the clamp is logged so the mismatch is visible instead of silent.
+    """
     requested = _int_setting(environ, name, default, aliases=aliases)
     cloud_quota = cloud_quota_for(method)
-    ceiling = (
-        cloud_quota.daily
-        if cloud_quota and cloud_quota.verified
-        and cloud_quota.daily is not None
-        else default
-    )
-    return min(requested, max(0, ceiling))
+    recorded = getattr(cloud_quota, "daily", None) if cloud_quota else None
+    if recorded is None:
+        ceiling = default
+    elif cloud_quota.verified:
+        ceiling = recorded
+    else:
+        ceiling = min(default, recorded)
+    hard_ceiling = hard_ceiling_for(method)
+    if hard_ceiling is not None:
+        ceiling = min(ceiling, hard_ceiling)
+    clamped = min(requested, max(0, ceiling))
+    if requested != clamped:
+        # Name the setting that actually matched, which may be a legacy alias,
+        # so the operator edits the right line in .env.
+        matched = next(
+            (n for n in (name, *aliases) if n in environ), name,
+        )
+        print(
+            f"[quota_config] {matched}={requested} clamped to {clamped} "
+            f"requests/day; Google Cloud allows {ceiling}/day for {method}."
+        )
+    return clamped
 
 
 def load_api_quota_config(environ=None):

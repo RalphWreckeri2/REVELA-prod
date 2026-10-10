@@ -1239,7 +1239,7 @@ export default function SettingsPage() {
                 icon: "📈",
                 title: "API Usage & Limits",
                 tag: "Administrator",
-                summary: "Understand shared request budgets, scan counts, warnings, and estimated costs.",
+                summary: "Review tracked requests, the allowance left for each lookup type, and Run Detection scans.",
                 btnLabel: "Read guide →",
               },
             ].map((card, idx) => (

@@ -291,16 +291,69 @@
   overflow-wrap: anywhere;
 }
 
-.api-usage-trigger {
-  display: inline-flex;
-  align-items: center;
+.api-usage-error {
+  padding: 10px 12px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 8px;
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+  font-size: 12.5;
+}
+
+.api-usage-note {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  border-radius: 8px;
+  background: var(--color-gold-light);
+  color: var(--color-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.api-usage-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.api-usage-toolbar .ghost-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.api-usage-warnings {
+  display: grid;
   gap: 8px;
-  min-height: 40px;
-  border: 1px solid var(--color-primary-dark);
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--color-primary-dark), var(--color-primary));
-  box-shadow: 0 5px 14px rgba(59, 109, 17, 0.18);
-  font-weight: 700;
+}
+
+.api-usage-warning {
+  padding: 9px 12px;
+  border: 1px solid var(--color-border-soft);
+  border-left: 3px solid var(--color-muted);
+  border-radius: 8px;
+  background: var(--color-card-alt);
+  color: var(--color-ink);
+  font-size: 12.5;
+  line-height: 1.5;
+}
+
+.api-usage-warning--warning {
+  border-left-color: var(--color-warning);
+}
+
+.api-usage-warning--danger {
+  border-left-color: var(--color-danger);
+}
+
+.api-usage-inline-warning {
+  margin-bottom: 14px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--color-gold-dark);
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
 .api-usage-active-badge {
@@ -314,12 +367,6 @@
   font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
-}
-
-.api-usage-trigger .api-usage-active-badge {
-  border-color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.16);
-  color: #fff;
 }
 
 .api-usage-modal-backdrop {
@@ -400,7 +447,7 @@
 }
 
 .api-usage-overview-card > span,
-.api-usage-method-summary span {
+.api-usage-method-usage span {
   color: var(--color-muted);
   font-size: 11px;
   font-weight: 700;
@@ -416,27 +463,85 @@
 }
 
 .api-usage-overview-card small,
-.api-usage-method-summary small {
+.api-usage-method-foot span {
   color: var(--color-muted);
   font-size: 11px;
   line-height: 1.45;
 }
 
-.api-usage-method-summary {
+.api-usage-methods {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+}
+
+.api-usage-method-card {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-modal-bg);
+}
+
+.api-usage-method-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.api-usage-method-header strong {
+  color: var(--color-ink);
+  font-size: 13.5px;
+  font-weight: 700;
+}
+
+.api-usage-method-usage {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 10px;
 }
 
-.api-usage-method-summary > div {
-  display: grid;
-  gap: 3px;
-}
-
-.api-usage-method-summary strong {
+.api-usage-method-usage strong {
   color: var(--color-ink);
   font-size: 16px;
   font-weight: 800;
+}
+
+.api-usage-method-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.api-usage-meter {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--color-hover);
+  overflow: hidden;
+}
+
+.api-usage-limit-source {
+  display: grid;
+  gap: 3px;
+  margin-top: 5px;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--color-muted);
+}
+
+.api-usage-limit-source strong {
+  color: var(--color-primary-dark);
+  font-weight: 700;
+}
+
+.api-usage-limit-source--custom strong {
+  color: var(--color-gold-dark);
 }
 
 .api-usage-technical-details,
@@ -578,11 +683,6 @@
   .api-usage-modal-content {
     gap: 12px;
     padding: 14px 12px 20px;
-  }
-
-  .api-usage-trigger {
-    width: 100%;
-    justify-content: center;
   }
 
   .map-page-header .page-title {

@@ -2366,6 +2366,7 @@ export default function MapPage() {
   const [filterSource, setFilterSource] = useState("all");
 
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
+  const moreActionsRef = useRef(null);
   const priorityDispatchQueue = opsRankings
     .filter((ranking) => ranking.flagged_count > 0)
     .slice(0, 3);
@@ -3746,6 +3747,7 @@ export default function MapPage() {
 
               <details
                 className="map-more-actions"
+                ref={moreActionsRef}
                 onToggle={(event) => {
                   if (event.currentTarget.open) fetchPlacesUsage();
                 }}
@@ -3839,6 +3841,25 @@ export default function MapPage() {
                   >
                     Re-verify Pins
                   </button>
+                  {isAdmin && (
+                    <ApiUsageSettingsPanel
+                      token={token}
+                      isAdmin={isAdmin}
+                      isSuperAdmin={user?.role === "SUPER_ADMIN"}
+                      onOpen={() => {
+                        // The modal is a full-screen overlay; leaving the
+                        // dropdown open behind it just clutters the page when
+                        // the modal closes.
+                        if (moreActionsRef.current) {
+                          moreActionsRef.current.open = false;
+                        }
+                      }}
+                      onUsageChanged={() => {
+                        fetchPlacesUsage();
+                        fetchDetectionQuota();
+                      }}
+                    />
+                  )}
                 </div>
               </details>
             </div>
@@ -4272,17 +4293,6 @@ export default function MapPage() {
 
         </div>
       </div>
-
-      {isAdmin && (
-        <ApiUsageSettingsPanel
-          token={token}
-          isAdmin={isAdmin}
-          onUsageChanged={() => {
-            fetchPlacesUsage();
-            fetchDetectionQuota();
-          }}
-        />
-      )}
 
       {/* Footer */}
       <footer className="saas-footer frosted-glass">

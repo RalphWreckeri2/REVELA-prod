@@ -662,29 +662,29 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(results, [{"place_id": "legacy"}])
         fetch_legacy.assert_called_once_with(13.9667, 121.1167, 850)
 
-    @patch("api.flags.service.time.sleep")
     @patch("api.flags.service._reserve_places_call")
     @patch("api.flags.service.http.get")
-    def test_legacy_nearby_enforces_configured_minimum_pacing(
-        self, http_get, reserve, sleep
+    def test_legacy_nearby_is_gated_by_the_shared_rate_limiter(
+        self, http_get, reserve
     ):
+        """
+        Pacing now lives in the shared GCRA limiter, not in a local sleep, so
+        that every thread in the process is paced by one object. The limiter's
+        own maths is covered in tests/test_places_rate_limit.py.
+        """
         response = MagicMock()
         response.json.return_value = {"status": "ZERO_RESULTS", "results": []}
         http_get.return_value = response
-        service._nearby_last_request_at = service.time.monotonic() - 0.1
 
-        result = service._places_get(
-            "nearby", "https://places.test", timeout=10
-        )
+        with patch.object(service, "LEGACY_NEARBY_LIMITER") as limiter:
+            limiter.acquire.return_value = 1.25
+            result = service._places_get(
+                "nearby", "https://places.test", timeout=10
+            )
 
         self.assertIs(result, response)
+        limiter.acquire.assert_called_once()
         reserve.assert_called_once_with("nearby")
-        self.assertGreaterEqual(
-            sleep.call_args.args[0],
-            service.pacing_for("nearby_search_legacy")[
-                "min_interval_ms"] / 1000
-            - 0.1 - 0.02,
-        )
 
     @patch("api.flags.service._mark_point_done")
     @patch("api.flags.service._completed_points_this_cycle", return_value=set())

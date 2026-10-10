@@ -44,6 +44,20 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/build/
+/android/app/build/
+
+# Gradle / Kotlin caches
+/android/.gradle/
+/android/.kotlin/
+/android/local.properties
+
+# Built Android packages -- sideloaded manually, never committed or hosted by
+# the web deployment. Build output stays under /build/ (ignored above).
+# See root README, "Mobile Client (Flutter APK)".
+*.apk
+*.aab
+*.ap_
+*.dex
 
 revela_mobile/.flutter-plugins
 revela_mobile/.flutter-plugins-dependencies

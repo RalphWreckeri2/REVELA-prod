@@ -1,5 +1,6 @@
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 .env
@@ -9,6 +10,9 @@ revela_backend/instance/
 node_modules/
 dist/
 
+# Vercel CLI local project link / build scratch
+.vercel/
+
 
 # General
 .DS_Store
@@ -16,6 +20,15 @@ Thumbs.db
 
 # Mobile
 .vscode/
+
+# Built APK / AAB artifacts.
+# The field app is sideloaded manually and is not hosted by this deployment.
+# Build locally into reveals_mobile/build/ and distribute the file directly;
+# never commit it. See README "Mobile Client (Flutter APK)".
+*.apk
+*.aab
+*.symbols
+*.map.json
 
 # Analytics and Colab Exports
 revela_backend/colab_export/

@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/revela.apk",
+      "destination": "/__retired__/revela.apk"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

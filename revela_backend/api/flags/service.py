@@ -28,7 +28,10 @@ from api.utils.places_quota import (
     reserve_usage_slot,
 )
 from api.utils.quota_config import API_QUOTA_CONFIG
-from api.utils.quota_ceilings import pacing_for
+from api.utils.places_rate_limit import (
+    CLOUD_LEGACY_NEARBY_PER_MINUTE,
+    LEGACY_NEARBY_LIMITER,
+)
 from api.utils import quota_settings, test_mode
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -171,13 +174,20 @@ def _places_get(kind, url, **kwargs):
             return cached
 
     global _nearby_last_request_at
-    pacing_seconds = (
-        pacing_for("nearby_search_legacy")["min_interval_ms"] / 1000.0
-    )
     with _nearby_request_lock:
-        elapsed = time.monotonic() - _nearby_last_request_at
-        if _nearby_last_request_at and elapsed < pacing_seconds:
-            time.sleep(pacing_seconds - elapsed)
+        # Single funnel for every Places API (Legacy) request in this module, so
+        # this is the one place that has to be paced. The shared limiter (see
+        # api/utils/places_rate_limit.py) keeps the send rate under Google's
+        # 60 requests/minute Legacy quota and coordinates every thread in the
+        # process, including overlapping detection runs. Per-request timing is
+        # recorded only for diagnostics now.
+        waited = LEGACY_NEARBY_LIMITER.acquire()
+        if waited > 5:
+            print(
+                f"[Run Detection] legacy Nearby rate limiter held the request "
+                f"for {waited:.1f}s (Cloud quota "
+                f"{CLOUD_LEGACY_NEARBY_PER_MINUTE}/minute)."
+            )
         _reserve_places_call(kind)
         calls = getattr(_places_run_state, "calls", None)
         if calls is not None:
@@ -383,17 +393,33 @@ def _places_usage_count(cur, kind, today=False):
     return int((row.get("c") if isinstance(row, dict) else row[0]) or 0) if row else 0
 
 
+#: Detection-run statuses that mark a scan cycle as finished.
+#:
+#: `_completed_points_this_cycle` uses these as a watermark: only when a run
+#: reaches one of them is the previous cycle's checkpoint list considered
+#: settled. A run that stops on the work budget is recorded as "partial", which
+#: is deliberately NOT in this list, so its completed grid points stay
+#: checkpointed and the next scan resumes from where it stopped rather than
+#: starting the grid over.
+#:
+#: This matters more than it looks: the Legacy Nearby rate limiter makes runs
+#: stop on the work budget more often, so more runs end "partial".
+RESUME_RESET_STATUSES = ("completed", "completed_with_gaps", "reset")
+
+
 def _completed_points_this_cycle():
     """
     Grid points already finished since the last COMPLETED scan (so a scan interrupted by the
     daily budget resumes instead of restarting). Our own grid keys only.
     """
+    statuses = ", ".join(f"'{s}'" for s in RESUME_RESET_STATUSES)
     cur = mysql.connection.cursor()
     try:
-        cur.execute("""
+        cur.execute(f"""
             SELECT pointKey FROM scan_point_log
             WHERE completedAt > COALESCE(
-                    (SELECT MAX(completedAt) FROM detection_runs WHERE status IN ('completed', 'completed_with_gaps', 'reset')),
+                    (SELECT MAX(completedAt) FROM detection_runs
+                      WHERE status IN ({statuses})),
                     '1970-01-01')
               AND completedAt > NOW() - INTERVAL 30 DAY
         """)

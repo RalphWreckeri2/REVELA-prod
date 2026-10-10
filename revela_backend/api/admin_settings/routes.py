@@ -1,10 +1,17 @@
 """
 Admin-only "API Usage & Testing" endpoints.
 
-Every route here is gated with `@admin_required()`, which returns 401 for a
-missing/invalid token or a deactivated account and 403 for an authenticated
-non-admin. The frontend additionally hides the UI from non-admins, but the
-server is the actual boundary — the client check is only cosmetic.
+Two authorization tiers, and the split is deliberate:
+
+  * `@admin_required()`   -- read-only monitoring. Every admin needs to see how
+    much of the shared Google request budget is spent.
+  * `@super_admin_required()` -- anything that CHANGES how REVELA spends quota
+    or stores Google-derived data: application quota edits and resets, Test Mode
+    configuration and resets, and fixture purge.
+
+The Super Admin tier exists because the frontend gate is cosmetic. Hiding the
+Advanced Settings block is not an authorization boundary; a client that calls
+`PUT /api/admin-settings/quota` directly must be refused by the server too.
 
 Deliberately absent: any global quota bypass, any way to reset or truncate
 production usage counters, and any Google Cloud Console control. Caps can only
@@ -16,7 +23,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 
 from api.flags.service import _load_registry, _match_poi_to_registry
-from api.middleware.decorators import admin_required
+from api.middleware.decorators import admin_required, super_admin_required
 from api.utils import quota_settings, test_mode, usage_report
 
 
@@ -31,6 +38,9 @@ def _actor_id():
 
 
 # ── GET /api/admin-settings/usage ─────────────────────────────────────────────
+#
+# Read-only and admin-accessible on purpose: usage monitoring is something
+# every administrator needs, including Super Admin.
 
 
 @admin_settings_bp.route("/usage", methods=["GET"])
@@ -49,10 +59,13 @@ def usage_route():
 
 
 # ── GET/PUT /api/admin-settings/quota ─────────────────────────────────────────
+#
+# Super Admin only. This payload exists solely for the Advanced Settings block
+# and directly changes how many Google requests REVELA is willing to spend.
 
 
 @admin_settings_bp.route("/quota", methods=["GET"])
-@admin_required()
+@super_admin_required()
 def get_quota_route():
     """Effective quota settings with baseline, source, and Cloud ceiling."""
     return jsonify({
@@ -63,7 +76,7 @@ def get_quota_route():
 
 
 @admin_settings_bp.route("/quota", methods=["PUT"])
-@admin_required()
+@super_admin_required()
 def update_quota_route():
     """
     Persist quota overrides.
@@ -86,7 +99,7 @@ def update_quota_route():
 
 
 @admin_settings_bp.route("/quota/reset", methods=["POST"])
-@admin_required()
+@super_admin_required()
 def reset_quota_route():
     """
     Discard admin overrides so the environment baseline applies again.
@@ -101,10 +114,13 @@ def reset_quota_route():
 
 
 # ── GET/PUT /api/admin-settings/test-mode ─────────────────────────────────────
+#
+# Super Admin only. Test Mode changes live request behaviour and fixture
+# storage persists Google-derived payloads on the server.
 
 
 @admin_settings_bp.route("/test-mode", methods=["GET"])
-@admin_required()
+@super_admin_required()
 def get_test_mode_route():
     """Test Mode configuration plus fixture cache statistics."""
     return jsonify({
@@ -117,7 +133,7 @@ def get_test_mode_route():
 
 
 @admin_settings_bp.route("/test-mode", methods=["PUT"])
-@admin_required()
+@super_admin_required()
 def update_test_mode_route():
     """
     Persist Test Mode settings. 200 on success, 400 on any validation error.
@@ -133,7 +149,7 @@ def update_test_mode_route():
 
 
 @admin_settings_bp.route("/test-mode/reset", methods=["POST"])
-@admin_required()
+@super_admin_required()
 def reset_test_mode_route():
     """Restore Test Mode defaults. Never touches usage counters."""
     result, error = test_mode.reset_config(user_id=_actor_id())
@@ -143,7 +159,7 @@ def reset_test_mode_route():
 
 
 @admin_settings_bp.route("/test-mode/fixtures/purge", methods=["POST"])
-@admin_required()
+@super_admin_required()
 def purge_fixtures_route():
     """
     Delete cached request payloads.
@@ -163,6 +179,10 @@ def purge_fixtures_route():
 
 
 # ── POST /api/admin-settings/matching-dry-run ─────────────────────────────────
+#
+# Stays on the plain admin tier: it is a pure, read-only matcher replay. It
+# reserves no quota, writes no usage row, creates no flag, and stores nothing,
+# so it neither spends Google budget nor exposes a Google-derived dataset.
 
 
 @admin_settings_bp.route("/matching-dry-run", methods=["POST"])

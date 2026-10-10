@@ -247,15 +247,17 @@ const manualSections = [
     content: (
       <>
         <p>
-          Admins can open <strong>API Usage &amp; Limits</strong> from the
-          Map &amp; Flags page. The modal summarizes tracked requests, remaining
-          application budgets, Run Detection scans, and warnings.
+          Admins open <strong>API Usage &amp; Limits</strong> from{" "}
+          <strong>More Actions</strong> on the Map &amp; Flags page. The window
+          summarizes tracked requests, the remaining allowance for each lookup
+          type, Run Detection scans left, and any warnings.
         </p>
         <ul>
           <li>Usage is shared across Admin and Super Admin accounts; one administrator’s requests reduce the allowance shown to the others.</li>
-          <li>Budgets are tracked separately by API method and may have daily and monthly limits.</li>
-          <li>Cost is an internal estimate, not Google billing. If current pricing or free allowances are unverified, the estimate is shown as unavailable.</li>
-          <li>Google Cloud quotas are not changed from this modal. Advanced / Testing contains technical quota settings, Test Mode, and fixture tools for authorized administrative use.</li>
+          <li>Each lookup type has its own allowance: <strong>Business Lookup</strong>, <strong>Map Pin Refresh</strong>, <strong>Run Detection Requests</strong>, and <strong>Address Lookup</strong>. What is left for one type is never used by another.</li>
+          <li>A warning appears as soon as a type reaches 80% of a daily or monthly limit, and again when the limit is reached.</li>
+          <li>These counts are tracked internally by REVELA for application limits. They are not Google Cloud billing figures.</li>
+          <li><strong>Advanced Settings</strong> is collapsed by default and available to Super Admins only. It holds application limits, Business Lookup workflow allocations, Test Mode, fixture management, and the technical quota detail.</li>
           <li>Test Mode affects testing behavior. Check its active indicator before using the system for normal operations.</li>
         </ul>
       </>
