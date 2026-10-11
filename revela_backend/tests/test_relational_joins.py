@@ -163,6 +163,77 @@ class RelationalJoinsTests(unittest.TestCase):
             rejected_place_pairs=set(),
         )
 
+    @patch("api.flags.service._match_registry_to_google")
+    @patch("api.flags.service._load_registry")
+    @patch("api.flags.service.mysql")
+    @patch("api.registry.audit.mysql")
+    def test_reconcile_maps_expired_registry_match_to_red(
+        self, _mock_audit_mysql, mock_mysql, mock_load, mock_match
+    ):
+        from api.flags.service import reconcile_existing_flags
+
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [{
+            "logID": 102,
+            "businessID": "BIZ-EXPIRED",
+            "placeID": None,
+            "detectedName": "Expired Shop",
+            "latitude": 13.96,
+            "longitude": 121.11,
+            "barangayID": 1,
+        }]
+        mock_cursor.fetchone.return_value = {"total": 1}
+        mock_load.return_value = [{
+            "businessID": "BIZ-EXPIRED",
+            "businessName": "Expired Shop",
+            "barangayID": 1,
+            "applicationStatus": "Expired",
+        }]
+
+        converted = reconcile_existing_flags(force=True, silent=True)
+
+        self.assertEqual(converted, 1)
+        self.assertEqual(
+            mock_match.call_args.kwargs["target_color"], "Red"
+        )
+
+    @patch("api.flags.service._match_registry_to_google")
+    @patch("api.flags.service._load_registry")
+    @patch("api.flags.service.mysql")
+    @patch("api.registry.audit.mysql")
+    def test_reconcile_preserves_verified_orange_for_expired_business(
+        self, _mock_audit_mysql, mock_mysql, mock_load, mock_match
+    ):
+        from api.flags.service import reconcile_existing_flags
+
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [{
+            "logID": 103,
+            "businessID": "BIZ-EXPIRED-ORANGE",
+            "placeID": None,
+            "detectedName": "Warned Expired Shop",
+            "latitude": 13.96,
+            "longitude": 121.11,
+            "barangayID": 1,
+            "has_verified_orange": 1,
+        }]
+        mock_cursor.fetchone.return_value = {"total": 1}
+        mock_load.return_value = [{
+            "businessID": "BIZ-EXPIRED-ORANGE",
+            "businessName": "Warned Expired Shop",
+            "barangayID": 1,
+            "applicationStatus": "Expired",
+        }]
+
+        converted = reconcile_existing_flags(force=True, silent=True)
+
+        self.assertEqual(converted, 1)
+        self.assertEqual(
+            mock_match.call_args.kwargs["target_color"], "Orange"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

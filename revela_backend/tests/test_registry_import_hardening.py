@@ -12,6 +12,90 @@ sys.path.insert(0, os.path.abspath(
 from api.registry import service
 
 
+class RegistryFlagColorTests(unittest.TestCase):
+
+    def test_registry_statuses_use_approved_flag_colors(self):
+        expected = {
+            "Active": "Green",
+            "Pending": "Yellow",
+            "Expired": "Red",
+            "Revoked": "Black",
+            "Blacklisted": "Black",
+            "Closed": "Purple",
+        }
+        for status, color in expected.items():
+            with self.subTest(status=status):
+                self.assertEqual(service._status_to_flag_color(status), color)
+
+    def test_blacklisted_import_status_normalizes_to_revoked(self):
+        self.assertEqual(service._normalise_status("Blacklisted"), "Revoked")
+
+    def test_expired_registry_sync_seeds_red_flag(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+
+        service._sync_flag_color(
+            cursor,
+            barangay_id=1,
+            business_name="Expired Shop",
+            status="Expired",
+            lat=13.96,
+            lng=121.11,
+            business_id="BIZ-EXPIRED",
+        )
+
+        inserted_values = cursor.execute.call_args_list[-1].args[1]
+        self.assertEqual(inserted_values[5], "Red")
+
+    def test_verified_orange_survives_expired_registry_sync(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
+            "logID": 17,
+            "flagColor": "Red",
+            "latitude": 13.96,
+            "longitude": 121.11,
+            "has_verified_orange": 1,
+        }
+
+        service._sync_flag_color(
+            cursor,
+            barangay_id=1,
+            business_name="Warned Shop",
+            status="Expired",
+            lat=13.96,
+            lng=121.11,
+            business_id="BIZ-WARNED",
+        )
+
+        update_sql, update_values = cursor.execute.call_args_list[-1].args
+        self.assertIn("UPDATE geospatial_logs", update_sql)
+        self.assertEqual(update_values[0], "Orange")
+        self.assertNotIn("UPDATE official_registry", update_sql)
+
+    def test_unapproved_orange_does_not_override_expired_registry_sync(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {
+            "logID": 18,
+            "flagColor": "Orange",
+            "latitude": 13.96,
+            "longitude": 121.11,
+            "has_verified_orange": 0,
+        }
+
+        service._sync_flag_color(
+            cursor,
+            barangay_id=1,
+            business_name="Unapproved Shop",
+            status="Expired",
+            lat=13.96,
+            lng=121.11,
+            business_id="BIZ-UNAPPROVED",
+        )
+
+        update_values = cursor.execute.call_args_list[-1].args[1]
+        self.assertEqual(update_values[0], "Red")
+
+
 class RegistryImportHardeningTests(unittest.TestCase):
 
     def test_600_row_import_uses_geocoding_after_registry_text_search_quota(

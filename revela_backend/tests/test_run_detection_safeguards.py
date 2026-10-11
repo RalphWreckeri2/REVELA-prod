@@ -14,8 +14,9 @@ class DetectionStatusTests(unittest.TestCase):
     def test_valid_permit_status_colors_are_unchanged(self):
         expected = {
             "Active": "Green",
-            "Expired": "Orange",
+            "Expired": "Red",
             "Revoked": "Black",
+            "Blacklisted": "Black",
             "Closed": "Purple",
             "Pending": "Yellow",
         }
@@ -183,6 +184,8 @@ class CheckpointConfigurationTests(unittest.TestCase):
                 ):
             test_mode.is_enabled.return_value = enabled
             test_mode.get_config.return_value = test_config or {}
+            service._places_run_state.work_budget_exhausted = False
+            service._places_run_state.work_budget_reason = None
             state = {
                 "total_points": 0,
                 "skipped_points": 0,

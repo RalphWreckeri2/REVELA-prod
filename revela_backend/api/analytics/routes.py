@@ -100,6 +100,66 @@ def _registry_has_registration_type(cursor):
     return bool(row and row["column_count"])
 
 
+def _verified_orange_sql(alias="g"):
+    registry_match = f"""(
+        (r_chk.businessID IS NOT NULL AND {alias}.businessID IS NOT NULL
+            AND r_chk.businessID = {alias}.businessID)
+        OR ({alias}.placeID IS NOT NULL AND r_chk.placeID = {alias}.placeID
+            AND ({alias}.businessID IS NULL OR r_chk.businessID = {alias}.businessID))
+        OR ({alias}.businessID IS NULL
+            AND r_chk.barangayID = {alias}.barangayID
+            AND r_chk.businessName = {alias}.detectedName)
+    )"""
+    return f"""(
+        EXISTS (
+            SELECT 1 FROM inspection_reports ir
+            WHERE ir.targetType = 'geospatial_log'
+              AND ir.targetID = {alias}.logID
+              AND ir.verificationStatus = 'Verified'
+              AND ir.inspectionResult = 'Orange'
+        )
+        AND (
+            NOT EXISTS (
+                SELECT 1 FROM official_registry r_chk
+                WHERE {registry_match}
+            )
+            OR EXISTS (
+                SELECT 1 FROM official_registry r_chk
+                WHERE {registry_match}
+                  AND r_chk.applicationStatus = 'Expired'
+            )
+        )
+    )"""
+
+
+def _effective_flag_color_sql(alias="g"):
+    registry_status = f"""(
+        SELECT r_chk.applicationStatus
+        FROM official_registry r_chk
+        WHERE (
+            (r_chk.businessID IS NOT NULL AND {alias}.businessID IS NOT NULL
+                AND r_chk.businessID = {alias}.businessID)
+            OR ({alias}.placeID IS NOT NULL AND r_chk.placeID = {alias}.placeID
+                AND ({alias}.businessID IS NULL OR r_chk.businessID = {alias}.businessID))
+            OR ({alias}.businessID IS NULL
+                AND r_chk.barangayID = {alias}.barangayID
+                AND r_chk.businessName = {alias}.detectedName)
+        )
+        ORDER BY (r_chk.businessID = {alias}.businessID) DESC,
+                 (r_chk.placeID = {alias}.placeID) DESC
+        LIMIT 1
+    )"""
+    return f"""CASE
+        WHEN { _verified_orange_sql(alias) } THEN 'Orange'
+        WHEN {registry_status} = 'Active' THEN 'Green'
+        WHEN {registry_status} = 'Expired' THEN 'Red'
+        WHEN {registry_status} IN ('Revoked', 'Blacklisted') THEN 'Black'
+        WHEN {registry_status} = 'Closed' THEN 'Purple'
+        WHEN {registry_status} = 'Pending' THEN 'Yellow'
+        ELSE {alias}.flagColor
+    END"""
+
+
 analytics_bp = Blueprint("analytics", __name__)
 
 
@@ -187,6 +247,7 @@ def _get_all_analytics_inner(F=None):
     geo_on_g, geo_on_g_p = geo_on_extra("g", Fx)
     brgy_b, brgy_b_p = barangay_b_sql(Fx)
     insp_ir, insp_ir_p = inspection_sql("ir", Fx)
+    effective_flag_color = _effective_flag_color_sql("g")
 
     # ── WLC config ────────────────────────────────────────────────────────────
     config = get_wlc_config()
@@ -300,11 +361,20 @@ def _get_all_analytics_inner(F=None):
                 g.logID AS id,
                 g.barangayID,
                 CASE
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired'
+                     AND EXISTS (
+                        SELECT 1 FROM inspection_reports ir
+                        WHERE ir.targetType = 'geospatial_log'
+                          AND ir.targetID = g.logID
+                          AND ir.verificationStatus = 'Verified'
+                          AND ir.inspectionResult = 'Orange'
+                     ) THEN 'Orange'
                     WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Active'  THEN 'Green'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Orange'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Revoked' THEN 'Black'
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Red'
+                    WHEN r.businessID IS NOT NULL AND r.applicationStatus IN ('Revoked', 'Blacklisted') THEN 'Black'
                     WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Closed'  THEN 'Purple'
                     WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Pending' THEN 'Yellow'
+                    WHEN {_verified_orange_sql("g")} THEN 'Orange'
                     ELSE g.flagColor
                 END AS flagColor
             FROM geospatial_logs g
@@ -312,6 +382,8 @@ def _get_all_analytics_inner(F=None):
                 SELECT businessID, applicationStatus
                 FROM official_registry
                 WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
+                   OR (g.placeID IS NOT NULL AND placeID = g.placeID
+                       AND (g.businessID IS NULL OR businessID = g.businessID))
                    OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
                 ORDER BY (businessID = g.businessID) DESC
                 LIMIT 1
@@ -325,8 +397,9 @@ def _get_all_analytics_inner(F=None):
                 r.barangayID,
                 CASE r.applicationStatus
                     WHEN 'Active'  THEN 'Green'
-                    WHEN 'Expired' THEN 'Orange'
+                    WHEN 'Expired' THEN 'Red'
                     WHEN 'Revoked' THEN 'Black'
+                    WHEN 'Blacklisted' THEN 'Black'
                     WHEN 'Closed'  THEN 'Purple'
                     ELSE 'Yellow'
                 END AS flagColor
@@ -500,12 +573,12 @@ def _get_all_analytics_inner(F=None):
         SELECT
             b.barangayID,
             b.barangayName,
-            COUNT(DISTINCT CASE WHEN g.flagColor != 'Green' THEN g.logID END) AS flagged_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Red'    THEN g.logID END) AS red_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Yellow' THEN g.logID END) AS yellow_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Black'  THEN g.logID END) AS black_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Orange' THEN g.logID END) AS orange_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Purple' THEN g.logID END) AS purple_count
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} != 'Green' THEN g.logID END) AS flagged_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Orange' THEN g.logID END) AS orange_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Purple' THEN g.logID END) AS purple_count
         FROM barangays b
         LEFT JOIN geospatial_logs g ON g.barangayID = b.barangayID 
             AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
@@ -552,7 +625,7 @@ def _get_all_analytics_inner(F=None):
            AND rm.barangayID = g.barangayID
            AND rm.match_count = 1
         JOIN official_registry o ON o.businessID = COALESCE(g.businessID, rm.businessID)
-        WHERE 1=1 AND g.flagColor != 'Green' 
+        WHERE 1=1 AND {effective_flag_color} != 'Green'
           AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g} {reg_o}
         GROUP BY category
         ORDER BY flagged_count DESC
@@ -592,7 +665,7 @@ def _get_all_analytics_inner(F=None):
         LEFT JOIN ({registry_match_sql}) rm
             ON rm.normalized_name = TRIM(g.detectedName)
            AND rm.barangayID = g.barangayID
-        WHERE g.flagColor != 'Green'
+        WHERE {effective_flag_color} != 'Green'
           AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
     """, geo_g_p)
     linkage_row = cur.fetchone() or {}
@@ -613,7 +686,7 @@ def _get_all_analytics_inner(F=None):
                 DATE_SUB(g.detectedDate, INTERVAL WEEKDAY(g.detectedDate) DAY),
                 '%%Y-%%m-%%d'
             ) AS week_start,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Red' THEN g.logID END) AS new_red_flags
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red' THEN g.logID END) AS new_red_flags
         FROM geospatial_logs g
         WHERE g.detectedDate >= DATE_SUB(NOW(), INTERVAL 8 WEEK) 
           AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
@@ -631,12 +704,13 @@ def _get_all_analytics_inner(F=None):
     dbscan_clusters = []
     try:
         cur.execute(f"""
-                 SELECT g.logID, g.detectedName, g.detectedDate, g.flagColor,
+                 SELECT g.logID, g.detectedName, g.detectedDate,
+                     {effective_flag_color} AS flagColor,
                      g.latitude, g.longitude,
                      COALESCE(b.barangayName, 'Unknown Area') as barangayName
             FROM geospatial_logs g
             LEFT JOIN barangays b ON g.barangayID = b.barangayID
-            WHERE g.flagColor IN ('Red', 'Black')
+            WHERE {effective_flag_color} IN ('Red', 'Black')
               AND g.latitude IS NOT NULL
               AND g.longitude IS NOT NULL
               AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
@@ -706,7 +780,7 @@ def _get_all_analytics_inner(F=None):
                 b.barangayName,
                 AVG(g.latitude) as lat,
                 AVG(g.longitude) as lng,
-                COUNT(DISTINCT CASE WHEN g.flagColor IN ('Red', 'Black') THEN g.logID END) as severe_count
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Black') THEN g.logID END) as severe_count
             FROM barangays b
             JOIN geospatial_logs g ON b.barangayID = g.barangayID 
                 AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
@@ -792,10 +866,10 @@ def _get_all_analytics_inner(F=None):
         SELECT
             b.barangayID,
             b.barangayName,
-            COUNT(DISTINCT CASE WHEN g.flagColor IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Red'    THEN g.logID END) AS red_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Yellow' THEN g.logID END) AS yellow_count,
-            COUNT(DISTINCT CASE WHEN g.flagColor = 'Black'  THEN g.logID END) AS black_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
             AVG(g.latitude)                                          AS avg_lat,
             AVG(g.longitude)                                         AS avg_lng,
             COUNT(DISTINCT o.businessID)                             AS total_registered
@@ -1344,6 +1418,7 @@ def get_ops_rankings_only():
     try:
         from app import mysql
         cur = mysql.connection.cursor()
+        effective_flag_color = _effective_flag_color_sql("g")
 
         config = get_wlc_config()
         w1 = config.get("w1_risk", 68) / 100
@@ -1355,14 +1430,14 @@ def get_ops_rankings_only():
 
         # Same exclusion rule as the main analytics endpoint: only Red/Yellow/
         # Black flags feed the OPS ranking shown in the Priority Dispatch Queue.
-        cur.execute("""
+        cur.execute(f"""
             SELECT
                 b.barangayID,
                 b.barangayName,
-                COUNT(DISTINCT CASE WHEN g.flagColor IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Red'    THEN g.logID END) AS red_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Yellow' THEN g.logID END) AS yellow_count,
-                COUNT(DISTINCT CASE WHEN g.flagColor = 'Black'  THEN g.logID END) AS black_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
                 AVG(g.latitude)                                          AS avg_lat,
                 AVG(g.longitude)                                         AS avg_lng
             FROM barangays b

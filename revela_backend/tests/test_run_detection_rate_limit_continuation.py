@@ -162,16 +162,17 @@ class CheckpointTests(unittest.TestCase):
                           return_value=set()), \
                 patch.object(service, "_mark_point_done"), \
                 patch.object(service, "_detection_work_budget_reached",
-                             side_effect=[False, False, True]), \
+                             side_effect=[False, True]), \
                 patch.object(service, "_fetch_point_results_for_mode",
-                             return_value=([], True)):
+                             return_value=([], True)) as fetch_point:
             state = empty_state(len(points))
             service._scan_grid(
                 lambda _places: None, None, state, "quick", points=points,
             )
 
         self.assertTrue(state["work_budget_stop"])
-        self.assertEqual(len(state["done_keys"]), 2)
+        self.assertEqual(len(state["done_keys"]), 1)
+        fetch_point.assert_called_once()
 
 
 class ContinuationTests(unittest.TestCase):

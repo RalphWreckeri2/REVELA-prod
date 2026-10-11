@@ -746,8 +746,8 @@ def _detection_status_color(application_status):
     ) or "Pending"
     return (
         "Green" if status == "Active" else
-        "Orange" if status == "Expired" else
-        "Black" if status == "Revoked" else
+        "Red" if status == "Expired" else
+        "Black" if status in ("Revoked", "Blacklisted") else
         "Purple" if status == "Closed" else "Yellow"
     )
 
@@ -893,12 +893,21 @@ def _match_registry_to_google(
 
     # 3. Check all geospatial_logs matching businessID, placeID OR (businessID IS NULL AND detectedName + barangayID)
     _detection_execute(cursor, """
-        SELECT logID, businessID, placeID, flagColor, latitude, longitude
-        FROM geospatial_logs
-        WHERE (businessID IS NOT NULL AND businessID = %s)
-           OR (placeID IS NOT NULL AND placeID = %s)
-           OR (businessID IS NULL AND detectedName = %s AND barangayID = %s)
-        ORDER BY (businessID = %s) DESC, (placeID = %s) DESC
+        SELECT g.logID, g.businessID, g.placeID, g.flagColor,
+               g.latitude, g.longitude,
+               EXISTS (
+                   SELECT 1
+                   FROM inspection_reports ir
+                   WHERE ir.targetType = 'geospatial_log'
+                     AND ir.targetID = g.logID
+                     AND ir.verificationStatus = 'Verified'
+                     AND ir.inspectionResult = 'Orange'
+               ) AS has_verified_orange
+        FROM geospatial_logs g
+        WHERE (g.businessID IS NOT NULL AND g.businessID = %s)
+           OR (g.placeID IS NOT NULL AND g.placeID = %s)
+           OR (g.businessID IS NULL AND g.detectedName = %s AND g.barangayID = %s)
+        ORDER BY (g.businessID = %s) DESC, (g.placeID = %s) DESC
     """, (business_id, place_id, detected_name, barangay_id, business_id, place_id))
     matched_logs = cursor.fetchall()
     matched_logs = [
@@ -933,6 +942,11 @@ def _match_registry_to_google(
                     break
         if not primary_log:
             primary_log = matched_logs[0]
+
+        if target_color == "Red" and any(
+            log.get("has_verified_orange") for log in matched_logs
+        ):
+            target_color = "Orange"
 
         # If locked, DO NOT overwrite existing verified coordinates with Google's lat/lng!
         final_lat = (reg_lat if reg_lat is not None else primary_log.get(
@@ -1038,10 +1052,20 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
         ensure_registry_workflow_events()
         cursor = mysql.connection.cursor()
         cursor.execute("""
-            SELECT logID, businessID, placeID, detectedName, latitude, longitude, barangayID,
-                   nearestLandmark, placeTypes
-            FROM geospatial_logs
-            WHERE flagColor = 'Red' AND latitude IS NOT NULL AND longitude IS NOT NULL
+            SELECT g.logID, g.businessID, g.placeID, g.detectedName,
+                   g.latitude, g.longitude, g.barangayID,
+                   g.nearestLandmark, g.placeTypes,
+                   EXISTS (
+                       SELECT 1
+                       FROM inspection_reports ir
+                       WHERE ir.targetType = 'geospatial_log'
+                         AND ir.targetID = g.logID
+                         AND ir.verificationStatus = 'Verified'
+                         AND ir.inspectionResult = 'Orange'
+                   ) AS has_verified_orange
+            FROM geospatial_logs g
+            WHERE g.flagColor = 'Red'
+              AND g.latitude IS NOT NULL AND g.longitude IS NOT NULL
         """)
         red_flags = cursor.fetchall()
         cursor.close()
@@ -1136,6 +1160,11 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                 )
                 if status == 'review':
                     target_color = 'Yellow'
+                elif (
+                    matched.get("applicationStatus") == "Expired"
+                    and flag.get("has_verified_orange")
+                ):
+                    target_color = "Orange"
 
                 target_b_id = matched.get('barangayID') or b_id
                 _match_registry_to_google(
@@ -1453,6 +1482,13 @@ def _detection_work_budget_reached():
     return time_limit_hit or request_limit_hit
 
 
+def _detection_result_processing_stopped():
+    """Stop local result processing for elapsed-time limits, not request caps."""
+    if not _detection_work_budget_reached():
+        return False
+    return getattr(_places_run_state, "work_budget_reason", None) != "request_limit"
+
+
 def _detection_elapsed_metrics(request_started_at):
     """
     Timing diagnostics for every terminal path.
@@ -1671,6 +1707,8 @@ def _new_nearby_request(lat, lng, radius_m):
                 "daily quota", "quota exceeded",
             ))
             if per_minute and attempt < 3:
+                if _detection_work_budget_reached():
+                    return [], False
                 delay = (2 ** (attempt + 1)) * random.uniform(0.8, 1.2)
                 print(
                     f"[Run Detection] New Nearby per-minute throttle; "
@@ -1991,8 +2029,8 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
             else:
                 state["outside"] += 1
 
-        process_places(inside)
-        if getattr(_places_run_state, "work_budget_exhausted", False):
+        processing_complete = process_places(inside) is not False
+        if not processing_complete:
             if complete:
                 state["incomplete_points"] += 1
             state["work_budget_stop"] = True
@@ -2003,6 +2041,9 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
         if complete:
             _mark_point_done(key)
             state["done_keys"].append(key)
+        if _detection_work_budget_reached():
+            state["work_budget_stop"] = True
+            break
 
 
 def _grid_scan_has_terminal_gaps(state):
@@ -2234,10 +2275,18 @@ def _load_existing_flags(place_ids):
     cursor = mysql.connection.cursor()
     try:
         _detection_execute(cursor, f"""
-            SELECT logID, placeID, flagColor
-            FROM geospatial_logs
-            WHERE placeID IN ({placeholders})
-            ORDER BY logID
+            SELECT g.logID, g.placeID, g.flagColor,
+                   EXISTS (
+                       SELECT 1
+                       FROM inspection_reports ir
+                       WHERE ir.targetType = 'geospatial_log'
+                         AND ir.targetID = g.logID
+                         AND ir.verificationStatus = 'Verified'
+                         AND ir.inspectionResult = 'Orange'
+                   ) AS has_verified_orange
+            FROM geospatial_logs g
+            WHERE g.placeID IN ({placeholders})
+            ORDER BY g.logID
         """, tuple(place_ids))
         rows = cursor.fetchall()
     finally:
@@ -2449,8 +2498,10 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             existing_flags = _load_existing_flags(pending_place_ids)
             non_business_red_ids = []
             writes_pending = False
+            processing_complete = True
             for place in places:
-                if _detection_work_budget_reached():
+                if _detection_result_processing_stopped():
+                    processing_complete = False
                     break
                 place_id = place.get("place_id")
                 if not place_id:
@@ -2544,6 +2595,12 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                     if match_status == "review":
                         target_color = "Yellow"
                         counters["review"] += 1
+                    elif (
+                        nearest.get("applicationStatus") == "Expired"
+                        and existing_flag
+                        and existing_flag.get("has_verified_orange")
+                    ):
+                        target_color = "Orange"
 
                     target_barangay_id = nearest.get(
                         "barangayID") or barangay_id
@@ -2572,6 +2629,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                     cursor.close()
             if writes_pending:
                 _detection_commit()
+            return processing_complete
 
         _places_run_state.started_at = time.monotonic()
         points = _detection_points_for_mode(mode, barangay_rows)
@@ -2802,7 +2860,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
          businesses with GPS coordinates are visible on the map regardless of whether a
          detection scan has run.  Their flagColor is derived from applicationStatus:
            Active  → Green
-           Expired → Orange
+           Expired → Red
            Revoked → Black
            Closed  → Purple
            Pending → Yellow  (anything else → Yellow)
@@ -2841,13 +2899,98 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             # Map the color filter back to the applicationStatus for the registry branch
             _status_for_color = {
                 "Green":  "Active",
-                "Orange": "Expired",
+                "Red":    "Expired",
                 "Black":  "Revoked",
                 "Purple": "Closed",
                 "Yellow": "Pending",
             }
             mapped_status = _status_for_color.get(color)
-            if mapped_status:
+            if color == "Orange":
+                geo_conditions.append("""
+                    (
+                        (
+                            EXISTS (
+                                SELECT 1 FROM inspection_reports ir
+                                WHERE ir.targetType = 'geospatial_log'
+                                  AND ir.targetID = g.logID
+                                  AND ir.verificationStatus = 'Verified'
+                                  AND ir.inspectionResult = 'Orange'
+                            )
+                            AND (
+                                NOT EXISTS (
+                                    SELECT 1 FROM official_registry r_chk
+                                    WHERE (g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
+                                       OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
+                                           AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
+                                       OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
+                                           AND r_chk.businessName = g.detectedName)
+                                )
+                                OR EXISTS (
+                                    SELECT 1 FROM official_registry r_chk
+                                    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
+                                           OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
+                                               AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
+                                           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
+                                               AND r_chk.businessName = g.detectedName))
+                                      AND r_chk.applicationStatus = 'Expired'
+                                )
+                            )
+                        )
+                        OR (
+                            g.flagColor = 'Orange'
+                            AND NOT EXISTS (
+                                SELECT 1 FROM official_registry r_chk
+                                WHERE (g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
+                                   OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
+                                       AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
+                                   OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
+                                       AND r_chk.businessName = g.detectedName)
+                            )
+                        )
+                    )
+                """)
+                reg_conditions.append("FALSE")
+            elif color == "Red":
+                geo_conditions.append("""
+                    (
+                        (g.flagColor = %s OR EXISTS (
+                            SELECT 1 FROM official_registry r_chk
+                            WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
+                                   OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
+                                       AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
+                                   OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
+                                       AND r_chk.businessName = g.detectedName))
+                              AND r_chk.applicationStatus = %s
+                        ))
+                        AND NOT EXISTS (
+                            SELECT 1 FROM inspection_reports ir
+                            WHERE ir.targetType = 'geospatial_log'
+                              AND ir.targetID = g.logID
+                              AND ir.verificationStatus = 'Verified'
+                              AND ir.inspectionResult = 'Orange'
+                        )
+                    )
+                """)
+                geo_params.extend([color, mapped_status])
+                reg_conditions.append("r.applicationStatus = %s")
+                reg_params.append(mapped_status)
+            elif color == "Black":
+                geo_conditions.append("""
+                    (g.flagColor = %s OR EXISTS (
+                        SELECT 1 FROM official_registry r_chk
+                        WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
+                               OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
+                                   AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
+                               OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
+                                   AND r_chk.businessName = g.detectedName))
+                          AND r_chk.applicationStatus IN ('Revoked', 'Blacklisted')
+                    ))
+                """)
+                geo_params.append(color)
+                reg_conditions.append(
+                    "r.applicationStatus IN ('Revoked', 'Blacklisted')"
+                )
+            elif mapped_status:
                 geo_conditions.append(
                     "(g.flagColor = %s OR EXISTS ("
                     "    SELECT 1 FROM official_registry r_chk"
@@ -2918,11 +3061,26 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     COALESCE(g.latitude, r.latitude) AS latitude,
                     COALESCE(g.longitude, r.longitude) AS longitude,
                     CASE
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired'
+                         AND EXISTS (
+                            SELECT 1 FROM inspection_reports ir
+                            WHERE ir.targetType = 'geospatial_log'
+                              AND ir.targetID = g.logID
+                              AND ir.verificationStatus = 'Verified'
+                              AND ir.inspectionResult = 'Orange'
+                         ) THEN 'Orange'
                         WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Active'  THEN 'Green'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Orange'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Revoked' THEN 'Black'
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Red'
+                        WHEN r.businessID IS NOT NULL AND r.applicationStatus IN ('Revoked', 'Blacklisted') THEN 'Black'
                         WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Closed'  THEN 'Purple'
                         WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Pending' THEN 'Yellow'
+                        WHEN r.businessID IS NULL AND EXISTS (
+                            SELECT 1 FROM inspection_reports ir
+                            WHERE ir.targetType = 'geospatial_log'
+                              AND ir.targetID = g.logID
+                              AND ir.verificationStatus = 'Verified'
+                              AND ir.inspectionResult = 'Orange'
+                        ) THEN 'Orange'
                         ELSE g.flagColor
                     END AS flagColor,
                     g.detectedDate,
@@ -2979,8 +3137,9 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     r.longitude                AS longitude,
                     CASE r.applicationStatus
                         WHEN 'Active'  THEN 'Green'
-                        WHEN 'Expired' THEN 'Orange'
+                        WHEN 'Expired' THEN 'Red'
                         WHEN 'Revoked' THEN 'Black'
+                        WHEN 'Blacklisted' THEN 'Black'
                         WHEN 'Closed'  THEN 'Purple'
                         ELSE 'Yellow'
                     END                        AS flagColor,
@@ -3084,14 +3243,23 @@ def update_flag_color(log_id, color):
 
         if log_id < 0:
             biz_id = -log_id
+            if color == "Orange":
+                cursor.close()
+                return False, (
+                    "Orange requires an explicit verified inspection warning "
+                    "and cannot be assigned to a registry-only flag."
+                )
             status_map = {
                 "Green": "Active",
                 "Purple": "Closed",
-                "Orange": "Expired",
+                "Red": "Expired",
                 "Black": "Revoked",
                 "Yellow": "Pending"
             }
-            app_status = status_map.get(color, "Pending")
+            app_status = status_map.get(color)
+            if app_status is None:
+                cursor.close()
+                return False, f"Unsupported registry flag color: {color}"
             cursor.execute(
                 "UPDATE official_registry SET applicationStatus = %s WHERE businessID = %s", (app_status, biz_id))
             mysql.connection.commit()

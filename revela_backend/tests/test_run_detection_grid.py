@@ -655,6 +655,198 @@ class RunDetectionGridTests(unittest.TestCase):
             service._places_run_state.work_budget_reason, "time_limit"
         )
 
+    def _scan_one_request_response(self, places, points=None):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"places": places}
+        processed = []
+        state = {
+            "done_keys": [],
+            "total_points": 0,
+            "skipped_points": 0,
+            "outside": 0,
+            "incomplete_points": 0,
+            "work_budget_stop": False,
+            "api_error_stop": False,
+        }
+
+        def process_results(results):
+            for place in results:
+                if service._detection_result_processing_stopped():
+                    return False
+                processed.append(place["place_id"])
+            return True
+
+        caps = {
+            "run_detection.max_seconds": 90,
+            "run_detection.max_requests": 1,
+            "run_detection.grid_step_degrees": 0.009,
+            "quota.nearby_new.daily": 5,
+            "quota.nearby_new.monthly": 5,
+        }
+        with (
+            patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "test-key"}),
+            patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
+            patch.object(
+                service.quota_settings,
+                "cap",
+                side_effect=lambda key: caps.get(key, 100),
+            ),
+            patch.object(service.test_mode, "is_enabled", return_value=False),
+            patch.object(service.test_mode, "get_config", return_value={}),
+            patch.object(service, "mysql", MagicMock()),
+            patch.object(service, "reserve_usage_slot", return_value=(True, None)) as reserve,
+            patch.object(service.http, "post", return_value=response) as post,
+            patch.object(service, "_nearby_last_request_at", 0),
+            patch.object(service, "_completed_points_this_cycle", return_value=set()),
+            patch.object(service, "_mark_point_done") as mark_done,
+            patch.object(service, "is_cancelled", return_value=False),
+        ):
+            service._places_run_state.started_at = service.time.monotonic()
+            selected_points = points or [(13.9667, 121.1167), (13.9677, 121.1167)]
+            service._scan_grid(
+                process_results,
+                None,
+                state,
+                detection_mode="full",
+                points=selected_points,
+            )
+
+        return state, processed, post, reserve, mark_done
+
+    def test_one_request_result_is_processed_and_checkpointed(self):
+        state, processed, post, reserve, mark_done = (
+            self._scan_one_request_response([{
+                "id": "place-1",
+                "displayName": {"text": "Single Store"},
+                "location": {"latitude": 13.9667, "longitude": 121.1167},
+            }])
+        )
+
+        self.assertEqual(processed, ["place-1"])
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(reserve.call_count, 1)
+        mark_done.assert_called_once()
+        self.assertEqual(len(state["done_keys"]), 1)
+        self.assertTrue(state["work_budget_stop"])
+        self.assertEqual(state["total_points"], 2)
+
+    def test_one_request_processes_multiple_results_without_another_attempt(self):
+        places = [{
+            "id": f"place-{index}",
+            "displayName": {"text": f"Store {index}"},
+            "location": {"latitude": 13.9667, "longitude": 121.1167},
+        } for index in range(3)]
+
+        state, processed, post, reserve, mark_done = (
+            self._scan_one_request_response(places)
+        )
+
+        self.assertEqual(processed, ["place-0", "place-1", "place-2"])
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(reserve.call_count, 1)
+        mark_done.assert_called_once()
+        self.assertEqual(len(state["done_keys"]), 1)
+        self.assertTrue(state["work_budget_stop"])
+
+    def test_empty_successful_response_is_checkpointed_at_request_limit(self):
+        state, processed, post, reserve, mark_done = (
+            self._scan_one_request_response([])
+        )
+
+        self.assertEqual(processed, [])
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(reserve.call_count, 1)
+        mark_done.assert_called_once()
+        self.assertEqual(len(state["done_keys"]), 1)
+        self.assertTrue(state["work_budget_stop"])
+
+    def test_saturated_response_is_processed_but_not_refined_or_checkpointed(self):
+        places = [{
+            "id": f"place-{index}",
+            "displayName": {"text": f"Store {index}"},
+            "location": {"latitude": 13.9667, "longitude": 121.1167},
+        } for index in range(service.NEW_NEARBY_RESULT_LIMIT)]
+
+        state, processed, post, reserve, mark_done = (
+            self._scan_one_request_response(places)
+        )
+
+        self.assertEqual(len(processed), service.NEW_NEARBY_RESULT_LIMIT)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(reserve.call_count, 1)
+        mark_done.assert_not_called()
+        self.assertEqual(state["done_keys"], [])
+        self.assertEqual(state["incomplete_points"], 1)
+        self.assertTrue(state["work_budget_stop"])
+
+    @patch("api.flags.service.time.sleep")
+    def test_rate_limit_retry_is_blocked_before_another_reservation(self, sleep):
+        throttled = MagicMock(
+            status_code=429,
+            text='{"error":{"status":"RESOURCE_EXHAUSTED","quotaId":"RequestsPerMinute"}}',
+        )
+        service._places_run_state.started_at = service.time.monotonic()
+        caps = {
+            "run_detection.max_seconds": 90,
+            "run_detection.max_requests": 1,
+            "quota.nearby_new.daily": 5,
+            "quota.nearby_new.monthly": 5,
+        }
+        with (
+            patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "test-key"}),
+            patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
+            patch.object(
+                service.quota_settings,
+                "cap",
+                side_effect=lambda key: caps.get(key, 100),
+            ),
+            patch.object(service.test_mode, "is_enabled", return_value=False),
+            patch.object(service, "mysql", MagicMock()),
+            patch.object(service, "_nearby_last_request_at", 0),
+            patch.object(service.http, "post", return_value=throttled) as post,
+            patch.object(service, "reserve_usage_slot", return_value=(True, None)) as reserve,
+        ):
+            results, complete = service._new_nearby_request(
+                13.9667, 121.1167, 850
+            )
+
+        self.assertEqual(results, [])
+        self.assertFalse(complete)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(reserve.call_count, 1)
+        sleep.assert_not_called()
+
+    def test_already_exhausted_budget_does_not_reserve_or_send(self):
+        service._places_run_state.started_at = service.time.monotonic()
+        service._places_run_state.calls["new_nearby"] = 1
+        caps = {
+            "run_detection.max_seconds": 90,
+            "run_detection.max_requests": 1,
+            "quota.nearby_new.daily": 5,
+            "quota.nearby_new.monthly": 5,
+        }
+        with (
+            patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "test-key"}),
+            patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
+            patch.object(
+                service.quota_settings,
+                "cap",
+                side_effect=lambda key: caps.get(key, 100),
+            ),
+            patch.object(service.test_mode, "is_enabled", return_value=False),
+            patch.object(service, "mysql", MagicMock()),
+            patch.object(service.http, "post") as post,
+            patch.object(service, "reserve_usage_slot") as reserve,
+        ):
+            results, complete = service._new_nearby_request(
+                13.9667, 121.1167, 850
+            )
+
+        self.assertEqual(results, [])
+        self.assertFalse(complete)
+        post.assert_not_called()
+        reserve.assert_not_called()
+
     @patch("api.flags.service._fetch_legacy_point_results_once")
     def test_legacy_mode_remains_the_default_fallback(self, fetch_legacy):
         fetch_legacy.return_value = ([{"place_id": "legacy"}], True)

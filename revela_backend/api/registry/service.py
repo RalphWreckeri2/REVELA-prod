@@ -574,6 +574,7 @@ def _normalise_status(raw: str) -> str:
         "active":         "Active",
         "expired":        "Expired",
         "revoked":        "Revoked",
+        "blacklisted":    "Revoked",
         "pending":        "Pending",
         "for issuance":   "Pending",
         "cancelled":      "Revoked",
@@ -591,6 +592,7 @@ def _status_to_flag_color(status: str) -> str:
         "Pending": "Yellow",
         "Expired": "Red",
         "Revoked": "Black",
+        "Blacklisted": "Black",
         "Closed": "Purple"
     }
     return mapping.get(status, "Yellow")
@@ -628,16 +630,30 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
 
     cursor.execute(
         """
-        SELECT logID, flagColor, latitude, longitude
-        FROM geospatial_logs
-        WHERE (businessID IS NOT NULL AND businessID = %s)
-           OR (businessID IS NULL AND barangayID = %s AND detectedName = %s)
-        ORDER BY (businessID = %s) DESC, detectedDate DESC
+        SELECT g.logID, g.flagColor, g.latitude, g.longitude,
+               EXISTS (
+                   SELECT 1
+                   FROM inspection_reports ir
+                   WHERE ir.targetType = 'geospatial_log'
+                     AND ir.targetID = g.logID
+                     AND ir.verificationStatus = 'Verified'
+                     AND ir.inspectionResult = 'Orange'
+               ) AS has_verified_orange
+        FROM geospatial_logs g
+        WHERE (g.businessID IS NOT NULL AND g.businessID = %s)
+           OR (g.businessID IS NULL AND g.barangayID = %s AND g.detectedName = %s)
+        ORDER BY (g.businessID = %s) DESC, g.detectedDate DESC
         LIMIT 1
         """,
         (business_id, barangay_id, name_clean, business_id),
     )
     existing_pin = cursor.fetchone()
+    if (
+        existing_pin
+        and status == "Expired"
+        and existing_pin.get("has_verified_orange")
+    ):
+        flag_color = "Orange"
 
     if existing_pin:
         cursor.execute(

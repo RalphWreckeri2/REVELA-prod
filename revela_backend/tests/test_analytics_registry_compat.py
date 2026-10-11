@@ -6,6 +6,16 @@ from api.analytics import filters, routes
 
 class AnalyticsRegistryCompatibilityTests(unittest.TestCase):
 
+    def test_effective_analytics_color_uses_only_verified_orange_reports(self):
+        expression = routes._effective_flag_color_sql("g")
+
+        self.assertIn("ir.verificationStatus = 'Verified'", expression)
+        self.assertIn("ir.inspectionResult = 'Orange'", expression)
+        self.assertIn("r_chk.applicationStatus = 'Expired'", expression)
+        self.assertIn("THEN 'Orange'", expression)
+        self.assertIn("WHEN (", expression)
+        self.assertIn("THEN 'Red'", expression)
+
     def test_registration_type_column_detection_uses_current_database_schema(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = {"column_count": 0}
