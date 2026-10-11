@@ -153,7 +153,9 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
     active:     loading,
     done:       !!summary,
     finalCount: summary
-      ? (isSync ? (summary.inserted ?? 0) + (summary.updated ?? 0) : summary.inserted)
+      ? (isSync
+          ? (summary.inserted ?? 0) + (summary.updated ?? 0) + (summary.unchanged ?? 0) + (summary.skipped ?? 0)
+          : summary.inserted)
       : undefined,
   });
 
@@ -307,7 +309,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
               <div>
                 <p style={s.completionMain}>
                   {isSync
-                    ? `${(summary.inserted ?? 0) + (summary.updated ?? 0)} of ${summary.total_rows} rows applied (${summary.updated ?? 0} updated, ${summary.inserted ?? 0} new)`
+                    ? `${(summary.inserted ?? 0) + (summary.updated ?? 0) + (summary.unchanged ?? 0) + (summary.skipped ?? 0)} of ${summary.total_rows} rows processed (${summary.updated ?? 0} updated, ${summary.unchanged ?? 0} unchanged, ${summary.inserted ?? 0} new, ${summary.skipped ?? 0} skipped)`
                     : `${summary.inserted} of ${summary.total_rows} rows inserted`}
                 </p>
                 <p style={s.completionSub}>
@@ -322,6 +324,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
                 ...(isSync
                   ? [
                       ["Existing records updated",   summary.updated ?? 0,     "var(--color-primary)"],
+                      ["Existing records unchanged", summary.unchanged ?? 0,   "var(--color-muted)"],
                       ["New businesses added",       summary.inserted ?? 0,    "var(--color-primary)"],
                     ]
                   : [["Successfully inserted",       summary.inserted,         "var(--color-primary)"]]),

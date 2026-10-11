@@ -368,9 +368,9 @@ export async function uploadRegistryFile(file, token, signal) {
 }
 
 /**
- * Merge a CSV or Excel file into the registry (updates matching businesses by
- * name + barangay, inserts new rows). Any authenticated user may call this.
- * @returns {Promise<{total_rows, inserted, updated, geocoded_ok, geocoded_failed, skipped, errors[]}>}
+ * Merge a CSV or Excel file into the registry by Business ID, updating changed
+ * rows, counting unchanged rows separately, and inserting new rows.
+ * @returns {Promise<{total_rows, inserted, updated, unchanged, geocoded_ok, geocoded_failed, skipped, errors[]}>}
  */
 export async function syncRegistryFile(file, token, signal) {
   try {

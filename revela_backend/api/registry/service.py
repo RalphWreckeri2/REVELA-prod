@@ -5,6 +5,7 @@ import math
 import os
 import re
 import threading
+from datetime import date
 from app import mysql
 from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
@@ -619,6 +620,116 @@ def _parse_renewal_date(raw) -> str | None:
         return None
 
 
+def _annual_expiration_eligible(status, renewal_date, current_year):
+    """Match the scheduled rule: Active permits renewed before this calendar year."""
+    if status != "Active" or not renewal_date:
+        return False
+    parsed_renewal_date = _parse_renewal_date(renewal_date)
+    return bool(
+        parsed_renewal_date
+        and int(parsed_renewal_date[:4]) < current_year
+    )
+
+
+def _effective_import_status(status, renewal_date, current_year):
+    """Derive the stored permit status using the scheduled annual rule."""
+    if _annual_expiration_eligible(status, renewal_date, current_year):
+        return "Expired"
+    return status
+
+
+def _sync_text_value(value):
+    """Compare imported text without case or repeated-whitespace differences."""
+    cleaned = _clean_str(value)
+    return re.sub(r"\s+", " ", cleaned).strip().casefold() if cleaned else None
+
+
+def _sync_upper_value(value):
+    cleaned = _sync_text_value(value)
+    return cleaned.upper() if cleaned else None
+
+
+def _sync_barangay_value(value):
+    """Compare database integer IDs with values returned as numeric strings."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            numeric_value = float(value)
+            if math.isfinite(numeric_value) and numeric_value.is_integer():
+                return int(numeric_value)
+        except (TypeError, ValueError):
+            pass
+        cleaned = _clean_str(value)
+        return cleaned.casefold() if cleaned else None
+
+
+def _registry_sync_location_fields_unchanged(existing, name, address, barangay_id):
+    return (
+        _sync_upper_value(existing.get("businessName")) == _sync_upper_value(name)
+        and _sync_text_value(existing.get("businessAddress")) == _sync_text_value(address)
+        and _sync_barangay_value(existing.get("barangayID")) == _sync_barangay_value(barangay_id)
+    )
+
+
+def _sync_coordinate_value(value):
+    if value is None:
+        return None
+    try:
+        coordinate = float(value)
+        return coordinate if math.isfinite(coordinate) else None
+    except (TypeError, ValueError):
+        return _sync_text_value(value)
+
+
+def _sync_coord_meta_changed(existing, meta):
+    if not meta:
+        return False
+    source = _sync_text_value(meta.get("coord_source"))
+    if source != _sync_text_value(existing.get("coordSource")):
+        return True
+    resolve_key = meta.get("resolve_key")
+    if resolve_key and resolve_key != existing.get("resolveKey"):
+        return True
+    if source == "csv":
+        return False
+    fields = (
+        ("place_id", "placeID", _sync_text_value),
+        ("place_id_kind", "placeIDKind", _sync_text_value),
+        ("score", "matchScore", _sync_coordinate_value),
+        ("match_status", "matchStatus", _sync_text_value),
+    )
+    return any(
+        normalize(meta.get(meta_field)) != normalize(existing.get(db_field))
+        for meta_field, db_field, normalize in fields
+    )
+
+
+def _registry_sync_business_fields_changed(existing, incoming):
+    """Return whether normalized imported registry fields differ from storage."""
+    fields = (
+        ("businessName", _sync_upper_value, _sync_upper_value),
+        ("businessType", _sync_upper_value, _sync_upper_value),
+        ("lineOfBusiness", _sync_upper_value, _sync_upper_value),
+        ("businessAddress", _sync_text_value, _sync_text_value),
+        ("barangayID", _sync_barangay_value, _sync_barangay_value),
+        ("applicationStatus", _normalise_status, _normalise_status),
+        ("lastRenewalDate", _parse_renewal_date, _parse_renewal_date),
+        ("businessSize", _sync_upper_value, _sync_upper_value),
+        ("registrationType", _normalise_registration_type, _normalise_registration_type),
+    )
+    for field, normalize_existing, normalize_incoming in fields:
+        stored_value = existing.get(field)
+        imported_value = incoming.get(field)
+        if field == "registrationType" and imported_value is None:
+            imported_value = stored_value
+        if normalize_existing(stored_value) != normalize_incoming(imported_value):
+            return True
+    return False
+
+
 def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None):
     """
     Propagate a registry permit-status change to the business's map pin
@@ -667,6 +778,7 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
             """,
             (flag_color, business_id, lat, lng, existing_pin["logID"]),
         )
+        return True
     elif lat is not None and lng is not None:
         cursor.execute(
             """
@@ -676,6 +788,8 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
             """,
             (barangay_id, business_id, name_clean, lat, lng, flag_color, address),
         )
+        return True
+    return False
 
 
 # ── Service functions ─────────────────────────────────────────────────────────
@@ -708,6 +822,7 @@ def upload_registry(file, ext: str):
                 f"Maximum {MAX_IMPORT_PER_BATCH} businesses can be imported per batch (your file has {total_rows} rows). "
                 f"Please split your file into batches of up to {MAX_IMPORT_PER_BATCH} rows."
             )
+        import_year = date.today().year
 
         # Fetch existing IDs to avoid geocoding duplicates
         cursor = mysql.connection.cursor()
@@ -915,6 +1030,7 @@ def upload_registry(file, ext: str):
 
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
+            status = _effective_import_status(status, renewal_date, import_year)
 
             addr_key = address_raw
 
@@ -949,17 +1065,26 @@ def upload_registry(file, ext: str):
                 inserted_ids.append(biz_id)
                 if lat is not None:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
-                flag_color = _status_to_flag_color(status)
                 if not _is_retryable_resolution_failure(geo_meta):
-                    insert_green_flag(
+                    if status != "Expired" or not _sync_flag_color(
+                        cursor,
                         barangay_id,
                         name_key,
+                        status,
                         lat,
                         lng,
                         address_raw,
-                        color=flag_color,
-                        business_id=biz_id
-                    )
+                        business_id=biz_id,
+                    ):
+                        insert_green_flag(
+                            barangay_id,
+                            name_key,
+                            lat,
+                            lng,
+                            address_raw,
+                            color=_status_to_flag_color(status),
+                            business_id=biz_id,
+                        )
             else:
                 skipped += 1
 
@@ -1011,8 +1136,8 @@ def upload_registry(file, ext: str):
 
 def sync_registry(file, ext: str):
     """Parse CSV/Excel → geocode → upsert OFFICIAL_REGISTRY.
-    Existing rows match on businessName + barangayID and are overwritten
-    with file values; new rows are inserted (same rules as upload).
+    Existing rows match on businessID and only changed business fields are
+    written; new rows are inserted (same validation rules as upload).
     Returns (summary_dict, error_string)."""
     places_resolver.reset_run_state()
     set_cancel("registry_import", False)
@@ -1040,9 +1165,11 @@ def sync_registry(file, ext: str):
                 f"Maximum {MAX_IMPORT_PER_BATCH} businesses can be synced per batch (your file has {total_rows} rows). "
                 f"Please split your file into batches of up to {MAX_IMPORT_PER_BATCH} rows."
             )
+        import_year = date.today().year
 
         inserted = 0
         updated = 0
+        unchanged = 0
         skipped = 0
         geocoded_ok = 0
         geocoded_failed = 0
@@ -1118,7 +1245,12 @@ def sync_registry(file, ext: str):
             # Check if this business already exists in the database
             cursor.execute(
                 """
-                SELECT businessID, latitude, longitude, coordSource, matchStatus, resolveKey FROM official_registry
+                SELECT businessID, barangayID, businessName, businessType,
+                       lineOfBusiness, businessAddress, applicationStatus,
+                       lastRenewalDate, businessSize, registrationType,
+                       latitude, longitude, coordSource, placeID, placeIDKind,
+                       matchScore, matchStatus, resolveKey
+                FROM official_registry
                 WHERE businessID = %s
                 """,
                 (biz_id,),
@@ -1134,6 +1266,20 @@ def sync_registry(file, ext: str):
                 m_stat = (existing.get("matchStatus") or "").strip().lower()
                 if m_stat == "rejected":
                     is_rejected = True
+            location_fields_unchanged = bool(
+                existing
+                and _registry_sync_location_fields_unchanged(
+                    existing, name_key, address_raw, barangay_id
+                )
+            )
+            stored_resolve_key = (
+                places_resolver.compute_resolve_key(
+                    existing.get("businessName"),
+                    existing.get("businessAddress"),
+                    existing.get("barangayID"),
+                )
+                if existing else None
+            )
 
             curr_resolve_key = places_resolver.compute_resolve_key(
                 name_key, address_raw, barangay_id)
@@ -1182,7 +1328,13 @@ def sync_registry(file, ext: str):
                     lng = float(existing["longitude"])
                     reused_existing = True
                 geocoded_failed += 1
-            elif existing and existing.get("resolveKey") == curr_resolve_key:
+            elif existing and (
+                existing.get("resolveKey") == curr_resolve_key
+                or (
+                    location_fields_unchanged
+                    and existing.get("resolveKey") == stored_resolve_key
+                )
+            ):
                 # Unchanged record according to SHA-1 resolveKey: consumes zero Google API calls!
                 if existing.get("latitude") is not None and existing.get("longitude") is not None:
                     lat = float(existing["latitude"])
@@ -1229,13 +1381,31 @@ def sync_registry(file, ext: str):
                 row.get("registrationType"))
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
+            status = _effective_import_status(status, renewal_date, import_year)
 
             btype = _clean_upper(row.get("businessType"))
             lob = _clean_upper(row.get("lineOfBusiness"))
             addr = address_raw
             bsize = _clean_upper(row.get("businessSize"))
+            business_fields_changed = existing is not None and (
+                _registry_sync_business_fields_changed(
+                    existing,
+                    {
+                        "barangayID": barangay_id,
+                        "businessName": name_key,
+                        "businessType": btype,
+                        "lineOfBusiness": lob,
+                        "businessAddress": addr,
+                        "applicationStatus": status,
+                        "lastRenewalDate": renewal_date,
+                        "businessSize": bsize,
+                        "registrationType": reg_type,
+                    },
+                )
+            )
 
             if existing:
+                coord_meta_written = False
                 if is_locked:
                     final_lat = existing.get("latitude")
                     final_lng = existing.get("longitude")
@@ -1245,7 +1415,7 @@ def sync_registry(file, ext: str):
                     final_lng = lng if lng is not None else existing.get(
                         "longitude")
 
-                if not is_locked and not reused_existing and lat is not None:
+                if business_fields_changed and not is_locked and not reused_existing and lat is not None:
                     coord_source_val = geo_meta.get(
                         "coord_source", "csv") if geo_meta else "csv"
                     place_id_val = geo_meta.get(
@@ -1301,7 +1471,8 @@ def sync_registry(file, ext: str):
                             biz_id,
                         ),
                     )
-                else:
+                    coord_meta_written = True
+                elif business_fields_changed:
                     cursor.execute(
                         """
                         UPDATE official_registry SET
@@ -1336,9 +1507,37 @@ def sync_registry(file, ext: str):
                             biz_id,
                         ),
                     )
-                updated += 1
-                if not is_locked and not reused_existing and lat is not None:
+                else:
+                    unchanged += 1
+                    coordinates_changed = (
+                        not is_locked
+                        and not reused_existing
+                        and lat is not None
+                        and (
+                            _sync_coordinate_value(existing.get("latitude"))
+                            != _sync_coordinate_value(final_lat)
+                            or _sync_coordinate_value(existing.get("longitude"))
+                            != _sync_coordinate_value(final_lng)
+                        )
+                    )
+                    if coordinates_changed:
+                        cursor.execute(
+                            """UPDATE official_registry
+                               SET latitude=%s, longitude=%s
+                               WHERE businessID=%s""",
+                            (final_lat, final_lng, biz_id),
+                        )
+
+                should_record_coord_meta = (
+                    not is_locked
+                    and not reused_existing
+                    and lat is not None
+                    and _sync_coord_meta_changed(existing, geo_meta)
+                )
+                if should_record_coord_meta and not coord_meta_written:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
+                if business_fields_changed:
+                    updated += 1
                 if not _is_retryable_resolution_failure(geo_meta):
                     old_lat = existing.get("latitude")
                     old_lng = existing.get("longitude")
@@ -1451,6 +1650,7 @@ def sync_registry(file, ext: str):
             "inserted":         inserted,
             "inserted_ids":     inserted_ids,
             "updated":          updated,
+            "unchanged":        unchanged,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,
             "coordinates_out_of_bounds": coordinates_out_of_bounds,
@@ -2306,7 +2506,8 @@ def get_business_by_id(business_id):
 def check_and_expire_old_permits():
     """
     Check if there are any active business permits from a previous calendar year.
-    If so, mark them as 'Expired' and set their map pin flagColor to 'Red'.
+    If so, mark them as 'Expired' and set their map pin flagColor to 'Red',
+    preserving map pins with an admin-verified Orange monitoring warning.
     Also insert an in-app notification for all admin users and publish SSE.
     """
     try:
@@ -2332,7 +2533,17 @@ def check_and_expire_old_permits():
                 """
                 UPDATE geospatial_logs g
                 JOIN official_registry r ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
-                SET g.flagColor = 'Red'
+                SET g.flagColor = CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM inspection_reports ir
+                        WHERE ir.targetType = 'geospatial_log'
+                          AND ir.targetID = g.logID
+                          AND ir.verificationStatus = 'Verified'
+                          AND ir.inspectionResult = 'Orange'
+                    ) THEN 'Orange'
+                    ELSE 'Red'
+                END
                 WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'
                 """
             )
@@ -2360,7 +2571,8 @@ def check_and_expire_old_permits():
             title = "New Year Rollover Detected!"
             body = (
                 f"Welcome to {current_year}! The system has automatically marked {cnt} "
-                "active business permits from previous years as Expired and their map flags as Red. "
+                "active business permits from previous years as Expired and updated their map flags, "
+                "preserving admin-verified monitoring warnings. "
                 "Please upload the new registry to synchronize their statuses."
             )
             link = "/registry"
