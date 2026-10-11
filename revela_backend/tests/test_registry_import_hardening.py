@@ -14,6 +14,141 @@ from api.registry import service
 
 class RegistryImportHardeningTests(unittest.TestCase):
 
+    def test_600_row_import_uses_geocoding_after_registry_text_search_quota(
+        self,
+    ):
+        from api.registry import places_resolver
+
+        class MockResponse:
+            status_code = 200
+            text = ""
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def json(self):
+                return self.payload
+
+        cursor = MagicMock()
+        cursor.fetchall.return_value = []
+        cursor.fetchone.return_value = None
+        cursor.rowcount = 1
+        mysql = MagicMock()
+        mysql.connection.cursor.return_value = cursor
+
+        frame = pd.DataFrame([{
+            "Business ID": f"BIZ-{index:04d}",
+            "businessName": f"BPLO Business {index:04d}",
+            "businessAddress": f"{index + 1} Main Street",
+            "barangay": "Barangay I",
+            "applicationStatus": "Active",
+        } for index in range(600)])
+
+        text_search_reservations = 0
+        text_search_requests = 0
+        geocode_reservations = 0
+        geocode_requests = 0
+
+        def reserve_text_search(_prefix, *_args, **_kwargs):
+            nonlocal text_search_reservations
+            text_search_reservations += 1
+            if text_search_reservations <= 40:
+                return True
+            places_resolver._api_state.quota_reason = "daily_quota_exceeded"
+            return False
+
+        def fake_post(_url, **kwargs):
+            nonlocal text_search_requests
+            text_search_requests += 1
+            business_name = kwargs["json"]["textQuery"].split(",", 1)[0]
+            return MockResponse({
+                "places": [{
+                    "id": f"place-{business_name}",
+                    "displayName": {"text": business_name},
+                    "location": {"latitude": 13.9667, "longitude": 121.1167},
+                    "types": ["store"],
+                }]
+            })
+
+        def reserve_geocode():
+            nonlocal geocode_reservations
+            geocode_reservations += 1
+            return True
+
+        def fake_get(_url, **_kwargs):
+            nonlocal geocode_requests
+            geocode_requests += 1
+            return MockResponse({
+                "status": "OK",
+                "results": [{
+                    "geometry": {
+                        "location": {"lat": 13.9667, "lng": 121.1167},
+                        "location_type": "ROOFTOP",
+                    },
+                    "place_id": "geocoded-place",
+                }],
+            })
+
+        original_resolve_location = places_resolver.resolve_location
+
+        def safe_resolve_location(*args, **kwargs):
+            return original_resolve_location(
+                *args, _post=fake_post, _get=fake_get, **kwargs
+            )
+
+        usage = {
+            "text_search": {"day": 40, "month": 40},
+            "text_search_workflows": {},
+            "details": {"day": 0, "month": 0},
+            "geocoding": {"day": 560, "month": 560},
+        }
+        with (
+            patch.object(service, "mysql", mysql),
+            patch.object(places_resolver, "mysql", mysql),
+            patch.object(service, "GOOGLE_MAPS_API_KEY", "test-key"),
+            patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "test-key"}),
+            patch.object(service.pd, "read_excel", return_value=frame),
+            patch.object(
+                service, "_load_barangay_lookup",
+                return_value={"barangay i": 1},
+            ),
+            patch.object(service, "_resolve_barangay_id", return_value=1),
+            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(places_resolver, "reserve_call", side_effect=reserve_text_search),
+            patch.object(service, "_reserve_geocode_call", side_effect=reserve_geocode),
+            patch.object(places_resolver.quota_settings, "cap", return_value=1000),
+            patch.object(
+                places_resolver, "resolve_location",
+                side_effect=safe_resolve_location,
+            ),
+            patch.object(places_resolver.time, "sleep"),
+            patch.object(places_resolver, "_last_places_request_at", 0),
+            patch.object(
+                places_resolver, "get_places_call_usage", return_value=usage
+            ),
+            patch.object(service, "insert_green_flag"),
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.upload_registry(BytesIO(b"mocked xlsx"), ".xlsx")
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["total_rows"], 600)
+        self.assertEqual(summary["inserted"], 600)
+        self.assertEqual(summary["geocoded_ok"], 600)
+        self.assertEqual(summary["geocoded_failed"], 0)
+        self.assertEqual(summary["skipped_quota"], 0)
+        self.assertEqual(text_search_reservations, 41)
+        self.assertEqual(text_search_requests, 40)
+        self.assertEqual(geocode_reservations, 560)
+        self.assertEqual(geocode_requests, 560)
+
+        insert_calls = [
+            call for call in cursor.execute.call_args_list
+            if "INSERT IGNORE INTO official_registry" in call.args[0]
+        ]
+        self.assertEqual(len(insert_calls), 600)
+        self.assertTrue(all(call.args[1][6:8] == (13.9667, 121.1167) for call in insert_calls))
+
     def test_coordinate_pair_requires_finite_in_range_values(self):
         self.assertEqual(service._parse_coordinate_pair("13.96", "121.11"), (13.96, 121.11))
         self.assertIsNone(service._parse_coordinate_pair("91", "121.11"))
@@ -60,19 +195,24 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(
                 service,
                 "_resolve_location",
-                return_value=(None, None, {"reason": "no_geocode_results"}),
+                return_value=(
+                    None, None,
+                    {"reason": "skipped_quota", "budget_exhausted": True},
+                ),
             ) as resolve_location,
             patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
-            patch.object(service, "insert_green_flag"),
+            patch.object(service, "insert_green_flag") as insert_flag,
             patch("api.notifications.hub.publish_to_admins"),
         ):
             summary, error = service.upload_registry(BytesIO(b"csv"), ".csv")
 
         self.assertIsNone(error)
         self.assertEqual(summary["inserted"], 1)
+        self.assertEqual(summary["skipped_quota"], 1)
         self.assertEqual(summary["coordinates_out_of_bounds"], 1)
         self.assertIn("outside the Mataasnakahoy boundary", summary["errors"][0])
         resolve_location.assert_called_once()
+        insert_flag.assert_not_called()
         insert_call = next(
             call for call in cursor.execute.call_args_list
             if "INSERT IGNORE INTO official_registry" in call.args[0]

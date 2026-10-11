@@ -84,6 +84,8 @@ def enabled():
 def reset_run_state():
     """Clear run-scoped quota state before starting a new resolver run."""
     _api_state.quota_halted = False
+    _api_state.text_search_quota_halted = False
+    _api_state.text_search_quota_reason = None
     _api_state.last_error = None
     _api_state.outcome = None
     _api_state.quota_reason = None
@@ -323,6 +325,13 @@ def _places_request(label, request, reserve):
                 _api_state.quota_halted = True
                 reason = getattr(_api_state, "quota_reason",
                                  None) or "skipped_quota"
+                if label == "TextSearch" and reason in (
+                    "skipped_quota",
+                    "monthly_quota_exceeded",
+                    "daily_quota_exceeded",
+                ):
+                    _api_state.text_search_quota_halted = True
+                    _api_state.text_search_quota_reason = reason
                 _api_state.outcome = (
                     "api_error" if reason == "quota_ledger_error" else reason
                 )
@@ -361,6 +370,9 @@ def _places_request(label, request, reserve):
             if _429_is_daily_quota(body) or not _429_is_per_minute(body):
                 _api_state.quota_halted = True
                 _api_state.outcome = "skipped_quota"
+                if label == "TextSearch":
+                    _api_state.text_search_quota_halted = True
+                    _api_state.text_search_quota_reason = "skipped_quota"
                 _api_state.last_error = f"{label} daily quota exhausted (HTTP 429)"
                 print(
                     f"[places_resolver] {label} daily quota exhausted; stopping Places calls for this run")
@@ -466,11 +478,15 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     """
     _api_state.last_error = None
     _api_state.outcome = None
+    text_search_quota_halted = (
+        quota_scope == "registry_import"
+        and getattr(_api_state, "text_search_quota_halted", False)
+    )
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return None, None, {"reason": "api_error", "api_error": "Google Maps API key is not configured"}
     if _halted:
         return None, None, {"reason": "api_error", "api_error": str(_halted)}
-    if getattr(_api_state, "quota_halted", False):
+    if getattr(_api_state, "quota_halted", False) and not text_search_quota_halted:
         return None, None, {
             "reason": getattr(_api_state, "quota_reason", None) or "skipped_quota",
             "api_error": getattr(_api_state, "last_error", None),
@@ -557,26 +573,39 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     )
     text_search_monthly_cap = quota_settings.cap("quota.text_search.monthly")
     text_search_daily_cap = quota_settings.cap("quota.text_search.daily")
-    data = _text_search(
-        name, address, barangay, post=_post,
-        reserve=lambda: reserve_call(
-            "imp_ts",
-            text_search_monthly_cap,
-            text_search_daily_cap,
-            additional_daily_limits=((
-                workflow_ledger_kind, workflow_daily_cap
-            ),),
-        ),
+    if text_search_quota_halted:
+        data = {}
+        call_outcome = (
+            getattr(_api_state, "text_search_quota_reason", None)
+            or "skipped_quota"
+        )
+    else:
+        data = _text_search(
+            name, address, barangay, post=_post,
+            reserve=lambda: reserve_call(
+                "imp_ts",
+                text_search_monthly_cap,
+                text_search_daily_cap,
+                additional_daily_limits=((
+                    workflow_ledger_kind, workflow_daily_cap
+                ),),
+            ),
+        )
+        call_outcome = getattr(_api_state, "outcome", None)
+    text_search_quota_exhausted = call_outcome in (
+        "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
     )
-    call_outcome = getattr(_api_state, "outcome", None)
-    if call_outcome in ("skipped_quota", "monthly_quota_exceeded",
-                        "daily_quota_exceeded", "api_error"):
+    text_search_quota_exhausted = text_search_quota_exhausted or (
+        quota_scope == "registry_import"
+        and getattr(_api_state, "text_search_quota_halted", False)
+    )
+    if call_outcome == "api_error" or (
+        text_search_quota_exhausted and quota_scope != "registry_import"
+    ):
         return None, None, {
             "reason": call_outcome,
             "api_error": getattr(_api_state, "last_error", None),
-            "budget_exhausted": call_outcome in (
-                "skipped_quota", "monthly_quota_exceeded", "daily_quota_exceeded"
-            ),
+            "budget_exhausted": text_search_quota_exhausted,
         }
     discarded_rejected = False
     seen_places = len(data.get("places", []) or [])
@@ -670,6 +699,10 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     # 5. Geocode Fallback
     geocode_budget_exhausted = False
     if not refresh_geocode and address and reserve_geocode:
+        # A Places quota denial must not be mistaken for a Geocoding failure.
+        _api_state.outcome = None
+        _api_state.last_error = None
+        _api_state.quota_reason = None
         if reserve_geocode():
             g = _geocode_fallback(address, barangay, get=_get)
             if g:
@@ -696,10 +729,6 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
         }
 
     meta = {"resolve_key": current_key}
-    if geocode_budget_exhausted:
-        meta["budget_exhausted"] = True
-        meta["reason"] = "skipped_quota"
-        meta["quota_kind"] = "geocode"
     if seen_places is not None:
         if seen_places == 0:
             meta["reason"] = "no_text_results"
@@ -710,6 +739,14 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
             meta["best_score"] = round(best_score, 3)
             meta["best_name"] = ((best or {}).get(
                 "displayName") or {}).get("text")
+    if geocode_budget_exhausted:
+        meta["reason"] = "skipped_quota"
+        meta["budget_exhausted"] = True
+        meta["quota_kind"] = "geocode"
+    elif text_search_quota_exhausted:
+        meta["reason"] = call_outcome
+        meta["budget_exhausted"] = True
+        meta["quota_kind"] = "text_search"
     return None, None, meta
 
 

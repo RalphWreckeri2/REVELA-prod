@@ -98,31 +98,138 @@ class PlacesResolverHardeningTests(unittest.TestCase):
     @patch("api.registry.places_resolver.time.sleep")
     @patch("api.registry.places_resolver.reserve_call", return_value=True)
     @patch("api.registry.places_resolver.mysql")
-    def test_quota_429_is_not_a_no_match_or_geocode_fallback(
+    def test_registry_import_geocodes_when_places_quota_is_exhausted(
         self, mock_mysql, _mock_reserve, _mock_sleep
     ):
+        from api.registry import places_resolver
+
         mock_cursor = MagicMock()
         mock_mysql.connection.cursor.return_value = mock_cursor
         mock_cursor.fetchone.return_value = None
         mock_cursor.fetchall.return_value = []
 
-        response = MagicMock()
-        response.status_code = 429
-        response.text = '{"error":{"status":"RESOURCE_EXHAUSTED"}}'
-        post = MagicMock(return_value=response)
+        places_response = MagicMock()
+        places_response.status_code = 429
+        places_response.text = '{"error":{"status":"RESOURCE_EXHAUSTED"}}'
+        post = MagicMock(return_value=places_response)
+        geocode_response = MagicMock()
+        geocode_response.status_code = 200
+        geocode_response.json.return_value = {
+            "status": "OK",
+            "results": [{
+                "geometry": {
+                    "location": {"lat": 13.9667, "lng": 121.1167},
+                    "location_type": "ROOFTOP",
+                },
+                "place_id": "geocode-place",
+            }],
+        }
+        get = MagicMock(return_value=geocode_response)
         geocode_reservation = MagicMock(return_value=True)
 
         lat, lng, meta = resolve_location(
             "No Match Store", "Poblacion", "Barangay I",
             business_id="BIZ-429", barangay_id=1, _post=post,
+            reserve_geocode=geocode_reservation, _get=get,
+        )
+
+        self.assertEqual((lat, lng), (13.9667, 121.1167))
+        self.assertEqual(meta["coord_source"], "geocode")
+        post.assert_called_once()
+        geocode_reservation.assert_called_once()
+        get.assert_called_once()
+        self.assertTrue(places_resolver._api_state.text_search_quota_halted)
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call", return_value=False)
+    @patch("api.registry.places_resolver.mysql")
+    def test_registry_import_falls_back_when_text_search_reservation_is_denied(
+        self, mock_mysql, _mock_reserve
+    ):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+        mock_cursor.fetchall.return_value = []
+        geocode_response = MagicMock()
+        geocode_response.status_code = 200
+        geocode_response.json.return_value = {
+            "status": "OK",
+            "results": [{
+                "geometry": {
+                    "location": {"lat": 13.9667, "lng": 121.1167},
+                    "location_type": "ROOFTOP",
+                },
+            }],
+        }
+        get = MagicMock(return_value=geocode_response)
+        geocode_reservation = MagicMock(return_value=True)
+
+        lat, lng, meta = resolve_location(
+            "No Match Store", "Poblacion", "Barangay I",
+            business_id="BIZ-QUOTA", barangay_id=1,
+            _post=MagicMock(), _get=get,
+            reserve_geocode=geocode_reservation,
+        )
+
+        self.assertEqual((lat, lng), (13.9667, 121.1167))
+        self.assertEqual(meta["coord_source"], "geocode")
+        get.assert_called_once()
+        geocode_reservation.assert_called_once()
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call", return_value=False)
+    @patch("api.registry.places_resolver.mysql")
+    def test_non_import_workflow_still_stops_when_text_search_quota_is_exhausted(
+        self, mock_mysql, _mock_reserve
+    ):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+        mock_cursor.fetchall.return_value = []
+        get = MagicMock()
+        geocode_reservation = MagicMock(return_value=True)
+
+        lat, lng, meta = resolve_location(
+            "No Match Store", "Poblacion", "Barangay I",
+            business_id="BIZ-SNAP", barangay_id=1,
+            quota_scope="snap_pins",
+            _post=MagicMock(), _get=get,
             reserve_geocode=geocode_reservation,
         )
 
         self.assertIsNone(lat)
         self.assertIsNone(lng)
-        self.assertEqual(meta["reason"], "skipped_quota")
-        post.assert_called_once()
+        self.assertTrue(meta["budget_exhausted"])
+        get.assert_not_called()
         geocode_reservation.assert_not_called()
+
+    @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
+    @patch("api.registry.places_resolver.reserve_call", return_value=False)
+    @patch("api.registry.places_resolver.mysql")
+    def test_registry_import_continues_without_coordinates_when_geocoding_quota_is_exhausted(
+        self, mock_mysql, _mock_reserve
+    ):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = None
+        mock_cursor.fetchall.return_value = []
+        get = MagicMock()
+        geocode_reservation = MagicMock(return_value=False)
+
+        lat, lng, meta = resolve_location(
+            "No Match Store", "Poblacion", "Barangay I",
+            business_id="BIZ-GEOCODE-QUOTA", barangay_id=1,
+            _post=MagicMock(), _get=get,
+            reserve_geocode=geocode_reservation,
+        )
+
+        self.assertIsNone(lat)
+        self.assertIsNone(lng)
+        self.assertTrue(meta["budget_exhausted"])
+        self.assertEqual(meta["reason"], "skipped_quota")
+        self.assertEqual(meta["quota_kind"], "geocode")
+        get.assert_not_called()
+        geocode_reservation.assert_called_once()
 
     @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
     def test_daily_quota_halt_persists_across_resolver_calls(self):
