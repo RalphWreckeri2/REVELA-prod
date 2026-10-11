@@ -8,12 +8,21 @@ import { useState, useEffect, useCallback, useRef, useContext, useMemo, useEffec
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
-import { GoogleMap, Data } from "@react-google-maps/api";
+import { GoogleMap, Data, Marker } from "@react-google-maps/api";
 import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import DashboardLayout from "../components/DashboardLayout";
 import "../styles/MapPage.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import ApiUsageSettingsPanel from "../components/ApiUsageSettingsPanel";
+import {
+  IMPORTED_LOCATION,
+  PREVIOUS_LOCATION,
+  canConfirmLocationChoice,
+  confirmLocationChoice,
+  resetLocationChoices,
+  selectLocationChoice,
+  selectedLocationChoice,
+} from "../components/locationReviewPolicy";
 import { AuthContext } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -46,6 +55,7 @@ import {
   reverifyPinsRequest,
   getRegistryReviewQueueRequest,
   decideRegistryReviewRequest,
+  resolveRegistryReviewCandidateRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 
@@ -2203,6 +2213,7 @@ export default function MapPage() {
   const [reviewQueueError, setReviewQueueError] = useState("");
   const [reviewQueueNotice, setReviewQueueNotice] = useState("");
   const [reviewQueueActionId, setReviewQueueActionId] = useState(null);
+  const [reviewLocationChoices, setReviewLocationChoices] = useState({});
   const [detectionQuota, setDetectionQuota] = useState(null);
   const [placesUsage, setPlacesUsage] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -2470,6 +2481,7 @@ export default function MapPage() {
     if (!token || !isAdmin) return;
     setReviewQueueLoading(true);
     setReviewQueueError("");
+    setReviewLocationChoices(resetLocationChoices());
     try {
       const result = await getRegistryReviewQueueRequest(
         token,
@@ -3213,6 +3225,7 @@ export default function MapPage() {
   };
 
   const handleOpenReviewQueue = () => {
+    setReviewLocationChoices(resetLocationChoices());
     setShowReviewQueue(true);
     setReviewQueueSearch("");
     setReviewQueueNotice("");
@@ -3226,14 +3239,26 @@ export default function MapPage() {
 
   const handleReviewQueueDecision = async (candidate, action) => {
     const isApprove = action === "approve";
+    const locationChoice = selectedLocationChoice(
+      reviewLocationChoices, candidate,
+    );
+    if (
+      isApprove && candidate.locationReapproval
+      && !canConfirmLocationChoice(candidate, locationChoice)
+    ) {
+      setReviewQueueError("A valid current location candidate is required for this choice.");
+      return;
+    }
     const decision = await Swal.fire({
       icon: "warning",
-      title: isApprove ? "Approve pin move?" : "Reject pin suggestion?",
+      title: isApprove ? "Confirm selected location?" : "Reject location candidate?",
       text: isApprove
-        ? `This will move ${candidate.businessName} to the proposed Google Maps location.`
-        : `This will keep ${candidate.businessName}'s current pin and reject this Google Place.`,
+        ? locationChoice === "previous"
+          ? `Keep the previously approved coordinates for ${candidate.businessName} and approve them for the updated address?`
+          : `Replace ${candidate.businessName}'s previous coordinates with the current imported/resolved candidate?`
+        : `Reject this location candidate and keep the previous pin pending review?`,
       showCancelButton: true,
-      confirmButtonText: isApprove ? "Approve move" : "Reject suggestion",
+      confirmButtonText: isApprove ? "Confirm location" : "Reject candidate",
       confirmButtonColor: isApprove ? "#059669" : "#dc2626",
       cancelButtonText: "Cancel",
     });
@@ -3242,12 +3267,34 @@ export default function MapPage() {
     setReviewQueueActionId(candidate.businessID);
     setReviewQueueError("");
     try {
-      await decideRegistryReviewRequest(token, candidate.businessID, action);
-      setReviewQueueNotice(
-        isApprove
-          ? `${candidate.businessName} was approved and its map pin was updated.`
-          : `${candidate.businessName}'s current pin was kept; the suggestion was rejected.`,
-      );
+      if (isApprove && candidate.locationReapproval) {
+        await confirmLocationChoice(
+          candidate,
+          locationChoice,
+          (payload) => decideRegistryReviewRequest(
+            token, candidate.businessID, "approve", payload,
+          ),
+          () => setReviewQueueNotice(
+            locationChoice === PREVIOUS_LOCATION
+              ? `${candidate.businessName}'s previously approved location was confirmed for the updated address.`
+              : `${candidate.businessName}'s imported location was approved.`,
+          ),
+        );
+      } else {
+        await decideRegistryReviewRequest(
+          token,
+          candidate.businessID,
+          action,
+          candidate.locationReapproval
+            ? { candidateHistoryID: candidate.candidateHistoryID }
+            : {},
+        );
+        setReviewQueueNotice(
+          isApprove
+            ? `${candidate.businessName} was approved and its map pin was updated.`
+            : `${candidate.businessName}'s current pin was kept; the suggestion was rejected.`,
+        );
+      }
       await fetchFlags(true);
       const nextPage =
         reviewQueue?.data?.length === 1 && reviewQueuePage > 1
@@ -3256,6 +3303,24 @@ export default function MapPage() {
       await loadRegistryReviewQueue(nextPage);
     } catch (err) {
       setReviewQueueError(err.message || "Unable to save the pin review decision.");
+    } finally {
+      setReviewQueueActionId(null);
+    }
+  };
+
+  const handleCloseReviewQueue = () => {
+    setShowReviewQueue(false);
+    setReviewLocationChoices(resetLocationChoices());
+  };
+
+  const handleResolveReviewCandidate = async (candidate) => {
+    setReviewQueueActionId(candidate.businessID);
+    setReviewQueueError("");
+    try {
+      await resolveRegistryReviewCandidateRequest(token, candidate.businessID);
+      await loadRegistryReviewQueue(reviewQueuePage);
+    } catch (err) {
+      setReviewQueueError(err.message || "Unable to resolve an updated-address candidate.");
     } finally {
       setReviewQueueActionId(null);
     }
@@ -4360,7 +4425,7 @@ export default function MapPage() {
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget && !reviewQueueActionId) {
-              setShowReviewQueue(false);
+              handleCloseReviewQueue();
             }
           }}
           style={{
@@ -4411,7 +4476,7 @@ export default function MapPage() {
               <button
                 type="button"
                 className="ghost-btn"
-                onClick={() => setShowReviewQueue(false)}
+                onClick={handleCloseReviewQueue}
                 disabled={Boolean(reviewQueueActionId)}
                 aria-label="Close pin review queue"
               >
@@ -4541,6 +4606,97 @@ export default function MapPage() {
                           </a>
                         )}
                       </div>
+                      {candidate.locationReapproval && (
+                        <div style={{
+                          marginTop: 14,
+                          padding: 12,
+                          border: "1px solid var(--color-border-soft)",
+                          borderRadius: 8,
+                          background: "var(--color-surface, #fff)",
+                        }}>
+                          <strong>Location changed in registry import</strong>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12, marginTop: 8, fontSize: 12 }}>
+                            <div>
+                              <strong>Previous address</strong>
+                              <div>{candidate.previousAddress || "Not recorded"}</div>
+                              <div style={{ color: "var(--color-muted)" }}>{candidate.previousBarangayName || `Barangay ID ${candidate.previousBarangayID ?? "unknown"}`}</div>
+                            </div>
+                            <div>
+                              <strong>Updated imported address</strong>
+                              <div>{candidate.businessAddress || "Not provided"}</div>
+                              <div style={{ color: "var(--color-muted)" }}>{candidate.barangayName || `Barangay ID ${candidate.barangayID}`}</div>
+                            </div>
+                          </div>
+                          <fieldset style={{ border: 0, padding: 0, margin: "12px 0 0", display: "grid", gap: 10 }}>
+                            <legend style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Choose the location for this address</legend>
+                            <label style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer" }}>
+                              <input
+                                type="radio"
+                                name={`location-choice-${candidate.businessID}`}
+                                value="previous"
+                                checked={selectedLocationChoice(reviewLocationChoices, candidate) === PREVIOUS_LOCATION}
+                                onChange={() => setReviewLocationChoices((choices) => selectLocationChoice(choices, candidate, PREVIOUS_LOCATION))}
+                              />
+                              <span>
+                                <strong>Previously approved location</strong>
+                                <span style={{ display: "block", color: "var(--color-muted)" }}>
+                                  {candidate.originalLatitude == null || candidate.originalLongitude == null
+                                    ? "Coordinates unavailable"
+                                    : `${Number(candidate.originalLatitude).toFixed(6)}, ${Number(candidate.originalLongitude).toFixed(6)} · ${candidate.coordSource || "unknown source"}`}
+                                </span>
+                              </span>
+                            </label>
+                            <label style={{ display: "flex", gap: 9, alignItems: "flex-start", opacity: candidate.candidateAvailable ? 1 : 0.65, cursor: candidate.candidateAvailable ? "pointer" : "not-allowed" }}>
+                              <input
+                                type="radio"
+                                name={`location-choice-${candidate.businessID}`}
+                                value="imported"
+                                disabled={!canConfirmLocationChoice(candidate, IMPORTED_LOCATION)}
+                                checked={selectedLocationChoice(reviewLocationChoices, candidate) === IMPORTED_LOCATION}
+                                onChange={() => setReviewLocationChoices((choices) => selectLocationChoice(choices, candidate, IMPORTED_LOCATION))}
+                              />
+                              <span>
+                                <strong>Latest imported/resolved location</strong>
+                                <span style={{ display: "block", color: "var(--color-muted)" }}>
+                                  {candidate.candidateAvailable
+                                    ? `${Number(candidate.candidateLatitude).toFixed(6)}, ${Number(candidate.candidateLongitude).toFixed(6)} · ${candidate.candidateSource || "Re-verify proposal"}`
+                                    : "Unavailable until valid coordinates are imported or resolved."}
+                                </span>
+                              </span>
+                            </label>
+                            {!candidate.candidateAvailable && (
+                              <button
+                                type="button"
+                                className="ghost-btn"
+                                onClick={() => handleResolveReviewCandidate(candidate)}
+                                disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+                              >
+                                {reviewQueueActionId === candidate.businessID ? "Resolving…" : "Resolve updated address"}
+                              </button>
+                            )}
+                          </fieldset>
+                          {isLoaded && (candidate.originalLatitude != null || candidate.candidateAvailable) && (
+                            <div style={{ height: 150, marginTop: 12, overflow: "hidden", borderRadius: 6 }}>
+                              <GoogleMap
+                                mapContainerStyle={{ width: "100%", height: "100%" }}
+                                center={{
+                                  lat: Number(candidate.originalLatitude ?? candidate.candidateLatitude),
+                                  lng: Number(candidate.originalLongitude ?? candidate.candidateLongitude),
+                                }}
+                                zoom={14}
+                                options={{ disableDefaultUI: true, zoomControl: true, clickableIcons: false, mapId: REVELA_MAP_ID }}
+                              >
+                                {candidate.originalLatitude != null && candidate.originalLongitude != null && (
+                                  <Marker position={{ lat: Number(candidate.originalLatitude), lng: Number(candidate.originalLongitude) }} label="A" title="Previously approved location" />
+                                )}
+                                {candidate.candidateAvailable && (
+                                  <Marker position={{ lat: Number(candidate.candidateLatitude), lng: Number(candidate.candidateLongitude) }} label="B" title={`Latest ${candidate.candidateSource} candidate`} />
+                                )}
+                              </GoogleMap>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div style={{
                         display: "grid",
                         gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -4571,18 +4727,22 @@ export default function MapPage() {
                           type="button"
                           className="ghost-btn"
                           onClick={() => handleReviewQueueDecision(candidate, "reject")}
-                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || (candidate.locationReapproval && !candidate.candidateAvailable)}
                           style={{ color: "var(--color-danger, #dc2626)" }}
                         >
-                          {reviewQueueActionId === candidate.businessID ? "Saving…" : "Reject suggestion"}
+                          {reviewQueueActionId === candidate.businessID ? "Saving…" : candidate.locationReapproval ? "Reject imported location" : "Reject suggestion"}
                         </button>
                         <button
                           type="button"
                           className="primary-btn"
                           onClick={() => handleReviewQueueDecision(candidate, "approve")}
-                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId)}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
                         >
-                          {reviewQueueActionId === candidate.businessID ? "Saving…" : "Approve pin move"}
+                          {reviewQueueActionId === candidate.businessID ? "Saving…" : candidate.locationReapproval
+                            ? selectedLocationChoice(reviewLocationChoices, candidate) === PREVIOUS_LOCATION
+                              ? "Confirm previous location"
+                              : "Use imported location"
+                            : "Approve pin move"}
                         </button>
                       </div>
                     </article>

@@ -24,6 +24,9 @@ class PlacesResolverHardeningTests(unittest.TestCase):
 
         reset_run_state()
         places_resolver._last_places_request_at = 0
+        schema_check = patch("api.registry.reverify._ensure_history_table")
+        schema_check.start()
+        self.addCleanup(schema_check.stop)
 
     @patch("api.registry.places_resolver.time.sleep")
     def test_resource_exhausted_429_stops_without_retry(self, mock_sleep):

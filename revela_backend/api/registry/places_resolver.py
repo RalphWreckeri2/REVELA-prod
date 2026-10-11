@@ -521,6 +521,14 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
                 stored_key = stored.get("resolveKey") if isinstance(
                     stored, dict) else stored[0]
                 if stored_key and stored_key == current_key:
+                    stored_match_status = (stored.get("matchStatus") if isinstance(
+                        stored, dict) else stored[7]) or ""
+                    if str(stored_match_status).strip().lower() == "review":
+                        return None, None, {
+                            "resolve_key": None,
+                            "match_status": "review",
+                            "reason": "pending_location_reapproval",
+                        }
                     stored_lat = stored.get("latitude") if isinstance(
                         stored, dict) else stored[1]
                     stored_lng = stored.get("longitude") if isinstance(
@@ -791,7 +799,9 @@ def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, b
 
 
 def _g(row, key, idx):
-    return row[key] if isinstance(row, dict) else row[idx]
+    if isinstance(row, dict):
+        return row.get(key)
+    return row[idx] if len(row) > idx else None
 
 
 # ------------------------------ maintenance ----------------------------------
@@ -895,20 +905,36 @@ def list_review_queue(page=1, per_page=20, search=""):
         row = cur.fetchone()
         total = int(_g(row, "c", 0))
         cur.execute(
-            """SELECT r.businessID, r.barangayID, b.barangayName, r.businessName, r.businessAddress,
-                      COALESCE(h.newLat, r.latitude) AS latitude,
-                      COALESCE(h.newLng, r.longitude) AS longitude,
-                      COALESCE(h.placeID, r.placeID) AS placeID,
-                      r.latitude AS originalLatitude, r.longitude AS originalLongitude,
-                      h.id AS reviewHistoryID,
-                      r.coordSource, r.matchScore, r.matchStatus
+            """SELECT r.businessID, r.barangayID, b.barangayName, r.businessName,
+                      r.businessAddress, r.latitude AS originalLatitude,
+                      r.longitude AS originalLongitude, r.placeID AS originalPlaceID,
+                      r.coordSource, r.matchScore, r.matchStatus, r.resolveKey,
+                      h.id AS reviewHistoryID, h.outcome AS reviewOutcome,
+                      h.reviewType, h.reviewKey,
+                      h.newLat AS candidateLatitude,
+                      h.newLng AS candidateLongitude,
+                      h.placeID AS candidatePlaceID,
+                      h.score AS candidateScore,
+                      h.candidateSource,
+                      h.newCoordSource AS candidateCoordSource,
+                      h.oldAddress AS previousAddress,
+                      h.oldBarangayID AS previousBarangayID,
+                      old_b.barangayName AS previousBarangayName,
+                      h.oldLat AS previousLatitude,
+                      h.oldLng AS previousLongitude,
+                      h.oldCoordSource AS previousCoordSource,
+                      h.oldPlaceID AS previousPlaceID,
+                      h.oldPlaceIDKind AS previousPlaceIDKind
                FROM official_registry r
                LEFT JOIN barangays b ON r.barangayID = b.barangayID
                LEFT JOIN registry_pin_history h
                  ON h.id = (
                      SELECT MAX(h2.id) FROM registry_pin_history h2
                      WHERE h2.businessID = r.businessID AND h2.outcome = 'review'
+                       AND (h2.reviewType IN ('address_reapproval', 'reverify')
+                           OR h2.reviewType IS NULL)
                  )
+               LEFT JOIN barangays old_b ON old_b.barangayID = h.oldBarangayID
                WHERE r.matchStatus='review'
                  AND (%s = '' OR r.businessName LIKE %s
                       OR CAST(r.businessID AS CHAR) LIKE %s
@@ -922,14 +948,74 @@ def list_review_queue(page=1, per_page=20, search=""):
         items = []
         for r in cur.fetchall():
             d = dict(r) if isinstance(r, dict) else dict(zip(
-                ["businessID", "barangayID", "barangayName", "businessName", "businessAddress", "latitude",
-                 "longitude", "placeID", "originalLatitude", "originalLongitude", "reviewHistoryID",
-                 "coordSource", "matchScore", "matchStatus"], r))
-            for k in ("latitude", "longitude", "originalLatitude", "originalLongitude", "matchScore"):
-                d[k] = float(d[k]) if d.get(k) is not None else None
+                ["businessID", "barangayID", "barangayName", "businessName",
+                 "businessAddress", "originalLatitude", "originalLongitude",
+                 "originalPlaceID", "coordSource", "matchScore", "matchStatus",
+                 "resolveKey", "reviewHistoryID", "reviewOutcome", "reviewType",
+                 "reviewKey", "candidateLatitude", "candidateLongitude", "candidatePlaceID",
+                 "candidateScore", "candidateSource", "candidateCoordSource",
+                 "previousAddress", "previousBarangayID", "previousBarangayName",
+                 "previousLatitude",
+                 "previousLongitude", "previousCoordSource", "previousPlaceID",
+                 "previousPlaceIDKind"], r))
             d.setdefault("originalLatitude", d.get("latitude"))
             d.setdefault("originalLongitude", d.get("longitude"))
+            d.setdefault("originalPlaceID", d.get("placeID"))
+            row_key = compute_resolve_key(
+                d.get("businessName"), d.get(
+                    "businessAddress"), d.get("barangayID")
+            )
+            review_type = d.get("reviewType")
+            key_is_current = bool(
+                d.get("reviewKey") and d.get("reviewKey") == row_key)
+            retained_source = str(d.get("coordSource") or "").strip().lower()
+            is_legacy_retained_review = (
+                review_type is None
+                and retained_source in {"manual", "places", "geocode", "csv"}
+                and d.get("matchStatus") == "review"
+                and not d.get("resolveKey")
+            )
+            d["locationReapproval"] = (
+                review_type == "address_reapproval" or is_legacy_retained_review
+            )
+            candidate_is_valid = (
+                (key_is_current or (review_type is None and not is_legacy_retained_review))
+                and d.get("reviewOutcome") == "review"
+                and d.get("candidateLatitude") is not None
+                and d.get("candidateLongitude") is not None
+                and (
+                    d.get("candidateCoordSource") in {
+                        "csv", "places", "geocode"}
+                    or review_type is None
+                )
+            )
+            if review_type == "reverify" and not key_is_current:
+                candidate_is_valid = False
+            if review_type == "address_reapproval" and not key_is_current:
+                candidate_is_valid = False
+            for k in (
+                "originalLatitude", "originalLongitude", "candidateLatitude",
+                "candidateLongitude", "previousLatitude", "previousLongitude",
+                "matchScore", "candidateScore",
+            ):
+                d[k] = float(d[k]) if d.get(k) is not None else None
             d.setdefault("reviewHistoryID", None)
+            d["candidateAvailable"] = candidate_is_valid
+            d["candidateHistoryID"] = (
+                d.get("reviewHistoryID") if candidate_is_valid else None
+            )
+            d["latitude"] = (
+                d.get("candidateLatitude") if candidate_is_valid
+                else d.get("originalLatitude")
+            )
+            d["longitude"] = (
+                d.get("candidateLongitude") if candidate_is_valid
+                else d.get("originalLongitude")
+            )
+            d["placeID"] = (
+                d.get("candidatePlaceID") if candidate_is_valid
+                else d.get("originalPlaceID")
+            )
             d["mapsUrl"] = (f"https://www.google.com/maps/search/?api=1&query=x&query_place_id={d['placeID']}"
                             if d.get("placeID") else None)
             items.append(d)
@@ -940,22 +1026,384 @@ def list_review_queue(page=1, per_page=20, search=""):
         cur.close()
 
 
-def decide_review(business_id, approve):
+def resolve_review_candidate(business_id, _post=requests.post, _get=requests.get):
+    """Resolve an address-review candidate only after an explicit admin request."""
     cur = mysql.connection.cursor()
     try:
         from api.registry.reverify import _ensure_history_table
         _ensure_history_table(cur)
-        cur.execute("SELECT barangayID, businessName, latitude, longitude, placeID FROM official_registry "
-                    "WHERE businessID=%s AND matchStatus='review'", (business_id,))
+        cur.execute(
+            """SELECT r.businessID, r.businessName, r.businessAddress,
+                      r.barangayID, b.barangayName, r.latitude, r.longitude,
+                      r.lineOfBusiness, r.businessType, r.matchStatus
+               FROM official_registry r
+               LEFT JOIN barangays b ON b.barangayID=r.barangayID
+               WHERE r.businessID=%s AND r.matchStatus='review'""",
+            (business_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None, "Business is not awaiting location review"
+        business = dict(row) if isinstance(row, dict) else dict(zip(
+            ("businessID", "businessName", "businessAddress", "barangayID",
+             "barangayName", "latitude", "longitude", "lineOfBusiness",
+             "businessType", "matchStatus"), row))
+        review_key = compute_resolve_key(
+            business.get("businessName"), business.get("businessAddress"),
+            business.get("barangayID"),
+        )
+        cur.close()
+
+        if not os.getenv("GOOGLE_MAPS_API_KEY"):
+            return None, "Google Maps API key is not configured"
+
+        from api.registry import service
+        lat, lng, meta = resolve_location(
+            business.get("businessName") or "",
+            business.get("businessAddress") or "",
+            business.get("barangayName") or "",
+            business_id=business_id,
+            barangay_id=business.get("barangayID"),
+            line_of_business=business.get("lineOfBusiness") or "",
+            business_type=business.get("businessType") or "",
+            reserve_geocode=service._reserve_geocode_call,
+            force=True,
+            current_lat=business.get("latitude"),
+            current_lng=business.get("longitude"),
+            quota_scope="reverify",
+            _post=_post,
+            _get=_get,
+        )
+        if lat is None or lng is None or not meta:
+            reason = (meta or {}).get("reason") or "no valid match"
+            return None, f"No valid location candidate was found ({reason})"
+        source = meta.get("coord_source")
+        if source not in {"places", "geocode"} or not _is_within_municipal_bounds(lat, lng):
+            return None, "Resolver did not return a valid in-municipality candidate"
+
+        cur = mysql.connection.cursor()
+        try:
+            _ensure_history_table(cur)
+            cur.execute(
+                """SELECT businessID, businessName, businessAddress, barangayID,
+                          latitude, longitude, coordSource, placeID, placeIDKind,
+                          matchScore, matchStatus
+                   FROM official_registry
+                   WHERE businessID=%s AND matchStatus='review'""",
+                (business_id,),
+            )
+            current = cur.fetchone()
+            if not current:
+                mysql.connection.rollback()
+                return None, "Location review changed while resolving the candidate"
+            current = dict(current) if isinstance(current, dict) else dict(zip(
+                ("businessID", "businessName", "businessAddress", "barangayID",
+                 "latitude", "longitude", "coordSource", "placeID", "placeIDKind",
+                 "matchScore", "matchStatus"), current))
+            current_key = compute_resolve_key(
+                current.get("businessName"), current.get("businessAddress"),
+                current.get("barangayID"),
+            )
+            if current_key != review_key:
+                mysql.connection.rollback()
+                return None, "Business address changed while resolving the candidate"
+            from api.registry.reverify import record_location_history
+            record_location_history(
+                cur,
+                business_id,
+                "review",
+                "address_reapproval",
+                review_key,
+                old_row=current,
+                new_lat=lat,
+                new_lng=lng,
+                new_source=source,
+                candidate_source=source,
+                place_id=meta.get("place_id"),
+                score=meta.get("score"),
+                new_address=current.get("businessAddress"),
+                new_barangay_id=current.get("barangayID"),
+            )
+            history_id = cur.lastrowid
+            mysql.connection.commit()
+            return {
+                "candidateHistoryID": history_id,
+                "latitude": float(lat),
+                "longitude": float(lng),
+                "source": source,
+                "placeID": meta.get("place_id"),
+                "score": meta.get("score"),
+            }, None
+        except Exception:
+            mysql.connection.rollback()
+            raise
+        finally:
+            cur.close()
+    except Exception as e:
+        mysql.connection.rollback()
+        return None, str(e)
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+
+
+def decide_review(
+    business_id,
+    approve,
+    location_choice=None,
+    candidate_history_id=None,
+    actor_user_id=None,
+):
+    cur = mysql.connection.cursor()
+    try:
+        from api.registry.reverify import _ensure_history_table
+        _ensure_history_table(cur)
+        cur.execute("""SELECT businessID, barangayID, businessName, businessAddress,
+                           latitude, longitude, placeID, placeIDKind, matchScore,
+                           coordSource, matchStatus, resolveKey
+                    FROM official_registry
+                    WHERE businessID=%s AND matchStatus='review'""",
+                    (business_id,),
+                    )
         r = cur.fetchone()
         if not r:
             return False, "Not found or not awaiting review"
+
+        current_key = compute_resolve_key(
+            _g(r, "businessName", 2), _g(r, "businessAddress", 3),
+            _g(r, "barangayID", 1),
+        )
+
+        cur.execute(
+            """SELECT id AS addressReviewID
+               FROM registry_pin_history
+               WHERE businessID=%s AND reviewType='address_reapproval'
+                 AND reviewKey=%s
+                 AND outcome IN ('review', 'candidate_rejected')
+               ORDER BY id DESC LIMIT 1""",
+            (business_id, current_key),
+        )
+        address_context = cur.fetchone()
+        address_context_id = (
+            address_context.get("addressReviewID")
+            if isinstance(address_context, dict)
+            else address_context[0] if address_context else None
+        )
+        current_source = str(_g(r, "coordSource", 9) or "").strip().lower()
+        has_reverify_context = False
+        if (
+            address_context_id is None
+            and current_source in {"manual", "places", "geocode", "csv"}
+            and not _g(r, "resolveKey", 11)
+        ):
+            cur.execute(
+                """SELECT id AS reverifyHistoryID
+                   FROM registry_pin_history
+                                     WHERE businessID=%s AND outcome='review'
+                                         AND reviewType='reverify' AND reviewKey=%s
+                   ORDER BY id DESC LIMIT 1""",
+                (business_id, current_key),
+            )
+            reverify_context = cur.fetchone()
+            has_reverify_context = reverify_context is not None
+        pending_location_reapproval = (
+            address_context_id is not None
+            or (
+                not has_reverify_context
+                and
+                current_source in {"manual", "places", "geocode", "csv"}
+                and str(_g(r, "matchStatus", 10) or "").strip().lower() == "review"
+                and not _g(r, "resolveKey", 11)
+            )
+        )
+        if pending_location_reapproval and approve and location_choice not in (
+            "previous", "imported"
+        ):
+            return False, "This location re-approval requires an explicit location choice"
+        if location_choice is not None and not pending_location_reapproval:
+            return False, "A location choice is only valid for address re-approval"
+        if pending_location_reapproval and not approve and candidate_history_id is None:
+            return False, "A current imported location candidate is required for rejection"
+
+        if location_choice is not None:
+            if not approve:
+                return False, "A location choice must be approved explicitly"
+
+            if location_choice == "previous":
+                source = str(_g(r, "coordSource", 9) or "").strip().lower()
+                retained_coordinates = (
+                    _g(r, "latitude", 4) is not None
+                    and _g(r, "longitude", 5) is not None
+                    and source in {"manual", "places", "geocode", "csv"}
+                )
+                if not retained_coordinates:
+                    return False, "The previously approved coordinates are unavailable"
+                cur.execute(
+                    """UPDATE official_registry
+                       SET matchStatus='approved', resolveKey=%s
+                       WHERE businessID=%s AND matchStatus='review'
+                         AND businessAddress <=> %s AND barangayID <=> %s""",
+                    (current_key, business_id, _g(r, "businessAddress", 3),
+                     _g(r, "barangayID", 1)),
+                )
+                if cur.rowcount == 0:
+                    mysql.connection.rollback()
+                    return False, "Business address changed while confirming the location"
+                from api.registry.reverify import record_location_history
+                record_location_history(
+                    cur, business_id, "location_kept",
+                    "address_reapproval", current_key, old_row={
+                        "businessID": business_id,
+                        "barangayID": _g(r, "barangayID", 1),
+                        "businessAddress": _g(r, "businessAddress", 3),
+                        "latitude": _g(r, "latitude", 4),
+                        "longitude": _g(r, "longitude", 5),
+                        "coordSource": _g(r, "coordSource", 9),
+                        "placeID": _g(r, "placeID", 6),
+                        "placeIDKind": _g(r, "placeIDKind", 7),
+                        "matchScore": _g(r, "matchScore", 8),
+                        "matchStatus": _g(r, "matchStatus", 10),
+                    },
+                    new_lat=_g(r, "latitude", 4),
+                    new_lng=_g(r, "longitude", 5),
+                    new_source=_g(r, "coordSource", 9),
+                    candidate_source="previous",
+                    actor_user_id=actor_user_id,
+                )
+                mysql.connection.commit()
+                return True, None
+
+            if address_context_id is None or candidate_history_id is None:
+                return False, "No current imported location candidate is available"
+            cur.execute(
+                """SELECT id, newLat, newLng, placeID, score, candidateSource,
+                          newCoordSource, oldLat, oldLng, oldCoordSource,
+                          oldPlaceID, oldPlaceIDKind, oldMatchScore, oldMatchStatus,
+                          oldAddress, newAddress, oldBarangayID, newBarangayID
+                   FROM registry_pin_history
+                   WHERE id=%s AND businessID=%s
+                     AND reviewType='address_reapproval' AND reviewKey=%s
+                     AND outcome='review' AND newLat IS NOT NULL AND newLng IS NOT NULL
+                   LIMIT 1""",
+                (candidate_history_id, business_id, current_key),
+            )
+            candidate = cur.fetchone()
+            if not candidate:
+                return False, "The selected location candidate is stale or unavailable"
+            candidate_lat = _g(candidate, "newLat", 1)
+            candidate_lng = _g(candidate, "newLng", 2)
+            if not _is_within_municipal_bounds(candidate_lat, candidate_lng):
+                return False, "The selected location candidate is outside the municipality"
+            candidate_source = (
+                _g(candidate, "newCoordSource", 6)
+                or _g(candidate, "candidateSource", 5)
+            )
+            if candidate_source not in {"csv", "places", "geocode"}:
+                return False, "The selected location candidate has no valid provenance"
+            candidate_place_id = _g(candidate, "placeID", 3)
+            candidate_score = _g(candidate, "score", 4)
+            old_lat, old_lng = _g(r, "latitude", 4), _g(r, "longitude", 5)
+            place_id_kind = (
+                "poi" if candidate_source == "places" and candidate_place_id
+                else "address" if candidate_source == "geocode" and candidate_place_id
+                else None
+            )
+            cur.execute(
+                """UPDATE official_registry
+                   SET latitude=%s, longitude=%s, placeID=%s, placeIDKind=%s,
+                       matchScore=%s, coordFetchedAt=CASE
+                           WHEN %s IN ('places', 'geocode') THEN NOW()
+                           ELSE coordFetchedAt END,
+                       matchStatus='approved', coordSource=%s, resolveKey=%s
+                   WHERE businessID=%s AND matchStatus='review'
+                     AND businessAddress <=> %s AND barangayID <=> %s""",
+                (candidate_lat, candidate_lng, candidate_place_id, place_id_kind,
+                 candidate_score, candidate_source, candidate_source,
+                 current_key, business_id, _g(r, "businessAddress", 3),
+                 _g(r, "barangayID", 1)),
+            )
+            if cur.rowcount == 0:
+                mysql.connection.rollback()
+                return False, "Business address changed while approving the candidate"
+            from api.registry.reverify import record_location_history
+            old_snapshot = {
+                "latitude": _g(candidate, "oldLat", 7),
+                "longitude": _g(candidate, "oldLng", 8),
+                "coordSource": _g(candidate, "oldCoordSource", 9),
+                "placeID": _g(candidate, "oldPlaceID", 10),
+                "placeIDKind": _g(candidate, "oldPlaceIDKind", 11),
+                "matchScore": _g(candidate, "oldMatchScore", 12),
+                "matchStatus": _g(candidate, "oldMatchStatus", 13),
+                "businessAddress": _g(candidate, "oldAddress", 14),
+                "barangayID": _g(candidate, "oldBarangayID", 16),
+            }
+            record_location_history(
+                cur, business_id, "location_replaced", "address_reapproval",
+                current_key, old_row=old_snapshot, new_lat=candidate_lat,
+                new_lng=candidate_lng, new_source=candidate_source,
+                candidate_source=_g(candidate, "candidateSource", 5),
+                place_id=candidate_place_id, score=candidate_score,
+                actor_user_id=actor_user_id,
+                new_address=_g(candidate, "newAddress", 15),
+                new_barangay_id=_g(candidate, "newBarangayID", 17),
+            )
+            if (
+                old_lat is not None and old_lng is not None
+                and (float(old_lat), float(old_lng))
+                != (float(candidate_lat), float(candidate_lng))
+            ):
+                _update_pin(
+                    cur, _g(r, "barangayID", 1), _g(r, "businessName", 2),
+                    old_lat, old_lng, candidate_lat, candidate_lng,
+                    business_id=business_id,
+                )
+            cur.execute(
+                """UPDATE registry_pin_history
+                   SET outcome='candidate_selected', actorUserID=%s,
+                       decisionAt=NOW()
+                   WHERE id=%s AND businessID=%s AND reviewKey=%s""",
+                (actor_user_id, candidate_history_id, business_id, current_key),
+            )
+            mysql.connection.commit()
+            return True, None
+
+        if pending_location_reapproval and not approve:
+            cur.execute(
+                """SELECT id, placeID FROM registry_pin_history
+                   WHERE id=%s AND businessID=%s
+                     AND reviewType='address_reapproval' AND reviewKey=%s
+                     AND outcome='review'""",
+                (candidate_history_id, business_id, current_key),
+            )
+            candidate = cur.fetchone()
+            if not candidate:
+                return False, "The selected location candidate is stale or unavailable"
+            rejected_place_id = _g(candidate, "placeID", 1)
+            if rejected_place_id:
+                cur.execute(
+                    "INSERT IGNORE INTO registry_rejected_places (businessID, placeID) VALUES (%s, %s)",
+                    (business_id, rejected_place_id),
+                )
+            cur.execute(
+                """UPDATE registry_pin_history
+                   SET outcome='candidate_rejected', actorUserID=%s,
+                       decisionAt=NOW()
+                   WHERE id=%s AND businessID=%s AND reviewKey=%s""",
+                (actor_user_id, candidate_history_id, business_id, current_key),
+            )
+            mysql.connection.commit()
+            return True, None
+
         cur.execute(
             """SELECT id AS reviewHistoryID, newLat, newLng, placeID, score
                FROM registry_pin_history
                WHERE businessID=%s AND outcome='review'
+                 AND (reviewType='reverify' OR reviewType IS NULL)
+                 AND (reviewKey=%s OR reviewKey IS NULL)
                ORDER BY id DESC LIMIT 1""",
-            (business_id,),
+            (business_id, current_key),
         )
         proposal = cur.fetchone()
         proposal_id = (
@@ -989,34 +1437,54 @@ def decide_review(business_id, approve):
                     """UPDATE official_registry
                        SET latitude=%s, longitude=%s, placeID=%s, placeIDKind='poi',
                            matchScore=%s, coordFetchedAt=NOW(),
-                           matchStatus='approved', coordSource='manual'
+                           matchStatus='approved', coordSource='manual', resolveKey=%s
                        WHERE businessID=%s AND matchStatus='review'""",
                     (proposal_lat, proposal_lng, proposal_place_id,
-                     proposal_score, business_id),
+                     proposal_score, current_key, business_id),
                 )
                 _update_pin(
                     cur,
-                    _g(r, "barangayID", 0),
-                    _g(r, "businessName", 1),
-                    _g(r, "latitude", 2),
-                    _g(r, "longitude", 3),
+                    _g(r, "barangayID", 1),
+                    _g(r, "businessName", 2),
+                    _g(r, "latitude", 4),
+                    _g(r, "longitude", 5),
                     proposal_lat,
                     proposal_lng,
                     business_id=business_id,
                 )
                 cur.execute(
-                    "UPDATE registry_pin_history SET outcome='review_approved' WHERE id=%s",
-                    (proposal_id,),
+                    """UPDATE registry_pin_history
+                       SET outcome='review_approved', actorUserID=%s,
+                           decisionAt=NOW()
+                       WHERE id=%s""",
+                    (actor_user_id, proposal_id),
                 )
             else:
                 cur.execute(
-                    "UPDATE official_registry SET matchStatus='approved', coordSource='manual' WHERE businessID=%s",
-                    (business_id,),
+                    """UPDATE official_registry
+                       SET matchStatus='approved', coordSource='manual', resolveKey=%s
+                       WHERE businessID=%s""",
+                    (current_key, business_id),
                 )
         else:
             pid = proposal_place_id if has_reverify_proposal else _g(
-                r, "placeID", 4)
-            if pid:
+                r, "placeID", 6)
+            existing_coord_source = (
+                (r.get("coordSource") if isinstance(r, dict)
+                 else (r[9] if len(r) > 9 else ""))
+                or ""
+            ).strip().lower()
+            existing_match_status = (
+                (r.get("matchStatus") if isinstance(r, dict)
+                 else (r[10] if len(r) > 10 else ""))
+                or ""
+            ).strip().lower()
+            retained_pin_reapproval = (
+                not has_reverify_proposal
+                and existing_coord_source in {"manual", "places", "geocode", "csv"}
+                and existing_match_status == "review"
+            )
+            if pid and not retained_pin_reapproval:
                 cur.execute(
                     "INSERT IGNORE INTO registry_rejected_places (businessID, placeID) VALUES (%s, %s)",
                     (business_id, pid)
@@ -1030,9 +1498,11 @@ def decide_review(business_id, approve):
                     "UPDATE registry_pin_history SET outcome='review_rejected' WHERE id=%s",
                     (proposal_id,),
                 )
+            elif retained_pin_reapproval:
+                return False, "Use a location choice to complete this address re-approval"
             else:
-                _update_pin(cur, _g(r, "barangayID", 0), _g(r, "businessName", 1),
-                            _g(r, "latitude", 2), _g(r, "longitude", 3), None, None, business_id=business_id)
+                _update_pin(cur, _g(r, "barangayID", 1), _g(r, "businessName", 2),
+                            _g(r, "latitude", 4), _g(r, "longitude", 5), None, None, business_id=business_id)
                 cur.execute("""UPDATE official_registry SET matchStatus='rejected', latitude=NULL, longitude=NULL,
                                placeID=NULL, placeIDKind=NULL, coordSource=NULL, coordFetchedAt=NULL
                                WHERE businessID=%s""", (business_id,))

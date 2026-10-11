@@ -1,3 +1,4 @@
+from api.registry import service
 import os
 import sys
 import unittest
@@ -9,8 +10,6 @@ import pandas as pd
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.registry import service
 
 
 class RegistryFlagColorTests(unittest.TestCase):
@@ -185,7 +184,8 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
                     "YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'",
                     normalized_sql,
                 )
-                self.assertIn("ir.verificationStatus = 'Verified'", normalized_sql)
+                self.assertIn(
+                    "ir.verificationStatus = 'Verified'", normalized_sql)
                 self.assertIn("ir.inspectionResult = 'Orange'", normalized_sql)
                 for business in businesses:
                     if (
@@ -222,7 +222,8 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
             # Dec 31, 2026: 2026 renewals are still current-year permits.
             self.assertIsNone(service.check_and_expire_old_permits())
             self.assertEqual(
-                [b["applicationStatus"] for b in businesses].count("Expired"), 1
+                [b["applicationStatus"]
+                    for b in businesses].count("Expired"), 1
             )
             self.assertEqual(pins["Orange Shop"], "Orange")
 
@@ -253,6 +254,11 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
 
 
 class RegistryImportHardeningTests(unittest.TestCase):
+
+    def setUp(self):
+        schema_check = patch("api.registry.reverify._ensure_history_table")
+        schema_check.start()
+        self.addCleanup(schema_check.stop)
 
     @staticmethod
     def _fixed_import_date():
@@ -298,17 +304,21 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "mysql", mysql),
             patch.object(service, "date", self._fixed_import_date()),
             patch.object(service.pd, "read_csv", return_value=frame),
-            patch.object(service, "_load_barangay_lookup", return_value={"barangay i": 1}),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"barangay i": 1}),
             patch.object(service, "_resolve_barangay_id", return_value=1),
-            patch.object(service, "_coordinate_pair_within_municipality", return_value=True),
+            patch.object(
+                service, "_coordinate_pair_within_municipality", return_value=True),
             patch.object(service, "is_cancelled", return_value=False),
             patch.object(service.places_resolver, "reset_run_state"),
             patch.object(service.places_resolver, "record_coord_meta"),
-            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
             patch.object(service, "insert_green_flag") as insert_flag,
             patch("api.notifications.hub.publish_to_admins"),
         ):
-            summary, error = service.upload_registry(BytesIO(b"mocked csv"), ".csv")
+            summary, error = service.upload_registry(
+                BytesIO(b"mocked csv"), ".csv")
         insert_call = next(
             call for call in cursor.execute.call_args_list
             if "INSERT IGNORE INTO official_registry" in call.args[0]
@@ -367,7 +377,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
                 self.assertIsNone(error)
                 self.assertEqual(summary["inserted"], 1)
                 self.assertEqual(insert_call.args[1][8], expected_status)
-                self.assertEqual(insert_call.args[1][9], service._parse_renewal_date(renewal_date))
+                self.assertEqual(
+                    insert_call.args[1][9], service._parse_renewal_date(renewal_date))
                 self.assertEqual(flag_color, expected_flag)
 
     def test_initial_import_verified_orange_survives_immediate_expiration(self):
@@ -446,9 +457,11 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "mysql", mysql),
             patch.object(service, "date", self._fixed_import_date()),
             patch.object(service.pd, "read_csv", return_value=frame),
-            patch.object(service, "_load_barangay_lookup", return_value={"barangay i": 1}),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"barangay i": 1}),
             patch.object(service, "_resolve_barangay_id", return_value=1),
-            patch.object(service, "_coordinate_pair_within_municipality", return_value=True),
+            patch.object(
+                service, "_coordinate_pair_within_municipality", return_value=True),
             patch.object(service, "is_cancelled", return_value=False),
             patch.object(service.places_resolver, "reset_run_state"),
             patch.object(
@@ -456,24 +469,28 @@ class RegistryImportHardeningTests(unittest.TestCase):
                 "compute_resolve_key",
                 side_effect=compute_resolve_key,
             ),
-            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
             patch.object(service.places_resolver, "_update_pin"),
             patch.object(service, "_sync_flag_color"),
             patch.object(service, "insert_green_flag"),
             patch("api.notifications.hub.publish_to_admins"),
             resolver as resolve_location,
         ):
-            summary, error = service.sync_registry(BytesIO(b"mocked csv"), ".csv")
+            summary, error = service.sync_registry(
+                BytesIO(b"mocked csv"), ".csv")
         return summary, error, cursor, resolve_location
 
     def test_sync_ten_rows_counts_only_three_business_changes(self):
         existing = [self._existing_sync_record(index) for index in range(10)]
-        frame = pd.DataFrame([self._sync_frame_record(index) for index in range(10)])
+        frame = pd.DataFrame([self._sync_frame_record(index)
+                             for index in range(10)])
         frame.loc[0, "businessName"] = "Changed Business 0"
         frame.loc[1, "lastRenewalDate"] = "2025-01-01"
         frame.loc[2, "applicationStatus"] = "Expired"
 
-        summary, error, cursor, resolve_location = self._run_mocked_sync(frame, existing)
+        summary, error, cursor, resolve_location = self._run_mocked_sync(
+            frame, existing)
 
         self.assertIsNone(error)
         self.assertEqual(summary["inserted"], 0)
@@ -489,9 +506,11 @@ class RegistryImportHardeningTests(unittest.TestCase):
 
     def test_sync_identical_rows_do_not_issue_registry_updates(self):
         existing = [self._existing_sync_record(index) for index in range(10)]
-        frame = pd.DataFrame([self._sync_frame_record(index) for index in range(10)])
+        frame = pd.DataFrame([self._sync_frame_record(index)
+                             for index in range(10)])
 
-        summary, error, cursor, resolve_location = self._run_mocked_sync(frame, existing)
+        summary, error, cursor, resolve_location = self._run_mocked_sync(
+            frame, existing)
 
         self.assertIsNone(error)
         self.assertEqual(summary["updated"], 0)
@@ -654,7 +673,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             frame,
             [existing],
             resolve_result=(
-                None, None, {"reason": "api_error", "api_error": "mocked failure"}
+                None, None, {"reason": "api_error",
+                             "api_error": "mocked failure"}
             ),
         )
 
@@ -700,7 +720,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             if "UPDATE official_registry" in call.args[0]
         ]
         self.assertEqual(len(coordinate_updates), 2)
-        self.assertIn("SET latitude=%s, longitude=%s", coordinate_updates[0].args[0])
+        self.assertIn("SET latitude=%s, longitude=%s",
+                      coordinate_updates[0].args[0])
         self.assertIn("coordSource=%s", coordinate_updates[1].args[0])
         resolve_location.assert_called_once()
 
@@ -804,9 +825,12 @@ class RegistryImportHardeningTests(unittest.TestCase):
             ),
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(service, "is_cancelled", return_value=False),
-            patch.object(places_resolver, "reserve_call", side_effect=reserve_text_search),
-            patch.object(service, "_reserve_geocode_call", side_effect=reserve_geocode),
-            patch.object(places_resolver.quota_settings, "cap", return_value=1000),
+            patch.object(places_resolver, "reserve_call",
+                         side_effect=reserve_text_search),
+            patch.object(service, "_reserve_geocode_call",
+                         side_effect=reserve_geocode),
+            patch.object(places_resolver.quota_settings,
+                         "cap", return_value=1000),
             patch.object(
                 places_resolver, "resolve_location",
                 side_effect=safe_resolve_location,
@@ -819,7 +843,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "insert_green_flag"),
             patch("api.notifications.hub.publish_to_admins"),
         ):
-            summary, error = service.upload_registry(BytesIO(b"mocked xlsx"), ".xlsx")
+            summary, error = service.upload_registry(
+                BytesIO(b"mocked xlsx"), ".xlsx")
 
         self.assertIsNone(error)
         self.assertEqual(summary["total_rows"], 600)
@@ -837,10 +862,12 @@ class RegistryImportHardeningTests(unittest.TestCase):
             if "INSERT IGNORE INTO official_registry" in call.args[0]
         ]
         self.assertEqual(len(insert_calls), 600)
-        self.assertTrue(all(call.args[1][6:8] == (13.9667, 121.1167) for call in insert_calls))
+        self.assertTrue(all(call.args[1][6:8] == (
+            13.9667, 121.1167) for call in insert_calls))
 
     def test_coordinate_pair_requires_finite_in_range_values(self):
-        self.assertEqual(service._parse_coordinate_pair("13.96", "121.11"), (13.96, 121.11))
+        self.assertEqual(service._parse_coordinate_pair(
+            "13.96", "121.11"), (13.96, 121.11))
         self.assertIsNone(service._parse_coordinate_pair("91", "121.11"))
         self.assertIsNone(service._parse_coordinate_pair("13.96", "inf"))
         self.assertIsNone(service._parse_coordinate_pair("13.96", None))
@@ -877,11 +904,13 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "mysql", mysql),
             patch.object(service, "GOOGLE_MAPS_API_KEY", None),
             patch.object(service.pd, "read_csv", return_value=frame),
-            patch.object(service, "_load_barangay_lookup", return_value={"barangay i": 1}),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"barangay i": 1}),
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(service, "is_cancelled", return_value=False),
             patch.object(service.places_resolver, "reset_run_state"),
-            patch.object(service.places_resolver, "compute_resolve_key", return_value="key"),
+            patch.object(service.places_resolver,
+                         "compute_resolve_key", return_value="key"),
             patch.object(
                 service,
                 "_resolve_location",
@@ -890,7 +919,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
                     {"reason": "skipped_quota", "budget_exhausted": True},
                 ),
             ) as resolve_location,
-            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
             patch.object(service, "insert_green_flag") as insert_flag,
             patch("api.notifications.hub.publish_to_admins"),
         ):
@@ -900,7 +930,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertEqual(summary["inserted"], 1)
         self.assertEqual(summary["skipped_quota"], 1)
         self.assertEqual(summary["coordinates_out_of_bounds"], 1)
-        self.assertIn("outside the Mataasnakahoy boundary", summary["errors"][0])
+        self.assertIn("outside the Mataasnakahoy boundary",
+                      summary["errors"][0])
         resolve_location.assert_called_once()
         insert_flag.assert_not_called()
         insert_call = next(
@@ -936,13 +967,16 @@ class RegistryImportHardeningTests(unittest.TestCase):
         with (
             patch.object(service, "mysql", mysql),
             patch.object(service.pd, "read_csv", return_value=frame),
-            patch.object(service, "_load_barangay_lookup", return_value={"barangay i": 1}),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"barangay i": 1}),
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(service, "is_cancelled", return_value=False),
             patch.object(service.places_resolver, "reset_run_state"),
-            patch.object(service.places_resolver, "compute_resolve_key", return_value="key"),
+            patch.object(service.places_resolver,
+                         "compute_resolve_key", return_value="key"),
             patch.object(service.places_resolver, "record_coord_meta"),
-            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
             patch.object(service, "insert_green_flag"),
             patch("api.notifications.hub.publish_to_admins"),
         ):
@@ -967,18 +1001,145 @@ class RegistryImportHardeningTests(unittest.TestCase):
             {"reason": "monthly_quota_exceeded"},
         ):
             with self.subTest(meta=meta):
-                self.assertIsNone(service._resolution_key_for_cache("new-key", meta))
+                self.assertIsNone(
+                    service._resolution_key_for_cache("new-key", meta))
         self.assertEqual(
-            service._resolution_key_for_cache("new-key", {"reason": "no_text_results"}),
+            service._resolution_key_for_cache(
+                "new-key", {"reason": "no_text_results"}),
             "new-key",
         )
 
     def test_import_preserves_authoritative_manual_and_csv_coordinates(self):
-        self.assertTrue(service._preserve_import_coordinates("manual", "auto", True))
-        self.assertTrue(service._preserve_import_coordinates("places", "approved", True))
-        self.assertTrue(service._preserve_import_coordinates("csv", "auto", False))
-        self.assertFalse(service._preserve_import_coordinates("csv", "auto", True))
-        self.assertFalse(service._preserve_import_coordinates("geocode", "auto", False))
+        self.assertTrue(service._preserve_import_coordinates(
+            "manual", "auto", True))
+        self.assertTrue(service._preserve_import_coordinates(
+            "places", "approved", True))
+        self.assertTrue(
+            service._preserve_import_coordinates("csv", "auto", False))
+        self.assertFalse(
+            service._preserve_import_coordinates("csv", "auto", True))
+        self.assertFalse(service._preserve_import_coordinates(
+            "geocode", "auto", False))
+
+    def test_sync_marks_changed_approved_pin_for_reapproval_without_cache_write(self):
+        existing = {
+            "businessID": "BIZ-REAPPROVE",
+            "barangayID": 1,
+            "businessName": "Approved Shop",
+            "businessAddress": "Old Street",
+            "latitude": 13.96,
+            "longitude": 121.11,
+            "coordSource": "manual",
+            "matchStatus": "approved",
+            "resolveKey": "old-resolve-key",
+        }
+        cursor = MagicMock()
+        cursor.fetchone.return_value = existing
+        cursor.rowcount = 1
+        mysql = MagicMock()
+        mysql.connection.cursor.return_value = cursor
+
+        frame = pd.DataFrame([{
+            "Business ID": "BIZ-REAPPROVE",
+            "businessName": "Approved Shop",
+            "businessAddress": "New Street",
+            "barangay": "Barangay I",
+            "latitude": "13.9700",
+            "longitude": "121.1200",
+            "lineOfBusiness": "Retail",
+            "applicationStatus": "Active",
+        }])
+        with (
+            patch.object(service, "mysql", mysql),
+            patch.object(service.pd, "read_csv", return_value=frame),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"Barangay I": 1}),
+            patch.object(service, "_resolve_barangay_id", return_value=1),
+            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(service.places_resolver, "reset_run_state"),
+            patch.object(service.places_resolver,
+                         "compute_resolve_key", return_value="new-key"),
+            patch.object(service, "_resolve_location", return_value=(None, None, {"reason": "no_text_results"})) as resolve_location,
+            patch.object(service.places_resolver, "record_coord_meta"),
+            patch.object(service.places_resolver, "get_places_call_usage", return_value={
+                "text_search": {"day": 1, "month": 1},
+                "details": {"day": 0, "month": 0},
+                "geocoding": {"day": 0, "month": 0},
+            }),
+            patch.object(service.places_resolver, "_update_pin"),
+            patch.object(service, "_sync_flag_color"),
+            patch.object(service, "insert_green_flag"),
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.sync_registry(BytesIO(b"csv"), ".csv")
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["updated"], 1)
+        resolve_location.assert_not_called()
+        pending_update = next(
+            call for call in cursor.execute.call_args_list
+            if "UPDATE official_registry SET" in call.args[0]
+            and "businessAddress = %s" in call.args[0]
+        )
+        self.assertIn("matchStatus = %s", pending_update.args[0])
+        self.assertIn("review", pending_update.args[1])
+        self.assertEqual(pending_update.args[1][5:7], (13.96, 121.11))
+        self.assertIn(None, pending_update.args[1])
+        candidate_history = next(
+            call for call in cursor.execute.call_args_list
+            if "INSERT INTO registry_pin_history" in call.args[0]
+        )
+        self.assertEqual(candidate_history.args[1][1], "review")
+        self.assertEqual(candidate_history.args[1][2:6],
+                         (13.96, 121.11, 13.97, 121.12))
+        self.assertIn("address_reapproval", candidate_history.args[1])
+        self.assertIn("csv", candidate_history.args[1])
+
+    def test_sync_changed_barangay_preserves_pin_and_requests_reapproval(self):
+        existing = self._existing_sync_record(1)
+        existing.update({
+            "barangayID": 2,
+            "coordSource": "places",
+            "matchStatus": "approved",
+        })
+        summary, error, cursor, resolve_location = self._run_mocked_sync(
+            pd.DataFrame([self._sync_frame_record(1)]), [existing]
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["updated"], 1)
+        resolve_location.assert_not_called()
+        pending_update = next(
+            call for call in cursor.execute.call_args_list
+            if "UPDATE official_registry SET" in call.args[0]
+            and "matchStatus = %s" in call.args[0]
+        )
+        self.assertIn("review", pending_update.args[1])
+        self.assertEqual(pending_update.args[1][5:7], (13.9667, 121.1167))
+
+    def test_reimport_identical_pending_review_does_not_update_or_resolve(self):
+        existing = self._existing_sync_record(1)
+        existing.update({
+            "coordSource": "manual",
+            "matchStatus": "review",
+            "resolveKey": "same-location-key",
+        })
+        summary, error, cursor, resolve_location = self._run_mocked_sync(
+            pd.DataFrame([self._sync_frame_record(1)]), [existing]
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["unchanged"], 1)
+        self.assertEqual(summary["updated"], 0)
+        self.assertFalse(any(
+            "UPDATE official_registry SET" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        self.assertFalse(any(
+            "INSERT INTO registry_pin_history" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        resolve_location.assert_not_called()
 
     def test_legacy_geocode_http_error_is_not_reported_as_no_match(self):
         response = MagicMock(status_code=503, text="upstream unavailable")
@@ -988,7 +1149,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "_reserve_geocode_call", return_value=True),
             patch.object(service.http, "get", return_value=response),
         ):
-            self.assertEqual(service._geocode("Main Street", "Barangay I"), (None, None))
+            self.assertEqual(service._geocode(
+                "Main Street", "Barangay I"), (None, None))
 
         self.assertEqual(service._geocode_state.outcome, "api_error")
         response.json.assert_not_called()
@@ -996,8 +1158,10 @@ class RegistryImportHardeningTests(unittest.TestCase):
     def test_legacy_name_only_geocode_has_geocode_provenance_and_one_request(self):
         service._geocode_state.outcome = None
         with (
-            patch.object(service.places_resolver, "enabled", return_value=False),
-            patch.object(service.places_resolver, "compute_resolve_key", return_value="resolve-key"),
+            patch.object(service.places_resolver,
+                         "enabled", return_value=False),
+            patch.object(service.places_resolver,
+                         "compute_resolve_key", return_value="resolve-key"),
             patch.object(service, "_geocode", return_value=(13.96, 121.11)) as geocode,
         ):
             result = service._resolve_location(
@@ -1040,18 +1204,22 @@ class RegistryImportHardeningTests(unittest.TestCase):
         with (
             patch.object(service, "mysql", mysql),
             patch.object(service.pd, "read_csv", return_value=frame),
-            patch.object(service, "_load_barangay_lookup", return_value={"Barangay I": 1}),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"Barangay I": 1}),
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(service, "is_cancelled", return_value=False),
             patch.object(service.places_resolver, "reset_run_state"),
-            patch.object(service.places_resolver, "compute_resolve_key", return_value="new-key"),
+            patch.object(service.places_resolver,
+                         "compute_resolve_key", return_value="new-key"),
             patch.object(
                 service,
                 "_resolve_location",
-                return_value=(None, None, {"reason": "api_error", "api_error": "HTTP 503"}),
+                return_value=(
+                    None, None, {"reason": "api_error", "api_error": "HTTP 503"}),
             ) as resolve_location,
             patch.object(service.places_resolver, "record_coord_meta") as record_coord_meta,
-            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
             patch.object(service.places_resolver, "_update_pin") as update_pin,
             patch.object(service, "_sync_flag_color") as sync_flag,
             patch.object(service, "insert_green_flag") as insert_flag,
@@ -1072,7 +1240,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             call for call in cursor.execute.call_args_list
             if "UPDATE official_registry SET" in call.args[0]
         )
-        self.assertIn("resolveKey = COALESCE(%s, resolveKey)", update_call.args[0])
+        self.assertIn("resolveKey = COALESCE(%s, resolveKey)",
+                      update_call.args[0])
         self.assertEqual(update_call.args[1][5:7], (13.96, 121.11))
         self.assertIsNone(update_call.args[1][11])
 
@@ -1106,11 +1275,13 @@ class RegistryImportHardeningTests(unittest.TestCase):
         with (
             patch.object(service, "mysql", mysql),
             patch.object(service.pd, "read_csv", return_value=frame),
-            patch.object(service, "_load_barangay_lookup", return_value={"Barangay I": 1}),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"Barangay I": 1}),
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(service, "is_cancelled", return_value=False),
             patch.object(service.places_resolver, "reset_run_state"),
-            patch.object(service.places_resolver, "compute_resolve_key", return_value="new-key"),
+            patch.object(service.places_resolver,
+                         "compute_resolve_key", return_value="new-key"),
             patch.object(
                 service,
                 "_resolve_location",
@@ -1128,7 +1299,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             ),
             patch.object(service.places_resolver, "record_coord_meta"),
             patch.object(service.places_resolver, "_update_pin") as update_pin,
-            patch.object(service.places_resolver, "get_places_call_usage", return_value=usage),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
             patch.object(service, "_sync_flag_color"),
             patch("api.notifications.hub.publish_to_admins"),
         ):

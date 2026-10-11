@@ -134,7 +134,8 @@ def reconcile_flags_route():
         from api.registry.audit import ensure_registry_workflow_events
         ensure_registry_workflow_events()
         cursor = mysql.connection.cursor()
-        cursor.execute("SELECT COALESCE(MAX(eventID), 0) AS last_event_id FROM registry_workflow_events")
+        cursor.execute(
+            "SELECT COALESCE(MAX(eventID), 0) AS last_event_id FROM registry_workflow_events")
         event_row = cursor.fetchone()
         last_event_id = (
             event_row.get("last_event_id")
@@ -268,7 +269,13 @@ def change_flag_location_route(log_id):
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid coordinates"}), 400
 
-    success, error = update_flag_location(log_id, lat, lng)
+    identity = get_jwt_identity()
+    try:
+        actor_user_id = int(identity) if identity is not None else None
+    except (TypeError, ValueError):
+        actor_user_id = None
+    success, error = update_flag_location(
+        log_id, lat, lng, actor_user_id=actor_user_id)
     if not success:
         return jsonify({"error": error}), 400
     return jsonify({"message": f"Flag #{log_id} location updated successfully"}), 200

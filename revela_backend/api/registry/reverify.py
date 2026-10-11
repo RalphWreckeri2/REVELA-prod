@@ -30,6 +30,11 @@ import threading
 import traceback
 from collections import Counter
 
+from api.registry.history_schema import (
+    REQUIRED_HISTORY_COLUMNS,
+    validate_history_columns,
+)
+
 # businesses on one point (to ~1 m) before it counts as a stack
 STACK_MIN = 3
 SKIP_RECENT_DAYS = 30       # do not re-check a business attempted within this many days
@@ -165,46 +170,88 @@ def plan_outcome(old, new, meta, conflict=False, barangay_ok=True):
 # ----------------------------------------------------------------------------
 # Database helpers
 # ----------------------------------------------------------------------------
-_HISTORY_DDL = """
-CREATE TABLE IF NOT EXISTS registry_pin_history (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  businessID VARCHAR(50) COLLATE utf8mb4_unicode_ci NOT NULL,
-  attemptedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  outcome VARCHAR(20) NOT NULL,
-  reason VARCHAR(30) NULL,
-  stackSize INT NULL,
-  oldLat DECIMAL(10,8) NULL, oldLng DECIMAL(11,8) NULL,
-  newLat DECIMAL(10,8) NULL, newLng DECIMAL(11,8) NULL,
-  placeID VARCHAR(255) COLLATE utf8mb4_unicode_ci NULL,
-  score DECIMAL(4,3) NULL,
-  failReason VARCHAR(30) NULL,
-  bestName VARCHAR(120) NULL,
-  bestScore DECIMAL(4,3) NULL,
-  KEY idx_pinhist_business (businessID, attemptedAt)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-"""
-_EXTRA_COLUMNS = (
-    ("failReason", "VARCHAR(30) NULL"),
-    ("bestName", "VARCHAR(120) NULL"),
-    ("bestScore", "DECIMAL(4,3) NULL"),
-)
+_REQUIRED_HISTORY_COLUMNS = REQUIRED_HISTORY_COLUMNS
+_HISTORY_SCHEMA_CACHE = {}
+_HISTORY_SCHEMA_CACHE_LOCK = threading.Lock()
 
 
 def _ensure_history_table(cur):
-    cur.execute(_HISTORY_DDL)
-    # A table created by an earlier version lacks the diagnostic columns: add them.
-    cur.execute(
-        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
-        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'registry_pin_history'"
-    )
-    have = set()
-    for r in cur.fetchall():
-        have.add((r.get("COLUMN_NAME") or r.get("column_name"))
-                 if isinstance(r, dict) else r[0])
-    for col, ddl in _EXTRA_COLUMNS:
-        if col not in have:
+    connection = getattr(cur, "connection", None)
+    database = getattr(connection, "db", None) or getattr(
+        connection, "database", None)
+    if isinstance(database, bytes):
+        database = database.decode(errors="replace")
+    cache_key = str(database) if database else ("connection", id(connection))
+
+    with _HISTORY_SCHEMA_CACHE_LOCK:
+        missing = _HISTORY_SCHEMA_CACHE.get(cache_key)
+        if missing is None:
             cur.execute(
-                f"ALTER TABLE registry_pin_history ADD COLUMN {col} {ddl}")
+                "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, "
+                "COLUMN_DEFAULT, EXTRA FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() "
+                "AND TABLE_NAME = 'registry_pin_history'"
+            )
+            _missing, errors = validate_history_columns(
+                cur.fetchall(), allow_missing_additions=False)
+            missing = tuple(errors)
+            _HISTORY_SCHEMA_CACHE[cache_key] = missing
+
+    if missing:
+        schema_errors = "; ".join(missing)
+        raise RuntimeError(
+            "Database migration is required or registry_pin_history has an "
+            f"incompatible schema: {schema_errors}. Apply "
+            "the guarded runner at "
+            "revela_backend/scripts/migrate_registry_pin_history.py "
+            "with explicit approval, then restart the application."
+        )
+
+
+def record_location_history(
+    cur,
+    business_id,
+    outcome,
+    review_type,
+    review_key,
+    old_row=None,
+    new_lat=None,
+    new_lng=None,
+    new_source=None,
+    candidate_source=None,
+    place_id=None,
+    score=None,
+    actor_user_id=None,
+    new_address=None,
+    new_barangay_id=None,
+):
+    """Persist a location review/correction with its address and provenance context."""
+    old = old_row or {}
+    cur.execute(
+        """INSERT INTO registry_pin_history
+           (businessID, outcome, oldLat, oldLng, newLat, newLng, placeID, score,
+            reviewType, reviewKey, candidateSource, oldCoordSource, newCoordSource,
+            oldPlaceID, oldPlaceIDKind, oldMatchScore, oldMatchStatus,
+                 oldAddress, newAddress, oldBarangayID, newBarangayID, actorUserID,
+                 decisionAt)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                     %s, %s, %s, %s, %s, %s, %s, %s,
+                     CASE WHEN %s = 'review' THEN NULL ELSE NOW() END)""",
+        (
+            business_id, outcome, old.get("latitude"), old.get("longitude"),
+            new_lat, new_lng, place_id, score, review_type, review_key,
+            candidate_source, old.get("coordSource"), new_source,
+            old.get("placeID"), old.get("placeIDKind"), old.get("matchScore"),
+            old.get("matchStatus"), old.get("businessAddress"),
+            new_address if new_address is not None else old.get(
+                "businessAddress"),
+            old.get("barangayID"),
+            new_barangay_id if new_barangay_id is not None else old.get(
+                "barangayID"),
+            actor_user_id, outcome,
+        ),
+    )
+    return cur.lastrowid
 
 
 def _load_rows(cur):
@@ -307,14 +354,24 @@ def _log_attempt(cur, biz, outcome, new=None, place_id=None, score=None, meta=No
     cur.execute(
         """INSERT INTO registry_pin_history
            (businessID, outcome, reason, stackSize, oldLat, oldLng, newLat, newLng, placeID, score,
-            failReason, bestName, bestScore)
-           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                failReason, bestName, bestScore, reviewType, reviewKey, candidateSource,
+                oldCoordSource, newCoordSource, oldPlaceID, oldPlaceIDKind, oldMatchScore,
+                oldMatchStatus, oldAddress, newAddress, oldBarangayID, newBarangayID)
+              VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         (biz["businessID"], outcome, biz.get("reason"), biz.get("stackSize"),
          biz.get("latitude"), biz.get("longitude"),
          new[0] if new else None, new[1] if new else None, place_id, score,
          meta.get("reason") if outcome == "unresolved" else None,
          best_name[:120] if best_name else None,
-         meta.get("best_score") if outcome == "unresolved" else None),
+            meta.get("best_score") if outcome == "unresolved" else None,
+            "reverify", meta.get("resolve_key"), meta.get("coord_source"),
+            biz.get("coordSource"), meta.get(
+                "coord_source"), biz.get("placeID"),
+            biz.get("placeIDKind"), biz.get(
+                "matchScore"), biz.get("matchStatus"),
+            biz.get("businessAddress"), biz.get("businessAddress"),
+            biz.get("barangayID"), biz.get("barangayID")),
     )
 
 

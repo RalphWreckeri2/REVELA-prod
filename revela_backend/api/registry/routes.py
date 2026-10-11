@@ -4,6 +4,7 @@ import threading
 from datetime import date, datetime
 from decimal import Decimal
 from flask import Blueprint, request, jsonify, current_app
+from flask_jwt_extended import get_jwt_identity
 from app import mysql
 from api.registry.service import (
     upload_registry,
@@ -30,7 +31,8 @@ def _workflow_summary_rows(event_type):
             WHERE e.eventType = %s
         """, (event_type,))
         count_row = cur.fetchone()
-        total = int(count_row.get("total") if isinstance(count_row, dict) else count_row[0])
+        total = int(count_row.get("total") if isinstance(
+            count_row, dict) else count_row[0])
         cur.execute("""
             SELECT e.businessID, r.businessName, r.businessAddress,
                    e.resultStatus, e.placeID, e.latitude, e.longitude,
@@ -64,7 +66,8 @@ def _reverification_summary():
             FROM registry_pin_history
         """)
         count_row = cur.fetchone()
-        total = int(count_row.get("total") if isinstance(count_row, dict) else count_row[0])
+        total = int(count_row.get("total") if isinstance(
+            count_row, dict) else count_row[0])
         cur.execute("""
             SELECT h.businessID, r.businessName, r.businessAddress,
                    h.outcome AS resultStatus, h.reason, h.failReason,
@@ -155,7 +158,8 @@ def workflow_summary():
             "recordLimit": 100,
         }), 200
     except Exception:
-        current_app.logger.exception("Failed to load registry workflow summary")
+        current_app.logger.exception(
+            "Failed to load registry workflow summary")
         return jsonify({"error": "Failed to load workflow summary"}), 500
 
 
@@ -411,6 +415,25 @@ def review_queue():
     return jsonify(result), 200
 
 
+def _review_error_status(error):
+    if error and error.startswith("Not found"):
+        return 404
+    if error and any(
+        fragment in error.lower()
+        for fragment in (
+            "location re-approval",
+            "location choice",
+            "location candidate",
+            "imported location candidate",
+            "candidate is stale",
+            "previously approved coordinates",
+            "business address changed",
+        )
+    ):
+        return 400
+    return 500
+
+
 # ── POST /api/registry/review/accept ──────────────────────────────────────────
 @registry_bp.route("/review/accept", methods=["POST"])
 @admin_required()
@@ -420,9 +443,10 @@ def review_accept():
     business_id = data.get("businessID") or data.get("business_id")
     if not business_id:
         return jsonify({"error": "businessID is required"}), 400
-    ok, error = places_resolver.decide_review(business_id, approve=True)
+    ok, error = places_resolver.decide_review(
+        business_id, approve=True, actor_user_id=_review_actor_id())
     if not ok:
-        return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
+        return jsonify({"error": error}), _review_error_status(error)
     return jsonify({"message": "Pin approved", "businessID": business_id, "matchStatus": "approved"}), 200
 
 
@@ -435,10 +459,64 @@ def review_reject():
     business_id = data.get("businessID") or data.get("business_id")
     if not business_id:
         return jsonify({"error": "businessID is required"}), 400
-    ok, error = places_resolver.decide_review(business_id, approve=False)
+    candidate_history_id = data.get("candidateHistoryID")
+    ok, error = places_resolver.decide_review(
+        business_id,
+        approve=False,
+        candidate_history_id=candidate_history_id,
+        actor_user_id=_review_actor_id(),
+    )
     if not ok:
-        return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
-    return jsonify({"message": "Pin rejected and candidate place discarded", "businessID": business_id, "matchStatus": "rejected"}), 200
+        return jsonify({"error": error}), _review_error_status(error)
+    return jsonify({
+        "message": "Location candidate rejected; the retained pin remains pending review",
+        "businessID": business_id,
+        "matchStatus": "review" if candidate_history_id else "rejected",
+    }), 200
+
+
+def _review_actor_id():
+    try:
+        identity = get_jwt_identity()
+        return int(identity) if identity is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+@registry_bp.route("/review/decision", methods=["POST"])
+@admin_required()
+def review_location_decision():
+    data = request.get_json(silent=True) or {}
+    business_id = data.get("businessID") or data.get("business_id")
+    location_choice = data.get("locationChoice")
+    if not business_id:
+        return jsonify({"error": "businessID is required"}), 400
+    if location_choice not in ("previous", "imported"):
+        return jsonify({"error": "locationChoice must be 'previous' or 'imported'"}), 400
+    ok, error = places_resolver.decide_review(
+        business_id,
+        approve=True,
+        location_choice=location_choice,
+        candidate_history_id=data.get("candidateHistoryID"),
+        actor_user_id=_review_actor_id(),
+    )
+    if not ok:
+        return jsonify({"error": error}), _review_error_status(error)
+    return jsonify({
+        "message": "Location approved",
+        "businessID": business_id,
+        "locationChoice": location_choice,
+        "matchStatus": "approved",
+    }), 200
+
+
+@registry_bp.route("/review/<path:business_id>/resolve", methods=["POST"])
+@admin_required()
+def resolve_review_location_candidate(business_id):
+    candidate, error = places_resolver.resolve_review_candidate(business_id)
+    if error:
+        return jsonify({"error": error}), 409 if "changed" in error else 400
+    return jsonify(candidate), 200
 
 
 # ── POST /api/registry/<id>/review  body: {"action": "approve" | "reject"} ────
@@ -452,7 +530,7 @@ def review_decide(business_id):
     ok, error = places_resolver.decide_review(
         business_id, approve=(action == "approve"))
     if not ok:
-        return jsonify({"error": error}), 404 if error and error.startswith("Not found") else 500
+        return jsonify({"error": error}), _review_error_status(error)
     return jsonify({"message": f"Pin {action}d"}), 200
 
 

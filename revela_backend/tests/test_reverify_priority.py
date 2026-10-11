@@ -7,6 +7,10 @@ from api.registry.reverify import prioritize_candidates
 
 class ReverifyPriorityTests(unittest.TestCase):
 
+    def setUp(self):
+        places_resolver.reset_run_state()
+        places_resolver._last_places_request_at = 0
+
     def test_prefers_unchecked_businesses_already_linked_to_google_poi(self):
         suspects = [
             {"businessID": "stacked", "stackSize": 20},
@@ -33,7 +37,8 @@ class ReverifyPriorityTests(unittest.TestCase):
         business = {"businessID": "BIZ-1"}
 
         self.assertEqual(
-            reverify._record_review_candidate(cursor, business, {"score": 0.68}),
+            reverify._record_review_candidate(
+                cursor, business, {"score": 0.68}),
             1,
         )
         sql, params = cursor.execute.call_args.args

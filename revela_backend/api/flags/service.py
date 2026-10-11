@@ -2474,7 +2474,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         for entry in registry:
             place_id_value = entry.get("placeID")
             if place_id_value:
-                registry_by_place_id.setdefault(place_id_value, []).append(entry)
+                registry_by_place_id.setdefault(
+                    place_id_value, []).append(entry)
         registry_match_index = _RegistryMatchIndex(registry)
         lookup_cursor = mysql.connection.cursor()
         try:
@@ -3321,7 +3322,7 @@ def update_flag_color(log_id, color):
         return False, str(e)
 
 
-def update_flag_location(log_id: int, lat: float, lng: float):
+def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None):
     """
     Update coordinates of a flag manually (e.g. via drag-and-drop on the map).
     Handles both:
@@ -3336,6 +3337,42 @@ def update_flag_location(log_id: int, lat: float, lng: float):
         if log_id < 0:
             # Virtual flag from official_registry (businessID = -log_id)
             biz_id = -log_id
+            cursor.execute(
+                """SELECT businessID, businessName, businessAddress, barangayID,
+                          latitude, longitude, coordSource, placeID, placeIDKind,
+                          matchScore, matchStatus, resolveKey
+                   FROM official_registry WHERE businessID=%s""",
+                (biz_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                return False, "Business not found"
+            old_lat, old_lng = row.get("latitude"), row.get("longitude")
+            final_barangay_id = new_barangay_id or row.get("barangayID")
+            from api.registry.places_resolver import compute_resolve_key
+            resolve_key = compute_resolve_key(
+                row.get("businessName"), row.get("businessAddress"),
+                final_barangay_id,
+            )
+            coordinates_changed = (
+                old_lat is None or old_lng is None
+                or (float(old_lat), float(old_lng)) != (float(lat), float(lng))
+            )
+            if coordinates_changed:
+                from api.registry.reverify import (
+                    _ensure_history_table,
+                    record_location_history,
+                )
+                _ensure_history_table(cursor)
+                record_location_history(
+                    cursor, biz_id, "manual_corrected", "manual_correction",
+                    resolve_key, old_row=row, new_lat=lat, new_lng=lng,
+                    new_source="manual", candidate_source="manual",
+                    new_address=row.get("businessAddress"),
+                    new_barangay_id=final_barangay_id,
+                    actor_user_id=actor_user_id,
+                )
             cursor.execute("""
                 UPDATE official_registry
                 SET latitude = %s,
@@ -3345,9 +3382,10 @@ def update_flag_location(log_id: int, lat: float, lng: float):
                     matchStatus = 'approved',
                     coordFetchedAt = NOW(),
                     placeID = NULL,
-                    placeIDKind = NULL
+                    placeIDKind = NULL,
+                    resolveKey = %s
                 WHERE businessID = %s
-            """, (lat, lng, new_barangay_id, biz_id))
+            """, (lat, lng, new_barangay_id, resolve_key, biz_id))
             mysql.connection.commit()
             cursor.close()
 
@@ -3407,6 +3445,44 @@ def update_flag_location(log_id: int, lat: float, lng: float):
                 target_biz_id = reg_match["businessID"]
 
         if target_biz_id:
+            cursor.execute(
+                """SELECT businessID, businessName, businessAddress, barangayID,
+                          latitude, longitude, coordSource, placeID, placeIDKind,
+                          matchScore, matchStatus
+                   FROM official_registry WHERE businessID=%s""",
+                (target_biz_id,),
+            )
+            registry_row = cursor.fetchone()
+            if registry_row:
+                final_barangay_id = new_barangay_id or registry_row.get(
+                    "barangayID")
+                from api.registry.places_resolver import compute_resolve_key
+                resolve_key = compute_resolve_key(
+                    registry_row.get("businessName"),
+                    registry_row.get("businessAddress"),
+                    final_barangay_id,
+                )
+                old_lat = registry_row.get("latitude")
+                old_lng = registry_row.get("longitude")
+                coordinates_changed = (
+                    old_lat is None or old_lng is None
+                    or (float(old_lat), float(old_lng)) != (float(lat), float(lng))
+                )
+                if coordinates_changed:
+                    from api.registry.reverify import (
+                        _ensure_history_table,
+                        record_location_history,
+                    )
+                    _ensure_history_table(cursor)
+                    record_location_history(
+                        cursor, target_biz_id, "manual_corrected",
+                        "manual_correction", resolve_key, old_row=registry_row,
+                        new_lat=lat, new_lng=lng, new_source="manual",
+                        candidate_source="manual",
+                        new_address=registry_row.get("businessAddress"),
+                        new_barangay_id=final_barangay_id,
+                        actor_user_id=actor_user_id,
+                    )
             cursor.execute("""
                 UPDATE official_registry
                 SET latitude = %s,
@@ -3416,9 +3492,10 @@ def update_flag_location(log_id: int, lat: float, lng: float):
                     matchStatus = 'approved',
                     coordFetchedAt = NOW(),
                     placeID = NULL,
-                    placeIDKind = NULL
+                    placeIDKind = NULL,
+                    resolveKey = %s
                 WHERE businessID = %s
-            """, (lat, lng, new_barangay_id, target_biz_id))
+            """, (lat, lng, new_barangay_id, resolve_key, target_biz_id))
 
         mysql.connection.commit()
         cursor.close()
@@ -3436,6 +3513,10 @@ def update_flag_location(log_id: int, lat: float, lng: float):
 
         return True, None
     except Exception as e:
+        try:
+            mysql.connection.rollback()
+        except Exception:
+            pass
         return False, str(e)
 
 

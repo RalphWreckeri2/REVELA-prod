@@ -180,7 +180,7 @@ def _preserve_import_coordinates(coord_source, match_status, has_csv_coords):
     status = (match_status or "").strip().lower()
     return (
         source == "manual"
-        or status == "approved"
+        or status in ("approved", "review")
         or (source == "csv" and not has_csv_coords)
     )
 
@@ -668,7 +668,8 @@ def _sync_barangay_value(value):
 
 def _registry_sync_location_fields_unchanged(existing, name, address, barangay_id):
     return (
-        _sync_upper_value(existing.get("businessName")) == _sync_upper_value(name)
+        _sync_upper_value(existing.get("businessName")
+                          ) == _sync_upper_value(name)
         and _sync_text_value(existing.get("businessAddress")) == _sync_text_value(address)
         and _sync_barangay_value(existing.get("barangayID")) == _sync_barangay_value(barangay_id)
     )
@@ -718,7 +719,8 @@ def _registry_sync_business_fields_changed(existing, incoming):
         ("applicationStatus", _normalise_status, _normalise_status),
         ("lastRenewalDate", _parse_renewal_date, _parse_renewal_date),
         ("businessSize", _sync_upper_value, _sync_upper_value),
-        ("registrationType", _normalise_registration_type, _normalise_registration_type),
+        ("registrationType", _normalise_registration_type,
+         _normalise_registration_type),
     )
     for field, normalize_existing, normalize_incoming in fields:
         stored_value = existing.get(field)
@@ -913,6 +915,8 @@ def upload_registry(file, ext: str):
         # Load all barangays once upfront instead of one DB cursor per row.
         barangay_lookup = _load_barangay_lookup()
         cursor = mysql.connection.cursor()
+        from api.registry.reverify import _ensure_history_table
+        _ensure_history_table(cursor)
 
         for idx, row in df.iterrows():
             if idx % 5 == 0:
@@ -1030,7 +1034,8 @@ def upload_registry(file, ext: str):
 
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
-            status = _effective_import_status(status, renewal_date, import_year)
+            status = _effective_import_status(
+                status, renewal_date, import_year)
 
             addr_key = address_raw
 
@@ -1302,6 +1307,7 @@ def sync_registry(file, ext: str):
                     f"Row {idx + 2}: coordinates are outside the Mataasnakahoy boundary — ignored"
                 )
             csv_has_coords = coordinate_pair is not None
+            imported_candidate_pair = coordinate_pair
             if existing:
                 is_locked = _preserve_import_coordinates(
                     existing_source, existing.get(
@@ -1309,6 +1315,19 @@ def sync_registry(file, ext: str):
                 )
             if coordinate_pair:
                 lat, lng = coordinate_pair
+
+            pending_location_reapproval = bool(
+                existing
+                and (
+                    existing_source == "manual"
+                    or (existing.get("matchStatus") or "").strip().lower() in ("approved", "review")
+                )
+                and (
+                    _sync_text_value(existing.get(
+                        "businessAddress")) != _sync_text_value(address_raw)
+                    or _sync_barangay_value(existing.get("barangayID")) != _sync_barangay_value(barangay_id)
+                )
+            )
 
             if is_locked:
                 # Preserve manual/approved pins and CSV pins without replacement coordinates.
@@ -1381,7 +1400,8 @@ def sync_registry(file, ext: str):
                 row.get("registrationType"))
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
-            status = _effective_import_status(status, renewal_date, import_year)
+            status = _effective_import_status(
+                status, renewal_date, import_year)
 
             btype = _clean_upper(row.get("businessType"))
             lob = _clean_upper(row.get("lineOfBusiness"))
@@ -1406,7 +1426,68 @@ def sync_registry(file, ext: str):
 
             if existing:
                 coord_meta_written = False
-                if is_locked:
+                if pending_location_reapproval:
+                    final_lat = existing.get("latitude")
+                    final_lng = existing.get("longitude")
+                    cursor.execute(
+                        """
+                        UPDATE official_registry SET
+                            barangayID = %s,
+                            businessName = %s,
+                            businessType = %s,
+                            lineOfBusiness = %s,
+                            businessAddress = %s,
+                            latitude = %s,
+                            longitude = %s,
+                            applicationStatus = %s,
+                            lastRenewalDate = %s,
+                            businessSize = %s,
+                            registrationType = COALESCE(%s, registrationType),
+                            coordSource = %s,
+                            matchStatus = %s,
+                            resolveKey = %s
+                        WHERE businessID = %s
+                        """,
+                        (
+                            barangay_id,
+                            name_key,
+                            btype,
+                            lob,
+                            addr,
+                            final_lat,
+                            final_lng,
+                            status,
+                            renewal_date,
+                            bsize,
+                            reg_type,
+                            existing.get("coordSource") or "manual",
+                            "review",
+                            None,
+                            biz_id,
+                        ),
+                    )
+                    from api.registry.reverify import record_location_history
+                    record_location_history(
+                        cursor,
+                        biz_id,
+                        "review",
+                        "address_reapproval",
+                        curr_resolve_key,
+                        old_row=existing,
+                        new_lat=(imported_candidate_pair[0]
+                                 if imported_candidate_pair else None),
+                        new_lng=(imported_candidate_pair[1]
+                                 if imported_candidate_pair else None),
+                        new_source=(
+                            "csv" if imported_candidate_pair else None),
+                        candidate_source=(
+                            "csv" if imported_candidate_pair else None),
+                        new_address=addr,
+                        new_barangay_id=barangay_id,
+                    )
+                    coord_meta_written = True
+                    updated += 1
+                elif is_locked:
                     final_lat = existing.get("latitude")
                     final_lng = existing.get("longitude")
                 else:
@@ -1415,7 +1496,7 @@ def sync_registry(file, ext: str):
                     final_lng = lng if lng is not None else existing.get(
                         "longitude")
 
-                if business_fields_changed and not is_locked and not reused_existing and lat is not None:
+                if not pending_location_reapproval and business_fields_changed and not is_locked and not reused_existing and lat is not None:
                     coord_source_val = geo_meta.get(
                         "coord_source", "csv") if geo_meta else "csv"
                     place_id_val = geo_meta.get(
@@ -1472,7 +1553,7 @@ def sync_registry(file, ext: str):
                         ),
                     )
                     coord_meta_written = True
-                elif business_fields_changed:
+                elif not pending_location_reapproval and business_fields_changed:
                     cursor.execute(
                         """
                         UPDATE official_registry SET
@@ -1507,7 +1588,7 @@ def sync_registry(file, ext: str):
                             biz_id,
                         ),
                     )
-                else:
+                elif not pending_location_reapproval:
                     unchanged += 1
                     coordinates_changed = (
                         not is_locked
@@ -1529,16 +1610,17 @@ def sync_registry(file, ext: str):
                         )
 
                 should_record_coord_meta = (
-                    not is_locked
+                    not pending_location_reapproval
+                    and not is_locked
                     and not reused_existing
                     and lat is not None
                     and _sync_coord_meta_changed(existing, geo_meta)
                 )
                 if should_record_coord_meta and not coord_meta_written:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
-                if business_fields_changed:
+                if business_fields_changed and not pending_location_reapproval:
                     updated += 1
-                if not _is_retryable_resolution_failure(geo_meta):
+                if not pending_location_reapproval and not _is_retryable_resolution_failure(geo_meta):
                     old_lat = existing.get("latitude")
                     old_lng = existing.get("longitude")
                     if (

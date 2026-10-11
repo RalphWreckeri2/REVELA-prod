@@ -1349,17 +1349,41 @@ export async function getRegistryReviewQueueRequest(
 }
 
 /** POST /api/registry/review/{accept|reject} - decide a pending pin proposal */
-export async function decideRegistryReviewRequest(token, businessID, action) {
+export async function decideRegistryReviewRequest(
+  token,
+  businessID,
+  action,
+  { locationChoice, candidateHistoryID } = {},
+) {
   try {
-    const endpoint = action === "approve" ? "accept" : "reject";
+    const endpoint = locationChoice
+      ? "decision"
+      : action === "approve"
+        ? "accept"
+        : "reject";
     const res = await fetch(`${BASE_URL}/registry/review/${endpoint}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ businessID }),
+      body: JSON.stringify({ businessID, locationChoice, candidateHistoryID }),
     });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function resolveRegistryReviewCandidateRequest(token, businessID) {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/registry/review/${encodeURIComponent(businessID)}/resolve`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);
