@@ -218,7 +218,11 @@ class ContinuationTests(unittest.TestCase):
 
     def test_second_scan_skips_points_checkpointed_by_the_first(self):
         points = [(13.90 + i * 0.01, 121.10) for i in range(6)]
-        first_run = {(f"{lat:.5f},{lng:.5f}") for lat, lng in points[:4]}
+        fingerprint = service._checkpoint_configuration_fingerprint("quick")
+        first_run = {
+            service._checkpoint_point_key(lat, lng, fingerprint)
+            for lat, lng in points[:4]
+        }
         fetched = []
 
         def fake_fetch(lat, lng, radius, mode):

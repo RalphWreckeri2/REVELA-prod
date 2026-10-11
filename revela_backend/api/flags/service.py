@@ -5,6 +5,7 @@ from api.models.detection_runs import (
     get_detection_quota_info,
 )
 import difflib
+import hashlib
 import math
 import numpy as np
 from sklearn.cluster import DBSCAN
@@ -585,6 +586,8 @@ def _match_poi_to_registry(
     poi_types=(),
     poi_address='',
     registry_index=None,
+    place_id=None,
+    rejected_place_pairs=None,
 ):
     """
     Tiered Decision Matrix for matching a candidate POI to official registry entries:
@@ -606,6 +609,10 @@ def _match_poi_to_registry(
         if registry_index is not None else registry
     )
     for entry in entries:
+        if _is_rejected_registry_place_pair(
+            entry.get("businessID"), place_id, rejected_place_pairs
+        ):
+            continue
         sim, match_reason = name_match(
             entry.get("businessName", ""),
             poi_name,
@@ -689,6 +696,62 @@ def _match_poi_to_registry(
     return best_match, best_dist, best_score, best_status
 
 
+def _is_rejected_registry_place_pair(business_id, place_id, rejected_pairs):
+    if not business_id or not place_id or not rejected_pairs:
+        return False
+    return (str(business_id), str(place_id)) in rejected_pairs
+
+
+def _registry_entry_for_place_id(place_id, registry_by_place_id, rejected_pairs):
+    if not place_id:
+        return None
+    entries = registry_by_place_id.get(place_id, ())
+    if not isinstance(entries, (list, tuple)):
+        entries = (entries,)
+    return next(
+        (
+            entry for entry in entries
+            if not _is_rejected_registry_place_pair(
+                entry.get("businessID"), place_id, rejected_pairs
+            )
+        ),
+        None,
+    )
+
+
+def _load_rejected_place_pairs():
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute(
+            "SELECT businessID, placeID FROM registry_rejected_places"
+        )
+        rows = cursor.fetchall()
+        pairs = set()
+        for row in rows:
+            business_id = (
+                row.get("businessID") if isinstance(row, dict) else row[0]
+            )
+            place_id = row.get("placeID") if isinstance(row, dict) else row[1]
+            if business_id and place_id:
+                pairs.add((str(business_id), str(place_id)))
+        return pairs
+    finally:
+        cursor.close()
+
+
+def _detection_status_color(application_status):
+    status = (
+        str(application_status).strip()
+        if application_status is not None else ""
+    ) or "Pending"
+    return (
+        "Green" if status == "Active" else
+        "Orange" if status == "Expired" else
+        "Black" if status == "Revoked" else
+        "Purple" if status == "Closed" else "Yellow"
+    )
+
+
 _place_types_column_ready = False
 _place_types_schema_lock = threading.Lock()
 
@@ -743,6 +806,7 @@ def _match_registry_to_google(
     poi_address=None,
     commit=True,
     operation_type=None,
+    rejected_place_pairs=None,
 ):
     """
     Updates or inserts the geospatial log for an existing registry business 
@@ -767,9 +831,11 @@ def _match_registry_to_google(
     is_locked = False
     reg_lat = None
     reg_lng = None
+    registry_place_id = None
+    registry_match_status = None
     if business_id:
         _detection_execute(cursor, """
-            SELECT coordSource, matchStatus, latitude, longitude
+            SELECT coordSource, matchStatus, latitude, longitude, placeID
             FROM official_registry
             WHERE businessID = %s
         """, (business_id,))
@@ -777,6 +843,8 @@ def _match_registry_to_google(
         if reg_row:
             src = (reg_row.get("coordSource") or "").strip().lower()
             m_stat = (reg_row.get("matchStatus") or "").strip().lower()
+            registry_match_status = m_stat
+            registry_place_id = reg_row.get("placeID")
             if src == "manual" or m_stat == "approved":
                 is_locked = True
                 reg_lat = reg_row.get("latitude")
@@ -786,6 +854,19 @@ def _match_registry_to_google(
                 is_locked = True
                 reg_lat = reg_row.get("latitude")
                 reg_lng = reg_row.get("longitude")
+
+    if _is_rejected_registry_place_pair(
+        business_id, place_id, rejected_place_pairs
+    ):
+        cursor.close()
+        return
+    if (
+        registry_match_status == "approved"
+        and registry_place_id
+        and registry_place_id != place_id
+    ):
+        cursor.close()
+        return
 
     # 2. Backfill discovered GPS coordinates into official_registry IF NOT LOCKED
     if business_id and not is_locked:
@@ -820,6 +901,23 @@ def _match_registry_to_google(
         ORDER BY (businessID = %s) DESC, (placeID = %s) DESC
     """, (business_id, place_id, detected_name, barangay_id, business_id, place_id))
     matched_logs = cursor.fetchall()
+    matched_logs = [
+        log for log in matched_logs
+        if not _is_rejected_registry_place_pair(
+            log.get("businessID"), log.get("placeID"), rejected_place_pairs
+        )
+    ]
+    if (
+        registry_match_status == "approved"
+        and any(
+            log.get("businessID") == business_id
+            and log.get("placeID")
+            and log.get("placeID") != place_id
+            for log in matched_logs
+        )
+    ):
+        cursor.close()
+        return
 
     if matched_logs:
         # Keep primary log (prefer the one with matching businessID, then placeID)
@@ -967,6 +1065,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             return 0
 
         registry = _load_registry()
+        rejected_place_pairs = _load_rejected_place_pairs()
         registry_match_index = _RegistryMatchIndex(registry)
         converted_count = 0
         total = len(red_flags)
@@ -986,14 +1085,25 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             matched_by_id = None
             if biz_id:
                 for entry in registry:
-                    if entry.get("businessID") == biz_id:
+                    if (
+                        entry.get("businessID") == biz_id
+                        and not _is_rejected_registry_place_pair(
+                            biz_id, place_id, rejected_place_pairs
+                        )
+                    ):
                         matched_by_id = entry
                         break
 
             matched_by_place = None
             if not matched_by_id and place_id:
                 for entry in registry:
-                    if entry.get("placeID") == place_id:
+                    if (
+                        entry.get("placeID") == place_id
+                        and not _is_rejected_registry_place_pair(
+                            entry.get("businessID"), place_id,
+                            rejected_place_pairs,
+                        )
+                    ):
                         matched_by_place = entry
                         break
 
@@ -1016,17 +1126,13 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                     poi_barangay_id=b_id,
                     poi_types=_decode_place_types(flag.get("placeTypes")),
                     poi_address=flag.get("nearestLandmark") or "",
+                    place_id=place_id,
+                    rejected_place_pairs=rejected_place_pairs,
                 )
 
             if matched and status != "no_match":
-                app_status = (matched.get('applicationStatus')
-                              or 'Active').strip()
-                target_color = 'Green' if app_status == 'Active' else (
-                    'Orange' if app_status == 'Expired' else (
-                        'Black' if app_status == 'Revoked' else (
-                            'Purple' if app_status == 'Closed' else 'Yellow'
-                        )
-                    )
+                target_color = _detection_status_color(
+                    matched.get("applicationStatus")
                 )
                 if status == 'review':
                     target_color = 'Yellow'
@@ -1039,6 +1145,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                     poi_types=_decode_place_types(flag.get("placeTypes")),
                     poi_address=flag.get("nearestLandmark"),
                     operation_type="reconciled",
+                    rejected_place_pairs=rejected_place_pairs,
                 )
                 converted_count += 1
 
@@ -1221,6 +1328,40 @@ def _grid_points():
             lng += step
         lat += step
     return points
+
+
+def _checkpoint_configuration_fingerprint(detection_mode):
+    test_config = test_mode.get_config() if test_mode.is_enabled() else {}
+    test_mode_enabled = bool(test_config.get("test_mode.enabled", False))
+    grid_step = (
+        test_config["test_mode.grid_step_degrees"]
+        if test_mode_enabled
+        else quota_settings.cap("run_detection.grid_step_degrees")
+    )
+    relevant_test_settings = (
+        {
+            key: value
+            for key, value in test_config.items()
+            if key.startswith("test_mode.")
+        }
+        if test_mode_enabled else {}
+    )
+    material = {
+        "version": 2,
+        "detection_mode": detection_mode,
+        "nearby_api": _nearby_api_mode(),
+        "radius_m": _detection_radius_m(),
+        "grid_step_degrees": grid_step,
+        "test_mode": relevant_test_settings,
+    }
+    encoded = json.dumps(
+        material, sort_keys=True, separators=(",", ":"), default=str
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _checkpoint_point_key(lat, lng, fingerprint):
+    return f"v2:{fingerprint}:{lat:.5f},{lng:.5f}"
 
 
 def _detection_points_for_mode(mode, barangay_rows=None):
@@ -1800,6 +1941,7 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
     done_before = _completed_points_this_cycle()
     if points is None:
         points = _detection_points_for_mode(detection_mode)
+    fingerprint = _checkpoint_configuration_fingerprint(detection_mode)
     state["total_points"] = len(points)
     state["detection_mode"] = detection_mode
 
@@ -1809,7 +1951,7 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
         if _detection_work_budget_reached():
             state["work_budget_stop"] = True
             break
-        key = f"{lat:.5f},{lng:.5f}"
+        key = _checkpoint_point_key(lat, lng, fingerprint)
         if key in done_before:
             state["skipped_points"] += 1
             continue
@@ -2278,11 +2420,12 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         })
         _ensure_place_types_column()
         registry = _load_registry()
+        rejected_place_pairs = _load_rejected_place_pairs()
         registry_by_place_id = {}
         for entry in registry:
             place_id_value = entry.get("placeID")
             if place_id_value:
-                registry_by_place_id.setdefault(place_id_value, entry)
+                registry_by_place_id.setdefault(place_id_value, []).append(entry)
         registry_match_index = _RegistryMatchIndex(registry)
         lookup_cursor = mysql.connection.cursor()
         try:
@@ -2346,7 +2489,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                     continue
                 counters["actionable_business_candidates"] += 1
 
-                matching_by_place = registry_by_place_id.get(place_id)
+                matching_by_place = _registry_entry_for_place_id(
+                    place_id, registry_by_place_id, rejected_place_pairs
+                )
                 p_types = place.get("types") or []
                 if place.get("primaryType"):
                     p_types = list(p_types) + [place.get("primaryType")]
@@ -2366,6 +2511,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                             poi_types=poi_types,
                             poi_address=address or "",
                             registry_index=registry_match_index,
+                            place_id=place_id,
+                            rejected_place_pairs=rejected_place_pairs,
                         )
                     finally:
                         _places_run_state.registry_match_time_seconds += (
@@ -2391,13 +2538,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                         writes_pending = True
                 else:
                     counters["matched"] += 1
-                    app_status = (nearest.get("applicationStatus")
-                                  or "Active").strip()
-                    target_color = (
-                        "Green" if app_status == "Active" else
-                        "Orange" if app_status == "Expired" else
-                        "Black" if app_status == "Revoked" else
-                        "Purple" if app_status == "Closed" else "Yellow"
+                    target_color = _detection_status_color(
+                        nearest.get("applicationStatus")
                     )
                     if match_status == "review":
                         target_color = "Yellow"
@@ -2412,6 +2554,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                         poi_types=poi_types,
                         poi_address=address,
                         commit=False,
+                        rejected_place_pairs=rejected_place_pairs,
                     )
                     writes_pending = True
 

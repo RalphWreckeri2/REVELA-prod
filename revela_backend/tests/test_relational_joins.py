@@ -116,7 +116,10 @@ class RelationalJoinsTests(unittest.TestCase):
     @patch("api.flags.service._match_registry_to_google")
     @patch("api.flags.service._load_registry")
     @patch("api.flags.service.mysql")
-    def test_reconcile_matches_directly_by_business_id(self, mock_mysql, mock_load, mock_match):
+    @patch("api.registry.audit.mysql")
+    def test_reconcile_matches_directly_by_business_id(
+        self, _mock_audit_mysql, mock_mysql, mock_load, mock_match
+    ):
         """reconcile_existing_flags must match red flag directly by businessID."""
         from api.flags.service import reconcile_existing_flags
 
@@ -156,6 +159,8 @@ class RelationalJoinsTests(unittest.TestCase):
             match_score=1.0,
             poi_types=(),
             poi_address=None,
+            operation_type="reconciled",
+            rejected_place_pairs=set(),
         )
 
 
