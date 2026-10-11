@@ -474,9 +474,9 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertEqual(
             service.NEW_NEARBY_EXCLUDED_TYPES,
             (
-                "place_of_worship", "school", "primary_school", "secondary_school",
+                "school", "primary_school", "secondary_school",
                 "university", "local_government_office", "city_hall", "courthouse",
-                "fire_station", "police_station", "post_office", "library", "cemetery",
+                "fire_station", "police", "post_office", "library", "cemetery",
                 "park", "transit_station", "bus_station", "subway_station",
                 "train_station", "light_rail_station",
             ),
@@ -583,6 +583,42 @@ class RunDetectionGridTests(unittest.TestCase):
                 service._fetch_point_results_once(13.9667, 121.1167, 850)
 
         post.assert_not_called()
+
+    @patch("api.flags.service.test_mode.remember_response")
+    @patch("api.flags.service.test_mode.resolve_request", return_value=(None, None))
+    @patch("api.flags.service.test_mode.is_enabled", return_value=False)
+    @patch("api.flags.service.quota_settings.cap")
+    @patch("api.flags.service.reserve_usage_slot", return_value=(False, "monthly_quota_exceeded"))
+    @patch("api.flags.service.mysql")
+    @patch("api.flags.service.http.post")
+    def test_new_nearby_monthly_cap_denial_does_not_send_request(
+        self, post, mysql, reserve, cap, _test_mode_enabled,
+        _fixture_lookup, _fixture_store,
+    ):
+        cap.side_effect = lambda key: {
+            "quota.nearby_new.daily": 75,
+            "quota.nearby_new.monthly": 2500,
+        }.get(key, 100)
+
+        with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "server-key"}), \
+                patch.object(service, "RUN_DETECTION_NEARBY_API", "new"), \
+                patch.object(service, "_nearby_last_request_at", 0):
+            with self.assertRaises(service.PlacesBudgetExceeded) as raised:
+                service._fetch_point_results_once(13.9667, 121.1167, 850)
+
+        self.assertEqual(raised.exception.reason, "monthly_quota_exceeded")
+        reserve.assert_called_once_with(
+            mysql.connection,
+            "new_nearby_month",
+            "new_nearby_day",
+            2500,
+            75,
+        )
+        post.assert_not_called()
+        cap.assert_has_calls([
+            unittest.mock.call("quota.nearby_new.daily"),
+            unittest.mock.call("quota.nearby_new.monthly"),
+        ], any_order=True)
 
     @patch("api.flags.service._fetch_point_results_once")
     def test_new_nearby_twenty_result_saturation_refines_children(self, fetch_once):
@@ -697,12 +733,14 @@ class RunDetectionGridTests(unittest.TestCase):
             patch.object(service, "reserve_usage_slot", return_value=(True, None)) as reserve,
             patch.object(service.http, "post", return_value=response) as post,
             patch.object(service, "_nearby_last_request_at", 0),
-            patch.object(service, "_completed_points_this_cycle", return_value=set()),
+            patch.object(service, "_completed_points_this_cycle",
+                         return_value=set()),
             patch.object(service, "_mark_point_done") as mark_done,
             patch.object(service, "is_cancelled", return_value=False),
         ):
             service._places_run_state.started_at = service.time.monotonic()
-            selected_points = points or [(13.9667, 121.1167), (13.9677, 121.1167)]
+            selected_points = points or [
+                (13.9667, 121.1167), (13.9677, 121.1167)]
             service._scan_grid(
                 process_results,
                 None,
@@ -846,6 +884,219 @@ class RunDetectionGridTests(unittest.TestCase):
         self.assertFalse(complete)
         post.assert_not_called()
         reserve.assert_not_called()
+
+    def test_new_nearby_multicell_scan_checkpoints_and_resumes_isolated_cells(self):
+        points = [
+            (13.9560, 121.1050),
+            (13.9667, 121.1167),
+            (13.9760, 121.1050),
+            (13.9860, 121.1167),
+        ]
+        point_a, point_b, point_c, point_d = points
+        completed_keys = set()
+        phase = {"name": "initial"}
+        request_sequence = {"value": 0}
+        request_centers = []
+        processed_place_ids = []
+        caps = {
+            "quota.nearby_new.daily": 100,
+            "quota.nearby_new.monthly": 100,
+            "run_detection.max_seconds": 90,
+            "run_detection.max_requests": 3,
+            "run_detection.grid_step_degrees": 0.009,
+        }
+
+        def make_place(place_id):
+            return {
+                "id": place_id,
+                "displayName": {"text": place_id},
+                "location": {"latitude": 13.9667, "longitude": 121.1167},
+            }
+
+        def make_response(places=(), status=200):
+            response = MagicMock()
+            response.status_code = status
+            response.text = "offline mock response"
+            response.json.return_value = {"places": list(places)}
+            return response
+
+        def near(first, second, tolerance=0.00001):
+            return (
+                abs(first[0] - second[0]) <= tolerance
+                and abs(first[1] - second[1]) <= tolerance
+            )
+
+        def mocked_http_post(_url, **kwargs):
+            circle = kwargs["json"]["locationRestriction"]["circle"]
+            center = circle["center"]
+            lat, lng = center["latitude"], center["longitude"]
+            request_centers.append((phase["name"], lat, lng))
+            request_sequence["value"] += 1
+
+            if phase["name"] == "initial":
+                if near((lat, lng), point_a):
+                    return make_response([make_place("cell-a")])
+                if (
+                    abs(lat - point_b[0]) < 0.005
+                    and abs(lng - point_b[1]) < 0.005
+                ):
+                    prefix = f"saturated-{request_sequence['value']}"
+                    return make_response([
+                        make_place(f"{prefix}-{index}")
+                        for index in range(service.NEW_NEARBY_RESULT_LIMIT)
+                    ])
+                return make_response()
+
+            if phase["name"] == "failed" and near((lat, lng), point_b):
+                return make_response(status=503)
+            if phase["name"] == "cancelled" and near((lat, lng), point_b):
+                return make_response([make_place("cell-b")])
+            if phase["name"] == "resume":
+                if near((lat, lng), point_c):
+                    return make_response([make_place("cell-c")])
+                if near((lat, lng), point_d):
+                    return make_response([make_place("cell-d")])
+            return make_response()
+
+        def process_places(places):
+            processed_place_ids.extend(place["place_id"] for place in places)
+            return True
+
+        def new_scan_state():
+            return {
+                "done_keys": [],
+                "total_points": 0,
+                "skipped_points": 0,
+                "outside": 0,
+                "incomplete_points": 0,
+                "work_budget_stop": False,
+                "api_error_stop": False,
+            }
+
+        with (
+            patch.dict("os.environ", {
+                       "GOOGLE_MAPS_API_KEY": "offline-test-key"}),
+            patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
+            patch.object(
+                service.quota_settings,
+                "cap",
+                side_effect=lambda key: caps.get(key, 100),
+            ),
+            patch.object(service.test_mode, "is_enabled", return_value=False),
+            patch.object(service.test_mode, "get_config", return_value={}),
+            patch.object(service.test_mode, "resolve_request", return_value=(None, None)) as fixture_lookup,
+            patch.object(service.test_mode, "remember_response") as fixture_store,
+            patch.object(service, "mysql", MagicMock()),
+            patch.object(service, "reserve_usage_slot", return_value=(True, None)) as reserve,
+            patch.object(service.http, "post", side_effect=mocked_http_post) as post,
+            patch.object(service, "_completed_points_this_cycle",
+                         side_effect=lambda: set(completed_keys)),
+            patch.object(
+                service, "_mark_point_done",
+                side_effect=lambda point_key: completed_keys.add(point_key),
+            ),
+            patch.object(service, "is_cancelled") as cancelled,
+            patch.object(service, "_nearby_last_request_at", 0),
+            patch.object(service.time, "sleep"),
+            patch.object(service.random, "uniform", return_value=0.3),
+            patch.object(
+                service, "_nearby_circle_intersects_municipality", return_value=True),
+        ):
+            with patch.object(service, "RUN_DETECTION_NEARBY_API", "legacy"):
+                legacy_fingerprint = service._checkpoint_configuration_fingerprint(
+                    "full")
+            legacy_d_key = service._checkpoint_point_key(
+                *point_d, legacy_fingerprint)
+            completed_keys.add(legacy_d_key)
+            new_fingerprint = service._checkpoint_configuration_fingerprint(
+                "full")
+            new_keys = {
+                point: service._checkpoint_point_key(*point, new_fingerprint)
+                for point in points
+            }
+
+            def scan(name, max_requests, cancellation_sequence):
+                phase["name"] = name
+                caps["run_detection.max_requests"] = max_requests
+                calls = service._places_run_state.calls
+                for key in (
+                    "new_nearby", "new_nearby_initial", "new_nearby_adaptive"
+                ):
+                    calls[key] = 0
+                service._places_run_state.started_at = service.time.monotonic()
+                service._places_run_state.api_errors = 0
+                service._places_run_state.work_budget_exhausted = False
+                service._places_run_state.work_budget_reason = None
+                cancelled.side_effect = cancellation_sequence
+                state = new_scan_state()
+                service._scan_grid(
+                    process_places, None, state,
+                    detection_mode="full", points=points,
+                )
+                return state
+
+            before_requests = post.call_count
+            before_reservations = reserve.call_count
+            initial = scan("initial", 3, [False] * 10)
+            initial_request_count = post.call_count - before_requests
+            initial_reservation_count = reserve.call_count - before_reservations
+
+            self.assertEqual(initial_request_count, 3)
+            self.assertEqual(initial_reservation_count, initial_request_count)
+            self.assertLessEqual(initial_request_count, 3)
+            self.assertIn(new_keys[point_a], completed_keys)
+            self.assertIn(legacy_d_key, completed_keys)
+            self.assertNotIn(new_keys[point_b], completed_keys)
+            self.assertNotIn(new_keys[point_c], completed_keys)
+            self.assertNotIn(new_keys[point_d], completed_keys)
+            self.assertEqual(initial["done_keys"], [new_keys[point_a]])
+            self.assertEqual(initial["incomplete_points"], 1)
+            self.assertTrue(initial["work_budget_stop"])
+
+            before_requests = post.call_count
+            before_reservations = reserve.call_count
+            failed = scan("failed", 3, [False] * 10)
+            self.assertEqual(post.call_count - before_requests, 1)
+            self.assertEqual(reserve.call_count - before_reservations, 1)
+            self.assertEqual(failed["skipped_points"], 1)
+            self.assertEqual(failed["incomplete_points"], 1)
+            self.assertTrue(failed["api_error_stop"])
+            self.assertNotIn(new_keys[point_b], completed_keys)
+
+            cancelled_state = scan("cancelled", 3, [False, False, True])
+            self.assertEqual(cancelled_state["skipped_points"], 1)
+            self.assertEqual(cancelled_state["done_keys"], [new_keys[point_b]])
+            self.assertNotIn(new_keys[point_c], completed_keys)
+
+            before_requests = post.call_count
+            before_reservations = reserve.call_count
+            resumed = scan("resume", 3, [False] * 10)
+            resumed_centers = request_centers[-(
+                post.call_count - before_requests):]
+            self.assertEqual(resumed["skipped_points"], 2)
+            self.assertEqual(resumed["done_keys"], [
+                             new_keys[point_c], new_keys[point_d]])
+            self.assertEqual(post.call_count - before_requests, 2)
+            self.assertEqual(reserve.call_count - before_reservations, 2)
+            self.assertEqual(
+                [(round(lat, 5), round(lng, 5))
+                 for _, lat, lng in resumed_centers],
+                [(round(point_c[0], 5), round(point_c[1], 5)),
+                 (round(point_d[0], 5), round(point_d[1], 5))],
+            )
+
+            self.assertTrue(all(
+                call.args[1:3] == ("new_nearby_month", "new_nearby_day")
+                for call in reserve.call_args_list
+            ))
+            self.assertTrue(all(
+                call.args[3:5] == (100, 100)
+                for call in reserve.call_args_list
+            ))
+            self.assertLessEqual(
+                service._places_run_state.calls["new_nearby"], 3)
+            fixture_lookup.assert_not_called()
+            fixture_store.assert_not_called()
 
     @patch("api.flags.service._fetch_legacy_point_results_once")
     def test_legacy_mode_remains_the_default_fallback(self, fetch_legacy):

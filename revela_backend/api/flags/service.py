@@ -53,9 +53,9 @@ NEW_NEARBY_FIELD_MASK = (
     "places.primaryType,places.businessStatus,places.formattedAddress"
 )
 NEW_NEARBY_EXCLUDED_TYPES = (
-    "place_of_worship", "school", "primary_school", "secondary_school",
+    "school", "primary_school", "secondary_school",
     "university", "local_government_office", "city_hall", "courthouse",
-    "fire_station", "police_station", "post_office", "library", "cemetery",
+    "fire_station", "police", "post_office", "library", "cemetery",
     "park", "transit_station", "bus_station", "subway_station",
     "train_station", "light_rail_station",
 )
@@ -452,6 +452,40 @@ def _unmark_points(point_keys):
         mysql.connection.commit()
     finally:
         cur.close()
+
+
+def _cleanup_cancelled_detection(inserted_flag_ids, point_keys):
+    """Atomically remove this run's new Red flags and their checkpoints."""
+    inserted_flag_ids = tuple(dict.fromkeys(inserted_flag_ids))
+    point_keys = tuple(dict.fromkeys(point_keys))
+    if not inserted_flag_ids and not point_keys:
+        return
+
+    cursor = mysql.connection.cursor()
+    try:
+        mysql.connection.begin()
+        if inserted_flag_ids:
+            placeholders = ", ".join(["%s"] * len(inserted_flag_ids))
+            _detection_execute(
+                cursor,
+                "DELETE FROM geospatial_logs "
+                f"WHERE logID IN ({placeholders})",
+                inserted_flag_ids,
+            )
+        if point_keys:
+            placeholders = ", ".join(["%s"] * len(point_keys))
+            _detection_execute(
+                cursor,
+                "DELETE FROM scan_point_log "
+                f"WHERE pointKey IN ({placeholders})",
+                point_keys,
+            )
+        _detection_commit()
+    except Exception:
+        mysql.connection.rollback()
+        raise
+    finally:
+        cursor.close()
 
 
 # ── GeoJSON Loading ───────────────────────────────────────────────────────────
@@ -2642,22 +2676,22 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             _places_run_state.db_metrics_active = False
 
         if is_cancelled("run_detection"):
-            # Roll back the flags created by THIS run and un-checkpoint its points, so a later
-            # run re-scans them (otherwise their flags would be missing but the points "done").
-            if inserted_flag_ids:
-                cursor = mysql.connection.cursor()
-                format_strings = ",".join(["%s"] * len(inserted_flag_ids))
-                cursor.execute(f"DELETE FROM geospatial_logs WHERE logID IN ({format_strings})", tuple(
-                    inserted_flag_ids))
-                mysql.connection.commit()
-                cursor.close()
-            _unmark_points(state["done_keys"])
+            # Keep newly inserted Red flags and checkpoints in sync on cancellation.
+            _cleanup_cancelled_detection(
+                inserted_flag_ids, state["done_keys"])
             update_detection_run_status(run_id, "cancelled")
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
-                "status": "Detection cancelled by user. Flags found in this run were rolled back."
+                "status": (
+                    "Detection cancelled. Newly inserted Red flags from this scan "
+                    "were removed; committed updates to existing matches or "
+                    "reconciliation may remain."
+                )
             })
-            return None, "Detection cancelled by user."
+            return None, (
+                "Detection cancelled. Newly inserted Red flags were removed; "
+                "committed updates to existing matches or reconciliation may remain."
+            )
 
         new_flags = counters["new_flags"]
         total_checked = counters["total_checked"]

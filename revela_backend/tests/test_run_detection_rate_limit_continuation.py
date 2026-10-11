@@ -15,6 +15,7 @@ or the real limiter clock.
 """
 
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 from api.flags import service
@@ -74,6 +75,120 @@ def empty_state(total_points=0):
         "api_error_stop": False,
         "detection_mode": "quick",
     }
+
+
+class FakeCheckpointCursor:
+    def __init__(self, connection):
+        self.connection = connection
+        self.result = []
+        self.rowcount = 0
+        self.closed = False
+
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.split())
+        self.connection.statements.append((normalized, params))
+        self.result = []
+        self.rowcount = 0
+
+        if normalized.startswith("CREATE TABLE IF NOT EXISTS"):
+            return
+
+        if normalized.startswith("INSERT INTO scan_point_log"):
+            self.assert_upsert_sql(normalized)
+            self.connection.checkpoints[params[0]] = self.connection.now
+            self.rowcount = 1
+            return
+
+        if normalized.startswith("SELECT pointKey FROM scan_point_log"):
+            self.assert_resume_sql(normalized)
+            terminal_times = [
+                run["completedAt"]
+                for run in self.connection.detection_runs
+                if run["status"] in service.RESUME_RESET_STATUSES
+            ]
+            watermark = max(
+                terminal_times, default=datetime(1970, 1, 1))
+            cutoff = self.connection.now - timedelta(days=30)
+            self.result = [
+                (point_key,)
+                for point_key, completed_at in self.connection.checkpoints.items()
+                if completed_at > watermark and completed_at > cutoff
+            ]
+            return
+
+        if normalized.startswith("DELETE FROM scan_point_log WHERE pointKey IN"):
+            if self.connection.fail_on_statement == "delete_checkpoints":
+                raise RuntimeError("synthetic checkpoint delete failure")
+            for point_key in params:
+                if point_key in self.connection.checkpoints:
+                    del self.connection.checkpoints[point_key]
+                    self.rowcount += 1
+            return
+
+        if normalized.startswith("DELETE FROM geospatial_logs WHERE logID IN"):
+            for flag_id in params:
+                if flag_id in self.connection.flags:
+                    self.connection.flags.remove(flag_id)
+                    self.rowcount += 1
+            return
+
+        raise AssertionError(f"Unexpected checkpoint SQL: {normalized}")
+
+    @staticmethod
+    def assert_upsert_sql(sql):
+        assert "INSERT INTO scan_point_log (pointKey, completedAt)" in sql
+        assert "ON DUPLICATE KEY UPDATE completedAt = NOW()" in sql
+
+    @staticmethod
+    def assert_resume_sql(sql):
+        assert "completedAt > COALESCE(" in sql
+        assert "NOW() - INTERVAL 30 DAY" in sql
+        for status in service.RESUME_RESET_STATUSES:
+            assert f"'{status}'" in sql
+        assert "'partial'" not in sql
+
+    def fetchall(self):
+        return list(self.result)
+
+    def close(self):
+        self.closed = True
+
+
+class FakeCheckpointConnection:
+    def __init__(self, now):
+        self.now = now
+        self.checkpoints = {}
+        self.flags = set()
+        self.detection_runs = []
+        self.statements = []
+        self.commits = 0
+        self.begins = 0
+        self.rollbacks = 0
+        self.fail_on_statement = None
+        self._transaction_snapshot = None
+
+    def cursor(self):
+        return FakeCheckpointCursor(self)
+
+    def commit(self):
+        self.commits += 1
+        self._transaction_snapshot = None
+
+    def begin(self):
+        if self._transaction_snapshot is not None:
+            raise AssertionError("Nested fake DB transaction")
+        self.begins += 1
+        self._transaction_snapshot = (
+            dict(self.checkpoints), set(self.flags))
+
+    def rollback(self):
+        self.rollbacks += 1
+        if self._transaction_snapshot is None:
+            raise AssertionError("Rollback without an active fake transaction")
+        checkpoints, flags = self._transaction_snapshot
+        self.checkpoints = checkpoints
+        self.flags = flags
+        self._transaction_snapshot = None
 
 
 class WorkEnvelopeTests(unittest.TestCase):
@@ -217,6 +332,166 @@ class ContinuationTests(unittest.TestCase):
             self.assertIn(f"'{status}'", sql)
         self.assertNotIn("'partial'", sql)
 
+    def test_checkpoint_database_round_trip_and_nearby_mode_isolation(self):
+        now = datetime(2026, 10, 12, 12, 0, 0)
+        connection = FakeCheckpointConnection(now)
+        point = (13.9667, 121.1167)
+        expired_key = "expired-checkpoint"
+        before_watermark_key = "before-terminal-watermark"
+        connection.checkpoints[expired_key] = now - timedelta(days=31)
+
+        with (
+            patch.object(service, "mysql", MagicMock(connection=connection)),
+            patch.object(service, "_budget_tables_ready", False),
+            patch.object(service.test_mode, "is_enabled", return_value=False),
+            patch.object(service.test_mode, "get_config", return_value={}),
+            patch.object(quota_settings, "cap", return_value=0.009),
+        ):
+            service._ensure_budget_tables()
+            scan_table_ddl = next(
+                sql for sql, _ in connection.statements
+                if "CREATE TABLE IF NOT EXISTS scan_point_log" in sql
+            )
+            self.assertIn(
+                "pointKey VARCHAR(64) NOT NULL PRIMARY KEY", scan_table_ddl)
+            self.assertIn("completedAt DATETIME NOT NULL", scan_table_ddl)
+
+            with patch.object(service, "RUN_DETECTION_NEARBY_API", "legacy"):
+                legacy_fingerprint = service._checkpoint_configuration_fingerprint(
+                    "full")
+            legacy_key = service._checkpoint_point_key(
+                *point, legacy_fingerprint)
+
+            connection.now = now - timedelta(minutes=6)
+            service._mark_point_done(legacy_key)
+            first_timestamp = connection.checkpoints[legacy_key]
+            connection.now = now - timedelta(minutes=5)
+            service._mark_point_done(legacy_key)
+            self.assertGreater(
+                connection.checkpoints[legacy_key], first_timestamp)
+            self.assertEqual(connection.commits, 3)
+
+            # Without a terminal-run watermark, the 30-day horizon still applies.
+            current_checkpoints = service._completed_points_this_cycle()
+            self.assertEqual(current_checkpoints, {legacy_key})
+            self.assertNotIn(expired_key, current_checkpoints)
+
+            connection.checkpoints[before_watermark_key] = (
+                now - timedelta(days=11))
+            connection.detection_runs = [
+                {"status": "completed",
+                    "completedAt": now - timedelta(days=10)},
+                {"status": "partial", "completedAt": now -
+                    timedelta(minutes=1)},
+                {"status": "failed", "completedAt": now},
+            ]
+            self.assertEqual(
+                service._completed_points_this_cycle(), {legacy_key})
+
+            with patch.object(service, "RUN_DETECTION_NEARBY_API", "new"):
+                new_fingerprint = service._checkpoint_configuration_fingerprint(
+                    "full")
+            new_key = service._checkpoint_point_key(*point, new_fingerprint)
+            self.assertNotEqual(legacy_key, new_key)
+
+            with (
+                patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
+                patch.object(
+                    service, "_fetch_point_results_for_mode",
+                    return_value=([], True),
+                ) as fetch,
+                patch.object(
+                    service, "_detection_work_budget_reached", return_value=False),
+                patch.object(service, "is_cancelled", return_value=False),
+            ):
+                state = empty_state(total_points=1)
+                service._scan_grid(
+                    lambda _places: True, None, state,
+                    detection_mode="full", points=[point],
+                )
+
+            fetch.assert_called_once_with(*point, 850, "full")
+            self.assertEqual(state["done_keys"], [new_key])
+            self.assertEqual(
+                service._completed_points_this_cycle(), {legacy_key, new_key})
+
+            service._unmark_points([new_key])
+            self.assertEqual(connection.commits, 5)
+            self.assertNotIn(new_key, connection.checkpoints)
+            self.assertEqual(
+                service._completed_points_this_cycle(), {legacy_key})
+
+    def test_cancel_cleanup_commits_flag_and_checkpoint_deletes_once(self):
+        connection = FakeCheckpointConnection(datetime(2026, 10, 12, 12))
+        connection.flags = {101, 102}
+        connection.checkpoints = {"cancelled-key": connection.now}
+
+        with patch.object(service, "mysql", MagicMock(connection=connection)):
+            service._cleanup_cancelled_detection([101], ["cancelled-key"])
+
+        self.assertEqual(connection.begins, 1)
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(connection.rollbacks, 0)
+        self.assertEqual(connection.flags, {102})
+        self.assertEqual(connection.checkpoints, {})
+
+    def test_cancel_cleanup_rolls_back_both_deletes_on_checkpoint_failure(self):
+        connection = FakeCheckpointConnection(datetime(2026, 10, 12, 12))
+        connection.flags = {101, 102}
+        connection.checkpoints = {"cancelled-key": connection.now}
+        connection.fail_on_statement = "delete_checkpoints"
+
+        with patch.object(service, "mysql", MagicMock(connection=connection)):
+            with self.assertRaisesRegex(
+                    RuntimeError, "synthetic checkpoint delete failure"):
+                service._cleanup_cancelled_detection([101], ["cancelled-key"])
+
+        self.assertEqual(connection.begins, 1)
+        self.assertEqual(connection.commits, 0)
+        self.assertEqual(connection.rollbacks, 1)
+        self.assertEqual(connection.flags, {101, 102})
+        self.assertEqual(connection.checkpoints, {
+                         "cancelled-key": connection.now})
+
+    def test_cancel_cleanup_makes_checkpoint_retryable_on_resume(self):
+        now = datetime(2026, 10, 12, 12)
+        connection = FakeCheckpointConnection(now)
+        point = (13.9667, 121.1167)
+        connection.flags = {101}
+
+        with (
+            patch.object(service, "mysql", MagicMock(connection=connection)),
+            patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
+            patch.object(service.test_mode, "is_enabled", return_value=False),
+            patch.object(service.test_mode, "get_config", return_value={}),
+            patch.object(quota_settings, "cap", return_value=0.009),
+        ):
+            fingerprint = service._checkpoint_configuration_fingerprint("full")
+            point_key = service._checkpoint_point_key(*point, fingerprint)
+            connection.checkpoints[point_key] = now
+            service._cleanup_cancelled_detection([101], [point_key])
+            self.assertEqual(service._completed_points_this_cycle(), set())
+
+            with (
+                patch.object(
+                    service, "_detection_work_budget_reached", return_value=False),
+                patch.object(service, "is_cancelled", return_value=False),
+                patch.object(
+                    service, "_fetch_point_results_for_mode",
+                    return_value=([], True),
+                ) as fetch,
+            ):
+                state = empty_state(total_points=1)
+                service._scan_grid(
+                    lambda _places: True, None, state,
+                    detection_mode="full", points=[point],
+                )
+
+            fetch.assert_called_once_with(*point, 850, "full")
+            self.assertEqual(state["done_keys"], [point_key])
+            self.assertIn(point_key, connection.checkpoints)
+            self.assertEqual(connection.flags, set())
+
     def test_second_scan_skips_points_checkpointed_by_the_first(self):
         points = [(13.90 + i * 0.01, 121.10) for i in range(6)]
         fingerprint = service._checkpoint_configuration_fingerprint("quick")
@@ -292,10 +567,12 @@ class RetryPathTests(unittest.TestCase):
         """The New endpoint keeps its bounded 429 retry; it is not paced by
         the legacy limiter, but the retry path must remain intact."""
         mode.is_enabled.return_value = False
-        throttled = MagicMock(status_code=429, text="RESOURCE_EXHAUSTED per minute")
+        throttled = MagicMock(
+            status_code=429, text="RESOURCE_EXHAUSTED per minute")
         recovered = MagicMock(status_code=200)
         recovered.json.return_value = {"places": []}
-        service._places_run_state.calls = {"new_nearby": 0, "new_nearby_initial": 0}
+        service._places_run_state.calls = {
+            "new_nearby": 0, "new_nearby_initial": 0}
 
         with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "test-key"}), \
                 patch.object(service, "mysql", MagicMock()), \
@@ -309,15 +586,18 @@ class RetryPathTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertEqual(results, [])
-        self.assertEqual(post.call_count, 2, "one throttled attempt then a retry")
+        self.assertEqual(post.call_count, 2,
+                         "one throttled attempt then a retry")
         sleep.assert_called()
 
     def test_new_nearby_daily_quota_429_still_stops_the_run(self):
         """A daily-limit 429 must not be retried into a longer stall."""
         mode = MagicMock()
         mode.is_enabled.return_value = False
-        exhausted = MagicMock(status_code=429, text="RESOURCE_EXHAUSTED quota exceeded")
-        service._places_run_state.calls = {"new_nearby": 0, "new_nearby_initial": 0}
+        exhausted = MagicMock(
+            status_code=429, text="RESOURCE_EXHAUSTED quota exceeded")
+        service._places_run_state.calls = {
+            "new_nearby": 0, "new_nearby_initial": 0}
 
         with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "test-key"}), \
                 patch.object(service, "test_mode", mode), \
@@ -330,7 +610,8 @@ class RetryPathTests(unittest.TestCase):
             with self.assertRaises(service.PlacesBudgetExceeded) as raised:
                 service._new_nearby_request(13.9667, 121.1167, 850)
 
-        self.assertEqual(post.call_count, 1, "a daily quota error is not retried")
+        self.assertEqual(post.call_count, 1,
+                         "a daily quota error is not retried")
         self.assertEqual(raised.exception.reason, "daily_quota_exceeded")
 
 
