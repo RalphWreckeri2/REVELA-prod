@@ -27,7 +27,11 @@ import time
 
 from api.models import app_settings
 from api.utils.quota_config import API_QUOTA_CONFIG
-from api.utils.quota_ceilings import cloud_quota_for, hard_ceiling_for
+from api.utils.quota_ceilings import (
+    NEARBY_NEW_APPLICATION_DAILY_MAX,
+    cloud_quota_for,
+    hard_ceiling_for,
+)
 
 
 # Re-read persisted overrides at most this often. Long enough that a 101-cell
@@ -128,10 +132,12 @@ QUOTA_FIELDS = {
     "quota.nearby_new.daily": {
         "label": "Nearby Search (New) — daily",
         "kind": "int", "baseline": API_QUOTA_CONFIG.nearby_new.daily,
-        "minimum": 0, "ceiling_method": "nearby_search_new",
+        "minimum": 0, "maximum": NEARBY_NEW_APPLICATION_DAILY_MAX,
+        "ceiling_method": "nearby_search_new",
         "ceiling_field": "daily",
-        "help": "Zero keeps Nearby Search (New) disabled until its rollout "
-                "gate passes.",
+        "help": "Zero keeps Nearby Search (New) disabled. While pricing "
+                "remains unverified, the application limit is at most "
+                f"{NEARBY_NEW_APPLICATION_DAILY_MAX} requests/day.",
     },
     "quota.nearby_new.monthly": {
         "label": "Nearby Search (New) — monthly",

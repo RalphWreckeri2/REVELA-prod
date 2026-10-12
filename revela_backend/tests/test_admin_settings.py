@@ -117,6 +117,24 @@ class QuotaValidationTests(unittest.TestCase):
         self.assertTrue(errors)
         self.assertIn("Google Cloud quota", errors[0])
 
+    def test_new_nearby_daily_persisted_override_cannot_exceed_five(self):
+        from api.utils.quota_settings import _coerce
+
+        key = "quota.nearby_new.daily"
+        spec = quota_settings.QUOTA_FIELDS[key]
+        original_baseline = spec["baseline"]
+        try:
+            spec["baseline"] = 0
+            with self.assertRaisesRegex(ValueError, "environment baseline"):
+                _coerce(key, 1)
+
+            spec["baseline"] = 5
+            self.assertEqual(_coerce(key, 5), 5)
+            with self.assertRaisesRegex(ValueError, "no more than 5"):
+                _coerce(key, 6)
+        finally:
+            spec["baseline"] = original_baseline
+
     def test_hard_ceiling_applies_even_while_the_quota_is_unverified(self):
         """
         Marking a Cloud quota verified must never be able to lift a cap past a

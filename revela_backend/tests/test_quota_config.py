@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from api.utils import quota_ceilings
 from api.utils.quota_config import load_api_quota_config
+from api.utils.quota_ceilings import NEARBY_NEW_APPLICATION_DAILY_MAX
 from api.utils.quota_ceilings import CloudMethodQuota
 
 #: Method key -> the ApiQuotaConfig attribute holding its MethodQuota.
@@ -144,7 +145,7 @@ class ApiQuotaConfigTests(unittest.TestCase):
             "GEOCODE_MONTHLY_CAP": "4000",
             "PLACES_DAILY_CAP": "500",
             "PLACES_MONTHLY_CAP": "1000",
-            "NEW_NEARBY_DAILY_CAP": "35",
+            "NEW_NEARBY_DAILY_CAP": "5",
             "NEW_NEARBY_MONTHLY_CAP": "600",
         })
 
@@ -156,12 +157,48 @@ class ApiQuotaConfigTests(unittest.TestCase):
         self.assertEqual(config.place_details.daily, 80)
         self.assertEqual(config.geocoding.monthly, 4000)
         self.assertEqual(config.legacy_nearby.daily, 120)
+        self.assertEqual(config.nearby_new.daily, 5)
         self.assertEqual(config.nearby_new.monthly, 600)
 
     def test_lower_legacy_nearby_daily_override_is_honored(self):
         config = load_api_quota_config({"PLACES_DAILY_CAP": "60"})
 
         self.assertEqual(config.legacy_nearby.daily, 60)
+
+    def test_nearby_new_stays_disabled_and_legacy_remains_default(self):
+        config = load_api_quota_config({})
+
+        self.assertEqual(config.run_detection_nearby_api, "legacy")
+        self.assertEqual(config.nearby_new.daily, 0)
+        self.assertEqual(config.nearby_new.monthly, 0)
+        self.assertEqual(config.legacy_nearby.daily, 120)
+        self.assertEqual(config.legacy_nearby.monthly, 2000)
+
+    def test_explicit_nearby_new_daily_cap_is_bounded_to_five(self):
+        for daily_cap in (1, NEARBY_NEW_APPLICATION_DAILY_MAX):
+            with self.subTest(daily_cap=daily_cap):
+                config = load_api_quota_config({
+                    "NEARBY_NEW_DAILY_CAP": str(daily_cap),
+                })
+                self.assertEqual(config.nearby_new.daily, daily_cap)
+                self.assertEqual(config.run_detection_nearby_api, "legacy")
+
+        self.assertEqual(NEARBY_NEW_APPLICATION_DAILY_MAX, 5)
+
+    def test_invalid_or_excessive_nearby_new_daily_caps_fail_closed(self):
+        for daily_cap in ("invalid", "-1", "1.5", "6", "75000"):
+            with self.subTest(daily_cap=daily_cap):
+                with self.assertRaises(ValueError):
+                    load_api_quota_config({
+                        "NEARBY_NEW_DAILY_CAP": daily_cap,
+                    })
+
+    def test_new_daily_legacy_alias_is_also_conservatively_bounded(self):
+        config = load_api_quota_config({"NEW_NEARBY_DAILY_CAP": "5"})
+        self.assertEqual(config.nearby_new.daily, 5)
+
+        with self.assertRaisesRegex(ValueError, "conservative application limit"):
+            load_api_quota_config({"NEW_NEARBY_DAILY_CAP": "6"})
 
     def test_workflow_caps_cannot_exceed_shared_text_search_cap(self):
         with self.assertRaisesRegex(ValueError, "must sum to no more than"):

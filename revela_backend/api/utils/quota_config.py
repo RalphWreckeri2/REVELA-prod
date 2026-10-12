@@ -5,7 +5,11 @@ import os
 from types import MappingProxyType
 from typing import Mapping
 
-from api.utils.quota_ceilings import cloud_quota_for, hard_ceiling_for
+from api.utils.quota_ceilings import (
+    NEARBY_NEW_APPLICATION_DAILY_MAX,
+    cloud_quota_for,
+    hard_ceiling_for,
+)
 
 
 @dataclass(frozen=True)
@@ -88,6 +92,27 @@ def _daily_cap(environ, name, default, method, aliases=()):
             f"requests/day; Google Cloud allows {ceiling}/day for {method}."
         )
     return clamped
+
+
+def _nearby_new_daily_cap(environ):
+    """Require an explicit, conservative cap; absence keeps the method off."""
+    setting_names = ("NEARBY_NEW_DAILY_CAP", "NEW_NEARBY_DAILY_CAP")
+    setting_name = next(
+        (name for name in setting_names if name in environ),
+        setting_names[0],
+    )
+    requested = _int_setting(
+        environ,
+        setting_name,
+        0,
+        aliases=setting_names[1:] if setting_name == setting_names[0] else (),
+    )
+    if requested > NEARBY_NEW_APPLICATION_DAILY_MAX:
+        raise ValueError(
+            f"{setting_name} must not exceed the conservative application "
+            f"limit of {NEARBY_NEW_APPLICATION_DAILY_MAX} requests/day."
+        )
+    return requested
 
 
 def load_api_quota_config(environ=None):
@@ -179,10 +204,7 @@ def load_api_quota_config(environ=None):
         ),
     )
     nearby_new = MethodQuota(
-        daily=_daily_cap(
-            environ, "NEARBY_NEW_DAILY_CAP", 0, "nearby_search_new",
-            aliases=("NEW_NEARBY_DAILY_CAP",),
-        ),
+        daily=_nearby_new_daily_cap(environ),
         monthly=_int_setting(
             environ, "NEARBY_NEW_MONTHLY_CAP", 0,
             aliases=("NEW_NEARBY_MONTHLY_CAP",),
