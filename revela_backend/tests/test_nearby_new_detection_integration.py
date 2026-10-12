@@ -288,7 +288,7 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
             "registry_count": len(registry),
         }
         cap_values = {
-            "quota.nearby_new.daily": 10,
+            "quota.nearby_new.daily": 5,
             "quota.nearby_new.monthly": 20,
             "run_detection.max_seconds": 90,
             "run_detection.max_requests": 10,
