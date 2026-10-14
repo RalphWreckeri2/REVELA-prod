@@ -1,24 +1,25 @@
 /**
  * HomePage.jsx — Overview Dashboard
  * Live KPIs from /api/analytics/all
- * Recent Detections from /api/flags (newest activity, all colors)
- * Mini Google Map preview with real flag markers
+ * Assignment deadlines and backend-ranked barangay priorities
+ * Google Map preview with the existing flag population and marker behavior
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
 import Footer from "../components/Footer";
-import KpiCard from "../components/KpiCard";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getOpsRankingsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import { availableNumber, dateQuery, deadlinePresentation, formatOverviewNumber, manilaGreeting, weatherPresentation } from "./overviewPresentation";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
+import "../styles/OverviewDashboard.css";
 
 const DEFAULT_CENTER = { lat: 13.9667, lng: 121.1167 };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
@@ -42,303 +43,266 @@ const parseColor = (f) => {
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 };
 
-const shortBarangay = (name = "") => name.replace("Barangay ", "Brgy.");
+const shortBarangay = (name = "") => String(name ?? "").replace("Barangay ", "Brgy.");
 
 // ── Hero Banner ───────────────────────────────────────────────────────────────
-const HERO_STEPS = [
-  { num: 1, label: "Upload Registry CSV", to: "/registry" },
-  { num: 2, label: "Review Geospatial Flags", to: "/map" },
-  { num: 3, label: "Priority Dispatch", to: "/inspections" },
+const HERO_SHORTCUTS = [
+  { icon: "registry", label: "Open Registry", to: "/registry" },
+  { icon: "map", label: "Review Geospatial Flags", to: "/map" },
+  { icon: "inspection", label: "Manage Inspections", to: "/inspections" },
 ];
 
-// WMO weather interpretation codes (Open-Meteo)
-const WEATHER_CODES = {
-  0: "Clear Sky", 1: "Mostly Clear", 2: "Partly Cloudy", 3: "Overcast",
-  45: "Foggy", 48: "Rime Fog",
-  51: "Light Drizzle", 53: "Drizzle", 55: "Heavy Drizzle",
-  61: "Light Rain", 63: "Rain", 65: "Heavy Rain",
-  71: "Light Snow", 73: "Snow", 75: "Heavy Snow",
-  80: "Light Showers", 81: "Showers", 82: "Heavy Showers",
-  95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm",
-};
+function OverviewIcon({ kind, className = "" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
+      {kind === "registry" && <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></>}
+      {kind === "map" && <path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6zM9 3v15M15 6v15" />}
+      {kind === "inspection" && <><rect x="4" y="4" width="16" height="18" rx="2" /><path d="M9 2h6v4H9zM8 13l3 3 5-6" /></>}
+      {kind === "clock" && <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>}
+      {kind === "arrow" && <path d="M5 12h14m-6-6 6 6-6 6" />}
+      {kind === "refresh" && <path d="M20 3v5h-5M20 8a9 9 0 1 0 1 7" />}
+    </svg>
+  );
+}
 
-function HeroBanner({ user, kpis, mapsReady, navigate, onRefresh, isRefreshing }) {
-  // Live clock — ticks every second
+function RequestFeedback({ state, label }) {
+  if (!state.loading && !state.error) return null;
+  const message = state.loading
+    ? `${state.hasResult ? "Refreshing" : "Loading"} ${label}…`
+    : state.hasResult
+      ? `Could not refresh ${label}. Showing last loaded data.`
+      : `Could not load ${label}.`;
+  return <p className={`overview-feedback${state.error && !state.loading ? " is-error" : ""}`} role="status">{message}</p>;
+}
+
+function PersonalizedGreeting({ user }) {
+  const [greeting, setGreeting] = useState(() => manilaGreeting());
+  useEffect(() => {
+    // Only a greeting-period change rerenders this heading.
+    const timer = setInterval(() => setGreeting(manilaGreeting()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const firstName = typeof user?.fullName === "string" && user.fullName.trim()
+    ? user.fullName.trim().split(/\s+/)[0] : "Admin";
+  return (
+    <h1 className="hero-greeting" id="overview-greeting">
+      {greeting},<br />
+      <span className="hero-greeting-name">{firstName}</span>{" "}
+      <span className="hero-wave" role="img" aria-label="waving hand">👋</span>
+    </h1>
+  );
+}
+
+const clockFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true,
+});
+const clockDateFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila", weekday: "long", month: "long", day: "numeric", year: "numeric",
+});
+
+function PhilippineClock() {
   const [now, setNow] = useState(() => new Date());
-  // Live weather for Mataasnakahoy (Open-Meteo, keyless)
-  const [weather, setWeather] = useState(null);
-
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+  const [time, amPm] = clockFormat.format(now).split(" ");
+  return (
+    <div className="hero-card hero-clock-card" aria-label="Philippine Time, UTC+8">
+      <div className="hero-card-title"><OverviewIcon kind="clock" /> Philippine Time</div>
+      <div className="hero-clock">{time} <span className="hero-clock-ampm">{amPm}</span></div>
+      <p className="hero-card-date">{clockDateFormat.format(now)}</p>
+      <p className="hero-card-foot">Asia/Manila · UTC+8</p>
+    </div>
+  );
+}
 
+function WeatherIcon({ kind }) {
+  return (
+    <svg data-weather-icon={kind} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" width="28" height="28" aria-hidden="true">
+      {kind === "sun" && <><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></>}
+      {kind === "partly-cloudy" && <><path d="M9 2v2M2 9h2M3.5 3.5 5 5M14.5 3.5 13 5" /><path d="M6 11a4 4 0 1 1 6-5" /></>}
+      {["partly-cloudy", "cloud", "rain", "snow", "thunderstorm"].includes(kind) && <path d="M6 17a4 4 0 0 1-1-7.9A6 6 0 0 1 16.5 8 4.5 4.5 0 1 1 18 17" />}
+      {kind === "rain" && <path d="m8 16-1 4m6-4-1 4m6-4-1 4" />}
+      {kind === "snow" && <path d="M8 20h.01M12 22h.01M16 20h.01M10 17h.01M14 17h.01" strokeWidth="3" />}
+      {kind === "thunderstorm" && <path d="m13 13-4 5h4l-2 5 6-7h-4l2-3" />}
+      {kind === "fog" && <path d="M4 7h16M2 11h18M4 15h18M2 19h18" />}
+      {kind === "unknown" && <><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M12 17h.01" /></>}
+    </svg>
+  );
+}
+
+function SystemStatusRow({ label, value, tone = "neutral" }) {
+  return (
+    <div className={`hero-status-row is-${tone}`}>
+      <dt><span className="hero-status-dot" aria-hidden="true" />{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh, isRefreshing }) {
+  const [weather, setWeather] = useState(null);
+  const [weatherState, setWeatherState] = useState("loading");
   useEffect(() => {
     let cancelled = false;
     fetch("https://api.open-meteo.com/v1/forecast?latitude=13.9667&longitude=121.1167&current=temperature_2m,weather_code")
-      .then(res => res.json())
-      .then(data => {
-        if (cancelled || !data?.current) return;
-        setWeather({
-          temp: Math.round(data.current.temperature_2m ?? 28),
-          label: WEATHER_CODES[data.current.weather_code] ?? "Fair",
-        });
+      .then(res => {
+        if (!res.ok) throw new Error("Weather unavailable");
+        return res.json();
       })
-      .catch(() => { }); // fall back to the default readout on failure
+      .then(data => {
+        if (cancelled) return;
+        const presentation = weatherPresentation(data);
+        if (!presentation) throw new Error("Weather unavailable");
+        setWeather(presentation);
+        setWeatherState(presentation.partial ? "partial" : "ready");
+      })
+      .catch(() => {
+        if (!cancelled) setWeatherState("error");
+      });
     return () => { cancelled = true; };
   }, []);
 
-  // All times are locked to Philippine Standard Time (UTC+8)
-  const timeFmt = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
-  const dateFmt = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", weekday: "long", month: "long", day: "numeric", year: "numeric" });
-  const hourFmt = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", hour: "numeric", hour12: false });
-
-  const manilaHour = Number(hourFmt.format(now)) % 24;
-  const greeting = manilaHour < 12 ? "Good morning" : manilaHour < 18 ? "Good afternoon" : "Good evening";
-  const firstName = user?.fullName ? user.fullName.trim().split(/\s+/)[0] : "Admin";
-
-  const [timeStr, amPm] = timeFmt.format(now).split(" ");
-  const flaggedCount = kpis ? kpis.total_flagged.toLocaleString() : "—";
+  const states = Object.values(requestStates);
+  const dashboardLoading = states.some(state => state.loading);
+  const dashboardError = states.some(state => state.error);
+  const hasResult = states.some(state => state.hasResult);
+  const metricsPartial = kpis && [kpis.total_businesses, kpis.compliance_rate,
+    kpis.current_year_registered_count ?? kpis.current_year_count,
+    kpis.upcoming_year_renewal_count, kpis.total_flagged].some(value => availableNumber(value) === null);
+  const dashboardValue = dashboardLoading ? (hasResult ? "Refreshing…" : "Loading…")
+    : dashboardError || metricsPartial ? (hasResult ? "Partial data" : "Unavailable") : "Loaded";
+  const weatherValue = { loading: "Loading…", ready: "Loaded", partial: "Partial data", error: "Unavailable" }[weatherState];
+  const registry = formatOverviewNumber(kpis?.total_businesses);
 
   return (
-    <section className="hero-banner">
-      <div className="hero-glow" aria-hidden="true" />
-
-      {/* ── Left: greeting + steps ── */}
+    <section className="hero-banner" aria-labelledby="overview-greeting">
       <div className="hero-left">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <div className="hero-status-pill">
-            <span className="hero-status-item">
-              <span className="hero-status-dot" />
-              BPLO Geospatial Engine Active
-            </span>
-            <span className="hero-status-divider" aria-hidden="true" />
-            <span className="hero-status-item">Mataasnakahoy Compliance Portal</span>
-          </div>
-
-          {onRefresh && (
-            <button
-              className="quick-refresh-btn"
-              type="button"
-              onClick={onRefresh}
-              disabled={isRefreshing}
-              style={{ padding: "4px 10px", fontSize: 11.5, height: 28 }}
-              title="Refresh overview metrics"
-            >
-              <svg className={isRefreshing ? "spin-icon" : ""} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" /></svg>
-              <span>{isRefreshing ? "Syncing…" : "Sync Live"}</span>
-            </button>
-          )}
-        </div>
-
-        <h1 className="hero-greeting">
-          {greeting},<br />
-          <span className="hero-greeting-name">{firstName} 👋</span>
-        </h1>
-
-        <p className="hero-sub">
-          Welcome back! You have{" "}
-          <strong className="hero-sub-highlight">{flaggedCount} commercial flags</strong>{" "}
-          pending geospatial audit. System dispatch priority model is active.
-        </p>
-
-        <div className="hero-steps">
-          {HERO_STEPS.map(({ num, label, to }) => (
-            <button key={num} className="hero-step" onClick={() => navigate(to)}>
-              <span className="hero-step-num">{num}</span>
+        <p className="hero-eyebrow">Mataasnakahoy · BPLO</p>
+        <PersonalizedGreeting user={user} />
+        <p className="hero-sub">Your municipal overview for registry records, geospatial flags, and outstanding inspection assignments.</p>
+        <nav className="hero-shortcuts" aria-label="Workflow shortcuts">
+          {HERO_SHORTCUTS.map(({ icon, label, to }) => (
+            <Link key={to} className="hero-shortcut" to={to}>
+              <span className={`hero-shortcut-icon is-${icon}`}><OverviewIcon kind={icon} /></span>
               <span>{label}</span>
-              <svg className="hero-step-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-                <path d="M5 12h14" /><path d="M13 6l6 6-6 6" />
-              </svg>
-            </button>
+              <OverviewIcon kind="arrow" className="hero-shortcut-arrow" />
+            </Link>
           ))}
-        </div>
+        </nav>
+        <button className="overview-refresh" type="button" onClick={onRefresh} disabled={isRefreshing}>
+          <OverviewIcon kind="refresh" />
+          {isRefreshing ? "Refreshing dashboard…" : "Refresh dashboard"}
+        </button>
       </div>
 
-      {/* ── Right: stat cards + quick actions ── */}
       <div className="hero-right">
         <div className="hero-cards">
-          {/* Municipal Time */}
-          <div className="hero-card">
-            <div className="hero-card-head">
-              <span className="hero-card-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15">
-                  <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
-                </svg>
-                <span>Municipal<br />Time</span>
-              </span>
-              <span className="hero-card-badge">PST<br />(UTC+8)</span>
-            </div>
-            <div className="hero-clock">
-              {timeStr} <span className="hero-clock-ampm">{amPm}</span>
-            </div>
-            <p className="hero-card-date">{dateFmt.format(now)}</p>
-            <div className="hero-card-foot">
-              <span>Status: {mapsReady ? "Syncing Google Maps" : "Loading Google Maps"}</span>
-              <span className={mapsReady ? "hero-foot-value" : "hero-foot-value--loading"}>
-                {mapsReady ? "100%" : "…"}
-              </span>
-            </div>
-          </div>
-
-          {/* Field Weather */}
-          <div className="hero-card">
-            <div className="hero-card-head">
-              <span className="hero-card-title">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15">
-                  <path d="M17.5 19a4.5 4.5 0 1 0-1.13-8.86A6 6 0 1 0 5 14.7" />
-                </svg>
-                <span>Field<br />Weather</span>
-              </span>
-              <span className="hero-card-loc">Mataasnakahoy</span>
-            </div>
+          <PhilippineClock />
+          <div className="hero-card hero-weather-card" aria-busy={weatherState === "loading"}>
+            <div className="hero-card-title">Local Weather</div>
             <div className="hero-weather-row">
-              <div>
-                <div className="hero-temp">{weather ? `${weather.temp}°C` : "28°C"}</div>
-                <p className="hero-cond">{weather ? `${weather.label} · Fair` : "Partly Cloudy · Fair"}</p>
-              </div>
-              <div className="hero-sun">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="22" height="22">
-                  <circle cx="12" cy="12" r="4" />
-                  <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-                </svg>
-              </div>
+              <span className="hero-temp">{weather?.temperature ?? "—"}</span>
+              <span className={`hero-weather-icon is-${weather?.icon ?? "unknown"}`}><WeatherIcon kind={weather?.icon ?? "unknown"} /></span>
             </div>
-            <div className="hero-card-foot">
-              <span>Inspection Readiness</span>
-              <span className="hero-foot-value hero-foot-value--optimal">Optimal</span>
-            </div>
+            <p className="hero-cond">{weather?.description ?? (weatherState === "loading" ? "Loading weather…" : "Weather unavailable")}</p>
+            <p className="hero-card-loc">Mataasnakahoy</p>
+            {weather?.observation && <p className="hero-card-foot">Observed {weather.observation}</p>}
           </div>
         </div>
 
-        {/* System Status */}
-        <div className="hero-status-card">
-          <span className="hero-status-card-title">System Status</span>
-          <div className="hero-status-row">
-            <span className="hero-status-row-label">
-              <span className="hero-status-dot" />
-              Geospatial Engine
-            </span>
-            <span className="hero-status-row-value hero-status-row-value--ok">Online</span>
-          </div>
-          <div className="hero-status-row">
-            <span className="hero-status-row-label">
-              <span className={mapsReady ? "hero-status-dot" : "hero-status-dot hero-status-dot--idle"} />
-              Google Maps Sync
-            </span>
-            <span className={mapsReady ? "hero-status-row-value hero-status-row-value--ok" : "hero-status-row-value hero-status-row-value--wait"}>
-              {mapsReady ? "Ready" : "Syncing…"}
-            </span>
-          </div>
-          <div className="hero-status-row">
-            <span className="hero-status-row-label">
-              <span className={weather ? "hero-status-dot" : "hero-status-dot hero-status-dot--idle"} />
-              Weather Feed
-            </span>
-            <span className={weather ? "hero-status-row-value hero-status-row-value--ok" : "hero-status-row-value hero-status-row-value--wait"}>
-              {weather ? "Live" : "Connecting…"}
-            </span>
-          </div>
-          <div className="hero-status-row">
-            <span className="hero-status-row-label">
-              <span className="hero-status-dot" />
-              Registry Baseline
-            </span>
-            <span className="hero-status-row-value">
-              {kpis ? `${kpis.total_businesses.toLocaleString()} entities` : "—"}
-            </span>
-          </div>
-        </div>
+        <section className="hero-status-card" aria-labelledby="overview-system-status">
+          <h2 id="overview-system-status">System Status</h2>
+          <dl>
+            <SystemStatusRow label="Dashboard data" value={dashboardValue} tone={dashboardLoading ? "wait" : dashboardError || metricsPartial ? "error" : "ready"} />
+            <SystemStatusRow label="Maps library" value={mapsError ? "Unavailable" : mapsReady ? "Ready" : "Loading…"} tone={mapsError ? "error" : mapsReady ? "ready" : "wait"} />
+            <SystemStatusRow label="Weather feed" value={weatherValue} tone={weatherState === "ready" ? "ready" : weatherState === "loading" ? "wait" : "error"} />
+            <SystemStatusRow label="Registry records" value={registry === "—" ? "Unavailable" : `${registry}${requestStates.kpis.error ? " · stale" : ""}`} />
+          </dl>
+        </section>
       </div>
     </section>
   );
 }
 
-function HighPriorityAlertsWidget({ opsRankings, navigate, loading }) {
-  const RISK_COLORS = {
-    High: { bg: "rgba(239,68,68,0.12)", text: "#dc2626", border: "#fca5a5" },
-    Medium: { bg: "rgba(245,158,11,0.12)", text: "#b45309", border: "#fcd34d" },
-    Low: { bg: "rgba(34,197,94,0.12)", text: "#166534", border: "#86efac" },
-  };
-
-  // Top 5 barangays by OPS score (already sorted from backend)
-  const top5 = (opsRankings || []).filter(b => b.flagged_count > 0).slice(0, 5);
-
+function KpiSummary({ kpis, state }) {
+  const measures = [
+    { label: "Total registry records", value: kpis?.total_businesses, note: "All records in the official registry." },
+    { label: "Active share of registry", value: kpis?.compliance_rate, suffix: "%", note: "Active records as a share of all registry records." },
+    { label: "Renewal/issue-year records", value: kpis?.current_year_registered_count ?? kpis?.current_year_count, note: "Renewal/issue date in the backend’s current year." },
+    { label: "Next-year renewal basis — derived", value: kpis?.upcoming_year_renewal_count, note: "Current-year active and next-year dated records." },
+    { label: "Qualifying non-green logs", value: kpis?.total_flagged, note: "Eligible logs across non-green flag colors." },
+  ];
+  const partial = state.hasResult && measures.some(measure => availableNumber(measure.value) === null);
+  const metric = ({ label, value, suffix, note }, index) => (
+    <div className={`overview-metric metric-${index}`} key={label}>
+      <dt>{label}</dt>
+      <dd aria-label={availableNumber(value) === null ? "Unavailable" : undefined}>{formatOverviewNumber(value, suffix)}</dd>
+      <p>{note}</p>
+    </div>
+  );
   return (
-    <div className="dashboard-widget frosted-glass saas-card">
-      <div className="widget-header">
-        <h3 style={{ color: "var(--color-danger)", display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16">
-            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          High-Priority Alerts
-        </h3>
+    <section className="overview-surface overview-kpis" aria-labelledby="overview-kpi-title" aria-busy={state.loading}>
+      <div className="overview-section-heading">
+        <h2 id="overview-kpi-title">Registry &amp; Flag Summary</h2>
+        <span className="overview-section-kicker">Overview</span>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
-        {loading ? (
-          <div style={{ textAlign: "center", padding: "20px 0", color: "var(--color-muted)", fontSize: 13 }}>
-            Loading priority queue…
-          </div>
-        ) : top5.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "20px 0", color: "var(--color-muted)", fontSize: 13 }}>
-            No barangays with active flags detected.
-          </div>
-        ) : top5.map((b) => {
-          const riskStyle = RISK_COLORS[b.risk_level] || RISK_COLORS.Low;
+      <RequestFeedback state={state} label="summary metrics" />
+      {partial && !state.error && <p className="overview-feedback" role="status">Some metric values are unavailable.</p>}
+      <dl className="overview-kpis-primary">{measures.slice(0, 2).map(metric)}</dl>
+      <dl className="overview-kpis-supporting">{measures.slice(2).map((measure, index) => metric(measure, index + 2))}</dl>
+      <details className="overview-explanation">
+        <summary>About these measures</summary>
+        <p>Active share describes registry status, not municipality-wide compliance. The next-year basis is a derived count, not a renewal schedule.</p>
+        <p>Reporting-year metadata is not supplied. Current-year and next-year wording follows the backend’s reporting period, using each record’s renewal/issue date.</p>
+        <p>Qualifying non-green logs have a Places ID, an inspector reporter, an Orange flag, or inspection history. Missing values appear as —; zero is a reported value.</p>
+      </details>
+    </section>
+  );
+}
+
+function BarangayPrioritiesWidget({ opsRankings, state }) {
+  // Preserve the backend order and existing top-five qualifying population.
+  const top5 = opsRankings.filter(b => b && b.flagged_count > 0).slice(0, 5);
+  return (
+    <section className="overview-surface overview-priorities" aria-labelledby="overview-priorities-title" aria-busy={state.loading}>
+      <div className="overview-section-heading">
+        <h2 id="overview-priorities-title">Barangay Inspection Priorities</h2>
+      </div>
+      <p className="overview-section-sub">Top five with qualifying flags, ranked by OPS.</p>
+      <RequestFeedback state={state} label="barangay priorities" />
+      {state.hasResult && top5.length === 0 && <p className="overview-empty">No barangays with qualifying flags in the loaded rankings.</p>}
+      <ol className="overview-priority-list">
+        {top5.map(b => {
+          const category = typeof b.risk_level === "string" && b.risk_level.trim() ? b.risk_level : "Unavailable";
+          const categoryClass = ["High", "Medium", "Low"].includes(category) ? category.toLowerCase() : "unknown";
           return (
-            <div
-              key={b.barangayID}
-              className="hover-lift"
-              style={{ background: "var(--color-surface)", border: "1px solid var(--color-border-soft)", padding: "10px 12px", borderRadius: "10px", cursor: "pointer" }}
-              onClick={() => navigate('/analytics')}
-            >
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3, gap: 8, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 6, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  <span style={{
-                    width: 18, height: 18, borderRadius: "50%",
-                    background: "var(--color-primary)", color: "#fff",
-                    fontSize: 10, fontWeight: 800,
-                    display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0
-                  }}>
-                    {b.rank}
-                  </span>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {shortBarangay(b.barangayName)}
-                  </span>
-                </div>
-                <span style={{
-                  fontSize: 10, fontWeight: 700,
-                  padding: "2px 8px", borderRadius: 6,
-                  background: riskStyle.bg, color: riskStyle.text,
-                  border: `1px solid ${riskStyle.border}`,
-                  flexShrink: 0
-                }}>
-                  {b.risk_level}
+            <li key={b.barangayID}>
+              <Link className="overview-priority" to="/analytics" title="View Analytics">
+                <span className="overview-priority-rank" aria-label={`Rank ${formatOverviewNumber(b.rank)}`}>{formatOverviewNumber(b.rank)}</span>
+                <span className="overview-priority-main">
+                  <span className="overview-priority-name">{shortBarangay(b.barangayName) || "Unknown barangay"}</span>
+                  <span className="overview-priority-meta"><strong>{formatOverviewNumber(b.ops_score)}</strong>/100 OPS · {formatOverviewNumber(b.flagged_count)} qualifying {b.flagged_count === 1 ? "flag" : "flags"}</span>
                 </span>
-              </div>
-              <div style={{ fontSize: 11, color: "var(--color-muted)", paddingLeft: 24, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <span>OPS <b style={{ color: "var(--color-ink)" }}>{b.ops_score}</b>/100</span>
-                <span>·</span>
-                <span>{b.flagged_count} flag{b.flagged_count !== 1 ? "s" : ""}</span>
-                {b.red_count > 0 && <span style={{ color: "#ef4444" }}>({b.red_count} Red)</span>}
-                {b.black_count > 0 && <span style={{ color: "#374151" }}>({b.black_count} Black)</span>}
-              </div>
-            </div>
+                <span className={`overview-priority-category is-${categoryClass}`}>{category}</span>
+              </Link>
+            </li>
           );
         })}
-        {top5.length > 0 && (
-          <button className="ghost-btn" style={{ fontSize: 11, padding: "6px", color: "var(--color-danger)", borderColor: "transparent", marginTop: 4, width: "100%" }} onClick={() => navigate('/analytics')}>
-            View Full Priority Queue →
-          </button>
-        )}
-      </div>
-    </div>
+      </ol>
+      <details className="overview-explanation">
+        <summary>How priorities are ranked</summary>
+        <p>OPS combines the backend’s risk, sector, and distance scores. Only qualifying Red, Yellow, and Black flags feed this ranking; categories are supplied by the backend.</p>
+        <p>High: 60–100 · Medium: 30–below 60 · Low: below 30. These are barangay priorities, not counts of unassigned tasks.</p>
+      </details>
+      <Link className="overview-section-link" to="/analytics">View Analytics <OverviewIcon kind="arrow" /></Link>
+    </section>
   );
 }
 
 // ── Mini Map Widget ───────────────────────────────────────────────────────────
-function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
+function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError }) {
   const [mapInstance, setMapInstance] = useState(null);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
@@ -426,16 +390,19 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
     };
   }, [isLoaded, mapInstance, flags]);
 
+  const nonGreenPreviewCount = flags.slice(0, 100).filter(f => parseColor(f) !== "Green").length;
+
   return (
-    <div className="dashboard-widget frosted-glass saas-card map-widget">
-      <div className="widget-header">
-        <h3>Live Map Preview</h3>
-        <button className="ghost-btn" type="button" onClick={onOpenMap}>
+    <section className="overview-surface overview-map" aria-labelledby="overview-map-title" aria-busy={state.loading || (!isLoaded && !loadError)}>
+      <div className="overview-section-heading">
+        <h2 id="overview-map-title">Map Preview</h2>
+        <button className="overview-inline-action" type="button" onClick={onOpenMap}>
           Open Full Map ↗
         </button>
       </div>
-
-      <div style={{ borderRadius: 12, overflow: "hidden", height: 260, position: "relative" }}>
+      <RequestFeedback state={state} label="map records" />
+      <p className="overview-section-sub">Up to 100 markers from the {state.hasResult ? formatOverviewNumber(flags.length) : "—"} loaded records. Open the full map to explore more.</p>
+      <div className="overview-map-canvas">
         {loadError ? (
           <div style={miniMapFallback}>
             <span>⚠ Google Maps failed to load.</span>
@@ -463,39 +430,33 @@ function MiniMapWidget({ flags, isDark, onOpenMap, isLoaded, loadError }) {
         )}
 
         {/* Clickable overlay to open full map */}
-        <div
+        <button
+          type="button"
+          className="overview-map-open"
           onClick={onOpenMap}
+          aria-label="Open Full Map from preview"
           title="Open full map"
-          style={{
-            position: "absolute", inset: 0, zIndex: 5, cursor: "pointer",
-            background: "transparent",
-          }}
         />
 
         {/* Flag count badge */}
-        {flags.length > 0 && (
-          <div style={{
-            position: "absolute", top: 10, left: 10, zIndex: 10,
-            background: "rgba(239,68,68,0.9)", color: "#fff",
-            fontSize: 11, fontWeight: 700, padding: "4px 10px",
-            borderRadius: 20, backdropFilter: "blur(4px)",
-            pointerEvents: "none",
-          }}>
-            {flags.filter(f => parseColor(f) !== "Green").length} active flags
+        {state.hasResult && (
+          <div className="overview-map-count">
+            {formatOverviewNumber(nonGreenPreviewCount)} non-green records in preview
           </div>
         )}
       </div>
 
-      {/* Mini legend */}
-      <div style={{ display: "flex", gap: 16, marginTop: 10, flexWrap: "wrap" }}>
+        {/* Mini legend */}
+      <ul className="overview-map-legend" aria-label="Flag legend">
         {Object.entries(FLAG_COLORS).map(([color, meta]) => (
-          <div key={color} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "var(--color-muted)" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: meta.marker, display: "inline-block" }} />
+          <li key={color}>
+            <span style={{ background: meta.marker }} aria-hidden="true" />
             {meta.label}
-          </div>
+          </li>
         ))}
-      </div>
-    </div>
+      </ul>
+      {state.hasResult && flags.length === 0 && <p className="overview-empty">No map records in the loaded results.</p>}
+    </section>
   );
 }
 
@@ -506,7 +467,7 @@ const miniMapFallback = {
 };
 
 // ── Visual Calendar Widget ──────────────────────────────────────────────────
-function VisualCalendarWidget({ inspections, navigate }) {
+function VisualCalendarWidget({ inspections, state, navigate }) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(null);
 
@@ -523,38 +484,18 @@ function VisualCalendarWidget({ inspections, navigate }) {
   const monthName = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
   const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-  // Map deadlines
-  const activeTasksWithDeadline = inspections
-    .filter(i => (i.verificationStatus === "Assigned" || i.verificationStatus === "Reassigned") && i.deadline);
-
-  // statusByDate: day -> 'overdue' | 'upcoming'
-  const statusByDate = {};
-  const tasksByDate = {};
-
-  activeTasksWithDeadline.forEach(t => {
-    const d = new Date(t.deadline);
-    if (d.getFullYear() === currentDate.getFullYear() && d.getMonth() === currentDate.getMonth()) {
-      const day = d.getDate();
-      if (!tasksByDate[day]) tasksByDate[day] = [];
-      tasksByDate[day].push(t);
-
-      const isOverdue = d < new Date();
-      if (statusByDate[day] !== 'overdue') {
-        statusByDate[day] = isOverdue ? 'overdue' : 'upcoming';
-      }
-    }
-  });
-
-  const displayedTasks = selectedDay && tasksByDate[selectedDay]
-    ? tasksByDate[selectedDay].sort((a, b) => new Date(a.deadline) - new Date(b.deadline))
-    : activeTasksWithDeadline.sort((a, b) => new Date(a.deadline) - new Date(b.deadline)).slice(0, 3);
+  const { outstanding, statusByDate, tasksByDate, displayedTasks } = deadlinePresentation(inspections, currentDate, selectedDay);
+  const selectedDate = selectedDay !== null ? new Date(currentDate.getFullYear(), currentDate.getMonth(), selectedDay) : null;
+  const activityPath = `/inspections/calendar${selectedDate ? `?date=${dateQuery(selectedDate)}` : ""}`;
 
   return (
-    <div className="dashboard-widget frosted-glass saas-card calendar-widget">
-      {/* Header: the month title stays prominent, the secondary "View Full
-          Calendar" action and the grouped month arrows wrap to their own row
-          instead of pushing the card wider than its column. */}
-      <div className="widget-header calendar-widget-header">
+    <section className="overview-surface calendar-widget" aria-labelledby="overview-deadlines-title" aria-busy={state.loading}>
+      <div className="overview-section-heading">
+        <h2 id="overview-deadlines-title">Assignment Deadlines</h2>
+      </div>
+      <p className="overview-section-sub">Outstanding assignments in the loaded inspection records.</p>
+      <RequestFeedback state={state} label="assignment deadlines" />
+      <div className="calendar-widget-header">
         <h3 className="calendar-widget-title">
           <svg className="calendar-widget-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16" aria-hidden="true">
             <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -566,21 +507,6 @@ function VisualCalendarWidget({ inspections, navigate }) {
         </h3>
 
         <div className="calendar-widget-controls">
-          <button
-            className="calendar-widget-link"
-            type="button"
-            onClick={() => navigate("/inspections/calendar")}
-            title="Open the full inspection calendar"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="12" height="12" aria-hidden="true">
-              <rect x="3" y="4" width="18" height="18" rx="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8" y1="2" x2="8" y2="6" />
-              <line x1="3" y1="10" x2="21" y2="10" />
-            </svg>
-            View Full Calendar
-          </button>
-
           <div className="calendar-widget-nav" role="group" aria-label="Month navigation">
             <button type="button" onClick={prevMonth} aria-label="Previous month" title="Previous month">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" width="14" height="14" aria-hidden="true">
@@ -630,10 +556,11 @@ function VisualCalendarWidget({ inspections, navigate }) {
               className={classes}
               onClick={() => setSelectedDay(day === selectedDay ? null : day)}
               aria-pressed={isSelected}
+              aria-current={isToday ? "date" : undefined}
               aria-label={`${monthName} ${day}${isToday ? " (today)" : ""}, ${
-                taskCount === 0
-                  ? "no scheduled tasks"
-                  : `${taskCount} scheduled ${taskCount === 1 ? "task" : "tasks"}${status === "overdue" ? ", overdue" : ""}`
+                !state.hasResult ? "deadlines unavailable" : taskCount === 0
+                  ? "no outstanding deadlines"
+                  : `${taskCount} outstanding ${taskCount === 1 ? "deadline" : "deadlines"}${status === "overdue" ? ", overdue" : ", upcoming"}`
               }`}
             >
               <span className="calendar-widget-day-number">{day}</span>
@@ -646,18 +573,23 @@ function VisualCalendarWidget({ inspections, navigate }) {
         })}
       </div>
 
+      <div className="calendar-widget-legend" aria-label="Deadline indicators">
+        <span><i className="is-overdue" aria-hidden="true" />Overdue</span>
+        <span><i className="is-upcoming" aria-hidden="true" />Upcoming</span>
+        <span className="calendar-widget-today-key">Today</span>
+      </div>
       <div className="calendar-widget-tasks">
         <div className="calendar-widget-tasks-header">
-          <h4>
-            {selectedDay ? `Tasks for ${monthName.split(' ')[0]} ${selectedDay}` : "Upcoming Tasks"}
-          </h4>
-          {selectedDay && (
-            <button className="ghost-btn" style={{ padding: "2px 6px", fontSize: 10 }} onClick={() => setSelectedDay(null)}>Clear</button>
+          <h3 id="overview-selected-deadlines" aria-live="polite">
+            {selectedDate ? `Deadlines · ${selectedDate.toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : "Earliest outstanding"}
+          </h3>
+          {selectedDate && (
+            <button className="overview-inline-action" type="button" onClick={() => setSelectedDay(null)}>Clear date</button>
           )}
         </div>
-        <div className="calendar-widget-task-list">
-          {displayedTasks.length === 0 ? (
-            <div className="calendar-widget-empty">No tasks for this date.</div>
+        <div className="calendar-widget-task-list" aria-labelledby="overview-selected-deadlines">
+          {state.hasResult && displayedTasks.length === 0 ? (
+            <p className="overview-empty">{selectedDate ? "No outstanding deadlines for this date in the loaded records." : "No outstanding assignment deadlines in the loaded records."}</p>
           ) : displayedTasks.map(task => {
             const isOverdue = new Date(task.deadline) < new Date();
             return (
@@ -666,20 +598,25 @@ function VisualCalendarWidget({ inspections, navigate }) {
                 key={task.reportID}
                 className={`calendar-widget-task${isOverdue ? " is-overdue" : ""}`}
                 onClick={() => navigate('/inspections')}
+                title="Open Inspection Dispatch"
               >
                 <span className="calendar-widget-task-main">
-                  <span className="calendar-widget-task-name">{task.detectedName}</span>
+                  <span className="calendar-widget-task-name">{task.detectedName || "Unknown establishment"}</span>
                   <span className="calendar-widget-task-meta">Inspector: {task.inspectorName || "Unknown"}</span>
                 </span>
                 <span className="calendar-widget-task-due">
-                  {isOverdue ? "⚠ Overdue" : new Date(task.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  <strong>{isOverdue ? "Overdue" : "Due"}</strong>
+                  <span>{new Date(task.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                 </span>
               </button>
             );
           })}
         </div>
+        {!selectedDate && outstanding.length > 3 && <p className="overview-scope-note">Showing the earliest three deadlines. Select a date to see its assignments.</p>}
       </div>
-    </div>
+      <p className="overview-scope-note">Based on up to 1,000 loaded inspection records. Task links open Dispatch.</p>
+      <Link className="overview-section-link" to={activityPath} title="Review recorded inspection lifecycle activity">View Inspection Activity <OverviewIcon kind="arrow" /></Link>
+    </section>
   );
 }
 
@@ -858,7 +795,6 @@ export default function HomePage() {
 
   // KPIs
   const [kpis, setKpis] = useState(null);
-  const [kpiError, setKpiError] = useState(false);
 
   // Flags
   const [allFlags, setAllFlags] = useState([]);
@@ -867,8 +803,10 @@ export default function HomePage() {
   const [inspectors, setInspectors] = useState([]);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [opsRankings, setOpsRankings] = useState([]);
-  const [opsLoading, setOpsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [requestStates, setRequestStates] = useState(() => Object.fromEntries(
+    ["kpis", "flags", "inspections", "inspectors", "ops"].map(key => [key, { loading: true, error: false, hasResult: false }]),
+  ));
 
   useEffect(() => {
     if (!location.state?.showWelcome || !user || welcomeHandledRef.current) {
@@ -890,6 +828,7 @@ export default function HomePage() {
     if (!isSilent) {
       setIsRefreshing(true);
     }
+    setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: true }])));
 
     try {
       const [analyticsRes, flagsRes, inspRes, inspectorsRes, opsRes] = await Promise.allSettled([
@@ -899,12 +838,20 @@ export default function HomePage() {
         getInspectorsRequest(token),
         getOpsRankingsRequest(token),
       ]);
+      const analyticsKpis = analyticsRes.status === "fulfilled" ? analyticsRes.value?.descriptive?.kpis : null;
+      const inspectorData = inspectorsRes.status === "fulfilled" ? (inspectorsRes.value?.data ?? inspectorsRes.value) : null;
+      const successful = {
+        kpis: Boolean(analyticsKpis && typeof analyticsKpis === "object" && !Array.isArray(analyticsKpis)),
+        flags: flagsRes.status === "fulfilled" && Array.isArray(flagsRes.value?.data),
+        inspections: inspRes.status === "fulfilled" && Array.isArray(inspRes.value?.data),
+        inspectors: Array.isArray(inspectorData),
+        ops: opsRes.status === "fulfilled" && Array.isArray(opsRes.value?.data),
+      };
 
       // KPIs & Rollover
       if (analyticsRes.status === "fulfilled" && analyticsRes.value) {
         const data = analyticsRes.value;
-        setKpis(data?.descriptive?.kpis ?? null);
-        setKpiError(false);
+        if (successful.kpis) setKpis(analyticsKpis);
 
         if (data?.new_year_rollover?.detected) {
           Swal.fire({
@@ -935,33 +882,35 @@ export default function HomePage() {
             }
           });
         }
-      } else if (analyticsRes.status === "rejected") {
-        setKpiError(true);
       }
 
       // Flags
-      if (flagsRes.status === "fulfilled" && flagsRes.value) {
-        setAllFlags(flagsRes.value?.data ?? []);
+      if (successful.flags) {
+        setAllFlags(flagsRes.value.data);
       }
 
       // Inspections
-      if (inspRes.status === "fulfilled" && inspRes.value) {
-        setInspections(inspRes.value?.data ?? []);
+      if (successful.inspections) {
+        setInspections(inspRes.value.data);
       }
 
       // Inspectors
-      if (inspectorsRes.status === "fulfilled" && inspectorsRes.value) {
-        setInspectors(inspectorsRes.value || []);
+      if (successful.inspectors) {
+        setInspectors(inspectorData);
       }
 
       // OPS Rankings
-      if (opsRes.status === "fulfilled" && opsRes.value) {
-        setOpsRankings(opsRes.value?.data || []);
+      if (successful.ops) {
+        setOpsRankings(opsRes.value.data);
       }
+      setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, {
+        loading: false, error: !successful[key], hasResult: state.hasResult || successful[key],
+      }])));
     } catch {
-      /* ignore */
+      setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, {
+        ...state, loading: false, error: true,
+      }])));
     } finally {
-      setOpsLoading(false);
       setIsRefreshing(false);
     }
   }, [token, navigate]);
@@ -1008,118 +957,42 @@ export default function HomePage() {
     };
   }, [fetchDashboardData]);
 
-  const kpiCards = [
-    {
-      value: kpis ? (kpis.current_year_registered_count ?? kpis.current_year_count ?? "—").toLocaleString() : "—",
-      label: "Registered Current Year (2026)",
-      iconVariant: "gold",
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line>
-        </svg>
-      ),
-    },
-    {
-      value: kpis ? (kpis.upcoming_year_renewal_count ?? "—").toLocaleString() : "—",
-      label: "Scheduled Renewal (2027)",
-      iconVariant: "green",
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-        </svg>
-      ),
-    },
-    {
-      value: kpis ? kpis.total_businesses.toLocaleString() : "—",
-      label: "Total Registered Entities",
-      delta: kpis?.total_businesses_delta ? `${kpis.total_businesses_delta > 0 ? '+' : ''}${kpis.total_businesses_delta} vs last month` : undefined,
-      trend: kpis?.total_businesses_delta >= 0 ? "up" : "down",
-      iconVariant: "gold",
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M3 3v18h18" /><path d="M18.7 8l-5.1 5.2-2.8-2.7L7 14.3" />
-        </svg>
-      ),
-    },
-    {
-      value: kpis ? kpis.total_flagged : "—",
-      label: "Unregistered Flags Detected",
-      delta: kpis?.total_flagged_delta ? `${kpis.total_flagged_delta > 0 ? '+' : ''}${kpis.total_flagged_delta} vs last month` : undefined,
-      trend: kpis?.total_flagged_delta > 0 ? "down" : "up", // Red flag: more is bad
-      iconVariant: "red",
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
-          <line x1="4" y1="22" x2="4" y2="15" />
-        </svg>
-      ),
-    },
-    {
-      value: kpis ? `${kpis.compliance_rate}%` : "—",
-      label: "Overall Compliance Rate",
-      delta: kpis?.compliance_rate_delta ? `${kpis.compliance_rate_delta > 0 ? '+' : ''}${kpis.compliance_rate_delta}% vs last month` : undefined,
-      trend: kpis?.compliance_rate_delta >= 0 ? "up" : "down",
-      iconVariant: "green",
-      icon: (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-          <polyline points="22 4 12 14.01 9 11.01" />
-        </svg>
-      ),
-    },
-  ];
-
   return (
-    <DashboardLayout>
+    <DashboardLayout className="overview-page">
       {/* Main Layout: 2 Columns */}
       <div className="overview-dashboard-layout">
 
         {/* Left Column (Main Content) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div className="overview-main-column">
           <HeroBanner
             user={user}
             kpis={kpis}
+            requestStates={requestStates}
             mapsReady={isLoaded}
-            navigate={navigate}
+            mapsError={loadError}
             onRefresh={() => fetchDashboardData(false)}
             isRefreshing={isRefreshing}
           />
 
-          {kpiError && (
-            <div style={{
-              background: "var(--color-danger-light)", border: "1px solid var(--color-danger)",
-              borderRadius: 8, padding: "10px 16px",
-              color: "var(--color-danger)", fontSize: 13, fontWeight: 600,
-            }}>
-              ⚠ Could not load live metrics — check that the backend is running.
-            </div>
-          )}
-
-          {/* KPI row */}
-          <div className="kpi-grid">
-            {kpiCards.map(kpi => <KpiCard key={kpi.label} {...kpi} />)}
-          </div>
+          <KpiSummary kpis={kpis} state={requestStates.kpis} />
 
           {/* Map */}
-          <div style={{ minHeight: 380, height: "auto", marginBottom: 24 }}>
-            <MiniMapWidget
-              flags={allFlags}
-              isDark={isDark}
-              onOpenMap={() => navigate("/map")}
-              isLoaded={isLoaded}
-              loadError={loadError}
-            />
-          </div>
+          <MiniMapWidget
+            flags={allFlags}
+            state={requestStates.flags}
+            isDark={isDark}
+            onOpenMap={() => navigate("/map")}
+            isLoaded={isLoaded}
+            loadError={loadError}
+          />
         </div>
 
         {/* Right Column (Sidebar) */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-          <VisualCalendarWidget inspections={inspections} navigate={navigate} />
-
-          <HighPriorityAlertsWidget
+        <div className="overview-side-column">
+          <VisualCalendarWidget inspections={inspections} state={requestStates.inspections} navigate={navigate} />
+          <BarangayPrioritiesWidget
             opsRankings={opsRankings}
-            navigate={navigate}
-            loading={opsLoading}
+            state={requestStates.ops}
           />
         </div>
       </div>

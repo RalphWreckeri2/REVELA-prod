@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
 import {
@@ -15,11 +15,14 @@ import {
 import {
   buildUsageWarnings,
   describeLimitSource,
+  detectionMethodKey,
   detectionScanSummary,
+  dirtySettingKeys,
   formatNumber,
   isCustomLimit,
   limitState,
   methodLabel,
+  mergeSettingsDraft,
   summarizeUsage,
 } from "./apiUsageView";
 
@@ -32,18 +35,17 @@ import {
  * scans remain. Warnings appear on their own whenever a budget is nearly or
  * fully spent.
  *
- * Everything technical — application limits, workflow allocations, Test Mode,
- * fixture management, and the raw Cloud-quota comparison — lives inside a
- * collapsed "Advanced Settings" block restricted to Super Admins. Nothing is
- * fetched for a plain administrator, so a restricted operator never even loads
- * that data.
+ * Super Admins navigate between application limits, testing/fixtures, and
+ * technical details. Drafts live above the section content so navigation and
+ * read-only refreshes preserve outstanding edits. Restricted settings payloads
+ * are requested only for Super Admins.
  *
  * Design notes, matching the rest of the app:
  *  - Surfaces (`saas-card`, `frosted-glass`, `primary-btn`, `ghost-btn`,
  *    `badge`) and every colour come from `src/styles/global.css` / `MapPage.css`;
  *    nothing here introduces a new token, so dark mode works unchanged.
- *  - Layout is intrinsic CSS Grid (`repeat(auto-fit, minmax(...))`) so it
- *    reflows without media queries or JS width checks.
+ *  - Modal styles are scoped to the API usage modal, with compact navigation
+ *    on narrow screens.
  *  - Wording, thresholds, and arithmetic live in `apiUsageView.js` so they can
  *    be unit tested without a DOM.
  *
@@ -54,6 +56,13 @@ import {
 const BILLING_NOTE =
   "REVELA counts these Google requests in its own internal ledger. The figures "
   + "below are application limits, not Google Cloud billing.";
+
+const SECTIONS = [
+  { id: "overview", title: "Usage overview", description: "Shared usage and remaining allowances", navHint: "Requests, scans, and warnings" },
+  { id: "limits", title: "Application limits", description: "Manage REVELA's request budgets", navHint: "Budgets and workflow allocations" },
+  { id: "testing", title: "Testing & fixtures", description: "Configure Test Mode and cached responses", navHint: "Test scope and fixture management" },
+  { id: "technical", title: "Technical details", description: "Inspect Cloud quotas, pacing, and the selected endpoint", navHint: "Cloud quotas and request pacing" },
+];
 
 const LIMIT_META = {
   cloud: {
@@ -81,48 +90,11 @@ const LIMIT_META = {
 
 function Section({ title, description, action, children }) {
   return (
-    <section
-      style={{
-        border: "1px solid var(--color-border-soft)",
-        borderRadius: "var(--radius-md)",
-        padding: 16,
-        background: "var(--color-card-alt)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: 12,
-          flexWrap: "wrap",
-          marginBottom: 14,
-        }}
-      >
+    <section className="api-usage-section">
+      <div className="api-usage-section-header">
         <div>
-          <h4
-            style={{
-              margin: "0 0 4px",
-              fontSize: 14,
-              fontWeight: 700,
-              color: "var(--color-ink)",
-            }}
-          >
-            {title}
-          </h4>
-          {description && (
-            <p
-              style={{
-                margin: 0,
-                fontSize: 12,
-                color: "var(--color-muted)",
-                lineHeight: 1.5,
-                maxWidth: 720,
-              }}
-            >
-              {description}
-            </p>
-          )}
+          <h4>{title}</h4>
+          {description && <p>{description}</p>}
         </div>
         {action}
       </div>
@@ -210,9 +182,11 @@ function Meter({ used, cap }) {
   );
 }
 
-function SegmentedToggle({ value, options, onChange, disabled }) {
+function SegmentedToggle({ label, value, options, onChange, disabled }) {
   return (
     <div
+      role="group"
+      aria-label={label}
       style={{
         display: "inline-flex",
         background: "var(--color-hover)",
@@ -227,6 +201,7 @@ function SegmentedToggle({ value, options, onChange, disabled }) {
           <button
             key={String(opt.value)}
             type="button"
+            aria-pressed={active}
             disabled={disabled}
             onClick={() => onChange(opt.value)}
             style={{
@@ -302,15 +277,27 @@ export default function ApiUsageSettingsPanel({
   onUsageChanged,
 }) {
   const [open, setOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState("overview");
   const [usage, setUsage] = useState(null);
   const [detectionQuota, setDetectionQuota] = useState(null);
-  const [quota, setQuota] = useState(null);
-  const [testMode, setTestMode] = useState(null);
-  const [draft, setDraft] = useState({});
-  const [testDraft, setTestDraft] = useState({});
+  const [quotaSettings, setQuotaSettings] = useState({ data: null, draft: {} });
+  const [testSettings, setTestSettings] = useState({ data: null, draft: {} });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const dialogRef = useRef(null);
+  const contentRef = useRef(null);
+  const triggerRef = useRef(null);
+  const quota = quotaSettings.data;
+  const draft = quotaSettings.draft;
+  const testMode = testSettings.data;
+  const testDraft = testSettings.draft;
+  const setDraft = (updater) => setQuotaSettings((current) => ({
+    ...current, draft: updater(current.draft),
+  }));
+  const setTestDraft = (updater) => setTestSettings((current) => ({
+    ...current, draft: updater(current.draft),
+  }));
 
   const load = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -320,7 +307,7 @@ export default function ApiUsageSettingsPanel({
       const [usageData, detectionData, quotaData, testData] = await Promise.all([
         getApiUsageReportRequest(token),
         getDetectionQuotaRequest(token),
-        // Advanced Settings is Super Admin only, so its two payloads are never
+        // Editing sections are Super Admin only, so their two payloads are never
         // requested — and never rendered — for a plain administrator.
         ...(isSuperAdmin
           ? [getApiQuotaSettingsRequest(token), getTestModeSettingsRequest(token)]
@@ -329,12 +316,20 @@ export default function ApiUsageSettingsPanel({
       setUsage(usageData);
       setDetectionQuota(detectionData);
       if (quotaData) {
-        setQuota(quotaData);
-        setDraft(draftFromFields(quotaData.fields));
+        setQuotaSettings((current) => ({
+          data: quotaData,
+          draft: mergeSettingsDraft(
+            current.draft, draftFromFields(current.data?.fields), draftFromFields(quotaData.fields),
+          ),
+        }));
       }
       if (testData) {
-        setTestMode(testData);
-        setTestDraft(editableTestModeDraft(testData.config));
+        setTestSettings((current) => ({
+          data: testData,
+          draft: mergeSettingsDraft(
+            current.draft, editableTestModeDraft(current.data?.config), editableTestModeDraft(testData.config),
+          ),
+        }));
       }
     } catch (err) {
       setError(err.message || "Could not load API usage settings.");
@@ -345,45 +340,84 @@ export default function ApiUsageSettingsPanel({
 
   useEffect(() => {
     if (!open) return undefined;
+    const dialog = dialogRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialog?.querySelector('[aria-current="page"]')?.focus();
     const onKeyDown = (event) => {
-      if (event.key === "Escape") setOpen(false);
+      // Confirmation dialogs manage their own focus and Escape handling.
+      if (!dialog || (!dialog.contains(document.activeElement) && document.activeElement !== document.body)) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...dialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')]
+        .filter((element) => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (document.activeElement === document.body) {
+        event.preventDefault();
+        (event.shiftKey ? last : first)?.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    const trigger = triggerRef.current;
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+      // The host closes More Actions on open; its summary remains focusable.
+      const returnTarget = trigger?.closest("details")?.querySelector("summary") ?? trigger;
+      returnTarget?.focus();
+    };
   }, [open]);
 
   // Load only when the modal opens; the content is only needed while visible.
   const handleToggle = () => {
-    setOpen((prev) => {
-      if (!prev) {
-        load();
-        // Let the host collapse the surrounding menu the trigger lives in.
-        onOpen?.();
-      }
-      return !prev;
-    });
+    if (!open) {
+      setActiveSection("overview");
+      void load();
+      // Let the host collapse the surrounding menu the trigger lives in.
+      onOpen?.();
+    }
+    setOpen(!open);
   };
 
   const methods = useMemo(() => usage?.methods ?? [], [usage]);
+  const nearbyApiMode = usage?.run_detection?.nearby_api_mode;
+  const activeMethodKey = detectionMethodKey(nearbyApiMode);
+  const hasScanQuota = Number.isFinite(detectionQuota?.used_this_month)
+    && Number.isFinite(detectionQuota?.monthly_limit)
+    && Number.isFinite(detectionQuota?.remaining_this_month);
   const usageTotals = useMemo(() => summarizeUsage(methods), [methods]);
   const scans = useMemo(
     () => detectionScanSummary(detectionQuota),
     [detectionQuota],
   );
   const warnings = useMemo(
-    () => buildUsageWarnings(methods, detectionQuota),
-    [methods, detectionQuota],
+    () => buildUsageWarnings(methods, detectionQuota, nearbyApiMode),
+    [methods, detectionQuota, nearbyApiMode],
   );
 
   const dirtyQuotaKeys = useMemo(() => {
-    if (!quota?.fields) return [];
-    return Object.keys(draft).filter((key) => {
-      const field = quota.fields[key];
-      if (!field) return false;
-      return Number(draft[key]) !== Number(field.baseline)
-        && String(draft[key]) !== String(field.baseline);
-    });
+    return dirtySettingKeys(draft, draftFromFields(quota?.fields));
   }, [draft, quota]);
+  const dirtyTestKeys = useMemo(
+    () => dirtySettingKeys(testDraft, editableTestModeDraft(testMode?.config)),
+    [testDraft, testMode],
+  );
+  const selectedSection = SECTIONS.find((section) => section.id === (isSuperAdmin ? activeSection : "overview"));
+  const sections = isSuperAdmin ? SECTIONS : SECTIONS.slice(0, 1);
+  const changeSection = (id) => {
+    setActiveSection(id);
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  };
 
   const handleSaveQuota = async () => {
     if (!quota?.fields) return;
@@ -396,8 +430,7 @@ export default function ApiUsageSettingsPanel({
     setSaving(true);
     try {
       const result = await updateApiQuotaSettingsRequest(payload, token);
-      setQuota({ fields: result.fields });
-      setDraft(draftFromFields(result.fields));
+      setQuotaSettings({ data: result, draft: draftFromFields(result.fields) });
       Swal.fire({
         icon: "success",
         title: "Limits saved",
@@ -436,8 +469,7 @@ export default function ApiUsageSettingsPanel({
     if (!confirm.isConfirmed) return;
     try {
       const result = await resetApiQuotaSettingsRequest(token);
-      setQuota({ fields: result.fields });
-      setDraft(draftFromFields(result.fields));
+      setQuotaSettings({ data: result, draft: draftFromFields(result.fields) });
       await load();
       onUsageChanged?.();
     } catch (err) {
@@ -449,8 +481,10 @@ export default function ApiUsageSettingsPanel({
     setSaving(true);
     try {
       const result = await updateTestModeSettingsRequest(patch, token);
-      setTestMode((prev) => ({ ...prev, config: result.config }));
-      setTestDraft(editableTestModeDraft(result.config));
+      setTestSettings((current) => ({
+        data: { ...current.data, config: result.config },
+        draft: editableTestModeDraft(result.config),
+      }));
       return true;
     } catch (err) {
       Swal.fire({
@@ -466,12 +500,13 @@ export default function ApiUsageSettingsPanel({
   };
 
   const handlePurgeFixtures = async (olderThanDays) => {
+    const retention = olderThanDays ?? testMode?.fixtures?.retention_days;
     const confirm = await Swal.fire({
       icon: "warning",
       title: "Delete cached payloads?",
       html: olderThanDays === 0
         ? "This deletes <b>every</b> stored fixture. Usage counters are not affected."
-        : `This deletes fixtures older than ${olderThanDays} day(s). Usage counters are not affected.`,
+        : `This deletes fixtures older than ${retention != null ? `${retention} day(s)` : "the configured retention window"}. Usage counters are not affected.`,
       showCancelButton: true,
       confirmButtonColor: "#ef4444",
       cancelButtonColor: "var(--color-muted)",
@@ -479,7 +514,7 @@ export default function ApiUsageSettingsPanel({
     if (!confirm.isConfirmed) return;
     try {
       const result = await purgeTestFixturesRequest(token, olderThanDays);
-      setTestMode((prev) => ({ ...prev, fixtures: result.fixtures }));
+      setTestSettings((current) => ({ ...current, data: { ...current.data, fixtures: result.fixtures } }));
       Swal.fire({
         icon: "success",
         title: "Fixtures cleared",
@@ -499,6 +534,7 @@ export default function ApiUsageSettingsPanel({
           same compact menu-item styling as Reconcile / Snap Pins / Re-verify
           instead of a separate full-width banner button. */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={handleToggle}
         aria-expanded={open}
@@ -516,6 +552,7 @@ export default function ApiUsageSettingsPanel({
           }}
         >
           <section
+            ref={dialogRef}
             className="api-usage-modal saas-card"
             role="dialog"
             aria-modal="true"
@@ -528,59 +565,104 @@ export default function ApiUsageSettingsPanel({
                   Counts are shared across all administrator accounts.
                 </p>
               </div>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => setOpen(false)}
-                aria-label="Close API usage and limits"
-              >
-                Close
-              </button>
+              <div className="api-usage-header-actions">
+                <span className="api-usage-role-badge">{isSuperAdmin ? "Super Admin" : "Admin · Read only"}</span>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close API usage and limits"
+                >
+                  Close
+                </button>
+              </div>
             </header>
-            <div className="api-usage-modal-content">
+            <div className="api-usage-modal-body">
+              <aside className="api-usage-sidebar">
+                <p className="api-usage-nav-label">{isSuperAdmin ? "Monitor & manage" : "Monitoring"}</p>
+                <nav className="api-usage-nav" aria-label="API usage sections">
+                  {sections.map((section, index) => {
+                    const edits = section.id === "limits" ? dirtyQuotaKeys.length
+                      : section.id === "testing" ? dirtyTestKeys.length : 0;
+                    return (
+                      <button
+                        key={section.id}
+                        type="button"
+                        className="api-usage-nav-item"
+                        aria-current={section.id === selectedSection.id ? "page" : undefined}
+                        aria-controls="api-usage-section"
+                        onClick={() => changeSection(section.id)}
+                      >
+                        <span className="api-usage-nav-number" aria-hidden="true">{String(index + 1).padStart(2, "0")}</span>
+                        <span className="api-usage-nav-copy">
+                          <span>{section.title}</span>
+                          <small>{edits ? `${edits} unsaved ${edits === 1 ? "change" : "changes"}` : section.navHint}</small>
+                        </span>
+                        {edits > 0 && <span className="api-usage-draft-dot" aria-hidden="true" />}
+                      </button>
+                    );
+                  })}
+                </nav>
+                <div className="api-usage-sidebar-note">
+                  <strong>{isSuperAdmin ? "Shared settings" : "Read-only access"}</strong>
+                  <p>{isSuperAdmin
+                    ? "Limits apply across administrator accounts. Section changes keep your unsaved drafts."
+                    : "Application limits, testing, and technical settings are available to Super Admins."}</p>
+                  {testMode?.config?.["test_mode.enabled"] && isSuperAdmin && (
+                    <span className="api-usage-active-badge">Test Mode active</span>
+                  )}
+                </div>
+              </aside>
+              <div className="api-usage-modal-content" ref={contentRef}>
+                <header className="api-usage-content-header">
+                  <div>
+                    <h3 id="api-usage-section-heading">{selectedSection.title}</h3>
+                    <p>{selectedSection.description}</p>
+                  </div>
+                  <button type="button" className="ghost-btn" onClick={() => void load()} disabled={loading || saving}>
+                    {loading ? "Refreshing…" : "Refresh"}
+                  </button>
+                </header>
+                <div className="api-usage-toolbar" role="status">
+                  <span>{usage?.generated_at ? `Report updated ${usage.generated_at}` : loading ? "Loading current usage…" : "Report not available"}</span>
+                  {isSuperAdmin && dirtyQuotaKeys.length + dirtyTestKeys.length > 0 && (
+                    <span className="api-usage-draft-status">Unsaved changes · Drafts kept when switching sections</span>
+                  )}
+                </div>
               {error && (
                 <div role="alert" className="api-usage-error">
                   {error}
                 </div>
               )}
-
+              <section id="api-usage-section" className="api-usage-section-content" aria-labelledby="api-usage-section-heading" aria-busy={loading}>
+              {selectedSection.id === "overview" && (<>
               <p className="api-usage-note">{BILLING_NOTE}</p>
-
-              <div className="api-usage-toolbar">
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={load}
-                  disabled={loading}
-                >
-                  {loading ? "Refreshing…" : "Refresh"}
-                </button>
-              </div>
 
               {/* ── Headline figures ───────────────────────────────────── */}
               <div className="api-usage-overview">
                 <div className="api-usage-overview-card">
                   <span>Requests used today</span>
                   <strong>
-                    {loading && !usage ? "…" : formatNumber(usageTotals.usedToday)}
+                    {usage ? formatNumber(usageTotals.usedToday) : loading ? "…" : "—"}
                   </strong>
                   <small>Across all lookup types</small>
                 </div>
                 <div className="api-usage-overview-card">
                   <span>Requests used this month</span>
                   <strong>
-                    {loading && !usage ? "…" : formatNumber(usageTotals.usedMonth)}
+                    {usage ? formatNumber(usageTotals.usedMonth) : loading ? "…" : "—"}
                   </strong>
                   <small>Across all lookup types</small>
                 </div>
                 <div className="api-usage-overview-card">
                   <span>Run Detection scans left</span>
-                  <strong>{detectionQuota ? formatNumber(scans.remaining) : "…"}</strong>
+                  <strong>{hasScanQuota ? formatNumber(scans.remaining) : loading ? "…" : "—"}</strong>
                   <small>
-                    {detectionQuota
+                    {hasScanQuota
                       ? `${formatNumber(scans.used)} of ${formatNumber(scans.limit)} used this month`
                       : "Monthly scan allowance"}
                   </small>
+                  {detectionQuota?.resets_on && <small>Resets {detectionQuota.resets_on}</small>}
                 </div>
               </div>
 
@@ -603,14 +685,14 @@ export default function ApiUsageSettingsPanel({
                 title="Monthly allowance"
                 description="Each type has its own allowance, so what is left for one type is never used by another."
               >
-                {loading && !usage ? (
-                  <div style={{ fontSize: 12.5, color: "var(--color-muted)" }}>
-                    Loading usage…
-                  </div>
+                {!usage ? (
+                  <p className="api-usage-empty" role="status">
+                    {loading ? "Loading usage…" : "Usage is unavailable. Refresh to try again."}
+                  </p>
                 ) : (
                   <div className="api-usage-methods">
                     {methods.map((method) => {
-                      const cap = method.revela_app_cap;
+                      const cap = method.revela_app_cap ?? {};
                       const monthly = limitState(
                         cap.used_month, cap.monthly_cap, cap.monthly_quota_exceeded,
                       );
@@ -622,7 +704,8 @@ export default function ApiUsageSettingsPanel({
                       return (
                         <div key={method.method} className="api-usage-method-card">
                           <div className="api-usage-method-header">
-                            <strong>{methodLabel(method)}</strong>
+                            <strong>{methodLabel(method, nearbyApiMode)}</strong>
+                            {method.method === activeMethodKey && <span className="api-usage-active-badge">Selected endpoint</span>}
                             {cap.disabled && <span className="badge badge--black">Not in use</span>}
                             {reached && <span className="badge badge--red">Limit reached</span>}
                             {!reached && near && <span className="badge badge--gold">Near limit</span>}
@@ -640,7 +723,7 @@ export default function ApiUsageSettingsPanel({
                             <span>
                               {monthly.level === "off"
                                 ? "No monthly allowance set"
-                                : `${formatNumber(monthly.remaining)} left this month`}
+                                : `${formatNumber(cap.monthly_remaining ?? monthly.remaining)} left this month`}
                             </span>
                             <span>
                               Today {formatNumber(cap.used_today)} / {formatNumber(cap.daily_cap)}
@@ -652,17 +735,14 @@ export default function ApiUsageSettingsPanel({
                   </div>
                 )}
               </Section>
+              {!isSuperAdmin && <p className="api-usage-access-note">You can monitor shared usage here. A Super Admin manages application limits and Test Mode.</p>}
+              </>)}
 
-              {/* ── Advanced Settings (Super Admin) ────────────────────── */}
-              {isSuperAdmin ? (
-                <details className="api-usage-advanced">
-                  <summary>
-                    Advanced Settings
-                    {testMode?.config?.["test_mode.enabled"] && (
-                      <span className="api-usage-active-badge">Test Mode active</span>
-                    )}
-                  </summary>
-
+              {/* Settings stay in parent state when section content unmounts. */}
+              {isSuperAdmin && selectedSection.id !== "overview" && !(selectedSection.id === "limits" ? quota : selectedSection.id === "testing" ? testMode : usage) && (
+                <p className="api-usage-empty" role="status">{loading ? "Loading settings…" : "Settings are unavailable. Refresh to try again."}</p>
+              )}
+              {isSuperAdmin && selectedSection.id === "limits" && quota && (<>
                   <Section
                     title="Application limits"
                     description="These are REVELA's own request budgets. Each one starts as the application default; a custom value is kept until it is explicitly changed or restored. Google Cloud limits cannot be changed here."
@@ -672,7 +752,7 @@ export default function ApiUsageSettingsPanel({
                           type="button"
                           className="primary-btn"
                           onClick={handleSaveQuota}
-                          disabled={saving || dirtyQuotaKeys.length === 0}
+                          disabled={loading || saving || dirtyQuotaKeys.length === 0}
                           style={{ fontSize: 12, padding: "7px 14px" }}
                         >
                           {saving
@@ -683,6 +763,7 @@ export default function ApiUsageSettingsPanel({
                           type="button"
                           className="ghost-btn"
                           onClick={handleResetQuota}
+                          disabled={loading || saving}
                           style={{ fontSize: 12, padding: "7px 14px" }}
                         >
                           Restore defaults
@@ -714,10 +795,11 @@ export default function ApiUsageSettingsPanel({
                             <input
                               id={`quota-${key}`}
                               type="number"
+                              disabled={loading || saving}
                               step={field.kind === "float" ? "0.0001" : "1"}
                               min={field.minimum}
                               max={Number.isFinite(max) ? max : undefined}
-                              value={draft[key] ?? field.baseline}
+                              value={draft[key] ?? field.value}
                               onChange={(e) =>
                                 setDraft((prev) => ({ ...prev, [key]: e.target.value }))
                               }
@@ -734,7 +816,7 @@ export default function ApiUsageSettingsPanel({
                               <strong>{describeLimitSource(field)}</strong>
                               <span>{field.help}</span>
                               {field.cloud_ceiling != null && (
-                                <span>Google Cloud daily limit: {formatNumber(field.cloud_ceiling)}</span>
+                                <span>Enforced daily ceiling: {formatNumber(field.cloud_ceiling)}</span>
                               )}
                             </div>
                           </div>
@@ -773,8 +855,9 @@ export default function ApiUsageSettingsPanel({
                       </div>
                     </Section>
                   )}
+              </>)}
 
-                  {/* ── Test Mode ────────────────────────────────────────── */}
+              {isSuperAdmin && selectedSection.id === "testing" && testMode && (<>
                   <Section
                     title="Test Mode"
                     description="Bounds a detection run to a small area and request cap. Real Google calls remain quota-counted. Fixture replay is separately gated because it stores Google-derived content."
@@ -793,12 +876,13 @@ export default function ApiUsageSettingsPanel({
                         Enable Test Mode for Run Detection
                       </span>
                       <SegmentedToggle
+                        label="Enable Test Mode for Run Detection"
                         value={Boolean(testDraft["test_mode.enabled"])}
                         options={[
                           { label: "On", value: true },
                           { label: "Off", value: false },
                         ]}
-                        disabled={saving}
+                        disabled={loading || saving}
                         onChange={(value) =>
                           setTestDraft((prev) => ({ ...prev, "test_mode.enabled": value }))
                         }
@@ -824,11 +908,12 @@ export default function ApiUsageSettingsPanel({
                         </div>
                         <div style={hintStyle}>
                           {testMode?.config?.["test_mode.fixture_storage_approved"]
-                            ? "Server policy approval is enabled. Retention is limited to 30 days or less."
+                            ? "Server policy approval is enabled. Retention follows the saved fixture retention setting."
                             : "Disabled until the server explicitly approves Google Places fixture storage."}
                         </div>
                       </div>
                       <SegmentedToggle
+                        label="Store minimal Google response fixtures"
                         value={Boolean(testDraft["test_mode.fixture_storage_enabled"])}
                         options={[
                           { label: "On", value: true },
@@ -836,6 +921,7 @@ export default function ApiUsageSettingsPanel({
                         ]}
                         disabled={
                           saving
+                          || loading
                           || !testMode?.config?.["test_mode.fixture_storage_approved"]
                         }
                         onChange={(value) =>
@@ -848,7 +934,7 @@ export default function ApiUsageSettingsPanel({
                     </div>
                     {!testMode?.config?.["test_mode.fixture_storage_enabled"] && (
                       <div className="api-usage-inline-warning">
-                        Fixture replay is off. Test Mode may still make live Google
+                        The saved configuration has fixture replay off. Test Mode may still make live Google
                         requests; those use normal quota reservations and may incur
                         charges.
                       </div>
@@ -896,6 +982,7 @@ export default function ApiUsageSettingsPanel({
                           <input
                             id={field.key}
                             type="number"
+                            disabled={loading || saving}
                             step={field.key === "test_mode.grid_step_degrees" ? "0.0001" : "1"}
                             value={testDraft[field.key] ?? ""}
                             onChange={(e) =>
@@ -913,10 +1000,11 @@ export default function ApiUsageSettingsPanel({
                         </label>
                         <select
                           id="test_mode.fixture_policy"
-                          value={testDraft["test_mode.fixture_policy"] ?? "cache_then_live"}
+                          value={testDraft["test_mode.fixture_policy"] ?? ""}
                           disabled={
                             saving
-                            || !testMode?.config?.["test_mode.fixture_storage_enabled"]
+                            || loading
+                            || !testDraft["test_mode.fixture_storage_enabled"]
                           }
                           onChange={(e) =>
                             setTestDraft((prev) => ({
@@ -944,13 +1032,13 @@ export default function ApiUsageSettingsPanel({
                       <button
                         type="button"
                         className="primary-btn"
-                        disabled={saving}
+                        disabled={loading || saving || dirtyTestKeys.length === 0}
                         onClick={async () => {
                           const patch = {};
-                          for (const [key, value] of Object.entries(testDraft)) {
-                            patch[key] = key === "test_mode.grid_step_degrees"
-                              ? Number(value)
-                              : value;
+                          for (const key of dirtyTestKeys) {
+                            patch[key] = typeof testMode.config[key] === "number"
+                              ? Number(testDraft[key])
+                              : testDraft[key];
                           }
                           if (await handleSaveTestMode(patch)) await load();
                         }}
@@ -961,12 +1049,14 @@ export default function ApiUsageSettingsPanel({
                       <button
                         type="button"
                         className="ghost-btn"
-                        disabled={saving}
+                        disabled={loading || saving}
                         onClick={async () => {
                           try {
                             const result = await resetTestModeSettingsRequest(token);
-                            setTestMode((prev) => ({ ...prev, config: result.config }));
-                            setTestDraft(editableTestModeDraft(result.config));
+                            setTestSettings((current) => ({
+                              data: { ...current.data, config: result.config },
+                              draft: editableTestModeDraft(result.config),
+                            }));
                           } catch (err) {
                             setError(err.message);
                           }
@@ -995,21 +1085,20 @@ export default function ApiUsageSettingsPanel({
                       <div>
                         <div style={labelStyle}>Stored fixtures</div>
                         <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)" }}>
-                          {formatNumber(testMode?.fixtures?.total ?? 0)}
+                          {testMode.fixtures?.available !== false && testMode.fixtures?.total != null ? formatNumber(testMode.fixtures.total) : "—"}
                         </div>
                       </div>
                       <div>
                         <div style={labelStyle}>Replays served</div>
                         <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)" }}>
-                          {formatNumber(testMode?.fixtures?.replay_hits ?? 0)}
+                          {testMode.fixtures?.replay_hits != null ? formatNumber(testMode.fixtures.replay_hits) : "—"}
                         </div>
                       </div>
                       <div>
-                        <div style={labelStyle}>Usage rows written</div>
+                        <div style={labelStyle}>Retention (days)</div>
                         <div style={{ fontSize: 18, fontWeight: 800, color: "var(--color-primary)" }}>
-                          0
+                          {testMode.fixtures?.retention_days != null ? formatNumber(testMode.fixtures.retention_days) : "—"}
                         </div>
-                        <div style={hintStyle}>by replays</div>
                       </div>
                     </div>
 
@@ -1017,6 +1106,7 @@ export default function ApiUsageSettingsPanel({
                       <button
                         type="button"
                         className="ghost-btn"
+                        disabled={loading || saving || testMode.fixtures?.available === false}
                         onClick={() => handlePurgeFixtures(undefined)}
                         style={{ fontSize: 12, padding: "6px 12px" }}
                       >
@@ -1025,17 +1115,22 @@ export default function ApiUsageSettingsPanel({
                       <button
                         type="button"
                         className="ghost-btn"
+                        disabled={loading || saving || testMode.fixtures?.available === false}
                         onClick={() => handlePurgeFixtures(0)}
                         style={{ fontSize: 12, padding: "6px 12px" }}
                       >
                         Purge all
                       </button>
                     </div>
+                    {testMode.fixtures?.available === false && (
+                      <p className="api-usage-empty" role="status">Fixture statistics are unavailable.</p>
+                    )}
                   </Section>
+              </>)}
 
-                  {/* ── Technical detail ─────────────────────────────────── */}
-                  <details className="api-usage-technical-details">
-                    <summary>Technical quota detail</summary>
+              {isSuperAdmin && selectedSection.id === "technical" && usage && (<>
+                  <p className="api-usage-note">Google Cloud quotas are reported limits; application caps are REVELA budgets. Request pacing is a separate delay between calls.</p>
+                  <Section title="Quota comparison" description="Current server-reported Cloud quotas, application caps, and request pacing for each method.">
                     <div
                       style={{
                         display: "grid",
@@ -1062,7 +1157,7 @@ export default function ApiUsageSettingsPanel({
                               marginBottom: 10,
                             }}
                           >
-                            {methodLabel(method)}
+                            {methodLabel(method, nearbyApiMode)}
                             <span style={{ color: "var(--color-muted)", fontWeight: 500 }}>
                               {" "}— {method.label}
                             </span>
@@ -1148,14 +1243,10 @@ export default function ApiUsageSettingsPanel({
                         {usage.run_detection.nearby_api_mode}. {usage.run_detection.note}
                       </div>
                     )}
-                  </details>
-                </details>
-              ) : (
-                <p className="api-usage-note">
-                  Application limits, Test Mode, and fixture management are part of
-                  Advanced Settings and are available to Super Admins.
-                </p>
-              )}
+                  </Section>
+              </>)}
+              </section>
+              </div>
             </div>
           </section>
         </div>,

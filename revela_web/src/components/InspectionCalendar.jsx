@@ -9,13 +9,11 @@
  * derived from that single response - no extra requests, no invented data.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getInspectionCalendarRequest } from "../services/api";
 
 // ── Event vocabulary (mirrors the backend lifecycle event types) ───────────────
-// `status` reuses the four Kanban board columns so the summary strip never
-// introduces a status the rest of the app does not already use.
 const EVENT_TYPES = {
   dispatched: { label: "Dispatched", status: "Assigned" },
   reassigned: { label: "Reassigned", status: "Reassigned" },
@@ -24,19 +22,18 @@ const EVENT_TYPES = {
   cancelled: { label: "Cancelled", status: "Cancelled" },
 };
 
-const SUMMARY_ORDER = ["Assigned", "Reassigned", "Submitted", "Verified"];
-
 // Restrained, semantic tones. Green is reserved for REVELA accents; the rest are
-// used only for small indicators so the panel never becomes loud.
+// used only when a selected-day event supplies its actual type.
 const STATUS_TONE = {
   Assigned: { fg: "var(--color-primary-dark)", bg: "var(--color-primary-light)", rail: "var(--color-primary)" },
-  Reassigned: { fg: "#a16207", bg: "#fefce8", rail: "#eab308" },
-  Submitted: { fg: "#15803d", bg: "#dcfce7", rail: "#16a34a" },
+  Reassigned: { fg: "var(--flag-yellow-text)", bg: "var(--flag-yellow-bg)", rail: "var(--color-gold)" },
+  Submitted: { fg: "var(--flag-green-text)", bg: "var(--flag-green-bg)", rail: "var(--color-primary)" },
   Verified: { fg: "var(--color-muted)", bg: "var(--color-hover)", rail: "var(--color-subtle)" },
   Cancelled: { fg: "var(--color-danger)", bg: "var(--color-danger-light)", rail: "var(--color-danger)" },
 };
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const NO_ACTIVITIES = [];
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const toIsoDate = (date) => {
@@ -79,6 +76,8 @@ const flagToken = (value) => String(value || "").trim().split(/\s+/)[0].toLowerC
 /** Normalises the backend's "YYYY-MM-DD HH:MM:SS" for a <time dateTime>. */
 const toIsoDateTime = (value) => String(value || "").trim().replace(" ", "T");
 
+const eventCountLabel = (count) => `${count} ${count === 1 ? "event" : "events"}`;
+
 // ── Icons ──────────────────────────────────────────────────────────────────────
 const Icon = {
   Chevron: ({ dir = "left" }) => (
@@ -115,46 +114,143 @@ const Icon = {
   ),
 };
 
+/** The mini-calendar and month view share selection, counts, and keyboard behavior. */
+function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCounts, hasCounts, compact = false, onSelectDate }) {
+  const dayCount = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
+
+  const handleDateKey = (event, day) => {
+    const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    let nextDay;
+    if (event.key in offsets) nextDay = day + offsets[event.key];
+    else if (event.key === "Home") nextDay = 1;
+    else if (event.key === "End") nextDay = dayCount;
+    else return;
+
+    event.preventDefault();
+    nextDay = Math.max(1, Math.min(dayCount, nextDay));
+    event.currentTarget.parentElement.querySelector(`[data-day="${nextDay}"]`)?.focus();
+    onSelectDate(toIsoDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), nextDay)));
+  };
+
+  return (
+    <div
+      className={`inspection-calendar-grid ${compact ? "inspection-calendar-mini-dates" : "inspection-calendar-dates"}`}
+      role="group"
+      aria-labelledby={compact ? "inspection-calendar-mini-label" : "inspection-calendar-month-label"}
+      aria-describedby="inspection-calendar-keyboard-help"
+    >
+      {monthCells.map((day, index) => {
+        if (!day) {
+          return <span className="inspection-calendar-empty" key={`empty-${index}`} aria-hidden="true" />;
+        }
+        const date = toIsoDate(new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day));
+        const count = dayCounts.get(date) || 0;
+        const isSelected = selectedDate === date;
+        const isToday = date === todayIso;
+        const countDescription = hasCounts
+          ? `${eventCountLabel(count)} recorded`
+          : "activity counts not loaded";
+
+        return (
+          <button
+            key={date}
+            type="button"
+            data-day={day}
+            className={[
+              "inspection-calendar-day",
+              isToday ? "is-today" : "",
+              isSelected ? "is-selected" : "",
+              count > 0 ? "has-activity" : "",
+            ].filter(Boolean).join(" ")}
+            onClick={() => onSelectDate(date)}
+            onFocus={(event) => event.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" })}
+            onKeyDown={(event) => handleDateKey(event, day)}
+            tabIndex={isSelected ? 0 : -1}
+            aria-pressed={isSelected}
+            aria-current={isToday ? "date" : undefined}
+            aria-controls="inspection-calendar-selected-activity"
+            aria-label={`${formatLongDate(date)}${isToday ? " (today)" : ""}, ${countDescription}`}
+          >
+            <span className="inspection-calendar-day-number">{day}</span>
+            {count > 0 && (
+              <span className="inspection-calendar-day-events" aria-hidden="true">
+                {compact ? null : eventCountLabel(count)}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function InspectionCalendar({ token, initialDate }) {
   const [visibleMonth, setVisibleMonth] = useState(() => {
     const date = initialDate ? parseIsoDate(initialDate) : new Date();
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
   const [selectedDate, setSelectedDate] = useState(() => initialDate || toIsoDate(new Date()));
-  const [calendar, setCalendar] = useState({ days: [], activities: [] });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [calendar, setCalendar] = useState(null);
+  const [requestState, setRequestState] = useState(null);
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
-  const todayIso = useMemo(() => toIsoDate(new Date()), []);
-
-  const fetchCalendar = useCallback(async () => {
-    if (!token) return;
-    setLoading(true);
-    setError("");
-    try {
-      const result = await getInspectionCalendarRequest(
-        `${visibleMonth.getFullYear()}-${String(visibleMonth.getMonth() + 1).padStart(2, "0")}`,
-        selectedDate,
-        token,
-      );
-      setCalendar(result);
-    } catch (requestError) {
-      setError(requestError.message || "Unable to load inspection activities.");
-    } finally {
-      setLoading(false);
-    }
-  }, [token, visibleMonth, selectedDate]);
+  const todayIso = toIsoDate(new Date());
+  const monthIso = `${visibleMonth.getFullYear()}-${String(visibleMonth.getMonth() + 1).padStart(2, "0")}`;
+  const monthLabel = formatMonth(visibleMonth);
 
   useEffect(() => {
-    void Promise.resolve().then(fetchCalendar);
-  }, [fetchCalendar]);
+    if (!token) return undefined;
+    let isCurrent = true;
+    const request = { token, month: monthIso, date: selectedDate, refreshVersion };
+    const loadCalendar = async () => {
+      if (!isCurrent) return;
+      setRequestState({ ...request, status: "loading", error: "" });
+      try {
+        const result = await getInspectionCalendarRequest(monthIso, selectedDate, token);
+        if (!isCurrent) return;
+        if (
+          result?.month !== monthIso || result?.selectedDate !== selectedDate ||
+          !Array.isArray(result?.days) || !Array.isArray(result?.activities)
+        ) {
+          throw new Error("Unable to read inspection activity. Please try again.");
+        }
+        setCalendar({ token, refreshVersion, data: result });
+        setRequestState({ ...request, status: "success", error: "" });
+      } catch (requestError) {
+        if (isCurrent) {
+          setRequestState({
+            ...request,
+            status: "error",
+            error: requestError.message || "Unable to load inspection activity.",
+          });
+        }
+      }
+    };
+    void Promise.resolve().then(loadCalendar);
+    // Ignore older responses after rapid date/month changes or unmounting.
+    return () => { isCurrent = false; };
+  }, [token, monthIso, selectedDate, refreshVersion]);
 
-  const activities = useMemo(() => calendar.activities || [], [calendar.activities]);
+  const requestMatches = requestState?.token === token &&
+    requestState?.month === monthIso && requestState?.date === selectedDate &&
+    requestState?.refreshVersion === refreshVersion;
+  const loading = !requestMatches || requestState.status === "loading";
+  const error = requestMatches ? requestState.error : "";
+  // Monthly counts can stay visible while another day in the same month loads.
+  // Day details are never rendered until the response matches the current date.
+  const monthData = calendar?.token === token && calendar?.data.month === monthIso &&
+    calendar?.refreshVersion === refreshVersion && !error ? calendar.data : null;
+  const dayReady = !loading && !error && monthData?.selectedDate === selectedDate;
+  const activities = dayReady ? monthData.activities : NO_ACTIVITIES;
 
   const dayCounts = useMemo(
-    () => new Map((calendar.days || []).map((day) => [day.date, day.count])),
-    [calendar.days],
+    () => new Map((monthData?.days || [])
+      .filter((day) => day.date.startsWith(`${monthIso}-`) && day.count > 0)
+      .map((day) => [day.date, day.count])),
+    [monthData, monthIso],
   );
+  const monthlyEvents = [...dayCounts.values()].reduce((total, count) => total + count, 0);
+  const latestActiveDate = [...dayCounts.keys()].sort().at(-1);
 
   /** Cells are padded to whole weeks so every row keeps a consistent height. */
   const monthCells = useMemo(() => {
@@ -170,14 +266,15 @@ export default function InspectionCalendar({ token, initialDate }) {
     return cells;
   }, [visibleMonth]);
 
-  /** Counts per board status for the selected day, from the events we already have. */
+  /** Only summarize types actually present in the loaded selected-day events. */
   const statusSummary = useMemo(() => {
-    const counts = new Map(SUMMARY_ORDER.map((status) => [status, 0]));
+    const counts = new Map();
     activities.forEach((activity) => {
-      const status = EVENT_TYPES[activity.eventType]?.status;
-      if (counts.has(status)) counts.set(status, counts.get(status) + 1);
+      counts.set(activity.eventType, (counts.get(activity.eventType) || 0) + 1);
     });
-    return SUMMARY_ORDER.map((status) => ({ status, count: counts.get(status) }));
+    return Object.entries(EVENT_TYPES)
+      .filter(([eventType]) => counts.has(eventType))
+      .map(([eventType, meta]) => ({ eventType, ...meta, count: counts.get(eventType) }));
   }, [activities]);
 
   const selectMonth = (offset) => {
@@ -196,14 +293,75 @@ export default function InspectionCalendar({ token, initialDate }) {
     setSelectedDate(toIsoDate(today));
   };
 
+  const refreshCalendar = () => setRefreshVersion((version) => version + 1);
+  const sharedDateProps = {
+    visibleMonth, monthCells, selectedDate, todayIso, dayCounts,
+    hasCounts: Boolean(monthData), onSelectDate: setSelectedDate,
+  };
+
   return (
     <section className="inspection-calendar-page" aria-label="Inspection activity calendar">
+      <p id="inspection-calendar-keyboard-help" className="sr-only">
+        Use the arrow keys to select dates in this month. Home selects the first day; End selects the last day.
+        Recorded activity for the selected day appears below the calendar.
+      </p>
       <div className="inspection-calendar-layout">
-        {/* ── Calendar panel ─────────────────────────────────────────────── */}
-        <section className="inspection-calendar-card inspection-calendar-panel" aria-label="Calendar">
+        <aside className="inspection-calendar-card inspection-calendar-sidebar" aria-label="Calendar shortcuts and month overview">
+          <div className="inspection-calendar-create">
+            <Link className="primary-btn inspection-calendar-create-link" to="/map" aria-describedby="inspection-calendar-create-help">
+              <span className="inspection-calendar-plus" aria-hidden="true">＋</span>
+              <span>Create inspection assignment</span>
+            </Link>
+            <p id="inspection-calendar-create-help">
+              Choose an establishment in Map &amp; Flags, then assign an inspector.
+            </p>
+          </div>
+
+          <section className="inspection-calendar-sidebar-section inspection-calendar-mini" aria-labelledby="inspection-calendar-mini-label">
+            <h3 id="inspection-calendar-mini-label"><span className="sr-only">Mini-calendar: </span>{monthLabel}</h3>
+            <div className="inspection-calendar-grid inspection-calendar-mini-weekdays" aria-hidden="true">
+              {WEEKDAYS.map((day) => <span key={day}>{day.charAt(0)}</span>)}
+            </div>
+            <MonthDates {...sharedDateProps} compact />
+          </section>
+
+          <section className="inspection-calendar-sidebar-section inspection-calendar-totals" aria-label={`Monthly activity for ${monthLabel}`}>
+            <h3>Monthly activity</h3>
+            <dl>
+              <div>
+                <dt>Lifecycle events</dt>
+                <dd>{monthData ? monthlyEvents : "—"}</dd>
+              </div>
+              <div>
+                <dt>Active days</dt>
+                <dd>{monthData ? dayCounts.size : "—"}</dd>
+              </div>
+            </dl>
+            <p>An inspection can have multiple events.</p>
+          </section>
+
+          <section className="inspection-calendar-sidebar-section inspection-calendar-legend" aria-labelledby="inspection-calendar-legend-label">
+            <h3 id="inspection-calendar-legend-label">Activity legend</h3>
+            <ul>
+              <li><span className="inspection-calendar-legend-marker is-activity" aria-hidden="true" />Recorded activity</li>
+              <li><span className="inspection-calendar-legend-marker is-today" aria-hidden="true" />Today</li>
+              <li><span className="inspection-calendar-legend-marker is-selected" aria-hidden="true" />Selected date</li>
+            </ul>
+          </section>
+        </aside>
+
+        <div className="inspection-calendar-main">
+        <section className="inspection-calendar-card inspection-calendar-panel" aria-label="Month calendar">
           <div className="inspection-calendar-toolbar">
             <div className="inspection-calendar-month">
-              <h2 id="inspection-calendar-month-label">{formatMonth(visibleMonth)}</h2>
+              <div className="inspection-calendar-month-heading">
+                <h2 id="inspection-calendar-month-label">{monthLabel}</h2>
+                <p className="inspection-calendar-toolbar-context" role="status">
+                  {loading
+                    ? monthData ? "Loading selected-day activity…" : "Loading calendar activity…"
+                    : error ? "Activity unavailable" : "Recorded inspection activity · Month view"}
+                </p>
+              </div>
               <div className="inspection-calendar-nav" role="group" aria-label="Month navigation">
                 <button
                   type="button"
@@ -231,111 +389,77 @@ export default function InspectionCalendar({ token, initialDate }) {
               <button
                 type="button"
                 className="ghost-btn"
-                onClick={() => void fetchCalendar()}
+                onClick={refreshCalendar}
                 disabled={loading}
                 aria-label="Refresh inspection activity"
               >
                 <Icon.Refresh />
-                {loading ? "Refreshing…" : "Refresh"}
+                Refresh
               </button>
             </div>
           </div>
 
-          <div
-            className="inspection-calendar-grid inspection-calendar-weekdays"
-            aria-hidden="true"
-          >
-            {WEEKDAYS.map((day) => (
-              <span key={day}>{day}</span>
-            ))}
+          {error && (
+            <div className="inspection-calendar-error" role="alert">
+              <p className="inspection-calendar-state is-error">{error}</p>
+              <button className="ghost-btn" type="button" onClick={refreshCalendar}>Retry</button>
+            </div>
+          )}
+
+          <div className="inspection-calendar-month-scroll">
+            <div className="inspection-calendar-month-view">
+              <div className="inspection-calendar-grid inspection-calendar-weekdays" aria-hidden="true">
+                {WEEKDAYS.map((day) => <span key={day}>{day}</span>)}
+              </div>
+              <MonthDates {...sharedDateProps} />
+            </div>
           </div>
 
-          <div
-            className="inspection-calendar-grid"
-            role="group"
-            aria-labelledby="inspection-calendar-month-label"
-          >
-            {monthCells.map((day, index) => {
-              if (!day) {
-                return <span className="inspection-calendar-empty" key={`empty-${index}`} aria-hidden="true" />;
-              }
-              const date = toIsoDate(new Date(
-                visibleMonth.getFullYear(),
-                visibleMonth.getMonth(),
-                day,
-              ));
-              const count = dayCounts.get(date) || 0;
-              const isSelected = selectedDate === date;
-              const isToday = date === todayIso;
-              const classes = [
-                "inspection-calendar-day",
-                isToday ? "is-today" : "",
-                isSelected ? "is-selected" : "",
-              ]
-                .filter(Boolean)
-                .join(" ");
-
-              return (
-                <button
-                  key={date}
-                  type="button"
-                  className={classes}
-                  onClick={() => setSelectedDate(date)}
-                  aria-pressed={isSelected}
-                  aria-label={`${formatLongDate(date)}${isToday ? " (today)" : ""}, ${
-                    count === 0
-                      ? "no inspection activity"
-                      : `${count} inspection ${count === 1 ? "activity" : "activities"}`
-                  }`}
-                  title={count > 0 ? `${count} inspection ${count === 1 ? "activity" : "activities"}` : undefined}
-                >
-                  <span className="inspection-calendar-day-number">{day}</span>
-                  {count > 0 && (
-                    <span
-                      className={`inspection-calendar-day-dot${count > 1 ? " is-count" : ""}`}
-                      aria-hidden="true"
-                    >
-                      {count > 1 ? count : null}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+          <div className="inspection-calendar-footer">
+            <p className="inspection-calendar-key">
+              {error ? "Activity counts are unavailable. Try loading the calendar again."
+                : monthData && monthlyEvents === 0 ? "No recorded events this month. Select a date to review its history."
+                : "Select a date to review its recorded activity below."}
+              <span className="inspection-calendar-scroll-hint"> Scroll sideways to see all weekdays if needed.</span>
+            </p>
+            <a className="inspection-calendar-detail-link" href="#inspection-calendar-selected-activity">
+              View selected-day activity <span aria-hidden="true">↓</span>
+            </a>
           </div>
-
-          <p className="inspection-calendar-key">
-            <span className="inspection-calendar-key-dot" aria-hidden="true" />
-            A dot marks days with recorded inspection activity (number = event count).
-          </p>
         </section>
 
         {/* ── Selected-date panel ────────────────────────────────────────── */}
-        <section className="inspection-calendar-card inspection-calendar-activities" aria-label="Selected date activity">
+        <section
+          id="inspection-calendar-selected-activity"
+          className="inspection-calendar-card inspection-calendar-activities"
+          aria-labelledby="inspection-calendar-selected-label"
+          aria-busy={loading}
+          tabIndex={-1}
+        >
           <header className="inspection-calendar-activities-header">
             <div className="inspection-calendar-activities-heading">
-              <p className="inspection-calendar-eyebrow">Selected date</p>
-              <h2>{formatLongDate(selectedDate)}</h2>
+              <p className="inspection-calendar-eyebrow">Selected-day activity</p>
+              <h2 id="inspection-calendar-selected-label">{formatLongDate(selectedDate)}</h2>
+              <p className="inspection-calendar-activities-description">Recorded lifecycle events, in chronological order.</p>
             </div>
-            <span className="inspection-calendar-count">
-              {activities.length} {activities.length === 1 ? "activity" : "activities"}
-            </span>
+            {dayReady && <span className="inspection-calendar-count">{eventCountLabel(activities.length)}</span>}
           </header>
 
-          {activities.length > 0 && (
+          {statusSummary.length > 0 && (
             <dl className="inspection-calendar-summary">
-              {statusSummary.map(({ status, count }) => {
+              {statusSummary.map(({ eventType, label, status, count }) => {
                 const tone = STATUS_TONE[status];
                 return (
-                  <div className="inspection-calendar-summary-item" key={status}>
+                  <div className="inspection-calendar-summary-item" key={eventType}>
                     <dt>
                       <span
                         className="inspection-calendar-summary-dot"
                         style={{ background: tone.rail }}
                         aria-hidden="true"
                       />
-                      {status}
+                       {label}
                     </dt>
-                    <dd style={{ color: count > 0 ? tone.fg : undefined }}>{count}</dd>
+                    <dd>{count}</dd>
                   </div>
                 );
               })}
@@ -343,23 +467,13 @@ export default function InspectionCalendar({ token, initialDate }) {
           )}
 
           {loading ? (
-            <p className="inspection-calendar-state">Loading activities…</p>
+            <p className="inspection-calendar-state" role="status">Loading activity for this date…</p>
           ) : error ? (
-            <div className="inspection-calendar-error" role="alert">
-              <p className="inspection-calendar-state is-error">{error}</p>
-              <button
-                className="ghost-btn"
-                type="button"
-                onClick={() => void fetchCalendar()}
-                disabled={loading}
-              >
-                Retry
-              </button>
-            </div>
+            <p className="inspection-calendar-state is-error">Activity for this date could not be loaded. Use Retry above to try again.</p>
           ) : activities.length ? (
             <ol className="inspection-calendar-list">
               {activities.map((activity) => {
-                const meta = EVENT_TYPES[activity.eventType] || { label: activity.eventType };
+                const meta = EVENT_TYPES[activity.eventType] || { label: activity.eventType || "Recorded event" };
                 const tone = toneFor(activity.eventType);
                 const clock = formatClock(activity.eventTimestamp);
                 const flag = flagToken(activity.inspectionResult);
@@ -392,12 +506,21 @@ export default function InspectionCalendar({ token, initialDate }) {
                       </div>
 
                       <p className="inspection-calendar-activity-name">
-                        {activity.detectedName || `Location #${activity.targetLogID}`}
+                        {activity.detectedName || (activity.targetLogID != null ? `Location #${activity.targetLogID}` : "Establishment name unavailable")}
                       </p>
 
                       {details && (
                         <p className="inspection-calendar-activity-meta">{details}</p>
                       )}
+
+                      <p className="inspection-calendar-activity-meta">
+                        {[
+                          activity.eventID != null && `Event #${activity.eventID}`,
+                          activity.targetLogID != null && `Location #${activity.targetLogID}`,
+                          activity.reportID != null && `Report #${activity.reportID}`,
+                          activity.cycleID != null && `Cycle #${activity.cycleID}`,
+                        ].filter(Boolean).join(" · ")}
+                      </p>
 
                       {activity.remarks && (
                         <p className="inspection-calendar-activity-remark">
@@ -406,6 +529,9 @@ export default function InspectionCalendar({ token, initialDate }) {
                       )}
 
                       <div className="inspection-calendar-activity-foot">
+                        {activity.flagColorAtEvent && (
+                          <span className="inspection-calendar-activity-meta">Flag at event: {activity.flagColorAtEvent}</span>
+                        )}
                         {activity.inspectionResult && (
                           <span
                             className="inspection-calendar-flag"
@@ -422,7 +548,7 @@ export default function InspectionCalendar({ token, initialDate }) {
                             className="inspection-calendar-record-link"
                             to={`/inspections?search=${encodeURIComponent(activity.targetLogID)}`}
                           >
-                            Open dispatch record
+                            Search Dispatch for location #{activity.targetLogID}
                           </Link>
                         )}
                       </div>
@@ -433,15 +559,19 @@ export default function InspectionCalendar({ token, initialDate }) {
             </ol>
           ) : (
             <div className="inspection-calendar-empty-state">
-              <img src="/searching.png" alt="" width="72" height="72" />
-              <p className="inspection-calendar-empty-title">No activity recorded</p>
-              <p className="inspection-calendar-empty-text">
-                Nothing was dispatched, reassigned, submitted, or verified on this date.
-                Pick another day to review its inspection history.
-              </p>
+              <div>
+                <p className="inspection-calendar-empty-title">No activity recorded on this date</p>
+                <p className="inspection-calendar-empty-text">Select another day to review its inspection history.</p>
+              </div>
+              {latestActiveDate && (
+                <button className="ghost-btn" type="button" onClick={() => setSelectedDate(latestActiveDate)}>
+                  View latest activity this month
+                </button>
+              )}
             </div>
           )}
         </section>
+        </div>
       </div>
     </section>
   );

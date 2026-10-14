@@ -6,11 +6,14 @@ import {
   NEAR_LIMIT_PERCENT,
   buildUsageWarnings,
   describeLimitSource,
+  detectionMethodKey,
   detectionScanSummary,
+  dirtySettingKeys,
   formatNumber,
   isCustomLimit,
   limitState,
   methodLabel,
+  mergeSettingsDraft,
   summarizeUsage,
 } from "./apiUsageView.js";
 
@@ -35,8 +38,8 @@ test("every Google method maps to an administrator-facing label", () => {
   assert.deepEqual(Object.values(METHOD_LABELS), [
     "Business Lookup",
     "Map Pin Refresh",
-    "Run Detection Requests",
-    "Run Detection Requests (Alternate)",
+    "Run Detection Requests (Legacy)",
+    "Run Detection Requests (New)",
     "Address Lookup",
   ]);
   // The report's raw SKU-ish label is only a fallback for unknown methods.
@@ -153,6 +156,11 @@ test("detectionScanSummary reports remaining scans", () => {
   );
   assert.equal(detectionScanSummary(null).remaining, 0);
   assert.equal(
+    detectionScanSummary({ used_this_month: 4, monthly_limit: 17, remaining_this_month: 8 }).remaining,
+    8,
+    "the response's remaining allowance is authoritative",
+  );
+  assert.equal(
     detectionScanSummary({ used_this_month: 12, monthly_limit: 10 }).remaining,
     0,
     "over-limit usage never yields a negative remainder",
@@ -169,4 +177,40 @@ test("effective limits are described as defaults or custom settings", () => {
   assert.equal(isCustomLimit({ source: "admin_override" }), true);
   assert.equal(isCustomLimit({ source: "env" }), false);
   assert.equal(isCustomLimit(undefined), false);
+});
+
+test("Nearby labels and warnings follow the endpoint in the current report", () => {
+  assert.equal(detectionMethodKey("new"), "nearby_search_new");
+  assert.equal(detectionMethodKey("legacy"), "nearby_search_legacy");
+  assert.equal(detectionMethodKey(undefined), null);
+  for (const mode of ["new", "legacy"]) {
+    const active = mode === "new" ? "nearby_search_new" : "nearby_search_legacy";
+    const other = mode === "new" ? "nearby_search_legacy" : "nearby_search_new";
+    assert.equal(methodLabel({ method: active }, mode), "Run Detection Requests");
+    assert.equal(methodLabel({ method: other }, mode), "Run Detection Requests (Alternate)");
+    const warnings = buildUsageWarnings([
+      method(active, { used_today: 9, daily_cap: 9, monthly_cap: 91 }),
+    ], null, mode);
+    assert.match(warnings[0].text, /^Run Detection Requests has used/);
+  }
+});
+
+test("stored overrides are clean; editing back to a default is an unsaved change", () => {
+  const saved = { daily: 37, radius: 950, enabled: false, policy: "cache_only" };
+  assert.deepEqual(dirtySettingKeys({ ...saved, daily: "37" }, saved), []);
+  assert.deepEqual(dirtySettingKeys({ ...saved, daily: "19" }, saved), ["daily"]);
+  assert.deepEqual(dirtySettingKeys({ ...saved, daily: "" }, saved), ["daily"]);
+  assert.deepEqual(dirtySettingKeys({ ...saved, enabled: true, policy: "cache_then_live" }, saved), ["enabled", "policy"]);
+  assert.deepEqual(dirtySettingKeys({ enabled: true }, { enabled: 1 }), []);
+});
+
+test("read-only refresh retains outstanding edits and updates untouched fields", () => {
+  const saved = { daily: 37, monthly: 451, requests: 9, radius: 850 };
+  const draft = { ...saved, daily: "19", requests: "" };
+  const incoming = { daily: 41, monthly: 499, requests: 11, radius: 975, newField: 3 };
+  assert.deepEqual(mergeSettingsDraft(draft, saved, incoming), {
+    daily: "19", monthly: 499, requests: "", radius: 975, newField: 3,
+  });
+  assert.deepEqual(mergeSettingsDraft({}, {}, incoming), incoming);
+  assert.deepEqual(mergeSettingsDraft(draft, saved, { monthly: 499 }), { monthly: 499 });
 });

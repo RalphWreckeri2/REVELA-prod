@@ -178,8 +178,18 @@ const Icon = {
 };
 
 const DETECTION_MODES = [
-  { value: "quick", label: "Quick Discovery" },
-  { value: "full", label: "Full Coverage" },
+  {
+    value: "quick",
+    label: "Quick Discovery",
+    description: "Distributed search points · Lighter first pass",
+    summary: "A lighter first pass across distributed search points in Mataasnakahoy.",
+  },
+  {
+    value: "full",
+    label: "Full Coverage",
+    description: "Municipal grid · More detailed search",
+    summary: "Searches the municipal grid and refines dense areas. Request budgets and result limits can leave coverage gaps.",
+  },
 ];
 
 function DetectionModeDropdown({ value, onChange, disabled }) {
@@ -244,13 +254,14 @@ function DetectionModeDropdown({ value, onChange, disabled }) {
 
   return (
     <div className={`map-detection-mode${open ? " is-open" : ""}`} ref={rootRef}>
-      <span id="detection-mode-label">Mode</span>
+      <span id="detection-mode-label">Detection mode</span>
       <button
         ref={triggerRef}
         className="map-detection-mode-trigger"
         type="button"
         role="combobox"
-        aria-label="Detection mode"
+        aria-labelledby="detection-mode-label detection-mode-value"
+        aria-describedby="detection-mode-description"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? "detection-mode-options" : undefined}
@@ -264,7 +275,10 @@ function DetectionModeDropdown({ value, onChange, disabled }) {
         }}
         onKeyDown={handleKeyDown}
       >
-        <span>{activeMode.label}</span>
+        <span className="map-detection-mode-current">
+          <span className="map-detection-mode-symbol" aria-hidden="true"><Icon.Radar /></span>
+          <span id="detection-mode-value">{activeMode.label}</span>
+        </span>
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <path d="m4 6 4 4 4-4" />
         </svg>
@@ -291,8 +305,11 @@ function DetectionModeDropdown({ value, onChange, disabled }) {
                 triggerRef.current?.focus();
               }}
             >
-              <span>{mode.label}</span>
-              {mode.value === value && <span aria-hidden="true">✓</span>}
+              <span className="map-detection-mode-option-copy">
+                <span>{mode.label}</span>
+                <small>{mode.description}</small>
+              </span>
+              <span className="map-detection-mode-check" aria-hidden="true">{mode.value === value ? "✓" : ""}</span>
             </div>
           ))}
         </div>
@@ -2215,7 +2232,11 @@ export default function MapPage() {
   const [reviewQueueActionId, setReviewQueueActionId] = useState(null);
   const [reviewLocationChoices, setReviewLocationChoices] = useState({});
   const [detectionQuota, setDetectionQuota] = useState(null);
+  const [detectionQuotaLoading, setDetectionQuotaLoading] = useState(true);
+  const [detectionQuotaError, setDetectionQuotaError] = useState("");
   const [placesUsage, setPlacesUsage] = useState(null);
+  const [placesUsageLoading, setPlacesUsageLoading] = useState(true);
+  const [placesUsageError, setPlacesUsageError] = useState("");
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
@@ -2455,6 +2476,8 @@ export default function MapPage() {
 
   const fetchDetectionQuota = useCallback(async () => {
     if (!token || !isAdmin) return;
+    setDetectionQuotaLoading(true);
+    setDetectionQuotaError("");
     try {
       const data = await getDetectionQuotaRequest(token);
       if (data) {
@@ -2462,11 +2485,16 @@ export default function MapPage() {
       }
     } catch (err) {
       console.error("Failed to load detection quota", err);
+      setDetectionQuotaError("Scan allowance could not be loaded.");
+    } finally {
+      setDetectionQuotaLoading(false);
     }
   }, [token, isAdmin]);
 
   const fetchPlacesUsage = useCallback(async () => {
     if (!token || !isAdmin) return;
+    setPlacesUsageLoading(true);
+    setPlacesUsageError("");
     try {
       const data = await getPlacesUsageRequest(token);
       if (data) {
@@ -2474,6 +2502,9 @@ export default function MapPage() {
       }
     } catch (err) {
       console.error("Failed to load places usage", err);
+      setPlacesUsageError("Detection request budget could not be loaded.");
+    } finally {
+      setPlacesUsageLoading(false);
     }
   }, [token, isAdmin]);
 
@@ -3114,6 +3145,29 @@ export default function MapPage() {
     activeDetectionPlacesQuota?.daily_quota_exceeded ||
     activeDetectionPlacesQuota?.monthly_quota_exceeded
   );
+  // Presentation only: keep the existing scan guards and confirmation workflow.
+  const selectedDetectionMode = DETECTION_MODES.find((mode) => mode.value === runDetectionMode) ?? DETECTION_MODES[0];
+  const isMonthlyScanAllowanceReached = detectionQuota?.remaining_this_month === 0;
+  const isDetectionPaused = isMonthlyScanAllowanceReached || isDetectionPlacesQuotaReached;
+  const hasScanAllowance = Number.isFinite(detectionQuota?.remaining_this_month) &&
+    Number.isFinite(detectionQuota?.monthly_limit);
+  const detectionRunStatus = runDetectionLoading
+    ? "Detection is running. Progress and cancellation are available on the map below."
+    : isMonthlyScanAllowanceReached
+      ? `Monthly scan allowance used.${detectionQuota?.resets_on ? ` Resets ${detectionQuota.resets_on}.` : ""}`
+      : placesUsageLoading
+        ? "Checking detection request budget…"
+        : placesUsageError || !activeDetectionPlacesQuota
+          ? "Detection request budget is unavailable."
+          : activeDetectionPlacesQuota.enabled === false
+            ? "Detection requests are disabled by the current backend configuration."
+            : activeDetectionPlacesQuota.monthly_quota_exceeded
+              ? "Monthly detection request budget reached. This is separate from the monthly scan allowance."
+              : activeDetectionPlacesQuota.daily_quota_exceeded
+                ? "Daily detection request budget reached. This is separate from the monthly scan allowance."
+                : detectionQuota?.registry_count === 0
+                  ? "Import official business records in Registry before running detection."
+                  : "";
 
   const handleReverifyPins = async () => {
     if (isSnapMonthlyMaxed) {
@@ -3929,48 +3983,67 @@ export default function MapPage() {
               </details>
             </div>
 
-            <div className="map-detection-controls">
-              <DetectionModeDropdown
-                value={runDetectionMode}
-                onChange={setRunDetectionMode}
-                disabled={runDetectionLoading}
-              />
-              <button
-                className="primary-btn map-run-detection"
-                type="button"
-                onClick={handleRunDetection}
-                disabled={runDetectionLoading || (detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached}
-                title={
-                  runDetectionLoading
-                    ? "Detection scan in progress…"
-                    : detectionQuota && detectionQuota.registry_count === 0
-                      ? "Official registry is empty. Import business permits first before running detection."
-                      : detectionQuota && detectionQuota.remaining_this_month === 0
-                        ? `Monthly limit reached (0/${detectionQuota.monthly_limit ?? 10} remaining). Resets on ${detectionQuota.resets_on}`
-                        : isDetectionPlacesQuotaReached
-                          ? `Nearby Search app quota reached (${activeDetectionPlacesQuota?.used_today ?? 0}/${activeDetectionPlacesQuota?.daily_cap ?? 0} daily, ${activeDetectionPlacesQuota?.used_month ?? 0}/${activeDetectionPlacesQuota?.monthly_cap ?? 0} monthly).`
-                          : `Run geospatial detection scan (max ${detectionQuota?.monthly_limit ?? 10}x/month)`
-                }
-                style={{
-                  opacity: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? 0.6 : 1,
-                  cursor: ((detectionQuota && detectionQuota.remaining_this_month === 0) || isDetectionPlacesQuotaReached) && !runDetectionLoading ? "not-allowed" : "pointer"
-                }}
-              >
-                <span>{runDetectionLoading ? "Running…" : "Run Detection"}</span>
-                {detectionQuota && (
-                  <span
-                    className="map-detection-quota"
-                    style={{
-                      background: detectionQuota.remaining_this_month === 0
-                        ? "rgba(0, 0, 0, 0.3)"
-                        : "rgba(255, 255, 255, 0.22)"
-                    }}
-                  >
-                    {detectionQuota.remaining_this_month}/{detectionQuota.monthly_limit ?? 10}
+            <section className="map-detection-controls" aria-label="Detection scan controls">
+              <div className="map-detection-config">
+                <DetectionModeDropdown
+                  value={runDetectionMode}
+                  onChange={setRunDetectionMode}
+                  disabled={runDetectionLoading}
+                />
+                <p id="detection-mode-description" className="map-detection-description" aria-live="polite">
+                  {selectedDetectionMode.summary}
+                </p>
+              </div>
+
+              <div className="map-detection-run">
+                <button
+                  className="primary-btn map-run-detection"
+                  type="button"
+                  onClick={handleRunDetection}
+                  disabled={runDetectionLoading || isDetectionPaused}
+                  aria-busy={runDetectionLoading}
+                  aria-describedby={`detection-mode-description detection-scan-allowance detection-scope${detectionRunStatus ? " detection-run-status" : ""}`}
+                  title={detectionRunStatus || `Run ${selectedDetectionMode.label} in Mataasnakahoy`}
+                >
+                  <span className={runDetectionLoading ? "map-detection-spinner" : "map-detection-run-icon"} aria-hidden="true">
+                    {!runDetectionLoading && <Icon.Crosshair />}
                   </span>
+                  <span>{runDetectionLoading ? "Running…" : "Run Detection"}</span>
+                </button>
+              </div>
+
+              <div id="detection-scan-allowance" className="map-detection-allowance" aria-live="polite" aria-atomic="true" aria-busy={detectionQuotaLoading}>
+                <p className="map-detection-allowance-label">Monthly scan allowance</p>
+                {detectionQuotaLoading ? (
+                  <p className="map-detection-allowance-state">Loading scan allowance…</p>
+                ) : detectionQuotaError || !hasScanAllowance ? (
+                  <div className="map-detection-allowance-state">
+                    <p>{detectionQuotaError || "Scan allowance is unavailable."}</p>
+                    <button className="map-detection-retry" type="button" onClick={fetchDetectionQuota} disabled={runDetectionLoading} aria-label="Reload scan allowance">Retry</button>
+                  </div>
+                ) : (
+                  <>
+                    <p className={`map-detection-allowance-value${isMonthlyScanAllowanceReached ? " is-exhausted" : ""}`}>
+                      <strong>{detectionQuota.remaining_this_month.toLocaleString("en-US")}</strong> of {detectionQuota.monthly_limit.toLocaleString("en-US")} {detectionQuota.monthly_limit === 1 ? "scan" : "scans"} remaining
+                    </p>
+                    <p className="map-detection-allowance-reset">{detectionQuota.resets_on ? `Resets ${detectionQuota.resets_on}` : "Reset date unavailable"}</p>
+                  </>
                 )}
-              </button>
-            </div>
+              </div>
+
+              <p id="detection-scope" className="map-detection-scope">
+                <span aria-hidden="true"><Icon.MapPin /></span>
+                <span><strong>Scope: Mataasnakahoy municipal boundary.</strong> Google Places businesses are compared with the official registry. Map zoom, search, and flag filters only change the view.</span>
+              </p>
+              {detectionRunStatus && (
+                <div className={`map-detection-feedback${isDetectionPaused ? " is-paused" : ""}`}>
+                  <p id="detection-run-status" role="status">{detectionRunStatus}</p>
+                  {!placesUsageLoading && (placesUsageError || !activeDetectionPlacesQuota) && !runDetectionLoading && (
+                    <button className="map-detection-retry" type="button" onClick={fetchPlacesUsage} aria-label="Reload detection request budget">Retry request budget</button>
+                  )}
+                </div>
+              )}
+            </section>
           </div>
         )}
       </div>

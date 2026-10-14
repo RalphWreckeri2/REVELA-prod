@@ -1,0 +1,797 @@
+/* Overview-only refinements. HomePage.css retains the existing shared KPI-card
+   rules used by Analytics; this dashboard uses its own summary and surfaces. */
+.overview-page {
+  --overview-surface: var(--color-modal-bg);
+  --overview-muted: #526476;
+  --overview-accent: var(--color-primary-dark);
+  --overview-danger: #b91c1c;
+  --overview-border: #e2eae4;
+}
+
+.overview-page .saas-content {
+  padding: 28px 32px;
+  gap: 24px;
+}
+
+.overview-page .overview-dashboard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(310px, 1fr);
+  align-items: start;
+  gap: 20px;
+  min-width: 0;
+}
+
+.overview-page .overview-main-column,
+.overview-page .overview-side-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.overview-page .overview-main-column {
+  container: overview-main / inline-size;
+}
+
+.overview-page .overview-surface {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--overview-border);
+  border-radius: 18px;
+  background: var(--overview-surface);
+  color: var(--color-ink);
+  box-shadow: 0 2px 6px rgb(20 44 30 / 2%);
+}
+
+.overview-page .overview-section-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.overview-page .overview-section-heading h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: -0.25px;
+}
+
+.overview-page .overview-section-kicker {
+  color: var(--overview-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.overview-page .overview-section-sub,
+.overview-page .overview-scope-note {
+  margin: 7px 0 16px;
+  color: var(--overview-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.overview-page .overview-scope-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
+.overview-page .overview-feedback {
+  margin: 12px 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--color-card-alt);
+  color: var(--overview-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.overview-page .overview-feedback.is-error {
+  background: var(--color-danger-light);
+  color: var(--overview-danger);
+}
+
+.overview-page .overview-empty {
+  padding: 12px 0;
+  margin: 0;
+  color: var(--overview-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.overview-page .overview-section-link,
+.overview-page .overview-inline-action,
+.overview-page .overview-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  max-width: 100%;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--overview-accent);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  text-decoration: none;
+  text-align: left;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.overview-page .overview-section-link {
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--overview-border);
+  border-radius: 0;
+}
+
+.overview-page .overview-section-link:hover,
+.overview-page .overview-inline-action:hover,
+.overview-page .overview-refresh:hover {
+  color: var(--color-ink);
+}
+
+.overview-page .overview-dashboard-layout :is(button, a, summary):focus-visible {
+  outline: 2px solid var(--overview-accent);
+  outline-offset: 3px;
+}
+
+.overview-page .overview-dashboard-layout svg {
+  flex-shrink: 0;
+}
+
+/* Welcome hero: keep the greeting and independent shortcuts on the left,
+   clock/weather side by side on the right, with system status underneath. */
+.overview-page .hero-banner {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  gap: 24px;
+  padding: 24px;
+  overflow: hidden;
+  border: 1px solid var(--overview-border);
+  border-radius: 22px;
+  background: linear-gradient(115deg, #edf7e9 0%, #f4f9eb 52%, #fff8dd 100%);
+  color: var(--color-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 75%);
+  animation: none;
+}
+
+.overview-page .hero-left,
+.overview-page .hero-right {
+  min-width: 0;
+}
+
+.overview-page .hero-eyebrow {
+  margin: 0;
+  color: var(--overview-accent);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.overview-page .hero-greeting {
+  margin: 12px 0;
+  font-size: clamp(28px, 2.3vw, 40px);
+  line-height: 1.16;
+  font-weight: 800;
+  letter-spacing: -0.9px;
+  overflow-wrap: anywhere;
+}
+
+.overview-page .hero-greeting-name {
+  color: var(--overview-accent);
+}
+
+.overview-page .hero-wave {
+  display: inline-block;
+  font-size: 0.82em;
+  vertical-align: 0.04em;
+}
+
+.overview-page .hero-sub {
+  max-width: 46ch;
+  margin: 0 0 18px;
+  color: var(--overview-muted);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.overview-page .hero-shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.overview-page .hero-shortcut {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  min-width: 0;
+  padding: 6px 12px 6px 7px;
+  border: 1px solid rgb(77 113 50 / 9%);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 68%);
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.overview-page .hero-shortcut:hover {
+  background: var(--overview-surface);
+  border-color: rgb(77 113 50 / 22%);
+}
+
+.overview-page .hero-shortcut-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: var(--color-primary-light);
+  color: var(--overview-accent);
+}
+
+.overview-page .hero-shortcut-icon.is-registry {
+  background: var(--color-gold-light);
+  color: #876216;
+}
+
+.overview-page .hero-shortcut-arrow {
+  margin-left: auto;
+  color: var(--overview-muted);
+}
+
+.overview-page .overview-refresh {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.overview-page .overview-refresh:disabled {
+  color: var(--overview-muted);
+  cursor: wait;
+}
+
+.overview-page .hero-right {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0;
+}
+
+.overview-page .hero-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  flex: initial;
+}
+
+.overview-page .hero-card,
+.overview-page .hero-status-card {
+  min-width: 0;
+  margin: 0;
+  padding: 15px;
+  border: 1px solid rgb(94 116 65 / 9%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 65%);
+  backdrop-filter: none;
+}
+
+.overview-page .hero-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.overview-page .hero-card-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 600;
+}
+
+.overview-page .hero-card-title svg {
+  width: 15px;
+  height: 15px;
+  color: var(--overview-accent);
+}
+
+.overview-page .hero-clock {
+  margin-top: 5px;
+  font-size: clamp(20px, 11cqi, 27px);
+  line-height: 1.3;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.6px;
+  white-space: normal;
+}
+
+.overview-page .hero-clock-ampm {
+  display: inline-block;
+  color: var(--overview-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.overview-page .hero-card-date,
+.overview-page .hero-card-loc,
+.overview-page .hero-cond,
+.overview-page .hero-card-foot {
+  margin: 0;
+  color: var(--overview-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.overview-page .hero-card-loc {
+  font-weight: 400;
+}
+
+.overview-page .hero-card-foot {
+  display: block;
+  margin-top: auto;
+  padding-top: 9px;
+  border-top: 1px solid rgb(94 116 65 / 12%);
+  font-size: 11.5px;
+}
+
+.overview-page .hero-weather-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.overview-page .hero-temp {
+  font-size: 30px;
+  line-height: 1.25;
+  font-weight: 750;
+  letter-spacing: -0.7px;
+}
+
+.overview-page .hero-weather-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: #886510;
+  background: var(--color-gold-light);
+}
+
+.overview-page .hero-weather-icon:is(.is-cloud, .is-fog, .is-rain, .is-snow, .is-thunderstorm, .is-unknown) {
+  background: var(--color-card-alt);
+  color: var(--overview-muted);
+}
+
+.overview-page .hero-status-card {
+  display: block;
+  flex: initial;
+}
+
+.overview-page .hero-status-card h2 {
+  margin: 0 0 12px;
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 700;
+}
+
+.overview-page .hero-status-card dl {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+}
+
+.overview-page .hero-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 3px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.overview-page .hero-status-row dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--overview-muted);
+}
+
+.overview-page .hero-status-row dd {
+  margin: 0 0 0 auto;
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.overview-page .hero-status-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-subtle);
+  box-shadow: none;
+  animation: none;
+}
+
+.overview-page .hero-status-row.is-ready .hero-status-dot { background: var(--color-primary); }
+.overview-page .hero-status-row.is-wait .hero-status-dot { background: var(--color-warning); }
+.overview-page .hero-status-row.is-error .hero-status-dot { background: var(--color-danger); }
+.overview-page .hero-status-row.is-ready dd { color: var(--overview-accent); }
+.overview-page .hero-status-row.is-error dd { color: var(--overview-danger); }
+
+/* A single KPI summary with primary and supporting emphasis. */
+.overview-page .overview-kpis-primary,
+.overview-page .overview-kpis-supporting {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto auto auto;
+  gap: 0;
+  margin: 20px 0 0;
+}
+
+.overview-page .overview-kpis-supporting {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--overview-border);
+}
+
+.overview-page .overview-metric {
+  display: grid;
+  grid-template-rows: subgrid;
+  grid-row: span 3;
+  min-width: 0;
+  padding: 0 18px;
+}
+
+.overview-page .overview-metric:first-child { padding-left: 0; }
+.overview-page .overview-metric:last-child { padding-right: 0; }
+.overview-page .overview-metric + .overview-metric { border-left: 1px solid var(--overview-border); }
+
+.overview-page .overview-metric dt {
+  color: var(--overview-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.overview-page .overview-metric dd {
+  margin: 6px 0;
+  color: var(--color-ink);
+  font-size: 36px;
+  line-height: 1.2;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.8px;
+  overflow-wrap: anywhere;
+}
+
+.overview-page .overview-metric.metric-1 dd { color: var(--overview-accent); }
+.overview-page .overview-kpis-supporting dd { font-size: 25px; }
+.overview-page .overview-metric.metric-4 dd { color: var(--overview-danger); }
+
+.overview-page .overview-metric p {
+  margin: 0;
+  color: var(--overview-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.overview-page .overview-explanation {
+  margin-top: 16px;
+  color: var(--overview-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.overview-page .overview-explanation summary {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 0;
+  border-radius: 3px;
+  color: var(--overview-muted);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.overview-page .overview-explanation p { margin: 9px 0 0; }
+
+/* The real map, with its existing markers, camera and full-map destination. */
+.overview-page .overview-map-canvas {
+  position: relative;
+  height: 300px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+
+.overview-page .overview-map-open {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.overview-page .overview-map-open:focus-visible {
+  outline-offset: -4px;
+}
+
+.overview-page .overview-map-count {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: auto;
+  z-index: 10;
+  max-width: calc(100% - 24px);
+  padding: 6px 10px;
+  border: 1px solid var(--overview-border);
+  border-radius: 8px;
+  background: var(--overview-surface);
+  color: var(--color-ink);
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.overview-page .overview-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px 18px;
+  margin: 15px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--overview-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.overview-page .overview-map-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.overview-page .overview-map-legend li > span {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+/* Assignment deadlines: distinct from the completed lifecycle calendar. */
+.overview-page .calendar-widget,
+.overview-page .overview-priorities { padding: 18px; }
+
+.overview-page .calendar-widget-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 18px 0 14px;
+}
+
+.overview-page .calendar-widget-title {
+  margin: 0;
+  gap: 7px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.overview-page .calendar-widget-title span {
+  white-space: normal;
+  overflow: visible;
+}
+
+.overview-page .calendar-widget-nav button {
+  width: 32px;
+  height: 32px;
+  border-color: var(--overview-border);
+  background: var(--overview-surface);
+}
+
+.overview-page .calendar-widget-weekdays {
+  margin-bottom: 7px;
+  color: var(--overview-muted);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.overview-page .calendar-widget-grid { gap: 4px; }
+
+.overview-page .calendar-widget-day {
+  max-width: 38px;
+  height: 36px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.overview-page .calendar-widget-day.is-today {
+  border-color: var(--overview-accent);
+  background: transparent;
+  color: var(--overview-accent);
+}
+
+.overview-page .calendar-widget-day.is-selected {
+  border-color: var(--overview-accent);
+  background: var(--overview-accent);
+  color: var(--overview-surface);
+}
+
+.overview-page .calendar-widget-day.is-selected .calendar-widget-day-dot.is-upcoming { background: var(--overview-surface); }
+.overview-page .calendar-widget-day-dot { width: 5px; height: 5px; }
+.overview-page .calendar-widget-day-dot.is-overdue { background: var(--overview-danger); }
+
+.overview-page .calendar-widget-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px 14px;
+  margin-top: 12px;
+  color: var(--overview-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.overview-page .calendar-widget-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.overview-page .calendar-widget-legend i { width: 5px; height: 5px; border-radius: 50%; }
+.overview-page .calendar-widget-legend .is-overdue { background: var(--overview-danger); }
+.overview-page .calendar-widget-legend .is-upcoming { background: var(--color-primary); }
+.overview-page .calendar-widget-today-key { padding: 1px 5px; border: 1px solid var(--overview-accent); border-radius: 5px; }
+
+.overview-page .calendar-widget-tasks {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-color: var(--overview-border);
+}
+
+.overview-page .calendar-widget-tasks-header { flex-wrap: wrap; gap: 5px 10px; }
+.overview-page .calendar-widget-tasks-header h3 { margin: 0; font-size: 13px; line-height: 1.5; font-weight: 700; }
+.overview-page .calendar-widget-tasks-header .overview-inline-action { min-height: 28px; font-size: 12px; }
+.overview-page .calendar-widget-task-list { gap: 8px; }
+
+.overview-page .calendar-widget-task {
+  padding: 10px;
+  border: 1px solid var(--overview-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 9px;
+  background: var(--color-card-alt);
+}
+
+.overview-page .calendar-widget-task.is-overdue { border-left-color: var(--overview-danger); }
+.overview-page .calendar-widget-task-name { white-space: normal; overflow-wrap: anywhere; font-weight: 600; line-height: 1.5; }
+.overview-page .calendar-widget-task-meta { white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
+.overview-page .calendar-widget-task-due { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 12px; color: var(--overview-accent); }
+.overview-page .calendar-widget-task-due strong { font-weight: 600; }
+.overview-page .calendar-widget-task.is-overdue .calendar-widget-task-due { color: var(--overview-danger); }
+
+/* Compact backend-ranked priorities, with actual categories and accessible links. */
+.overview-page .overview-priority-list { margin: 0; padding: 0; list-style: none; }
+.overview-page .overview-priority-list li + li { border-top: 1px solid var(--overview-border); }
+
+.overview-page .overview-priority {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 5px 9px;
+  padding: 13px 0;
+  border-radius: 5px;
+  color: var(--color-ink);
+  text-decoration: none;
+  transition: background 150ms ease;
+}
+
+.overview-page .overview-priority:hover { background: var(--color-hover); }
+.overview-page .overview-priority-rank { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: var(--color-primary-light); color: var(--overview-accent); font-size: 12px; font-weight: 700; }
+.overview-page .overview-priority-main { display: contents; }
+.overview-page .overview-priority-name { min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.overview-page .overview-priority-meta { grid-column: 2 / -1; grid-row: 2; color: var(--overview-muted); font-size: 12px; line-height: 1.6; }
+.overview-page .overview-priority-meta strong { color: var(--color-ink); font-weight: 700; }
+.overview-page .overview-priority-category { grid-column: 3; grid-row: 1; align-self: start; margin-top: 2px; padding: 2px 6px; border-radius: 5px; font-size: 11.5px; line-height: 1.5; font-weight: 600; }
+.overview-page .overview-priority-category.is-high { background: var(--flag-red-bg); color: var(--overview-danger); }
+.overview-page .overview-priority-category.is-medium { background: var(--flag-yellow-bg); color: #875b10; }
+.overview-page .overview-priority-category.is-low { background: var(--flag-green-bg); color: var(--overview-accent); }
+.overview-page .overview-priority-category.is-unknown { background: var(--color-card-alt); color: var(--overview-muted); }
+
+/* Respond to actual main-column space, including collapsed sidebars and zoom. */
+@container overview-main (max-width: 680px) {
+  .overview-page .hero-banner { grid-template-columns: minmax(0, 1fr); }
+  .overview-page .hero-sub { max-width: 60ch; }
+  .overview-page .hero-shortcuts { max-width: 100%; }
+}
+
+@container overview-main (max-width: 480px) {
+  .overview-page .overview-kpis-supporting { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; gap: 14px; }
+  .overview-page .overview-kpis-supporting .overview-metric { display: block; grid-row: auto; padding: 0; border-left: 0; }
+  .overview-page .overview-kpis-supporting .overview-metric + .overview-metric { padding-top: 14px; border-top: 1px solid var(--overview-border); }
+}
+
+@container overview-main (max-width: 370px) {
+  .overview-page .hero-cards,
+  .overview-page .overview-kpis-primary { grid-template-columns: minmax(0, 1fr); }
+  .overview-page .overview-kpis-primary { grid-template-rows: none; gap: 16px; }
+  .overview-page .overview-kpis-primary .overview-metric { display: block; grid-row: auto; padding: 0; border-left: 0; }
+}
+
+@media (max-width: 1200px) {
+  .overview-page .overview-dashboard-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 900px) {
+  .overview-page .saas-content { padding: 24px; }
+  .overview-page .hero-banner { padding: 20px; gap: 20px; }
+  .overview-page .overview-surface { padding: 18px; }
+  .overview-page .overview-metric { padding: 0 12px; }
+}
+
+@media (max-width: 768px) {
+  .overview-page .saas-content { padding: 72px 16px 24px; }
+}
+
+html.theme-dark .overview-page {
+  --overview-muted: #b8c6cd;
+  --overview-accent: #6ee7b7;
+  --overview-danger: #fda4af;
+  --overview-border: #26352e;
+}
+
+html.theme-dark .overview-page .hero-banner { background: linear-gradient(115deg, #15271d 0%, #1c2b22 52%, #302d1b 100%); border-color: var(--overview-border); box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%); }
+html.theme-dark .overview-page .hero-card,
+html.theme-dark .overview-page .hero-status-card,
+html.theme-dark .overview-page .hero-shortcut { background: rgb(255 255 255 / 4%); border-color: rgb(255 255 255 / 8%); }
+html.theme-dark .overview-page .hero-shortcut:hover { background: rgb(255 255 255 / 8%); }
+html.theme-dark .overview-page .hero-card-foot { border-color: rgb(255 255 255 / 10%); }
+html.theme-dark .overview-page .hero-shortcut-icon.is-registry,
+html.theme-dark .overview-page .hero-weather-icon { color: var(--color-gold); }
+html.theme-dark .overview-page .hero-weather-icon:is(.is-cloud, .is-fog, .is-rain, .is-snow, .is-thunderstorm, .is-unknown) { color: var(--overview-muted); }
+html.theme-dark .overview-page .overview-priority-category.is-medium { color: var(--flag-yellow-text); }
+html.theme-dark .overview-page .calendar-widget-day.is-selected { color: #102019; }
+
+@media (prefers-reduced-motion: reduce) {
+  .overview-page .overview-dashboard-layout *,
+  .overview-page .overview-dashboard-layout *::before,
+  .overview-page .overview-dashboard-layout *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

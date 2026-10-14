@@ -24,14 +24,14 @@ export const NEAR_LIMIT_PERCENT = 80;
 
 /**
  * Administrator-facing names. One per REVELA feature, not per Google SKU.
- * `nearby_search_new` is the disabled alternate endpoint, so it is named
- * separately to avoid two identically titled cards.
+ * Nearby methods are named using the endpoint selected in the current report.
+ * Without that information, name the versions without assuming which is active.
  */
 export const METHOD_LABELS = {
   text_search: "Business Lookup",
   place_details: "Map Pin Refresh",
-  nearby_search_legacy: "Run Detection Requests",
-  nearby_search_new: "Run Detection Requests (Alternate)",
+  nearby_search_legacy: "Run Detection Requests (Legacy)",
+  nearby_search_new: "Run Detection Requests (New)",
   geocoding: "Address Lookup",
 };
 
@@ -41,8 +41,20 @@ export function formatNumber(value) {
   return number.toLocaleString("en-US");
 }
 
-export function methodLabel(method) {
+export function detectionMethodKey(nearbyApiMode) {
+  if (nearbyApiMode === "new") return "nearby_search_new";
+  if (nearbyApiMode === "legacy") return "nearby_search_legacy";
+  return null;
+}
+
+export function methodLabel(method, nearbyApiMode) {
   if (!method) return "Requests";
+  const activeMethod = detectionMethodKey(nearbyApiMode);
+  if (activeMethod && ["nearby_search_legacy", "nearby_search_new"].includes(method.method)) {
+    return method.method === activeMethod
+      ? "Run Detection Requests"
+      : "Run Detection Requests (Alternate)";
+  }
   return METHOD_LABELS[method.method] ?? method.label ?? "Requests";
 }
 
@@ -94,7 +106,9 @@ export function detectionScanSummary(detectionQuota) {
   return {
     used,
     limit,
-    remaining: limit > 0 ? Math.max(0, limit - used) : 0,
+    remaining: detectionQuota?.remaining_this_month != null
+      ? Math.max(0, Number(detectionQuota.remaining_this_month) || 0)
+      : limit > 0 ? Math.max(0, limit - used) : 0,
     state: limitState(used, limit),
   };
 }
@@ -103,13 +117,13 @@ export function detectionScanSummary(detectionQuota) {
  * Plain-language warnings for the administrator. Only actionable states are
  * reported: a limit that is met, nearly met, or switched off entirely.
  */
-export function buildUsageWarnings(methods = [], detectionQuota = null) {
+export function buildUsageWarnings(methods = [], detectionQuota = null, nearbyApiMode) {
   const warnings = [];
 
   for (const method of methods) {
     const cap = capOf(method);
     if (cap.disabled) continue;
-    const label = methodLabel(method);
+    const label = methodLabel(method, nearbyApiMode);
     const daily = limitState(cap.used_today, cap.daily_cap, cap.daily_quota_exceeded);
     const monthly = limitState(
       cap.used_month, cap.monthly_cap, cap.monthly_quota_exceeded,
@@ -183,4 +197,27 @@ export function describeLimitSource(field) {
 
 export function isCustomLimit(field) {
   return field?.source === "admin_override";
+}
+
+function sameSetting(left, right) {
+  if (String(left) === String(right)) return true;
+  // An empty input is an unfinished edit, not a numeric zero.
+  if (left == null || right == null || String(left).trim() === "" || String(right).trim() === "") {
+    return false;
+  }
+  return Number.isFinite(Number(left)) && Number(left) === Number(right);
+}
+
+/** Compare edits with saved effective values, never with application defaults. */
+export function dirtySettingKeys(draft = {}, saved = {}) {
+  return Object.keys(saved).filter((key) => key in draft && !sameSetting(draft[key], saved[key]));
+}
+
+/** Refresh saved values while retaining only the user's outstanding edits. */
+export function mergeSettingsDraft(draft = {}, saved = {}, incoming = {}) {
+  const merged = { ...incoming };
+  for (const key of dirtySettingKeys(draft, saved)) {
+    if (key in incoming) merged[key] = draft[key];
+  }
+  return merged;
 }
