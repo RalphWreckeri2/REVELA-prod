@@ -34,6 +34,7 @@ from api.utils.places_rate_limit import (
     LEGACY_NEARBY_LIMITER,
 )
 from api.utils import quota_settings, test_mode
+from api.utils.barangay_scope import validate_barangay_scope
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -492,6 +493,14 @@ def _cleanup_cancelled_detection(inserted_flag_ids, point_keys):
 MATAASNAKAHOY_GEOJSON_PATH = os.path.join(
     os.path.dirname(__file__), '..', 'utils', 'mataasnakahoy.json')
 _BARANGAY_POLYGONS = {}
+_GEOJSON_BARANGAY_ALIASES = {
+    "District I (Pob.)": "Barangay I",
+    "District II (Pob.)": "Barangay II",
+    "District III (Pob.)": "Barangay III",
+    "District IV (Pob.)": "Barangay IV",
+    "Barangay II-A (Pob.)": "Barangay II-A",
+    "Lumang Lipa": "Barangay Lumanglipa",
+}
 
 if os.path.exists(MATAASNAKAHOY_GEOJSON_PATH):
     with open(MATAASNAKAHOY_GEOJSON_PATH, 'r', encoding='utf-8') as f:
@@ -3229,29 +3238,172 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
 # ── Insert Yellow Flag ────────────────────────────────────────────────────────
 
-def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_color='Yellow', reported_by_user_id=None):
+class YellowFlagSubmissionConflict(Exception):
+    """Raised when an idempotency key is reused for different report data."""
+
+
+class YellowFlagValidationError(ValueError):
+    """A client-correctable Yellow Flag input or boundary failure."""
+
+
+def _validate_yellow_flag_barangay(cursor, lat, lng, barangay_id):
+    """Validate the selected registry barangay, without proximity fallbacks."""
+    cursor.execute(
+        "SELECT barangayName FROM barangays WHERE barangayID = %s",
+        (barangay_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise YellowFlagValidationError("The selected barangay does not exist.")
+
+    def key(name):
+        name = str(name or "").lower().replace("(pob.)", "").strip()
+        for prefix in ("barangay ", "brgy. ", "brgy "):
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+                break
+        return _normalize_barangay_name(name)
+
+    selected_key = key(row["barangayName"])
+    polygons = [
+        polygon for name, polygon in _BARANGAY_POLYGONS.items()
+        if key(_GEOJSON_BARANGAY_ALIASES.get(name, name)) == selected_key
+    ]
+    if len(polygons) != 1:
+        raise RuntimeError(
+            "Official barangay boundary data is unavailable or ambiguous."
+        )
+    try:
+        scope = validate_barangay_scope(barangay_id, polygons[0])
+    except ValueError as error:
+        raise RuntimeError("Official barangay boundary data is invalid.") from error
+    if not scope.contains_coordinate(lat, lng):
+        raise YellowFlagValidationError(
+            "Coordinates do not fall within the selected barangay boundary."
+        )
+
+
+def insert_yellow_flag(
+    business_name,
+    lat,
+    lng,
+    barangay_id,
+    notes=None,
+    flag_color='Yellow',
+    reported_by_user_id=None,
+    client_submission_id=None,
+):
     """Manually insert a Yellow Flag."""
     if flag_color != 'Yellow':
-        return None, "Only Yellow flags can be manually created."
-
+        return None, YellowFlagValidationError(
+            "Only Yellow flags can be manually created."
+        )
+    if (
+        isinstance(lat, bool) or isinstance(lng, bool)
+        or not isinstance(lat, (int, float))
+        or not isinstance(lng, (int, float))
+    ):
+        return None, YellowFlagValidationError(
+            "Valid numeric latitude and longitude are required."
+        )
     try:
-        # Validate that the manual pin falls within the municipality
-        if lat and lng and not _within_municipality(float(lat), float(lng)):
-            return None, "Cannot place a flag outside the official municipality boundaries."
+        lat, lng = float(lat), float(lng)
+    except (OverflowError, TypeError, ValueError):
+        return None, YellowFlagValidationError(
+            "Valid numeric latitude and longitude are required."
+        )
+    if not (
+        math.isfinite(lat) and math.isfinite(lng)
+        and -90 <= lat <= 90 and -180 <= lng <= 180
+    ):
+        return None, YellowFlagValidationError(
+            "Coordinates must be finite and within WGS84 bounds."
+        )
+    if (
+        isinstance(barangay_id, bool)
+        or not isinstance(barangay_id, int) or barangay_id <= 0
+    ):
+        return None, YellowFlagValidationError(
+            "A positive integer barangayID is required."
+        )
+    if (
+        not isinstance(business_name, str)
+        or not business_name.strip() or len(business_name) > 255
+    ):
+        return None, YellowFlagValidationError(
+            "Business name is required (maximum 255 characters)."
+        )
+
+    cursor = None
+    try:
+        # Coordinates describe the business, not the inspector's physical location.
+        # Retain the production municipality predicate and its existing tolerance.
+        if not _within_municipality(lat, lng):
+            return None, YellowFlagValidationError(
+                "Cannot place a flag outside the official municipality boundaries."
+            )
 
         cursor = mysql.connection.cursor()
-        cursor.execute("""
-            INSERT INTO geospatial_logs
-                (barangayID, reportID, detectedName, latitude, longitude,
-                 flagColor, notes, reportedByUserID)
-            VALUES (%s, NULL, %s, %s, %s, %s, %s, %s)
-        """, (barangay_id, business_name, lat, lng, flag_color, notes, reported_by_user_id))
+        _validate_yellow_flag_barangay(cursor, lat, lng, barangay_id)
+        if client_submission_id:
+            cursor.execute("""
+                INSERT INTO geospatial_logs
+                    (barangayID, reportID, detectedName, latitude, longitude,
+                     flagColor, notes, reportedByUserID, clientSubmissionID)
+                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE logID = LAST_INSERT_ID(logID)
+            """, (
+                barangay_id, business_name, lat, lng, flag_color, notes,
+                reported_by_user_id, client_submission_id,
+            ))
+            created = cursor.rowcount == 1
+            log_id = cursor.lastrowid
+            cursor.execute("""
+                SELECT barangayID, detectedName, latitude, longitude, notes,
+                       flagColor, reportedByUserID
+                FROM geospatial_logs
+                WHERE logID = %s
+            """, (log_id,))
+            existing = cursor.fetchone()
+            if existing:
+                values = (
+                    existing.get("barangayID"),
+                    existing.get("detectedName"),
+                    existing.get("latitude"),
+                    existing.get("longitude"),
+                    existing.get("notes"),
+                    existing.get("flagColor"),
+                    existing.get("reportedByUserID"),
+                ) if isinstance(existing, dict) else existing[:7]
+                same_report = (
+                    int(values[0]) == int(barangay_id)
+                    and values[1] == business_name
+                    and round(float(values[2]), 8) == round(float(lat), 8)
+                    and round(float(values[3]), 8) == round(float(lng), 8)
+                    and values[4] == notes
+                    and values[5] == flag_color
+                    and int(values[6]) == int(reported_by_user_id)
+                )
+                if not same_report:
+                    mysql.connection.rollback()
+                    cursor.close()
+                    return None, YellowFlagSubmissionConflict(
+                        "This submission ID was already used for different report data."
+                    )
+        else:
+            cursor.execute("""
+                INSERT INTO geospatial_logs
+                    (barangayID, reportID, detectedName, latitude, longitude,
+                     flagColor, notes, reportedByUserID)
+                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s)
+            """, (barangay_id, business_name, lat, lng, flag_color, notes, reported_by_user_id))
+            created = True
+            log_id = cursor.lastrowid
         mysql.connection.commit()
-        log_id = cursor.lastrowid
         cursor.close()
 
         # Fire admin notification (non-blocking)
-        if reported_by_user_id:
+        if reported_by_user_id and created:
             try:
                 from api.notifications.service import notify_yellow_flag_reported
                 notify_yellow_flag_reported(
@@ -3264,8 +3416,22 @@ def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_co
             except Exception as ne:
                 print(f"insert_yellow_flag notification error: {ne}")
 
-        return {"logID": log_id, "lat": lat, "lng": lng}, None
+        return {
+            "logID": log_id,
+            "lat": lat,
+            "lng": lng,
+            "alreadyAccepted": not created,
+        }, None
+    except YellowFlagValidationError as e:
+        mysql.connection.rollback()
+        cursor.close()
+        return None, e
     except Exception as e:
+        if cursor is not None:
+            try:
+                mysql.connection.rollback()
+            finally:
+                cursor.close()
         return None, str(e)
 
 

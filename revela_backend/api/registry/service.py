@@ -410,6 +410,186 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     return None, None
 
 
+def search_address_candidates(
+    street_address: str,
+    barangay: str | None = None,
+    *,
+    get=http.get,
+    reserve=None,
+) -> tuple[list[dict] | None, str | None]:
+    """Search a local address and return selectable Geocoding API results."""
+    address = _clean_str(street_address)
+    barangay_name = _clean_str(barangay) if barangay is not None else ""
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
+    if not api_key:
+        return None, "not_configured"
+    if not address:
+        return None, "invalid_request"
+
+    reserve_call = reserve or _reserve_geocode_call
+    if not reserve_call():
+        return None, "quota_exceeded"
+
+    address_parts = [address]
+    if barangay_name:
+        address_parts.append(barangay_name)
+    address_parts.extend(["Mataasnakahoy", "Batangas", "Philippines"])
+    full_address = ", ".join(address_parts)
+    try:
+        response = get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={
+                "address": full_address,
+                "components": "country:PH",
+                "region": "ph",
+                "key": api_key,
+            },
+            timeout=10,
+        )
+    except http.RequestException:
+        # Request exception text may include the API-key query parameter.
+        print("[Geocode search] Network error")
+        return None, "network_error"
+
+    if response.status_code != 200:
+        print(f"[Geocode search] HTTP {response.status_code}")
+        return None, "provider_error"
+
+    try:
+        data = response.json()
+    except (ValueError, TypeError):
+        print("[Geocode search] Invalid JSON response")
+        return None, "provider_error"
+
+    if not isinstance(data, dict):
+        return None, "provider_error"
+    status = data.get("status")
+    if status == "ZERO_RESULTS":
+        return [], None
+    if status in ("OVER_DAILY_LIMIT", "OVER_QUERY_LIMIT"):
+        return None, "quota_exceeded"
+    if status != "OK":
+        return None, "provider_error"
+
+    raw_results = data.get("results")
+    if not isinstance(raw_results, list):
+        return None, "provider_error"
+
+    candidates = []
+    for result in raw_results:
+        if not isinstance(result, dict):
+            continue
+        geometry = result.get("geometry") or {}
+        if not isinstance(geometry, dict):
+            continue
+        location = geometry.get("location") or {}
+        if not isinstance(location, dict):
+            continue
+        try:
+            lat = float(location["lat"])
+            lng = float(location["lng"])
+        except (KeyError, OverflowError, TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(lat)
+            or not math.isfinite(lng)
+            or not -90 <= lat <= 90
+            or not -180 <= lng <= 180
+        ):
+            continue
+        formatted_address = str(result.get("formatted_address", "")).strip()
+        if not formatted_address:
+            continue
+        candidates.append({
+            "formattedAddress": formatted_address,
+            "latitude": lat,
+            "longitude": lng,
+            "placeId": str(result.get("place_id", "")),
+        })
+        if len(candidates) == 5:
+            break
+    return candidates, None
+
+
+def reverse_geocode_coordinates(
+    latitude: float,
+    longitude: float,
+    *,
+    get=http.get,
+    reserve=None,
+) -> tuple[str | None, str | None]:
+    """Return the most precise formatted address for a validated GPS point."""
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
+    if not api_key:
+        return None, "not_configured"
+    if (
+        isinstance(latitude, bool)
+        or isinstance(longitude, bool)
+        or not isinstance(latitude, (int, float))
+        or not isinstance(longitude, (int, float))
+    ):
+        return None, "invalid_request"
+    try:
+        latitude, longitude = float(latitude), float(longitude)
+    except (OverflowError, TypeError, ValueError):
+        return None, "invalid_request"
+    if not (
+        math.isfinite(latitude) and math.isfinite(longitude)
+        and -90 <= latitude <= 90 and -180 <= longitude <= 180
+    ):
+        return None, "invalid_request"
+
+    reserve_call = reserve or _reserve_geocode_call
+    if not reserve_call():
+        return None, "quota_exceeded"
+
+    try:
+        response = get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={
+                "latlng": f"{latitude:.6f},{longitude:.6f}",
+                "result_type": (
+                    "street_address|premise|subpremise|route|"
+                    "point_of_interest|establishment"
+                ),
+                "key": api_key,
+            },
+            timeout=10,
+        )
+    except http.RequestException:
+        print("[Reverse geocode] Network error")
+        return None, "network_error"
+
+    if response.status_code != 200:
+        return None, "provider_error"
+
+    try:
+        data = response.json()
+    except (ValueError, TypeError):
+        return None, "provider_error"
+
+    if not isinstance(data, dict):
+        return None, "provider_error"
+    status = data.get("status")
+    if status == "ZERO_RESULTS":
+        return None, None
+    if status in ("OVER_DAILY_LIMIT", "OVER_QUERY_LIMIT"):
+        return None, "quota_exceeded"
+    if status != "OK":
+        return None, "provider_error"
+
+    results = data.get("results")
+    if not isinstance(results, list):
+        return None, "provider_error"
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        address = result.get("formatted_address")
+        if isinstance(address, str) and address.strip():
+            return address.strip(), None
+    return None, "provider_error"
+
+
 def _resolve_location(
     business_name,
     address,

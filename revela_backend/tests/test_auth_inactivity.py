@@ -300,13 +300,37 @@ class InactivityTests(unittest.TestCase):
         client = self.app.test_client()
         self.assertEqual(client.post("/api/auth/activity").status_code, 401)
 
-    def test_activity_is_only_reported_by_the_dedicated_endpoint(self):
-        """No background surface may report activity on the user's behalf."""
+    def test_activity_is_only_reported_by_explicit_activity_or_mobile_heartbeat(self):
+        """Polling cannot extend sessions; the explicit mobile heartbeat may."""
+        import ast
         import inspect
         source = inspect.getsource(auth_routes)
-        # Exactly one call site: POST /api/auth/activity.
-        self.assertEqual(source.count("record_session_activity("), 1)
+        callers = [
+            node.name for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+            and any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
+                and call.func.id == "record_session_activity"
+                for call in ast.walk(node)
+            )
+        ]
+        self.assertCountEqual(callers, ["record_activity", "record_mobile_heartbeat"])
         self.assertIn('@auth_bp.route("/activity", methods=["POST"])', source)
+        self.assertIn('@auth_bp.route("/heartbeat", methods=["POST"])', source)
+
+    def test_mobile_heartbeat_keeps_ten_minute_session_alive(self):
+        token, session_id = self._login(client_type="mobile")
+        self._age_activity(session_id, IDLE_LIMIT_SECONDS - 30)
+        with patch.object(sessions, "mysql", self.mysql), patch.object(
+            decorators, "find_user_by_id", return_value={"isActive": True}
+        ):
+            client = self.app.test_client()
+            headers = {"Authorization": f"Bearer {token}"}
+            self.assertEqual(client.post("/api/auth/heartbeat", headers=headers).status_code, 200)
+            self.assertLess(sessions.seconds_since_activity(session_id), 5)
+            self._age_activity(session_id, IDLE_LIMIT_SECONDS + 1)
+            self.assertEqual(client.post("/api/auth/heartbeat", headers=headers).status_code, 401)
 
     def test_sessions_of_different_users_do_not_interfere(self):
         token_a, session_a = self._login()
