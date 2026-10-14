@@ -166,6 +166,17 @@ def record_activity():
     return jsonify({"message": "Activity recorded"}), 200
 
 
+@auth_bp.route("/heartbeat", methods=["POST"])
+@jwt_required()
+def record_mobile_heartbeat():
+    """Keep a foreground mobile session alive without counting user activity."""
+    claims = get_jwt()
+    if claims.get("client_type") != "mobile":
+        return jsonify({"error": "Mobile sessions only."}), 403
+    record_session_activity(claims.get("session_id"))
+    return jsonify({"message": "Session heartbeat recorded"}), 200
+
+
 # ── POST /api/auth/logout ─────────────────────────────────────────────────────
 @auth_bp.route("/logout", methods=["POST"])
 @jwt_required()

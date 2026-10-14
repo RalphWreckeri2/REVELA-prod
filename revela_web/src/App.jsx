@@ -18,14 +18,16 @@ import CookiePolicyPage from './components/CookiePolicyPage';
 import DesktopAccessRequired from './components/DesktopAccessRequired';
 import InactivityProvider from './components/InactivityProvider';
 import { useDeviceAccess } from './hooks/useDeviceAccess';
+import { isLegalDocumentPath } from './components/mobileDetection';
 
 export default function App() {
   // Usability gate only: phone-sized screens get the restricted-access notice.
   // Tablets, laptops and desktops fall through to the normal application.
   // This re-evaluates on rotate/resize, so no orientation is stuck.
   const { restricted } = useDeviceAccess();
+  const isLegalDocument = isLegalDocumentPath(window.location.pathname);
 
-  if (restricted) {
+  if (restricted && !isLegalDocument) {
     return <DesktopAccessRequired />;
   }
 

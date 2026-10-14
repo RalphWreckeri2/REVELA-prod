@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 import '../theme/app_theme.dart';
 import '../widgets/custom_app_bar.dart';
+import 'notice_document_style.dart';
 
 class PdfGeneratorPage extends StatefulWidget {
   final InspectionTask? initialTask;
@@ -36,18 +37,24 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
   int _selectedEditCategory = 0;
 
   // ── Header Controllers ──
-  final TextEditingController _headerLine1Controller =
-      TextEditingController(text: 'Republika ng Pilipinas');
-  final TextEditingController _headerLine2Controller =
-      TextEditingController(text: 'Lalawigan ng Batangas');
-  final TextEditingController _headerLine3Controller =
-      TextEditingController(text: 'Bayan ng Mataasnakahoy');
-  final TextEditingController _officeTitleController =
-      TextEditingController(text: 'TANGGAPAN NG PUNUMBAYAN');
-  final TextEditingController _contactController =
-      TextEditingController(text: 'Telepono #: 461-2374');
-  final TextEditingController _emailController =
-      TextEditingController(text: 'Email: licensingoffice2374@yahoo.com');
+  final TextEditingController _headerLine1Controller = TextEditingController(
+    text: 'Republika ng Pilipinas',
+  );
+  final TextEditingController _headerLine2Controller = TextEditingController(
+    text: 'Lalawigan ng Batangas',
+  );
+  final TextEditingController _headerLine3Controller = TextEditingController(
+    text: 'Bayan ng Mataasnakahoy',
+  );
+  final TextEditingController _officeTitleController = TextEditingController(
+    text: 'TANGGAPAN NG PUNUMBAYAN',
+  );
+  final TextEditingController _contactController = TextEditingController(
+    text: 'Telepono #: 461-2374',
+  );
+  final TextEditingController _emailController = TextEditingController(
+    text: 'Email: licensingoffice2374@yahoo.com',
+  );
   final TextEditingController _sectionTitleController = TextEditingController(
     text: 'SEKSYON NG PANGKALAKALANG KAPAHINTULUTAN AT LISENSYA',
   );
@@ -173,16 +180,24 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
         _sectionTitleController.text = prefs.getString('saved_section_title')!;
       }
       if (prefs.containsKey('saved_closing_greeting')) {
-        _closingGreetingController.text = prefs.getString('saved_closing_greeting')!;
+        _closingGreetingController.text = prefs.getString(
+          'saved_closing_greeting',
+        )!;
       }
       if (prefs.containsKey('saved_signatory_name')) {
-        _signatoryNameController.text = prefs.getString('saved_signatory_name')!;
+        _signatoryNameController.text = prefs.getString(
+          'saved_signatory_name',
+        )!;
       }
       if (prefs.containsKey('saved_signatory_position')) {
-        _signatoryPositionController.text = prefs.getString('saved_signatory_position')!;
+        _signatoryPositionController.text = prefs.getString(
+          'saved_signatory_position',
+        )!;
       }
       if (prefs.containsKey('saved_footer_tagline')) {
-        _footerTaglineController.text = prefs.getString('saved_footer_tagline')!;
+        _footerTaglineController.text = prefs.getString(
+          'saved_footer_tagline',
+        )!;
       }
       if (prefs.containsKey('saved_footer_motto')) {
         _footerMottoController.text = prefs.getString('saved_footer_motto')!;
@@ -199,10 +214,22 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
     await prefs.setString('saved_contact', _contactController.text);
     await prefs.setString('saved_email', _emailController.text);
     await prefs.setString('saved_section_title', _sectionTitleController.text);
-    await prefs.setString('saved_closing_greeting', _closingGreetingController.text);
-    await prefs.setString('saved_signatory_name', _signatoryNameController.text);
-    await prefs.setString('saved_signatory_position', _signatoryPositionController.text);
-    await prefs.setString('saved_footer_tagline', _footerTaglineController.text);
+    await prefs.setString(
+      'saved_closing_greeting',
+      _closingGreetingController.text,
+    );
+    await prefs.setString(
+      'saved_signatory_name',
+      _signatoryNameController.text,
+    );
+    await prefs.setString(
+      'saved_signatory_position',
+      _signatoryPositionController.text,
+    );
+    await prefs.setString(
+      'saved_footer_tagline',
+      _footerTaglineController.text,
+    );
     await prefs.setString('saved_footer_motto', _footerMottoController.text);
   }
 
@@ -232,19 +259,23 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
       _officeTitleController.text = 'TANGGAPAN NG PUNUMBAYAN';
       _contactController.text = 'Telepono #: 461-2374';
       _emailController.text = 'Email: licensingoffice2374@yahoo.com';
-      _sectionTitleController.text = 'SEKSYON NG PANGKALAKALANG KAPAHINTULUTAN AT LISENSYA';
+      _sectionTitleController.text =
+          'SEKSYON NG PANGKALAKALANG KAPAHINTULUTAN AT LISENSYA';
       _customBodyController.clear();
       _closingGreetingController.text = 'Lubos na gumagalang,';
       _signatoryNameController.text = 'MIAN S. CASTILLO';
       _signatoryPositionController.text = 'Licensing Officer II';
-      _footerTaglineController.text = 'Health | Opportunity | Peace & Order | Education & Economy';
+      _footerTaglineController.text =
+          'Health | Opportunity | Peace & Order | Education & Economy';
       _footerMottoController.text = 'L O V E M A T A A S N A K A H O Y';
     });
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Document layout reset to default municipality template.'),
+          content: Text(
+            'Document layout reset to default municipality template.',
+          ),
           backgroundColor: AppColors.darkGreen,
         ),
       );
@@ -388,7 +419,9 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
     if (_rightLogoBase64 != null && _rightLogoBase64!.isNotEmpty) {
       rightImage = pw.MemoryImage(base64Decode(_rightLogoBase64!));
     } else {
-      final bpSealBytes = await rootBundle.load('assets/images/bagongpilipinas.png');
+      final bpSealBytes = await rootBundle.load(
+        'assets/images/bagongpilipinas.png',
+      );
       rightImage = pw.MemoryImage(bpSealBytes.buffer.asUint8List());
     }
 
@@ -463,7 +496,9 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                               _headerLine3Controller.text.trim(),
                               style: const pw.TextStyle(fontSize: 9),
                             ),
-                          if (_officeTitleController.text.trim().isNotEmpty) ...[
+                          if (_officeTitleController.text
+                              .trim()
+                              .isNotEmpty) ...[
                             pw.SizedBox(height: 1),
                             pw.Text(
                               _officeTitleController.text.trim(),
@@ -553,18 +588,7 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                   ),
                 ),
                 pw.SizedBox(height: 12),
-                pw.Container(
-                  padding: const pw.EdgeInsets.all(8),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.grey200,
-                    borderRadius: pw.BorderRadius.circular(6),
-                  ),
-                  child: pw.Text(
-                    _effectiveCertificationText,
-                    textAlign: pw.TextAlign.justify,
-                    style: const pw.TextStyle(fontSize: 10),
-                  ),
-                ),
+                NoticeDocumentStyle.pdfBody(_effectiveCertificationText),
                 pw.SizedBox(height: 12),
                 pw.Text(
                   'Maraming salamat po.',
@@ -832,7 +856,10 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                     label: const Text('Header & Logos'),
                                     selected: _selectedEditCategory == 0,
                                     onSelected: (val) {
-                                      if (val) setState(() => _selectedEditCategory = 0);
+                                      if (val)
+                                        setState(
+                                          () => _selectedEditCategory = 0,
+                                        );
                                     },
                                   ),
                                 ),
@@ -842,7 +869,10 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                     label: const Text('Body & Sign'),
                                     selected: _selectedEditCategory == 1,
                                     onSelected: (val) {
-                                      if (val) setState(() => _selectedEditCategory = 1);
+                                      if (val)
+                                        setState(
+                                          () => _selectedEditCategory = 1,
+                                        );
                                     },
                                   ),
                                 ),
@@ -852,7 +882,10 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                     label: const Text('Footer'),
                                     selected: _selectedEditCategory == 2,
                                     onSelected: (val) {
-                                      if (val) setState(() => _selectedEditCategory = 2);
+                                      if (val)
+                                        setState(
+                                          () => _selectedEditCategory = 2,
+                                        );
                                     },
                                   ),
                                 ),
@@ -875,31 +908,57 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                   Expanded(
                                     child: Column(
                                       children: [
-                                        Text('Left Logo (Seal 1)', style: TextStyle(fontSize: 12, color: context.adaptiveTextMid)),
+                                        Text(
+                                          'Left Logo (Seal 1)',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: context.adaptiveTextMid,
+                                          ),
+                                        ),
                                         const SizedBox(height: 6),
                                         Container(
                                           height: 50,
                                           width: 50,
                                           decoration: BoxDecoration(
-                                            border: Border.all(color: context.adaptiveBorder),
-                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(
+                                              color: context.adaptiveBorder,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                           ),
                                           child: _leftLogoBase64 != null
-                                              ? Image.memory(base64Decode(_leftLogoBase64!), fit: BoxFit.contain)
-                                              : Image.asset('assets/images/seal.png', fit: BoxFit.contain),
+                                              ? Image.memory(
+                                                  base64Decode(
+                                                    _leftLogoBase64!,
+                                                  ),
+                                                  fit: BoxFit.contain,
+                                                )
+                                              : Image.asset(
+                                                  'assets/images/seal.png',
+                                                  fit: BoxFit.contain,
+                                                ),
                                         ),
                                         const SizedBox(height: 4),
                                         Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
                                             IconButton(
-                                              icon: const Icon(Icons.upload, size: 18),
+                                              icon: const Icon(
+                                                Icons.upload,
+                                                size: 18,
+                                              ),
                                               onPressed: _pickLeftLogo,
                                               tooltip: 'Upload Left Logo',
                                             ),
                                             if (_leftLogoBase64 != null)
                                               IconButton(
-                                                icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                                icon: const Icon(
+                                                  Icons.delete,
+                                                  size: 18,
+                                                  color: Colors.red,
+                                                ),
                                                 onPressed: _removeLeftLogo,
                                                 tooltip: 'Reset Left Logo',
                                               ),
@@ -911,31 +970,57 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                   Expanded(
                                     child: Column(
                                       children: [
-                                        Text('Right Logo (Seal 2)', style: TextStyle(fontSize: 12, color: context.adaptiveTextMid)),
+                                        Text(
+                                          'Right Logo (Seal 2)',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: context.adaptiveTextMid,
+                                          ),
+                                        ),
                                         const SizedBox(height: 6),
                                         Container(
                                           height: 50,
                                           width: 50,
                                           decoration: BoxDecoration(
-                                            border: Border.all(color: context.adaptiveBorder),
-                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(
+                                              color: context.adaptiveBorder,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
                                           ),
                                           child: _rightLogoBase64 != null
-                                              ? Image.memory(base64Decode(_rightLogoBase64!), fit: BoxFit.contain)
-                                              : Image.asset('assets/images/bagongpilipinas.png', fit: BoxFit.contain),
+                                              ? Image.memory(
+                                                  base64Decode(
+                                                    _rightLogoBase64!,
+                                                  ),
+                                                  fit: BoxFit.contain,
+                                                )
+                                              : Image.asset(
+                                                  'assets/images/bagongpilipinas.png',
+                                                  fit: BoxFit.contain,
+                                                ),
                                         ),
                                         const SizedBox(height: 4),
                                         Row(
-                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          mainAxisAlignment:
+                                              MainAxisAlignment.center,
                                           children: [
                                             IconButton(
-                                              icon: const Icon(Icons.upload, size: 18),
+                                              icon: const Icon(
+                                                Icons.upload,
+                                                size: 18,
+                                              ),
                                               onPressed: _pickRightLogo,
                                               tooltip: 'Upload Right Logo',
                                             ),
                                             if (_rightLogoBase64 != null)
                                               IconButton(
-                                                icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                                icon: const Icon(
+                                                  Icons.delete,
+                                                  size: 18,
+                                                  color: Colors.red,
+                                                ),
                                                 onPressed: _removeRightLogo,
                                                 tooltip: 'Reset Right Logo',
                                               ),
@@ -949,44 +1034,81 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                               const SizedBox(height: 14),
                               TextField(
                                 controller: _headerLine1Controller,
-                                decoration: const InputDecoration(labelText: 'Header Line 1 (Country/Government)'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText:
+                                      'Header Line 1 (Country/Government)',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _headerLine2Controller,
-                                decoration: const InputDecoration(labelText: 'Header Line 2 (Province)'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText: 'Header Line 2 (Province)',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _headerLine3Controller,
-                                decoration: const InputDecoration(labelText: 'Header Line 3 (Municipality/City)'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText:
+                                      'Header Line 3 (Municipality/City)',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _officeTitleController,
-                                decoration: const InputDecoration(labelText: 'Office Title'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText: 'Office Title',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _contactController,
-                                decoration: const InputDecoration(labelText: 'Contact Telepono / Phone'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText: 'Contact Telepono / Phone',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _emailController,
-                                decoration: const InputDecoration(labelText: 'Office Email Address'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText: 'Office Email Address',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 10),
                               TextField(
                                 controller: _sectionTitleController,
-                                decoration: const InputDecoration(labelText: 'Document / Section Title Banner'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText: 'Document / Section Title Banner',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                             ],
 
@@ -1003,7 +1125,9 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                               const SizedBox(height: 12),
                               TextField(
                                 controller: _addressController,
-                                decoration: const InputDecoration(labelText: 'Address'),
+                                decoration: const InputDecoration(
+                                  labelText: 'Address',
+                                ),
                                 onChanged: (_) => setState(() {}),
                               ),
                               const SizedBox(height: 12),
@@ -1021,16 +1145,23 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                 maxLines: 3,
                                 minLines: 2,
                                 decoration: const InputDecoration(
-                                  labelText: 'Custom Body Notice Message (Optional)',
-                                  hintText: 'Leave blank to use automatic Notice template text based on establishment level.',
+                                  labelText:
+                                      'Custom Body Notice Message (Optional)',
+                                  hintText:
+                                      'Leave blank to use automatic Notice template text based on establishment level.',
                                 ),
                                 onChanged: (_) => setState(() {}),
                               ),
                               const SizedBox(height: 12),
                               TextField(
                                 controller: _closingGreetingController,
-                                decoration: const InputDecoration(labelText: 'Closing Greeting'),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                decoration: const InputDecoration(
+                                  labelText: 'Closing Greeting',
+                                ),
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 12),
                               TextField(
@@ -1038,7 +1169,10 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                 decoration: const InputDecoration(
                                   labelText: 'Signatory Name',
                                 ),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 12),
                               TextField(
@@ -1046,7 +1180,10 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                 decoration: const InputDecoration(
                                   labelText: 'Signatory Position',
                                 ),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 16),
                               Text(
@@ -1111,29 +1248,44 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                                 controller: _footerTaglineController,
                                 decoration: const InputDecoration(
                                   labelText: 'Footer Tagline Line 1',
-                                  hintText: 'e.g. Health | Opportunity | Peace & Order...',
+                                  hintText:
+                                      'e.g. Health | Opportunity | Peace & Order...',
                                 ),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 12),
                               TextField(
                                 controller: _footerMottoController,
                                 decoration: const InputDecoration(
                                   labelText: 'Footer Motto Line 2',
-                                  hintText: 'e.g. L O V E M A T A A S N A K A H O Y',
+                                  hintText:
+                                      'e.g. L O V E M A T A A S N A K A H O Y',
                                 ),
-                                onChanged: (_) { _saveCustomSettings(); setState(() {}); },
+                                onChanged: (_) {
+                                  _saveCustomSettings();
+                                  setState(() {});
+                                },
                               ),
                               const SizedBox(height: 20),
                               SizedBox(
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
                                   onPressed: _resetToDefaults,
-                                  icon: const Icon(Icons.restore, color: Colors.orange),
-                                  label: const Text('Reset All Settings to Default Template'),
+                                  icon: const Icon(
+                                    Icons.restore,
+                                    color: Colors.orange,
+                                  ),
+                                  label: const Text(
+                                    'Reset All Settings to Default Template',
+                                  ),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.orange,
-                                    side: const BorderSide(color: Colors.orange),
+                                    side: const BorderSide(
+                                      color: Colors.orange,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1162,7 +1314,7 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: context.adaptiveSurface,
+                        color: NoticeDocumentStyle.paperBackground,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
                           color: context.adaptiveBorder,
@@ -1177,266 +1329,311 @@ class _PdfGeneratorPageState extends State<PdfGeneratorPage> {
                         ],
                       ),
                       child: SingleChildScrollView(
-                        child: Column(
-                          children: [
-                            // Header Seals & Title
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                SizedBox(
-                                  width: 42,
-                                  height: 42,
-                                  child: _leftLogoBase64 != null
-                                      ? Image.memory(base64Decode(_leftLogoBase64!), fit: BoxFit.contain)
-                                      : Image.asset('assets/images/seal.png', fit: BoxFit.contain),
-                                ),
-                                Expanded(
-                                  child: Column(
-                                    children: [
-                                      if (_headerLine1Controller.text.trim().isNotEmpty)
-                                        Text(
-                                          _headerLine1Controller.text.trim(),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.normal),
-                                        ),
-                                      if (_headerLine2Controller.text.trim().isNotEmpty)
-                                        Text(
-                                          _headerLine2Controller.text.trim(),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.normal),
-                                        ),
-                                      if (_headerLine3Controller.text.trim().isNotEmpty)
-                                        Text(
-                                          _headerLine3Controller.text.trim(),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.normal),
-                                        ),
-                                      if (_officeTitleController.text.trim().isNotEmpty)
-                                        Text(
-                                          _officeTitleController.text.trim(),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
-                                        ),
-                                      if (_contactController.text.trim().isNotEmpty)
-                                        Text(
-                                          _contactController.text.trim(),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.normal),
-                                        ),
-                                      if (_emailController.text.trim().isNotEmpty)
-                                        Text(
-                                          _emailController.text.trim(),
-                                          textAlign: TextAlign.center,
-                                          style: const TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.normal,
-                                            color: Colors.blue,
-                                            decoration: TextDecoration.underline,
+                        child: DefaultTextStyle(
+                          style: const TextStyle(
+                            color: NoticeDocumentStyle.bodyTextColor,
+                          ),
+                          child: Column(
+                            children: [
+                              // Header Seals & Title
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: 42,
+                                    height: 42,
+                                    child: _leftLogoBase64 != null
+                                        ? Image.memory(
+                                            base64Decode(_leftLogoBase64!),
+                                            fit: BoxFit.contain,
+                                          )
+                                        : Image.asset(
+                                            'assets/images/seal.png',
+                                            fit: BoxFit.contain,
                                           ),
+                                  ),
+                                  Expanded(
+                                    child: Column(
+                                      children: [
+                                        if (_headerLine1Controller.text
+                                            .trim()
+                                            .isNotEmpty)
+                                          Text(
+                                            _headerLine1Controller.text.trim(),
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.normal,
+                                            ),
+                                          ),
+                                        if (_headerLine2Controller.text
+                                            .trim()
+                                            .isNotEmpty)
+                                          Text(
+                                            _headerLine2Controller.text.trim(),
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.normal,
+                                            ),
+                                          ),
+                                        if (_headerLine3Controller.text
+                                            .trim()
+                                            .isNotEmpty)
+                                          Text(
+                                            _headerLine3Controller.text.trim(),
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.normal,
+                                            ),
+                                          ),
+                                        if (_officeTitleController.text
+                                            .trim()
+                                            .isNotEmpty)
+                                          Text(
+                                            _officeTitleController.text.trim(),
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        if (_contactController.text
+                                            .trim()
+                                            .isNotEmpty)
+                                          Text(
+                                            _contactController.text.trim(),
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.normal,
+                                            ),
+                                          ),
+                                        if (_emailController.text
+                                            .trim()
+                                            .isNotEmpty)
+                                          Text(
+                                            _emailController.text.trim(),
+                                            textAlign: TextAlign.center,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.normal,
+                                              color: Colors.blue,
+                                              decoration:
+                                                  TextDecoration.underline,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    width: 42,
+                                    height: 42,
+                                    child: _rightLogoBase64 != null
+                                        ? Image.memory(
+                                            base64Decode(_rightLogoBase64!),
+                                            fit: BoxFit.contain,
+                                          )
+                                        : Image.asset(
+                                            'assets/images/bagongpilipinas.png',
+                                            fit: BoxFit.contain,
+                                          ),
+                                  ),
+                                ],
+                              ),
+                              const Divider(height: 20, thickness: 1.2),
+
+                              if (_sectionTitleController.text
+                                  .trim()
+                                  .isNotEmpty)
+                                Text(
+                                  _sectionTitleController.text.trim(),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              const SizedBox(height: 12),
+                              Align(
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  _formattedDate,
+                                  style: const TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'To the Owner/Representative:',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color:
+                                              NoticeDocumentStyle.bodyTextColor,
                                         ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        _ownerNameController.text.trim().isEmpty
+                                            ? '______________________'
+                                            : _ownerNameController.text.trim(),
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.bold,
+                                          color:
+                                              NoticeDocumentStyle.bodyTextColor,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _addressController.text.trim().isEmpty
+                                            ? '______________________'
+                                            : _addressController.text.trim(),
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          color:
+                                              NoticeDocumentStyle.bodyTextColor,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
-                                SizedBox(
-                                  width: 42,
-                                  height: 42,
-                                  child: _rightLogoBase64 != null
-                                      ? Image.memory(base64Decode(_rightLogoBase64!), fit: BoxFit.contain)
-                                      : Image.asset('assets/images/bagongpilipinas.png', fit: BoxFit.contain),
-                                ),
-                              ],
-                            ),
-                            const Divider(height: 20, thickness: 1.2),
+                              ),
+                              const SizedBox(height: 8),
 
-                            if (_sectionTitleController.text.trim().isNotEmpty)
-                              Text(
-                                _sectionTitleController.text.trim(),
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
+                              NoticeDocumentStyle.previewBody(
+                                _effectiveCertificationText,
+                              ),
+                              const SizedBox(height: 12),
+
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Maraming salamat po.',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: NoticeDocumentStyle.bodyTextColor,
+                                  ),
                                 ),
                               ),
-                            const SizedBox(height: 12),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Text(
-                                _formattedDate,
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.normal,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 6,
-                                ),
+                              const SizedBox(height: 12),
+                              Align(
+                                alignment: Alignment.centerRight,
                                 child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     Text(
-                                      'To the Owner/Representative:',
+                                      _closingGreetingController.text
+                                              .trim()
+                                              .isEmpty
+                                          ? 'Lubos na gumagalang,'
+                                          : _closingGreetingController.text
+                                                .trim(),
                                       style: TextStyle(
                                         fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: context.adaptiveTextDark,
+                                        color:
+                                            NoticeDocumentStyle.bodyTextColor,
                                       ),
                                     ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      _ownerNameController.text.trim().isEmpty
-                                          ? '______________________'
-                                          : _ownerNameController.text.trim(),
-                                      style: TextStyle(
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.bold,
-                                        color: context.adaptiveTextDark,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      _addressController.text.trim().isEmpty
-                                          ? '______________________'
-                                          : _addressController.text.trim(),
-                                      style: TextStyle(
-                                        fontSize: 10.5,
-                                        color: context.adaptiveTextMid,
-                                      ),
+                                    const SizedBox(height: 24),
+                                    Stack(
+                                      alignment: Alignment.bottomCenter,
+                                      clipBehavior: Clip.none,
+                                      children: [
+                                        if (_signatureBase64 != null)
+                                          Positioned(
+                                            bottom: 12,
+                                            child: SizedBox(
+                                              height: 60,
+                                              child: Image.memory(
+                                                base64Decode(_signatureBase64!),
+                                                fit: BoxFit.contain,
+                                              ),
+                                            ),
+                                          ),
+                                        Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.center,
+                                          children: [
+                                            Text(
+                                              _signatoryNameController.text
+                                                      .trim()
+                                                      .isEmpty
+                                                  ? '______________________'
+                                                  : _signatoryNameController
+                                                        .text
+                                                        .trim(),
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              _signatoryPositionController.text
+                                                      .trim()
+                                                      .isEmpty
+                                                  ? '______________________'
+                                                  : _signatoryPositionController
+                                                        .text
+                                                        .trim(),
+                                              style: const TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.normal,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
 
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: context.adaptiveBackground,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(
-                                _effectiveCertificationText,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: context.adaptiveTextMid,
-                                  height: 1.35,
-                                ),
-                                textAlign: TextAlign.justify,
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Text(
-                                'Maraming salamat po.',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: context.adaptiveTextMid,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Text(
-                                    _closingGreetingController.text.trim().isEmpty
-                                        ? 'Lubos na gumagalang,'
-                                        : _closingGreetingController.text.trim(),
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: context.adaptiveTextMid,
-                                    ),
+                              const SizedBox(height: 24),
+                              Container(height: 1, color: Colors.grey.shade300),
+                              const SizedBox(height: 8),
+                              if (_footerTaglineController.text
+                                  .trim()
+                                  .isNotEmpty)
+                                Text(
+                                  _footerTaglineController.text.trim(),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade900,
                                   ),
-                                  const SizedBox(height: 24),
-                                  Stack(
-                                    alignment: Alignment.bottomCenter,
-                                    clipBehavior: Clip.none,
-                                    children: [
-                                      if (_signatureBase64 != null)
-                                        Positioned(
-                                          bottom: 12,
-                                          child: SizedBox(
-                                            height: 60,
-                                            child: Image.memory(
-                                              base64Decode(_signatureBase64!),
-                                              fit: BoxFit.contain,
-                                            ),
-                                          ),
-                                        ),
-                                      Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.center,
-                                        children: [
-                                          Text(
-                                            _signatoryNameController.text
-                                                    .trim()
-                                                    .isEmpty
-                                                ? '______________________'
-                                                : _signatoryNameController.text
-                                                      .trim(),
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            _signatoryPositionController.text
-                                                    .trim()
-                                                    .isEmpty
-                                                ? '______________________'
-                                                : _signatoryPositionController
-                                                      .text
-                                                      .trim(),
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.normal,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ],
+                                ),
+                              const SizedBox(height: 2),
+                              if (_footerMottoController.text.trim().isNotEmpty)
+                                Text(
+                                  _footerMottoController.text.trim(),
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.montserrat(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange.shade900,
+                                    letterSpacing: 1.5,
                                   ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 24),
-                            Container(height: 1, color: Colors.grey.shade300),
-                            const SizedBox(height: 8),
-                            if (_footerTaglineController.text.trim().isNotEmpty)
-                              Text(
-                                _footerTaglineController.text.trim(),
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue.shade900,
                                 ),
-                              ),
-                            const SizedBox(height: 2),
-                            if (_footerMottoController.text.trim().isNotEmpty)
-                              Text(
-                                _footerMottoController.text.trim(),
-                                textAlign: TextAlign.center,
-                                style: GoogleFonts.montserrat(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange.shade900,
-                                  letterSpacing: 1.5,
-                                ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),

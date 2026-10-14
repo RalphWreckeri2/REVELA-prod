@@ -3,7 +3,6 @@ import os
 import smtplib
 import socket
 import ssl
-import threading
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -12,8 +11,10 @@ import requests
 from app import mysql
 from api.notifications import hub
 from api.notifications.fcm import send_inspection_dispatch_push
+from api.utils.qa_safety import is_qa_mode, start_background_task
 
 _tables_ready = False
+_qa_tables_validated = False
 logger = logging.getLogger(__name__)
 
 
@@ -24,6 +25,8 @@ def _is_revela_dev() -> bool:
 
 def _send_smtp_email(to_email: str, subject: str, text_body: str) -> bool:
     """Send one dev alert with bounded SMTP I/O and actionable server logs."""
+    if is_qa_mode():
+        return False
     host = os.getenv("MAIL_SERVER", "").strip()
     username = os.getenv("MAIL_USERNAME", "").strip()
     password = os.getenv("MAIL_PASSWORD", "")
@@ -78,13 +81,49 @@ def _send_smtp_email(to_email: str, subject: str, text_body: str) -> bool:
 
 def _send_inspection_alert_email(to_email: str, subject: str, text_body: str) -> bool:
     """Use SMTP only in revela-dev; retain the existing production transport."""
+    if is_qa_mode():
+        return False
     if _is_revela_dev():
         return _send_smtp_email(to_email, subject, text_body)
     return _send_resend_email(to_email, subject, text_body)
 
 
 def _ensure_tables() -> None:
-    global _tables_ready
+    global _tables_ready, _qa_tables_validated
+    if is_qa_mode():
+        if _qa_tables_validated:
+            return
+        _tables_ready = False
+        cur = None
+        try:
+            cur = mysql.connection.cursor()
+            cur.execute(
+                """
+                SELECT `id`, `recipientUserId`, `type`, `title`, `body`,
+                       `link`, `readAt`, `createdAt`
+                FROM `revela_test_mobile_phase72`.`revela_notifications`
+                LIMIT 0
+                """
+            )
+            cur.execute(
+                """
+                SELECT `userID`, `email_inspection_alerts`, `updatedAt`
+                FROM `revela_test_mobile_phase72`.`user_app_preferences`
+                LIMIT 0
+                """
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Required pre-provisioned QA notification tables are "
+                "unavailable or missing required columns."
+            ) from exc
+        finally:
+            if cur is not None:
+                cur.close()
+        _tables_ready = True
+        _qa_tables_validated = True
+        return
+
     if _tables_ready:
         return
     cur = mysql.connection.cursor()
@@ -239,6 +278,8 @@ def delete_notifications(user_id: int, notif_ids: Optional[List[int]] = None) ->
 
 
 def _send_resend_email(to_email: str, subject: str, text_body: str) -> bool:
+    if is_qa_mode():
+        return False
     key = os.getenv("RESEND_API_KEY")
     from_addr = os.getenv("RESEND_FROM")
     if not key or not from_addr:
@@ -368,6 +409,8 @@ def notify_inspection_submitted(
     """
     Insert in-app rows for each admin, push SSE, optionally email admins who opted in.
     """
+    if is_qa_mode():
+        return
     try:
         _ensure_tables()
         cur = mysql.connection.cursor()
@@ -449,11 +492,10 @@ def notify_inspection_submitted(
                 _send_inspection_alert_email(email, email_subject, email_body)
 
         if recipients:
-            threading.Thread(
-                target=_emails,
-                args=(tuple(dict.fromkeys(recipients)),),
+            start_background_task(
+                _emails,
+                tuple(dict.fromkeys(recipients)),
                 name=f"inspection-email-{report_id}",
-                daemon=True,
             ).start()
         else:
             logger.warning(
@@ -540,4 +582,3 @@ def notify_yellow_flag_reported(
 
     except Exception as e:
         print(f"notify_yellow_flag_reported error: {e}")
-

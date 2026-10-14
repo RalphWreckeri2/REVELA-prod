@@ -7,14 +7,36 @@ from flask import current_app, has_app_context
 from flask_jwt_extended import create_access_token
 
 from app import mysql
+from api.utils.qa_safety import is_qa_mode
 
 
 _session_table_ready = False
+_qa_session_table_ready = False
 _session_table_lock = threading.Lock()
 
 
 def _ensure_session_table():
-    global _session_table_ready
+    global _session_table_ready, _qa_session_table_ready
+    if is_qa_mode():
+        if _qa_session_table_ready:
+            return
+        with _session_table_lock:
+            if _qa_session_table_ready:
+                return
+            cursor = mysql.connection.cursor()
+            try:
+                try:
+                    cursor.execute("SELECT 1 FROM user_active_sessions LIMIT 0")
+                except Exception:
+                    raise RuntimeError(
+                        "Required pre-provisioned QA table "
+                        "'user_active_sessions' is unavailable."
+                    ) from None
+                _qa_session_table_ready = True
+            finally:
+                cursor.close()
+        return
+
     if _session_table_ready:
         return
     with _session_table_lock:
@@ -110,6 +132,24 @@ def idle_timeout_seconds():
     return DEFAULT_IDLE_TIMEOUT.total_seconds()
 
 
+def session_reclaim_timeout_seconds(client_type=None):
+    """Idle window before a new login may reclaim a prior mobile session."""
+    if str(client_type or "").strip().lower() != "mobile":
+        return idle_timeout_seconds()
+    if has_app_context():
+        configured = current_app.config.get(
+            "MOBILE_SESSION_IDLE_TIMEOUT", timedelta(minutes=1)
+        )
+        if isinstance(configured, timedelta):
+            value = configured.total_seconds()
+        elif isinstance(configured, (int, float)):
+            value = float(configured)
+        else:
+            value = timedelta(minutes=1).total_seconds()
+        return max(min(value, session_lifetime_hours() * 3600.0), 0.0)
+    return timedelta(minutes=1).total_seconds()
+
+
 def record_session_activity(session_id):
     """Mark a session as active right now (called on real user interaction)."""
     if not session_id:
@@ -155,7 +195,7 @@ def forget_session(session_id):
         _last_activity.pop(session_id, None)
 
 
-def _session_idle_since_issue(user_id, session_id):
+def _session_idle_since_issue(user_id, session_id, timeout_seconds):
     """Bootstrap check for a session this process has not seen.
 
     Compared with the database's ``CURRENT_TIMESTAMP`` rather than a Python
@@ -168,7 +208,7 @@ def _session_idle_since_issue(user_id, session_id):
             SELECT 1 FROM user_active_sessions
             WHERE userID = %s AND sessionID = %s
               AND issuedAt <= CURRENT_TIMESTAMP - INTERVAL %s SECOND
-        """, (int(user_id), session_id, idle_timeout_seconds()))
+        """, (int(user_id), session_id, timeout_seconds))
         return cursor.fetchone() is not None
     finally:
         cursor.close()
@@ -182,13 +222,14 @@ def _reject_if_idle(user_id, session_id):
     return False
 
 
-def session_is_idle(user_id, session_id, adopt=False):
+def session_is_idle(
+    user_id, session_id, adopt=False, client_type=None, for_login=False
+):
     """Has this session gone too long without reported user interaction?
 
-    Both the request path and the login path must answer this identically.
-    When they disagree the login path fails closed on a session the request path
-    would have already released, so a stale row keeps blocking new logins for
-    the whole JWT lifetime.
+    API requests keep the configured inactivity window. A competing login may
+    use the shorter client-specific reclaim window, without logging out an
+    otherwise valid mobile session merely because it was idle in the foreground.
 
     Falling back to the stored issue time is safe for the login path because the
     activity map is populated by *every* authenticated request: an entry that is
@@ -200,11 +241,16 @@ def session_is_idle(user_id, session_id, adopt=False):
             request path -- the login path must never extend someone else's
             session just because another device attempted to sign in.
     """
+    timeout_seconds = (
+        session_reclaim_timeout_seconds(client_type)
+        if for_login
+        else idle_timeout_seconds()
+    )
     elapsed = seconds_since_activity(session_id)
     if elapsed is not None:
-        return elapsed > idle_timeout_seconds()
+        return elapsed > timeout_seconds
 
-    if _session_idle_since_issue(user_id, session_id):
+    if _session_idle_since_issue(user_id, session_id, timeout_seconds):
         return True
     if adopt:
         record_session_activity(session_id)
@@ -232,10 +278,9 @@ def active_session_conflict_message(client_type):
     label = _CLIENT_LABELS.get(
         str(client_type or "").strip().lower(), "another device"
     )
-    minutes = max(int(idle_timeout_seconds() // 60), 1)
     return (
-        f"This account is already signed in on {label}. Sign out on that device "
-        f"first, or wait up to {minutes} minutes for that session to end on its own."
+        f"This account is already signed in on {label}. "
+        "Sign out on that device before signing in here."
     )
 
 
@@ -313,7 +358,12 @@ def claim_active_session(user_id, session_id, client_type):
             active = cursor.fetchone()
             if active is not None:
                 active_session_id = _row_value(active, "sessionID", 0)
-                if not session_is_idle(user_id, active_session_id):
+                if not session_is_idle(
+                    user_id,
+                    active_session_id,
+                    client_type=_row_value(active, "clientType", 1),
+                    for_login=True,
+                ):
                     raise ActiveSessionConflict(_row_value(active, "clientType", 1))
 
                 # Either the previous session has already idled past the

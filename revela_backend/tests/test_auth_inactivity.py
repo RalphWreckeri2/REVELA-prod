@@ -25,6 +25,7 @@ from tests.test_auth_sessions import (
 )
 
 IDLE_LIMIT_SECONDS = IDLE_LIMIT_MINUTES * 60
+MOBILE_IDLE_LIMIT_SECONDS = 60
 
 
 def _make_app(include_auth_routes=False, idle_timeout_minutes=IDLE_LIMIT_MINUTES):
@@ -33,6 +34,7 @@ def _make_app(include_auth_routes=False, idle_timeout_minutes=IDLE_LIMIT_MINUTES
         JWT_SECRET_KEY="test-secret",
         JWT_ACCESS_TOKEN_EXPIRES=timedelta(hours=12),
         SESSION_IDLE_TIMEOUT=timedelta(minutes=idle_timeout_minutes),
+        MOBILE_SESSION_IDLE_TIMEOUT=timedelta(seconds=MOBILE_IDLE_LIMIT_SECONDS),
         JWT_TOKEN_LOCATION=["headers"],
     )
     JWTManager(app)
@@ -105,6 +107,48 @@ class InactivityTests(unittest.TestCase):
         self.assertFalse(active)
         self.assertEqual(code, "session_idle")
 
+    def test_mobile_login_reclaims_after_one_minute_without_shortening_api_idle(self):
+        _, mobile_session_id = self._login(client_type="mobile")
+        with patch.object(sessions, "mysql", self.mysql):
+            with self.app.app_context():
+                self._age_activity(mobile_session_id, MOBILE_IDLE_LIMIT_SECONDS - 1)
+                self.assertFalse(
+                    sessions.session_is_idle(
+                        12,
+                        mobile_session_id,
+                        client_type="mobile",
+                        for_login=True,
+                    )
+                )
+                self._age_activity(mobile_session_id, MOBILE_IDLE_LIMIT_SECONDS + 1)
+                self.assertTrue(
+                    sessions.session_is_idle(
+                        12,
+                        mobile_session_id,
+                        client_type="mobile",
+                        for_login=True,
+                    )
+                )
+                self.assertFalse(sessions.session_is_idle(12, mobile_session_id))
+                self.assertEqual(sessions.idle_timeout_seconds(), 600)
+                self.assertEqual(
+                    sessions.session_reclaim_timeout_seconds("mobile"), 60
+                )
+
+    def test_mobile_slot_is_reclaimed_after_one_minute(self):
+        _, old_session_id = self._login(client_type="mobile")
+        with patch.object(sessions, "mysql", self.mysql):
+            with self.app.app_context():
+                self._age_activity(old_session_id, MOBILE_IDLE_LIMIT_SECONDS + 1)
+                claimed = sessions.claim_active_session(
+                    12, "replacement-mobile-session", "mobile"
+                )
+
+        self.assertEqual(claimed, "replacement-mobile-session")
+        self.assertEqual(
+            self.store.rows[12][0], "replacement-mobile-session"
+        )
+
     def test_background_polling_does_not_count_as_activity(self):
         """Repeated liveness checks must never extend the idle window."""
         token, session_id = self._login()
@@ -152,6 +196,29 @@ class InactivityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.get_json()["code"], "session_idle")
         self.assertIn("inactivity", response.get_json()["message"])
+
+    def test_mobile_protected_route_keeps_standard_api_idle_window(self):
+        token, session_id = self._login(client_type="mobile")
+        with patch.object(sessions, "mysql", self.mysql), patch.object(
+            decorators, "find_user_by_id", return_value={"isActive": True}
+        ):
+            client = self.app.test_client()
+            headers = {"Authorization": f"Bearer {token}"}
+            self.assertEqual(client.get("/private", headers=headers).status_code, 200)
+
+            with self.app.app_context():
+                self._age_activity(session_id, IDLE_LIMIT_SECONDS - 1)
+
+            self.assertEqual(client.get("/private", headers=headers).status_code, 200)
+
+            with self.app.app_context():
+                self._age_activity(session_id, IDLE_LIMIT_SECONDS + 1)
+
+            response = client.get("/private", headers=headers)
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["code"], "session_idle")
+        self.assertNotIn(12, self.store.rows)
 
     # ── Requirement 7: the slot is released for the next device ──────────────
     def test_idle_session_row_is_deleted_so_the_slot_is_released(self):
@@ -300,13 +367,43 @@ class InactivityTests(unittest.TestCase):
         client = self.app.test_client()
         self.assertEqual(client.post("/api/auth/activity").status_code, 401)
 
-    def test_activity_is_only_reported_by_the_dedicated_endpoint(self):
-        """No background surface may report activity on the user's behalf."""
+    def test_mobile_heartbeat_keeps_a_foreground_session_alive(self):
+        token, session_id = self._login(client_type="mobile")
+        self._age_activity(session_id, MOBILE_IDLE_LIMIT_SECONDS - 1)
+
+        with patch.object(sessions, "mysql", self.mysql), patch.object(
+            decorators, "find_user_by_id", return_value={"isActive": True}
+        ):
+            response = self.app.test_client().post(
+                "/api/auth/heartbeat",
+                headers={"Authorization": "Bearer " + token},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLess(
+            sessions.seconds_since_activity(session_id),
+            MOBILE_IDLE_LIMIT_SECONDS - 1,
+        )
+
+    def test_web_sessions_cannot_use_mobile_heartbeat(self):
+        token, _ = self._login(client_type="web")
+        with patch.object(sessions, "mysql", self.mysql), patch.object(
+            decorators, "find_user_by_id", return_value={"isActive": True}
+        ):
+            response = self.app.test_client().post(
+                "/api/auth/heartbeat",
+                headers={"Authorization": "Bearer " + token},
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_activity_and_heartbeat_are_separate_endpoints(self):
+        """Foreground liveness never masquerades as genuine user input."""
         import inspect
         source = inspect.getsource(auth_routes)
-        # Exactly one call site: POST /api/auth/activity.
-        self.assertEqual(source.count("record_session_activity("), 1)
+        self.assertEqual(source.count("record_session_activity("), 2)
         self.assertIn('@auth_bp.route("/activity", methods=["POST"])', source)
+        self.assertIn('@auth_bp.route("/heartbeat", methods=["POST"])', source)
 
     def test_sessions_of_different_users_do_not_interfere(self):
         token_a, session_a = self._login()

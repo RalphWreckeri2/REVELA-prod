@@ -2,6 +2,7 @@ from api.utils.cancellation import set_cancel
 from api.models.detection_runs import get_detection_quota_info
 from api.utils.quota_config import API_QUOTA_CONFIG
 import os
+import uuid
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import get_jwt_identity
 from api.flags.service import (
@@ -14,8 +15,11 @@ from api.flags.service import (
     reconcile_existing_flags,
     update_flag_location,
     get_places_usage_today,
+    YellowFlagSubmissionConflict,
 )
 from api.middleware.decorators import jwt_required, admin_required
+from api.utils.qa_safety import is_qa_mode
+from api.registry import service as registry_service
 from app import mysql
 flags_bp = Blueprint("flags", __name__)
 
@@ -70,6 +74,8 @@ def cancel_detection_route():
 @admin_required()
 def run_detection_route():
     """Trigger a detection scan in either quick or full mode."""
+    if is_qa_mode():
+        return jsonify({"error": "Detection scans are disabled in local QA mode."}), 403
     user_id = None
     try:
         user_id = int(get_jwt_identity())
@@ -213,6 +219,109 @@ def get_my_flags_route():
 
 
 # ── POST /api/flags/yellow ────────────────────────────────────────────────────
+@flags_bp.route("/location-search", methods=["POST"])
+@jwt_required()
+def yellow_flag_location_search_route():
+    """Return selectable geocoding matches for a Yellow Flag address."""
+    if is_qa_mode():
+        return jsonify({
+            "code": "external_search_disabled",
+            "error": "Address search is disabled in local QA mode.",
+        }), 503
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON request body is required."}), 400
+    street_value = data.get("streetAddress")
+    barangay_value = data.get("barangay")
+    street_address = street_value.strip() if isinstance(street_value, str) else ""
+    barangay = barangay_value.strip() if isinstance(barangay_value, str) else ""
+    if not street_address or len(street_address) > 200:
+        return jsonify({
+            "error": "Street / Purok / Landmark is required (maximum 200 characters).",
+        }), 400
+    if len(barangay) > 100:
+        return jsonify({"error": "Barangay name cannot exceed 100 characters."}), 400
+
+    candidates, error = registry_service.search_address_candidates(
+        street_address,
+        barangay or None,
+    )
+    if error == "not_configured":
+        return jsonify({
+            "code": error,
+            "error": "Address search is unavailable: server geocoding is not configured.",
+        }), 503
+    if error == "quota_exceeded":
+        return jsonify({
+            "code": error,
+            "error": "Address search quota is unavailable. Try again later.",
+        }), 429
+    if error == "network_error":
+        return jsonify({
+            "code": error,
+            "error": "The address search provider could not be reached.",
+        }), 502
+    if error is not None or candidates is None:
+        return jsonify({
+            "code": error or "provider_error",
+            "error": "The address search provider returned an error.",
+        }), 502
+    return jsonify({"results": candidates}), 200
+
+
+@flags_bp.route("/reverse-geocode", methods=["POST"])
+@jwt_required()
+def yellow_flag_reverse_geocode_route():
+    """Return a human-readable address for a Yellow Flag GPS location."""
+    if is_qa_mode():
+        return jsonify({
+            "code": "external_search_disabled",
+            "error": "Reverse geocoding is disabled in local QA mode.",
+        }), 503
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON request body is required."}), 400
+    latitude = data.get("latitude")
+    longitude = data.get("longitude")
+    if (
+        isinstance(latitude, bool)
+        or isinstance(longitude, bool)
+        or not isinstance(latitude, (int, float))
+        or not isinstance(longitude, (int, float))
+    ):
+        return jsonify({"error": "Valid latitude and longitude are required."}), 400
+
+    address, error = registry_service.reverse_geocode_coordinates(
+        latitude,
+        longitude,
+    )
+    if error == "not_configured":
+        return jsonify({
+            "code": error,
+            "error": "Reverse geocoding is unavailable: server geocoding is not configured.",
+        }), 503
+    if error == "quota_exceeded":
+        return jsonify({
+            "code": error,
+            "error": "Reverse geocoding quota is unavailable. Try again later.",
+        }), 429
+    if error == "network_error":
+        return jsonify({
+            "code": error,
+            "error": "The reverse geocoding provider could not be reached.",
+        }), 502
+    if error == "invalid_request":
+        return jsonify({"error": "Valid latitude and longitude are required."}), 400
+    if error is not None:
+        return jsonify({
+            "code": error,
+            "error": "The reverse geocoding provider returned an error.",
+        }), 502
+    return jsonify({"formattedAddress": address}), 200
+
+
 @flags_bp.route("/yellow", methods=["POST"])
 @jwt_required()  # inspectors and admins both allowed
 def yellow_flag_route():
@@ -220,14 +329,32 @@ def yellow_flag_route():
     data = request.get_json()
 
     required = ["businessName", "lat", "lng", "barangayID"]
-    if not data or not all(k in data for k in required):
+    if not isinstance(data, dict) or not all(k in data for k in required):
         return jsonify({"error": f"Required fields: {required}"}), 400
+
+    client_submission_id = data.get("clientSubmissionID")
+    if client_submission_id is not None:
+        if not isinstance(client_submission_id, str):
+            return jsonify({"error": "clientSubmissionID must be a UUID."}), 400
+        try:
+            if str(uuid.UUID(client_submission_id)) != client_submission_id.lower():
+                raise ValueError("UUID must use canonical formatting.")
+        except (ValueError, AttributeError):
+            return jsonify({"error": "clientSubmissionID must be a UUID."}), 400
 
     flag_color = data.get("flagColor", "Yellow")
     if flag_color != "Yellow":
         return jsonify({"error": "Only Yellow flags can be manually created"}), 400
 
     reporter_user_id = int(get_jwt_identity())
+    expected_reporter_id = data.get("expectedReporterUserID")
+    if expected_reporter_id is not None:
+        try:
+            expected_reporter_id = int(expected_reporter_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid expected reporter identity."}), 400
+        if expected_reporter_id != reporter_user_id:
+            return jsonify({"error": "Report owner does not match the signed-in account."}), 403
 
     result, error = insert_yellow_flag(
         business_name=data["businessName"],
@@ -237,8 +364,11 @@ def yellow_flag_route():
         notes=data.get("notes"),
         flag_color=flag_color,
         reported_by_user_id=reporter_user_id,
+        client_submission_id=client_submission_id,
     )
     if error:
+        if isinstance(error, YellowFlagSubmissionConflict):
+            return jsonify({"error": str(error)}), 409
         return jsonify({"error": error}), 500
     return jsonify(result), 201
 

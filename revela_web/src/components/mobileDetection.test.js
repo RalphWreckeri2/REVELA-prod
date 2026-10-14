@@ -4,9 +4,18 @@ import {
   MIN_SUPPORTED_SHORT_SIDE,
   evaluateAccess,
   isMobileBrowser,
+  isLegalDocumentPath,
   isPhoneUserAgent,
   isTabletUserAgent,
 } from "./mobileDetection.js";
+
+test("legal policy routes remain available on phone-sized screens", () => {
+  for (const path of ["/terms", "/privacy", "/cookies", "/cookie-policy"]) {
+    assert.equal(isLegalDocumentPath(path), true, `${path} should be exempt`);
+  }
+  assert.equal(isLegalDocumentPath("/home"), false);
+  assert.equal(isLegalDocumentPath("/"), false);
+});
 
 // Real user-agent strings. iPadOS sends `Mobile/15E148` in its default mode and
 // only switches to the `(Macintosh; ...)` string when "Request Desktop Website"

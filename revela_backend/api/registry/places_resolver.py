@@ -47,6 +47,7 @@ from api.utils.places_quota import (
 )
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
+from api.utils.qa_safety import require_external_services_allowed
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places/{pid}"
@@ -309,6 +310,7 @@ def _429_is_daily_quota(body):
 
 def _places_request(label, request, reserve):
     """Send a budgeted, serialized Places API request with bounded minute-limit retries."""
+    require_external_services_allowed("Google Places requests")
     global _last_places_request_at
     max_retries = 3
     for attempt in range(max_retries + 1):
@@ -390,6 +392,7 @@ def _places_request(label, request, reserve):
 
 # ------------------------------ resolution -----------------------------------
 def _text_search(name, address, barangay, post=requests.post, reserve=None):
+    require_external_services_allowed("Google Places Text Search")
     _api_state.last_error = None
     _api_state.outcome = None
     parts = [str(p).strip() for p in (name, address, barangay, MUNICIPALITY, PROVINCE)
@@ -416,6 +419,7 @@ def _text_search(name, address, barangay, post=requests.post, reserve=None):
 
 
 def _geocode_fallback(address, barangay, get=requests.get):
+    require_external_services_allowed("Google Geocoding")
     parts = [str(p).strip() for p in (address, barangay, MUNICIPALITY, PROVINCE, "Philippines")
              if p is not None and str(p).strip() and str(p).strip().lower() != "nan"]
     params = {"address": ", ".join(parts), "components": "country:PH",
@@ -476,6 +480,7 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
     force=True skips the resolveKey cache so an already-attempted record is looked up again
     (used by api.registry.reverify).
     """
+    require_external_services_allowed("Google Places and Geocoding")
     _api_state.last_error = None
     _api_state.outcome = None
     text_search_quota_halted = (
@@ -1027,6 +1032,7 @@ def list_review_queue(page=1, per_page=20, search=""):
 
 
 def resolve_review_candidate(business_id, _post=requests.post, _get=requests.get):
+    require_external_services_allowed("Google Places candidate resolution")
     """Resolve an address-review candidate only after an explicit admin request."""
     cur = mysql.connection.cursor()
     try:

@@ -13,12 +13,21 @@ jwt = JWTManager()
 
 
 def create_app():
+    # Resolve and validate the QA database target before constructing extensions
+    # or any code path that could acquire a MySQL connection.
+    database_settings = Config.resolve_database_settings()
     app = Flask(__name__)
     app.config.from_object(Config)
+    app.config.update(database_settings)
 
     # Do not wait until the first successful login to discover this required
     # production setting is missing.
     if not app.config.get("JWT_SECRET_KEY"):
+        if app.config["REVELA_QA_MODE"]:
+            raise RuntimeError(
+                "JWT_SECRET_KEY must be set in revela_backend/.env.qa "
+                "or the process environment."
+            )
         raise RuntimeError("JWT_SECRET_KEY must be set in revela_backend/.env")
 
     # Init extensions
@@ -30,7 +39,11 @@ def create_app():
     # frontend silently blocked; setting it overrides the production defaults.
     # Parsing, www/apex mirroring, and trailing-slash normalisation live in
     # api/utils/cors_config.py so they can be unit tested.
-    allowed_origins = cors_config.build_allowed_origins(os.getenv("CORS_ORIGINS"))
+    allowed_origins = (
+        cors_config.DEVELOPMENT_ORIGIN_PATTERNS
+        if app.config["REVELA_QA_MODE"]
+        else cors_config.build_allowed_origins(os.getenv("CORS_ORIGINS"))
+    )
     app.logger.info(
         "[CORS] Allowed origins: %s",
         ", ".join(
@@ -96,13 +109,18 @@ def create_app():
     # Instead, schedule it to run:
     #   1. Once at startup (with a short delay to let DB connections settle).
     #   2. Daily at midnight so year-rollover is caught automatically.
-    _start_permit_expiry_scheduler(app)
+    if not app.config["REVELA_QA_MODE"]:
+        _start_permit_expiry_scheduler(app)
 
     return app
 
 
 def _start_permit_expiry_scheduler(app):
     """Configure and start the APScheduler background job for permit expiry."""
+    if app.config.get("REVELA_QA_MODE", False):
+        app.logger.info("Background scheduler disabled in QA mode.")
+        return None
+
     import atexit
     from datetime import datetime, timedelta
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -168,4 +186,8 @@ def _start_permit_expiry_scheduler(app):
 
 if __name__ == "__main__":
     app = create_app()
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(
+        debug=not app.config["REVELA_QA_MODE"],
+        host="127.0.0.1" if app.config["REVELA_QA_MODE"] else "0.0.0.0",
+        port=5000,
+    )

@@ -13,6 +13,7 @@ from api.registry import places_resolver
 from api.utils.places_quota import read_usage, reserve_usage_slot
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
+from api.utils.qa_safety import require_external_services_allowed
 
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -349,6 +350,7 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
     """Call Google Geocoding API for a business address.
     Uses the full business address plus barangay for better accuracy.
     Returns (lat, lng) or (None, None) on failure."""
+    require_external_services_allowed("Google Geocoding")
     _geocode_state.outcome = None
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
     if not api_key:
@@ -408,6 +410,192 @@ def _geocode(address: str, barangay: str) -> tuple[float | None, float | None]:
         _geocode_state.outcome = "api_error"
         print(f"[Geocode] request failed: {e}")
     return None, None
+
+
+def search_address_candidates(
+    street_address: str,
+    barangay: str | None = None,
+    *,
+    get=http.get,
+    reserve=None,
+) -> tuple[list[dict] | None, str | None]:
+    """Search a local address and return selectable Geocoding API results."""
+    require_external_services_allowed("Google Geocoding")
+    address = _clean_str(street_address)
+    barangay_name = _clean_str(barangay) if barangay is not None else ""
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
+    if not api_key:
+        return None, "not_configured"
+    if not address:
+        return None, "invalid_request"
+
+    reserve_call = reserve or _reserve_geocode_call
+    if not reserve_call():
+        return None, "quota_exceeded"
+
+    address_parts = [address]
+    if barangay_name:
+        address_parts.append(barangay_name)
+    address_parts.extend(["Mataasnakahoy", "Batangas", "Philippines"])
+    full_address = ", ".join(address_parts)
+    try:
+        response = get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={
+                "address": full_address,
+                "components": "country:PH",
+                "region": "ph",
+                "key": api_key,
+            },
+            timeout=10,
+        )
+    except http.RequestException as error:
+        print(f"[Geocode search] Network error: {error}")
+        return None, "network_error"
+
+    if response.status_code != 200:
+        print(f"[Geocode search] HTTP {response.status_code}")
+        return None, "provider_error"
+
+    try:
+        data = response.json()
+    except (ValueError, TypeError) as error:
+        print(f"[Geocode search] Invalid JSON response: {error}")
+        return None, "provider_error"
+
+    if not isinstance(data, dict):
+        print("[Geocode search] Provider response was not an object")
+        return None, "provider_error"
+    status = data.get("status")
+    if status == "ZERO_RESULTS":
+        return [], None
+    if status in ("OVER_DAILY_LIMIT", "OVER_QUERY_LIMIT"):
+        return None, "quota_exceeded"
+    if status != "OK":
+        print(
+            f"[Geocode search] API status {status}: "
+            f"{str(data.get('error_message', ''))[:300]}"
+        )
+        return None, "provider_error"
+
+    raw_results = data.get("results")
+    if not isinstance(raw_results, list):
+        print("[Geocode search] Provider result list was invalid")
+        return None, "provider_error"
+
+    candidates = []
+    for result in raw_results:
+        if not isinstance(result, dict):
+            continue
+        geometry = result.get("geometry") or {}
+        if not isinstance(geometry, dict):
+            continue
+        location = geometry.get("location") or {}
+        if not isinstance(location, dict):
+            continue
+        try:
+            lat = float(location["lat"])
+            lng = float(location["lng"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (
+            not math.isfinite(lat)
+            or not math.isfinite(lng)
+            or not -90 <= lat <= 90
+            or not -180 <= lng <= 180
+        ):
+            continue
+        formatted_address = str(result.get("formatted_address", "")).strip()
+        if not formatted_address:
+            continue
+        candidates.append({
+            "formattedAddress": formatted_address,
+            "latitude": lat,
+            "longitude": lng,
+            "placeId": str(result.get("place_id", "")),
+        })
+        if len(candidates) == 5:
+            break
+    return candidates, None
+
+
+def reverse_geocode_coordinates(
+    latitude: float,
+    longitude: float,
+    *,
+    get=http.get,
+    reserve=None,
+) -> tuple[str | None, str | None]:
+    """Return the most precise formatted address for a validated GPS point."""
+    require_external_services_allowed("Google Geocoding")
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
+    if not api_key:
+        return None, "not_configured"
+    if (
+        isinstance(latitude, bool)
+        or isinstance(longitude, bool)
+        or not isinstance(latitude, (int, float))
+        or not isinstance(longitude, (int, float))
+        or not math.isfinite(latitude)
+        or not math.isfinite(longitude)
+        or not -90 <= latitude <= 90
+        or not -180 <= longitude <= 180
+    ):
+        return None, "invalid_request"
+
+    reserve_call = reserve or _reserve_geocode_call
+    if not reserve_call():
+        return None, "quota_exceeded"
+
+    try:
+        response = get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={
+                "latlng": f"{latitude:.6f},{longitude:.6f}",
+                "result_type": (
+                    "street_address|premise|subpremise|route|"
+                    "point_of_interest|establishment"
+                ),
+                "key": api_key,
+            },
+            timeout=10,
+        )
+    except http.RequestException as error:
+        print(f"[Reverse geocode] Network error: {error}")
+        return None, "network_error"
+
+    if response.status_code != 200:
+        print(f"[Reverse geocode] HTTP {response.status_code}")
+        return None, "provider_error"
+
+    try:
+        data = response.json()
+    except (ValueError, TypeError) as error:
+        print(f"[Reverse geocode] Invalid JSON response: {error}")
+        return None, "provider_error"
+
+    if not isinstance(data, dict):
+        print("[Reverse geocode] Provider response was not an object")
+        return None, "provider_error"
+    status = data.get("status")
+    if status == "ZERO_RESULTS":
+        return None, None
+    if status in ("OVER_DAILY_LIMIT", "OVER_QUERY_LIMIT"):
+        return None, "quota_exceeded"
+    if status != "OK":
+        print(f"[Reverse geocode] API response: {status}")
+        return None, "provider_error"
+
+    results = data.get("results")
+    if not isinstance(results, list):
+        return None, "provider_error"
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        address = result.get("formatted_address")
+        if isinstance(address, str) and address.strip():
+            return address.strip(), None
+    return None, "provider_error"
 
 
 def _resolve_location(

@@ -1,6 +1,5 @@
 from api.utils.cancellation import set_cancel
 import os
-import threading
 from datetime import date, datetime
 from decimal import Decimal
 from flask import Blueprint, request, jsonify, current_app
@@ -18,6 +17,7 @@ from api.registry.service import (
 from api.middleware.decorators import jwt_required, admin_required
 from api.registry import places_resolver
 from api.utils.quota_config import API_QUOTA_CONFIG
+from api.utils.qa_safety import is_qa_mode, start_background_task
 
 registry_bp = Blueprint("registry", __name__)
 
@@ -213,6 +213,8 @@ def snap_unresolved():
     Accepts optional JSON body: { "limit": 200 }  (default 200 per run).
     Runs asynchronously — progress is streamed via SSE (type: 'snap_progress').
     """
+    if is_qa_mode():
+        return jsonify({"error": "Google Places jobs are disabled in local QA mode."}), 403
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
     quota_response = _text_search_monthly_limit_response()
@@ -236,8 +238,7 @@ def snap_unresolved():
                 print(f"[snap_unresolved] background thread error: {e}")
                 traceback.print_exc()
 
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
+    start_background_task(_run)
     return jsonify({"message": f"Snap started for up to {limit} businesses. Watch SSE for progress."}), 202
 
 
@@ -260,6 +261,8 @@ def reverify_preview():
 @admin_required()
 def reverify_run():
     """Re-check pins that already have coordinates against Google Places (background job)."""
+    if is_qa_mode():
+        return jsonify({"error": "Google Places jobs are disabled in local QA mode."}), 403
     from api.registry import reverify
     if not os.getenv("GOOGLE_MAPS_API_KEY"):
         return jsonify({"error": "GOOGLE_MAPS_API_KEY is not configured on the server."}), 400
@@ -284,7 +287,7 @@ def reverify_run():
                 import traceback
                 traceback.print_exc()
 
-    threading.Thread(target=_go, daemon=True).start()
+    start_background_task(_go)
     return jsonify({"message": f"Re-verify started for up to {limit} pins. Watch the progress window."}), 202
 
 

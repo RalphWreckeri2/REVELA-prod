@@ -190,7 +190,11 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         mock_cursor = MagicMock()
         mock_mysql.connection.cursor.return_value = mock_cursor
         mock_cursor.fetchone.side_effect = [
-            {"reportID": 7, "irTimestamp": "2026-10-11 12:00:00"},
+            {
+                "reportID": 7,
+                "irTimestamp": "2026-10-11 12:00:00",
+                "verificationStatus": "Assigned",
+            },
             {"mins": 5},
             {"flagColor": "Red"},
         ]

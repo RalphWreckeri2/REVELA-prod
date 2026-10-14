@@ -1,6 +1,5 @@
 import os
 import uuid
-import threading
 import re
 from datetime import date, datetime, timedelta, timezone
 
@@ -13,6 +12,7 @@ from api.inspections.service import (
     get_inspector_reports_history,
     assign_inspection,
     submit_inspection,
+    InspectionSubmissionConflict,
     reassign_submitted_report,
     verify_inspection,
     get_all_inspections,
@@ -23,6 +23,7 @@ from api.inspections.service import (
     cleanup_archived_evidence,
 )
 from api.middleware.decorators import jwt_required, admin_required
+from api.utils.qa_safety import start_background_task
 from api.models.user import find_user_by_id
 from api.notifications.service import (
     notify_inspection_assigned,
@@ -179,11 +180,48 @@ def submit():
     if data["inspectionResult"] not in valid_results:
         return jsonify({"error": f"inspectionResult must be one of {valid_results}"}), 400
 
+    report_id = data.get("reportID")
+    if report_id is not None:
+        try:
+            report_id = int(report_id)
+            if report_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({"error": "reportID must be a positive integer"}), 400
+
+    assignment_cycle_id = data.get("assignmentCycleID")
+    if assignment_cycle_id is not None:
+        try:
+            assignment_cycle_id = int(assignment_cycle_id)
+            if assignment_cycle_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({
+                "error": "assignmentCycleID must be a positive integer",
+            }), 400
+
     notice_level = data.get("noticeLevel", 0)
+    submitted_at = data.get("submittedAt")
+    if submitted_at is not None:
+        try:
+            submitted_at = datetime.fromisoformat(
+                str(submitted_at).replace("Z", "+00:00")
+            )
+            if submitted_at.tzinfo is None:
+                raise ValueError
+            submitted_at = submitted_at.astimezone(timezone.utc).replace(
+                tzinfo=None
+            )
+        except (TypeError, ValueError):
+            return jsonify({
+                "error": "submittedAt must be an ISO-8601 timestamp with a timezone",
+                "code": "invalid_submission_timestamp",
+            }), 400
 
     result, error = submit_inspection(
         log_id=data["logID"],
         user_id=user_id,
+        report_id=report_id,
         inspection_result=data["inspectionResult"],
         notice_level=notice_level,
         verified_lat=data.get("verifiedLat"),
@@ -191,9 +229,19 @@ def submit():
         verified_accuracy=data.get("verifiedAccuracy"),
         notes=data.get("notes"),
         photo_url=data.get("photoURL"),
+        assignment_cycle_id=assignment_cycle_id,
+        submitted_at=submitted_at,
     )
     if error:
+        if isinstance(error, InspectionSubmissionConflict):
+            return jsonify({
+                "error": str(error),
+                "code": "inspection_submission_conflict",
+            }), 409
         return jsonify({"error": error}), 500
+
+    if result.get("alreadyAccepted"):
+        return jsonify(result), 200
 
     has_photo = bool(data.get("photoURL"))
 
@@ -214,11 +262,7 @@ def submit():
             except Exception as exc:
                 print(f"notify_inspection_submitted bg error: {exc}")
 
-    threading.Thread(
-        target=_bg_notify,
-        args=(app_instance, notif_args),
-        daemon=True,
-    ).start()
+    start_background_task(_bg_notify, app_instance, notif_args)
 
     return jsonify(result), 200
 

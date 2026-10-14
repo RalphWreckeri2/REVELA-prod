@@ -9,6 +9,9 @@ import 'pages/main_layout.dart';
 import 'service/auth_service.dart';
 import 'service/connectivity_service.dart';
 import 'service/push_notifications.dart';
+import 'service/api_config.dart';
+import 'service/runtime_build_config.dart';
+import 'widgets/genuine_activity_observer.dart';
 
 final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier<ThemeMode>(
   ThemeMode.system,
@@ -17,16 +20,20 @@ final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier<ThemeMode>(
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await ApiConfig.initialize();
+
   // Firebase configuration can be absent in a local/dev build. Push is
   // optional, so never let its initialization prevent the Flutter UI from
   // reaching runApp().
-  try {
-    await Firebase.initializeApp();
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    await PushNotifications.initialize();
-  } catch (error, stackTrace) {
-    debugPrint('[FIREBASE INIT WARNING] $error');
-    debugPrintStack(stackTrace: stackTrace);
+  if (!RuntimeBuildConfig.isQa) {
+    try {
+      await Firebase.initializeApp();
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      await PushNotifications.initialize();
+    } catch (error, stackTrace) {
+      debugPrint('[FIREBASE INIT WARNING] $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
   }
 
   ConnectivityService().start();
@@ -42,60 +49,31 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   final AuthService _authService = AuthService();
+  late bool _lastRoutedAuthState;
 
   @override
   void initState() {
     super.initState();
+    _lastRoutedAuthState = _authService.isAuthenticated;
     _authService.addListener(_handleAuthStateChanged);
-    // Force-stop the session whenever the device loses connectivity.
-    ConnectivityService().addOfflineListener(_handleConnectionLost);
   }
 
   @override
   void dispose() {
     _authService.removeListener(_handleAuthStateChanged);
-    ConnectivityService().removeOfflineListener(_handleConnectionLost);
     super.dispose();
-  }
-
-  /// Fired once per online → offline transition. If the user has an active
-  /// session, end it immediately (no server round-trip — we're offline) and
-  /// send them to the login screen where biometric unlock is still available.
-  void _handleConnectionLost() {
-    if (!mounted) return;
-    if (!_authService.isAuthenticated) return;
-
-    debugPrint('main: connection lost — force-stopping active session');
-    _authService.forceStopSession(); // auth listener navigates to LoginPage
-
-    // Give the navigation a frame to settle, then notify the user.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      final context = AuthService.navigatorKey.currentContext;
-      if (context == null || !context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Connection lost — you were signed out. You can sign back in '
-            'using your biometrics.',
-          ),
-          backgroundColor: Colors.redAccent,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 5),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      );
-    });
   }
 
   void _handleAuthStateChanged() {
     if (!mounted) return;
+    final isAuthenticated = _authService.isAuthenticated;
+    if (_lastRoutedAuthState == isAuthenticated) return;
 
     final navigator = AuthService.navigatorKey.currentState;
     if (navigator == null) return;
+    _lastRoutedAuthState = isAuthenticated;
 
-    if (_authService.isAuthenticated) {
+    if (isAuthenticated) {
       navigator.pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) => const MainLayout(showWelcomeGreeting: true),
@@ -103,16 +81,10 @@ class _MyAppState extends State<MyApp> {
         (route) => false,
       );
     } else {
-      final err = _authService.lastAuthError?.toLowerCase() ?? '';
-      final isRevoked = err.contains('revoked') ||
-          err.contains('deactivated') ||
-          err.contains('administrator') ||
-          err.contains('removed') ||
-          err.contains('cannot access');
-
       navigator.pushAndRemoveUntil(
         MaterialPageRoute(
-          builder: (_) => LoginPage(accountRevokedNotice: isRevoked),
+          builder: (_) =>
+              LoginPage(accountRevokedNotice: _authService.isAccountRevoked),
         ),
         (route) => false,
       );
@@ -142,7 +114,10 @@ class _MyAppState extends State<MyApp> {
             );
             return MediaQuery(
               data: mediaQueryData.copyWith(textScaler: scale),
-              child: child!,
+              child: GenuineActivityObserver(
+                authService: _authService,
+                child: child!,
+              ),
             );
           },
         );

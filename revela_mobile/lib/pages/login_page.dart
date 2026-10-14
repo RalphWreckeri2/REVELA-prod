@@ -1,20 +1,26 @@
 import 'package:flutter/material.dart';
-import 'dart:io';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter/gestures.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 import '../theme/app_theme.dart';
 import '../service/auth_service.dart';
 import '../service/connectivity_service.dart';
-import '../service/push_notifications.dart';
+import 'legal_policy_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'main_layout.dart';
 import 'mandatory_biometric_setup_page.dart';
 
 class LoginPage extends StatefulWidget {
   final bool accountRevokedNotice;
-  const LoginPage({super.key, this.accountRevokedNotice = false});
+  final bool sessionValidationUnavailable;
+  final bool passwordChangeRequired;
+
+  const LoginPage({
+    super.key,
+    this.accountRevokedNotice = false,
+    this.sessionValidationUnavailable = false,
+    this.passwordChangeRequired = false,
+  });
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -27,6 +33,8 @@ class _LoginPageState extends State<LoginPage> {
   final AuthService _authService = AuthService();
   bool _isLoading = false;
   bool _canUseBiometrics = false;
+  late bool _sessionValidationUnavailable;
+  bool _showActiveSessionConflict = false;
 
   // Bump this string whenever the Privacy Policy / Terms actually change.
   // Anyone who already agreed to an older version will be prompted again.
@@ -37,14 +45,16 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
+    _sessionValidationUnavailable = widget.sessionValidationUnavailable;
     // Runs after the first frame so `context` is safe to use for showDialog.
-    // Biometrics auto-login is deliberately checked afterward (see
-    // _checkPrivacyPolicyAcceptance) so it can't pop up at the same time as
-    // the privacy dialog.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (widget.accountRevokedNotice) {
         _showAccountRevokedDialog();
       } else {
+        if (widget.passwordChangeRequired) {
+          _emailController.text = await _authService.getSavedEmail() ?? '';
+        }
+        if (!mounted) return;
         _checkPrivacyPolicyAcceptance();
       }
     });
@@ -58,7 +68,11 @@ class _LoginPageState extends State<LoginPage> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: const [
-            Icon(Icons.remove_circle_outline_rounded, color: Colors.redAccent, size: 28),
+            Icon(
+              Icons.remove_circle_outline_rounded,
+              color: Colors.redAccent,
+              size: 28,
+            ),
             SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -91,8 +105,7 @@ class _LoginPageState extends State<LoginPage> {
     final acceptedVersion = prefs.getString(_privacyPolicyAcceptedKey);
 
     if (acceptedVersion == _privacyPolicyVersion) {
-      // Already agreed to the current version — proceed as normal.
-      _checkBiometrics();
+      _continueAfterPolicyAcceptance();
       return;
     }
 
@@ -113,6 +126,7 @@ class _LoginPageState extends State<LoginPage> {
           canPop: false, // Block back-button/gesture dismissal
           child: StatefulBuilder(
             builder: (context, setDialogState) {
+              final policyLinkColor = Theme.of(context).colorScheme.primary;
               return AlertDialog(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
@@ -151,14 +165,15 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 16),
                       InkWell(
-                        onTap: () => _openLegalUrl(
-                          'https://ralphwreckeri2.github.io/revela_pn/',
+                        onTap: () => showLegalPolicy(
+                          context,
+                          LegalPolicyDocument.privacy,
                         ),
                         child: Text(
                           'Read the full Privacy Policy',
                           style: TextStyle(
                             fontSize: 14,
-                            color: AppColors.darkGreen,
+                            color: policyLinkColor,
                             fontWeight: FontWeight.bold,
                             decoration: TextDecoration.underline,
                           ),
@@ -166,14 +181,29 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       const SizedBox(height: 4),
                       InkWell(
-                        onTap: () => _openLegalUrl(
-                          'https://ralphwreckeri2.github.io/revela_tc/',
-                        ),
+                        onTap: () =>
+                            showLegalPolicy(context, LegalPolicyDocument.terms),
                         child: Text(
                           'Read the Terms & Conditions',
                           style: TextStyle(
                             fontSize: 14,
-                            color: AppColors.darkGreen,
+                            color: policyLinkColor,
+                            fontWeight: FontWeight.bold,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      InkWell(
+                        onTap: () => showLegalPolicy(
+                          context,
+                          LegalPolicyDocument.cookies,
+                        ),
+                        child: Text(
+                          'Read Cookie & Storage Policy',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: policyLinkColor,
                             fontWeight: FontWeight.bold,
                             decoration: TextDecoration.underline,
                           ),
@@ -248,7 +278,15 @@ class _LoginPageState extends State<LoginPage> {
     await prefs.setString(_privacyPolicyAcceptedKey, _privacyPolicyVersion);
     if (!mounted || !dialogContext.mounted) return;
     Navigator.pop(dialogContext);
-    _checkBiometrics();
+    _continueAfterPolicyAcceptance();
+  }
+
+  void _continueAfterPolicyAcceptance() {
+    if (widget.passwordChangeRequired) {
+      _showForcePasswordChangeDialog();
+    } else {
+      _checkBiometrics();
+    }
   }
 
   Future<void> _checkBiometrics() async {
@@ -265,26 +303,16 @@ class _LoginPageState extends State<LoginPage> {
     if (mounted) {
       setState(() => _canUseBiometrics = canUse && hasCreds);
     }
-
-    // Auto prompt if possible
-    if (canUse && hasCreds) {
-      // Small delay so UI renders first
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) _handleBiometricLogin();
-      });
-    }
   }
 
   Future<bool> _hasNetworkConnectivity({
     Duration timeout = const Duration(seconds: 2),
   }) async {
     try {
-      final result = await InternetAddress.lookup(
-        'example.com',
-      ).timeout(timeout);
-      return result.isNotEmpty && result[0].rawAddress.isNotEmpty;
+      final results = await Connectivity().checkConnectivity().timeout(timeout);
+      return results.any((result) => result != ConnectivityResult.none);
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
@@ -321,76 +349,139 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _handleBiometricLogin() async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _showActiveSessionConflict = false;
+    });
 
-    // Show which account is associated with the biometric key (if any)
-    final activeProfile = await _authService.getActiveBiometricProfile();
-    final hasNet = await _hasNetworkConnectivity();
+    try {
+      final activeProfile = await _authService.getActiveBiometricProfile();
+      final hasNet = await _hasNetworkConnectivity();
+      if (!mounted) return;
 
-    // If there is no internet connectivity, short-circuit to an offline-only
-    // biometric restore flow so we do not attempt any network calls.
-    if (!hasNet) {
+      if (!hasNet) {
+        setState(() => _isLoading = false);
+        await _unlockOfflineBiometric(
+          activeProfile,
+          explanation:
+              'Your device appears to be offline. Continue only to unlock locally saved offline data.',
+        );
+        return;
+      }
+
+      final result = await _authService.biometricLogin();
       if (!mounted) return;
       setState(() => _isLoading = false);
 
-      if (activeProfile != null) {
-        final continueOffline = await showDialog<bool?>(
-          context: context,
-          barrierDismissible: false,
-          builder: (ctx) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: const Text('Offline Login'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Logging in as ${activeProfile['fullName'] ?? 'Inspector'}',
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('Continue to unlock your offline session.'),
-                ],
-              ),
-              actions: [
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      if (!mounted || !ctx.mounted) return;
-                      Navigator.pop(ctx, true);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.darkGreen,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text('Continue'),
+      if (result == LoginResult.canceled) return;
+      if (result == LoginResult.accountRevoked) {
+        _showAccountRevokedDialog();
+        return;
+      }
+      if (result == LoginResult.failed) {
+        _showErrorDialog(
+          'Biometric Login Failed',
+          'Your saved credentials have expired or your password was reset. Please log in manually with your new password.',
+        );
+        await _authService.logout();
+        if (mounted) _checkBiometrics();
+        return;
+      }
+      if (result == LoginResult.networkError) {
+        _showErrorDialog(
+          'Unable to Verify Login',
+          'The server could not be reached. Check your internet connection and try again. To use offline access, disconnect from Wi-Fi and mobile data, then tap Login with Biometrics.',
+        );
+        return;
+      }
+      _handleLoginResult(result);
+    } finally {
+      if (mounted && _isLoading) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _retrySavedSessionValidation() async {
+    if (_isLoading) return;
+    setState(() => _isLoading = true);
+    final result = await _authService.restoreSavedSession();
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+      _sessionValidationUnavailable =
+          result == SessionRestoreResult.temporarilyUnavailable;
+    });
+
+    switch (result) {
+      case SessionRestoreResult.restored:
+        break;
+      case SessionRestoreResult.passwordChangeRequired:
+        _showForcePasswordChangeDialog();
+        break;
+      case SessionRestoreResult.invalidSession:
+        _showSnackBar('Your saved session has ended. Please sign in again.');
+        break;
+      case SessionRestoreResult.noSavedSession:
+        _showSnackBar('There is no saved session to restore.');
+        break;
+      case SessionRestoreResult.temporarilyUnavailable:
+        _showSnackBar(
+          'The server is still unavailable. Your saved session and drafts are preserved.',
+        );
+        break;
+    }
+  }
+
+  Future<void> _unlockOfflineBiometric(
+    Map<String, dynamic>? activeProfile, {
+    required String explanation,
+  }) async {
+    if (!mounted) return;
+    final continueOffline = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Offline Login'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (activeProfile != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Text(
+                  'Logging in as ${activeProfile['fullName'] ?? 'Inspector'}',
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
-            );
-          },
-        );
+              ),
+            Text(explanation),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.darkGreen,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Continue Offline'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || continueOffline != true) return;
 
-        if (!mounted) return;
-        if (continueOffline != true) return;
-      }
-
-      if (mounted) setState(() => _isLoading = true);
+    setState(() => _isLoading = true);
+    try {
       final authenticated = await _authService.authenticateOfflineBiometric();
-      if (!mounted) return;
-      if (mounted) setState(() => _isLoading = false);
-
       bool hydrated = false;
       if (authenticated) {
         hydrated = await _authService.restoreOfflineBiometricUser();
@@ -408,86 +499,10 @@ class _LoginPageState extends State<LoginPage> {
         }
       }
 
-      if (!mounted) return;
-      if (hydrated) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const MainLayout()),
-          (route) => false,
-        );
-        return;
-      }
-
+      if (!mounted || hydrated) return;
       await _showNoCachedBiometricDialog();
-      return;
-    }
-
-    // If network is available, prefer the normal biometric flow; the service
-    // will still fall back to local restore if the backend cannot be reached.
-    if (activeProfile != null && mounted) {
-      setState(() => _isLoading = false);
-      final result = await _authService.biometricLogin();
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-
-      if (result == LoginResult.canceled) return;
-      if (result == LoginResult.accountRevoked) {
-        _showAccountRevokedDialog();
-        if (mounted) _checkBiometrics();
-        return;
-      }
-      if (result == LoginResult.failed) {
-        _showErrorDialog(
-          'Biometric Login Failed',
-          'Your saved credentials have expired or your password was reset. Please log in manually with your new password.',
-        );
-        await _authService.logout();
-        if (mounted) _checkBiometrics();
-        return;
-      }
-      if (result == LoginResult.networkError) {
-        await _showNoCachedBiometricDialog();
-        return;
-      }
-      _handleLoginResult(result);
-      return;
-    }
-
-    // No active profile — just attempt biometric login (online path within service)
-    try {
-      final result = await _authService.biometricLogin();
-      if (!mounted) return;
-      if (result == LoginResult.canceled) return;
-      if (result == LoginResult.failed) {
-        _showErrorDialog(
-          'Biometric Login Failed',
-          'Your saved credentials have expired or your password was reset. Please log in manually with your new password.',
-        );
-        await _authService.logout();
-        if (mounted) _checkBiometrics();
-        return;
-      }
-      if (result == LoginResult.networkError) {
-        await _showNoCachedBiometricDialog();
-        return;
-      }
-      _handleLoginResult(result);
     } finally {
       if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  Future<void> _openLegalUrl(String url) async {
-    final Uri uri = Uri.parse(url);
-    try {
-      if (await canLaunchUrl(uri)) {
-        // Consistent with SettingsScreen, open in an in-app web view
-        await launchUrl(uri, mode: LaunchMode.inAppWebView);
-      } else {
-        _showSnackBar('Could not open the link.');
-      }
-    } catch (e) {
-      // In case of an error, show a generic message
-      _showSnackBar('An error occurred while trying to open the link.');
     }
   }
 
@@ -612,7 +627,7 @@ class _LoginPageState extends State<LoginPage> {
     final authError = _authService.lastAuthError;
     switch (result) {
       case LoginResult.success:
-        _showWelcomeGreetingAndNavigate();
+        // MyApp routes on the authenticated-state transition.
         break;
       case LoginResult.mustChangePassword:
         _showForcePasswordChangeDialog();
@@ -630,6 +645,9 @@ class _LoginPageState extends State<LoginPage> {
       case LoginResult.accountRevoked:
         _showAccountRevokedDialog();
         break;
+      case LoginResult.activeSessionConflict:
+        setState(() => _showActiveSessionConflict = true);
+        break;
       case LoginResult.failed:
         _showSnackBar(
           authError ?? 'Incorrect email or password. Please try again.',
@@ -645,25 +663,6 @@ class _LoginPageState extends State<LoginPage> {
       case LoginResult.canceled:
         // Do nothing, user just dismissed a prompt.
         break;
-    }
-  }
-
-  Future<void> _showWelcomeGreetingAndNavigate() async {
-    if (!mounted) return;
-
-    // Save FCM token to backend now that user is authenticated
-    await PushNotifications.refreshFcmToken();
-
-    // Navigate to main layout
-    // Normally MyApp's auth listener performs this navigation. This fallback
-    // covers a successful response that did not emit an auth-state update.
-    if (mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (_) => const MainLayout(showWelcomeGreeting: true),
-        ),
-        (route) => false,
-      );
     }
   }
 
@@ -1222,6 +1221,42 @@ class _LoginPageState extends State<LoginPage> {
                                     color: context.adaptiveTextMid,
                                   ),
                                 ),
+                                if (_sessionValidationUnavailable) ...[
+                                  const SizedBox(height: 16),
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange.withValues(
+                                        alpha: 0.1,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: Colors.orange.withValues(
+                                          alpha: 0.4,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Text(
+                                          'Could not verify the saved session. Connect to the server and retry; the session and offline drafts have been kept.',
+                                          style: TextStyle(height: 1.35),
+                                        ),
+                                        Align(
+                                          alignment: Alignment.centerRight,
+                                          child: TextButton(
+                                            onPressed: _isLoading
+                                                ? null
+                                                : _retrySavedSessionValidation,
+                                            child: const Text('Retry session'),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                                 const SizedBox(height: 32),
 
                                 // Email Field
@@ -1335,6 +1370,52 @@ class _LoginPageState extends State<LoginPage> {
                                   ),
                                 ),
                                 const SizedBox(height: 12),
+                                if (_showActiveSessionConflict) ...[
+                                  Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.withValues(alpha: 0.08),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: Colors.red.withValues(
+                                          alpha: 0.35,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        const Icon(
+                                          Icons.error_outline_rounded,
+                                          color: Colors.redAccent,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        const Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Account already in use',
+                                                style: TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                              SizedBox(height: 3),
+                                              Text(
+                                                'This account already has an active mobile session.',
+                                                style: TextStyle(height: 1.3),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                ],
 
                                 // Forgot Password Button
                                 Align(
@@ -1462,8 +1543,9 @@ class _LoginPageState extends State<LoginPage> {
                                           decoration: TextDecoration.underline,
                                         ),
                                         recognizer: TapGestureRecognizer()
-                                          ..onTap = () => _openLegalUrl(
-                                            'https://ralphwreckeri2.github.io/revela_tc/',
+                                          ..onTap = () => showLegalPolicy(
+                                            context,
+                                            LegalPolicyDocument.terms,
                                           ),
                                       ),
                                       const TextSpan(text: ', '),
@@ -1476,8 +1558,9 @@ class _LoginPageState extends State<LoginPage> {
                                           decoration: TextDecoration.underline,
                                         ),
                                         recognizer: TapGestureRecognizer()
-                                          ..onTap = () => _openLegalUrl(
-                                            'https://ralphwreckeri2.github.io/revela_pn/',
+                                          ..onTap = () => showLegalPolicy(
+                                            context,
+                                            LegalPolicyDocument.privacy,
                                           ),
                                       ),
                                       const TextSpan(text: ', and '),
@@ -1490,8 +1573,9 @@ class _LoginPageState extends State<LoginPage> {
                                           decoration: TextDecoration.underline,
                                         ),
                                         recognizer: TapGestureRecognizer()
-                                          ..onTap = () => _openLegalUrl(
-                                            'https://revelasys.site/cookies',
+                                          ..onTap = () => showLegalPolicy(
+                                            context,
+                                            LegalPolicyDocument.cookies,
                                           ),
                                       ),
                                       const TextSpan(text: '.'),

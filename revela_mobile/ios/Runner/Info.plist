@@ -12,6 +12,8 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Why is my app authenticating using face id?</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>REVELA uses your location to record the position of an inspection. GPS can work without an internet connection.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

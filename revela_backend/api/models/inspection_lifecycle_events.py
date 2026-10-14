@@ -25,8 +25,9 @@ def log_inspection_event(
     cursor.execute("""
         INSERT INTO inspection_lifecycle_events
             (reportID, targetLogID, cycleID, eventType, actorUserID,
-             assignedToUserID, flagColorAtEvent, inspectionResult, remarks)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+             assignedToUserID, flagColorAtEvent, inspectionResult, remarks,
+             eventTimestamp)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP(6))
     """, (
         report_id,
         target_log_id,

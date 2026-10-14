@@ -302,10 +302,7 @@ class _MainLayoutState extends State<MainLayout> {
                 const Expanded(
                   child: Text(
                     'App Feature Tour',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                 ),
               ],
@@ -384,6 +381,7 @@ class _MainLayoutState extends State<MainLayout> {
         );
       case 1:
         return HomePage(
+          isVisible: true,
           onDrawerToggled: (expanded) {
             setState(() {
               _isNavBarVisible = !expanded;
@@ -524,6 +522,13 @@ class _MainLayoutState extends State<MainLayout> {
     setState(() {
       _ensurePageLoaded(index);
       _selectedIndex = index;
+      final mapPage = _pages[1];
+      if (mapPage is HomePage) {
+        _pages[1] = HomePage(
+          isVisible: index == 1,
+          onDrawerToggled: mapPage.onDrawerToggled,
+        );
+      }
     });
     _popIndicator();
     _checkTabTour(index);
@@ -812,7 +817,9 @@ class _MainLayoutState extends State<MainLayout> {
                                                       ),
                                                     ),
                                                     if (index == 3)
-                                                      ValueListenableBuilder<int>(
+                                                      ValueListenableBuilder<
+                                                        int
+                                                      >(
                                                         valueListenable:
                                                             InAppNotificationsService()
                                                                 .unreadCountNotifier,
@@ -822,12 +829,14 @@ class _MainLayoutState extends State<MainLayout> {
                                                           }
                                                           return Positioned(
                                                             right:
-                                                                (tabWidth / 2) - 20,
+                                                                (tabWidth / 2) -
+                                                                20,
                                                             top: -4,
                                                             child: Container(
                                                               padding:
                                                                   const EdgeInsets.symmetric(
-                                                                    horizontal: 5,
+                                                                    horizontal:
+                                                                        5,
                                                                     vertical: 2,
                                                                   ),
                                                               decoration: BoxDecoration(
@@ -840,25 +849,27 @@ class _MainLayoutState extends State<MainLayout> {
                                                               ),
                                                               constraints:
                                                                   const BoxConstraints(
-                                                                    minWidth: 18,
-                                                                    minHeight: 18,
+                                                                    minWidth:
+                                                                        18,
+                                                                    minHeight:
+                                                                        18,
                                                                   ),
                                                               child: Text(
                                                                 unread > 9
                                                                     ? '9+'
                                                                     : '$unread',
-                                                                style:
-                                                                    const TextStyle(
-                                                                      color: Colors
-                                                                          .white,
-                                                                      fontSize: 10,
-                                                                      fontWeight:
-                                                                          FontWeight
-                                                                              .bold,
-                                                                      height: 1.4,
-                                                                    ),
-                                                                textAlign: TextAlign
-                                                                    .center,
+                                                                style: const TextStyle(
+                                                                  color: Colors
+                                                                      .white,
+                                                                  fontSize: 10,
+                                                                  fontWeight:
+                                                                      FontWeight
+                                                                          .bold,
+                                                                  height: 1.4,
+                                                                ),
+                                                                textAlign:
+                                                                    TextAlign
+                                                                        .center,
                                                               ),
                                                             ),
                                                           );

@@ -180,6 +180,14 @@ def get_inspector_tasks(user_id):
         cursor.execute("""
             SELECT
                 ir.reportID,
+                (
+                    SELECT COALESCE(e.cycleID, e.eventID)
+                    FROM inspection_lifecycle_events e
+                    WHERE e.reportID = ir.reportID
+                      AND e.eventType IN ('dispatched', 'reassigned')
+                    ORDER BY e.eventID DESC
+                    LIMIT 1
+                ) AS assignmentCycleID,
                 ir.userID,
                 ir.targetID          AS logID,
                 ir.inspectionResult,
@@ -188,6 +196,14 @@ def get_inspector_tasks(user_id):
                 ir.remarks,
                 ir.photoPath,
                 ir.irTimestamp,
+                COALESCE((
+                    SELECT e.eventTimestamp
+                    FROM inspection_lifecycle_events e
+                    WHERE e.reportID = ir.reportID
+                      AND e.eventType IN ('dispatched', 'reassigned')
+                    ORDER BY e.eventID DESC
+                    LIMIT 1
+                ), ir.irTimestamp) AS dispatchedAt,
                 ir.deadline,
                 ir.nearestLandmark,
                 g.detectedName,
@@ -209,6 +225,8 @@ def get_inspector_tasks(user_id):
         for row in rows:
             if row.get("irTimestamp"):
                 row["irTimestamp"] = str(row["irTimestamp"])
+            if row.get("dispatchedAt"):
+                row["dispatchedAt"] = str(row["dispatchedAt"])
             if row.get("deadline"):
                 row["deadline"] = str(row["deadline"])
 
@@ -229,6 +247,14 @@ def get_inspector_reports_history(user_id):
         cursor.execute("""
             SELECT
                 ir.reportID,
+                (
+                    SELECT COALESCE(e.cycleID, e.eventID)
+                    FROM inspection_lifecycle_events e
+                    WHERE e.reportID = ir.reportID
+                      AND e.eventType IN ('dispatched', 'reassigned')
+                    ORDER BY e.eventID DESC
+                    LIMIT 1
+                ) AS assignmentCycleID,
                 ir.userID,
                 ir.targetID          AS logID,
                 ir.inspectionResult,
@@ -237,6 +263,16 @@ def get_inspector_reports_history(user_id):
                 ir.remarks,
                 ir.photoPath,
                 ir.irTimestamp,
+                COALESCE((
+                    SELECT e.eventTimestamp
+                    FROM inspection_lifecycle_events e
+                    WHERE e.reportID = ir.reportID
+                      AND e.eventType IN ('dispatched', 'reassigned')
+                    ORDER BY e.eventID DESC
+                    LIMIT 1
+                ), ir.irTimestamp) AS dispatchedAt,
+                ir.submittedAt,
+                ir.submissionReceivedAt,
                 ir.deadline,
                 ir.nearestLandmark,
                 g.detectedName,
@@ -249,7 +285,7 @@ def get_inspector_reports_history(user_id):
             JOIN geospatial_logs g  ON ir.targetID   = g.logID
             LEFT JOIN barangays b   ON g.barangayID  = b.barangayID
             WHERE ir.userID = %s
-            ORDER BY ir.irTimestamp DESC
+            ORDER BY ir.submittedAt IS NULL, ir.submittedAt DESC
             LIMIT 200
         """, (uid,))
         rows = cursor.fetchall()
@@ -258,6 +294,14 @@ def get_inspector_reports_history(user_id):
         for row in rows:
             if row.get("irTimestamp"):
                 row["irTimestamp"] = str(row["irTimestamp"])
+            if row.get("dispatchedAt"):
+                row["dispatchedAt"] = str(row["dispatchedAt"])
+            if row.get("submittedAt"):
+                row["submittedAt"] = str(row["submittedAt"])
+            if row.get("submissionReceivedAt"):
+                row["submissionReceivedAt"] = str(
+                    row["submissionReceivedAt"]
+                )
             if row.get("deadline"):
                 row["deadline"] = str(row["deadline"])
 
@@ -328,6 +372,8 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
                     wasReassigned = 1,
                     deadline = %s,
                     inspectionResult = NULL,
+                    submittedAt = NULL,
+                    submissionReceivedAt = NULL,
                     remarks = NULL,
                     photoPath = NULL,
                     resolutionTime = NULL,
@@ -335,15 +381,16 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
                     verifiedLatitude = NULL,
                     verifiedLongitude = NULL,
                     verifiedAccuracy = NULL,
-                    irTimestamp = NOW()
+                    irTimestamp = UTC_TIMESTAMP(6)
                 WHERE reportID = %s
             """, (inspector_user_id, new_status, deadline, existing["reportID"]))
             report_id = existing["reportID"]
         else:
             cursor.execute("""
                 INSERT INTO inspection_reports
-                    (userID, targetID, targetType, verificationStatus, deadline)
-                VALUES (%s, %s, 'geospatial_log', %s, %s)
+                (userID, targetID, targetType, verificationStatus,
+                 deadline, irTimestamp)
+            VALUES (%s, %s, 'geospatial_log', %s, %s, UTC_TIMESTAMP(6))
             """, (inspector_user_id, log_id, new_status, deadline))
             report_id = cursor.lastrowid
 
@@ -388,10 +435,56 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
 
 # ── Submit inspection ─────────────────────────────────────────────────────────
 
+class InspectionSubmissionConflict(Exception):
+    """A predictable conflict with the requested inspection assignment."""
+
+
+def _same_submission_payload(report, inspection_result, notice_level, notes,
+                             photo_url, verified_lat, verified_lng,
+                             verified_accuracy):
+    def same_number(left, right):
+        if left is None or right is None:
+            return left is None and right is None
+        try:
+            return abs(float(left) - float(right)) < 1e-7
+        except (TypeError, ValueError):
+            return False
+
+    def normalized_photos(value):
+        if value is None or value == "":
+            return None
+        try:
+            decoded = json.loads(value) if isinstance(value, str) else value
+            if isinstance(decoded, list):
+                return sorted(str(item) for item in decoded)
+        except (TypeError, ValueError):
+            pass
+        return str(value)
+
+    try:
+        same_notice_level = int(report.get("noticeLevel") or 0) == int(
+            notice_level or 0
+        )
+    except (TypeError, ValueError):
+        same_notice_level = False
+
+    return (
+        report.get("inspectionResult") == inspection_result
+        and same_notice_level
+        and (report.get("remarks") or "").strip() == (notes or "").strip()
+        and normalized_photos(report.get("photoPath"))
+        == normalized_photos(photo_url)
+        and same_number(report.get("verifiedLatitude"), verified_lat)
+        and same_number(report.get("verifiedLongitude"), verified_lng)
+        and same_number(report.get("verifiedAccuracy"), verified_accuracy)
+    )
+
+
 def submit_inspection(log_id, user_id, inspection_result,
                       notice_level=0,
                       verified_lat=None, verified_lng=None, verified_accuracy=None,
-                      notes=None, photo_url=None):
+                      notes=None, photo_url=None, report_id=None,
+                      assignment_cycle_id=None, submitted_at=None):
     """
     Inspector submits their field report for a given logID.
     Updates the existing Assigned report row to 'Submitted'.
@@ -402,33 +495,122 @@ def submit_inspection(log_id, user_id, inspection_result,
         cursor = mysql.connection.cursor()
         _ensure_gps_columns(cursor)
 
-        # Find the open assignment for this inspector + log
         uid = _as_user_id(user_id)
-        cursor.execute("""
-            SELECT reportID, irTimestamp FROM inspection_reports
-            WHERE targetID = %s
-              AND userID   = %s
-              AND verificationStatus IN ('Assigned', 'Reassigned')
-            LIMIT 1
-        """, (log_id, uid))
+        if report_id is not None:
+            cursor.execute("""
+                SELECT reportID, targetID, userID, irTimestamp,
+                       verificationStatus, wasReassigned, submittedAt,
+                       submissionReceivedAt,
+                       inspectionResult, noticeLevel,
+                       remarks, photoPath, verifiedLatitude,
+                       verifiedLongitude, verifiedAccuracy
+                FROM inspection_reports
+                WHERE reportID = %s
+                FOR UPDATE
+            """, (report_id,))
+        else:
+            cursor.execute("""
+                SELECT reportID, targetID, userID, irTimestamp,
+                       verificationStatus, wasReassigned, submittedAt,
+                       submissionReceivedAt,
+                       inspectionResult, noticeLevel,
+                       remarks, photoPath, verifiedLatitude,
+                       verifiedLongitude, verifiedAccuracy
+                FROM inspection_reports
+                WHERE targetID = %s
+                  AND userID = %s
+                  AND verificationStatus IN ('Assigned', 'Reassigned')
+                LIMIT 1
+                FOR UPDATE
+            """, (log_id, uid))
         report = cursor.fetchone()
 
         if not report:
+            mysql.connection.rollback()
             cursor.close()
-            return None, "No open assignment found for this flag and inspector"
+            return None, InspectionSubmissionConflict(
+                "No matching inspection assignment was found."
+            )
+        if report_id is not None and (
+            int(report.get("targetID", -1)) != int(log_id)
+            or int(report.get("userID", -1)) != int(uid)
+        ):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, InspectionSubmissionConflict(
+                "The inspection assignment does not belong to this inspector."
+            )
 
         cycle_id = get_latest_inspection_cycle_id(cursor, report["reportID"])
+        if (
+            report.get("wasReassigned")
+            and assignment_cycle_id is None
+        ):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, InspectionSubmissionConflict(
+                "The current reassignment cycle is required to submit this report."
+            )
+        if (
+            assignment_cycle_id is not None
+            and str(assignment_cycle_id) != str(cycle_id)
+        ):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, InspectionSubmissionConflict(
+                "This inspection assignment has been reassigned."
+            )
+
+        verified_lat, verified_lng, verified_accuracy = _validated_inspection_gps(
+            verified_lat, verified_lng, verified_accuracy)
+        if report.get("verificationStatus") in ("Submitted", "Verified"):
+            if _same_submission_payload(
+                report,
+                inspection_result,
+                notice_level,
+                notes,
+                photo_url,
+                verified_lat,
+                verified_lng,
+                verified_accuracy,
+            ):
+                result = {
+                    "reportID": report["reportID"],
+                    "inspectionResult": report["inspectionResult"],
+                    "status": report["verificationStatus"],
+                    "alreadyAccepted": True,
+                    "submittedAt": (
+                        str(report["submittedAt"])
+                        if report.get("submittedAt") else None
+                    ),
+                    "submissionReceivedAt": (
+                        str(report["submissionReceivedAt"])
+                        if report.get("submissionReceivedAt") else None
+                    ),
+                }
+                mysql.connection.commit()
+                cursor.close()
+                return result, None
+            mysql.connection.rollback()
+            cursor.close()
+            return None, InspectionSubmissionConflict(
+                "This inspection report was already submitted with different data."
+            )
+        if report.get("verificationStatus") not in ("Assigned", "Reassigned"):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, InspectionSubmissionConflict(
+                "This inspection assignment is not open for submission."
+            )
 
         # Calculate resolution time in minutes
         cursor.execute("""
-            SELECT TIMESTAMPDIFF(MINUTE, irTimestamp, NOW()) AS mins
+            SELECT TIMESTAMPDIFF(MINUTE, irTimestamp, UTC_TIMESTAMP()) AS mins
             FROM inspection_reports WHERE reportID = %s
         """, (report["reportID"],))
         timing = cursor.fetchone()
         resolution_mins = timing["mins"] if timing else None
 
-        verified_lat, verified_lng, verified_accuracy = _validated_inspection_gps(
-            verified_lat, verified_lng, verified_accuracy)
         landmark = None
         if verified_lat is not None and verified_lng is not None:
             landmark = f"{verified_lat},{verified_lng}"
@@ -444,7 +626,9 @@ def submit_inspection(log_id, user_id, inspection_result,
                 verifiedLatitude    = %s,
                 verifiedLongitude   = %s,
                 verifiedAccuracy    = %s,
-                resolutionTime      = %s
+                resolutionTime      = %s,
+                submittedAt         = %s,
+                submissionReceivedAt = UTC_TIMESTAMP(6)
             WHERE reportID = %s
         """, (
             inspection_result,
@@ -456,8 +640,16 @@ def submit_inspection(log_id, user_id, inspection_result,
             verified_lng,
             verified_accuracy,
             resolution_mins,
+            submitted_at,
             report["reportID"],
         ))
+
+        cursor.execute("""
+            SELECT submittedAt, submissionReceivedAt
+            FROM inspection_reports
+            WHERE reportID = %s
+        """, (report["reportID"],))
+        submission_timestamps = cursor.fetchone() or {}
 
         # Retrieve the current flagColor to return in the backend payload
         cursor.execute(
@@ -499,6 +691,14 @@ def submit_inspection(log_id, user_id, inspection_result,
             "status":           "Submitted",
             "resolutionMins":   resolution_mins,
             "flagColor":        flag_color,
+            "submittedAt": (
+                str(submission_timestamps["submittedAt"])
+                if submission_timestamps.get("submittedAt") else None
+            ),
+            "submissionReceivedAt": (
+                str(submission_timestamps["submissionReceivedAt"])
+                if submission_timestamps.get("submissionReceivedAt") else None
+            ),
         }, None
 
     except Exception as e:
@@ -560,6 +760,8 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
                 verificationStatus = 'Reassigned',
                 wasReassigned = 1,
                 inspectionResult = NULL,
+                submittedAt = NULL,
+                submissionReceivedAt = NULL,
                 remarks = NULL,
                 photoPath = NULL,
                 resolutionTime = NULL,
@@ -568,7 +770,7 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
                 verifiedLongitude = NULL,
                 verifiedAccuracy = NULL,
                 deadline = %s,
-                irTimestamp = NOW()
+                irTimestamp = UTC_TIMESTAMP(6)
             WHERE reportID = %s
             """,
             (inspector_user_id, deadline, report_id),

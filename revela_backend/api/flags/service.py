@@ -34,6 +34,7 @@ from api.utils.places_rate_limit import (
     LEGACY_NEARBY_LIMITER,
 )
 from api.utils import quota_settings, test_mode
+from api.utils.qa_safety import is_qa_mode, require_external_services_allowed
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -159,6 +160,7 @@ def _reserve_places_call(kind):
 
 
 def _places_get(kind, url, **kwargs):
+    require_external_services_allowed("Google Places requests")
     """Every Google Places HTTP call in this module must go through here."""
     # Test Mode: replay a stored fixture if we have one. A replay costs nothing
     # and is deliberately NOT reserved, because no Google request happens.
@@ -1630,6 +1632,7 @@ def _normalize_new_nearby_results(data):
 
 def _new_nearby_request(lat, lng, radius_m):
     """Send one quota-reserved New Nearby request with bounded RPM retries."""
+    require_external_services_allowed("Google Nearby Search")
     global _nearby_last_request_at
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or os.getenv(
         "GOOGLE_PLACES_API_KEY")
@@ -1797,6 +1800,7 @@ def _fetch_legacy_point_results_once(lat, lng, radius_m):
     Fetch all result pages for ONE grid point. Nothing is stored.
     Returns (results, complete). Raises PlacesBudgetExceeded when a limit is hit.
     """
+    require_external_services_allowed("Google Nearby Search")
     api_key = (
         os.getenv("GOOGLE_MAPS_API_KEY")
         or os.getenv("GOOGLE_PLACES_API_KEY")
@@ -2404,6 +2408,8 @@ def _is_non_business_place(place):
 
 
 def run_detection(user_id=None, mode="quick"):
+    if is_qa_mode():
+        return None, "Detection scans are disabled in local QA mode."
     if not _run_detection_lock.acquire(blocking=False):
         return None, "A detection scan is already in progress."
     try:
@@ -3229,7 +3235,20 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
 # ── Insert Yellow Flag ────────────────────────────────────────────────────────
 
-def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_color='Yellow', reported_by_user_id=None):
+class YellowFlagSubmissionConflict(Exception):
+    """Raised when an idempotency key is reused for different report data."""
+
+
+def insert_yellow_flag(
+    business_name,
+    lat,
+    lng,
+    barangay_id,
+    notes=None,
+    flag_color='Yellow',
+    reported_by_user_id=None,
+    client_submission_id=None,
+):
     """Manually insert a Yellow Flag."""
     if flag_color != 'Yellow':
         return None, "Only Yellow flags can be manually created."
@@ -3240,18 +3259,65 @@ def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_co
             return None, "Cannot place a flag outside the official municipality boundaries."
 
         cursor = mysql.connection.cursor()
-        cursor.execute("""
-            INSERT INTO geospatial_logs
-                (barangayID, reportID, detectedName, latitude, longitude,
-                 flagColor, notes, reportedByUserID)
-            VALUES (%s, NULL, %s, %s, %s, %s, %s, %s)
-        """, (barangay_id, business_name, lat, lng, flag_color, notes, reported_by_user_id))
+        if client_submission_id:
+            cursor.execute("""
+                INSERT INTO geospatial_logs
+                    (barangayID, reportID, detectedName, latitude, longitude,
+                     flagColor, notes, reportedByUserID, clientSubmissionID)
+                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE logID = LAST_INSERT_ID(logID)
+            """, (
+                barangay_id, business_name, lat, lng, flag_color, notes,
+                reported_by_user_id, client_submission_id,
+            ))
+            created = cursor.rowcount == 1
+            log_id = cursor.lastrowid
+            cursor.execute("""
+                SELECT barangayID, detectedName, latitude, longitude, notes,
+                       flagColor, reportedByUserID
+                FROM geospatial_logs
+                WHERE logID = %s
+            """, (log_id,))
+            existing = cursor.fetchone()
+            if existing:
+                values = (
+                    existing.get("barangayID"),
+                    existing.get("detectedName"),
+                    existing.get("latitude"),
+                    existing.get("longitude"),
+                    existing.get("notes"),
+                    existing.get("flagColor"),
+                    existing.get("reportedByUserID"),
+                ) if isinstance(existing, dict) else existing[:7]
+                same_report = (
+                    int(values[0]) == int(barangay_id)
+                    and values[1] == business_name
+                    and round(float(values[2]), 8) == round(float(lat), 8)
+                    and round(float(values[3]), 8) == round(float(lng), 8)
+                    and values[4] == notes
+                    and values[5] == flag_color
+                    and int(values[6]) == int(reported_by_user_id)
+                )
+                if not same_report:
+                    mysql.connection.rollback()
+                    cursor.close()
+                    return None, YellowFlagSubmissionConflict(
+                        "This submission ID was already used for different report data."
+                    )
+        else:
+            cursor.execute("""
+                INSERT INTO geospatial_logs
+                    (barangayID, reportID, detectedName, latitude, longitude,
+                     flagColor, notes, reportedByUserID)
+                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s)
+            """, (barangay_id, business_name, lat, lng, flag_color, notes, reported_by_user_id))
+            created = True
+            log_id = cursor.lastrowid
         mysql.connection.commit()
-        log_id = cursor.lastrowid
         cursor.close()
 
         # Fire admin notification (non-blocking)
-        if reported_by_user_id:
+        if reported_by_user_id and created:
             try:
                 from api.notifications.service import notify_yellow_flag_reported
                 notify_yellow_flag_reported(
@@ -3264,8 +3330,19 @@ def insert_yellow_flag(business_name, lat, lng, barangay_id, notes=None, flag_co
             except Exception as ne:
                 print(f"insert_yellow_flag notification error: {ne}")
 
-        return {"logID": log_id, "lat": lat, "lng": lng}, None
+        return {
+            "logID": log_id,
+            "lat": lat,
+            "lng": lng,
+            "alreadyAccepted": not created,
+        }, None
+    except YellowFlagSubmissionConflict as e:
+        return None, e
     except Exception as e:
+        try:
+            mysql.connection.rollback()
+        except Exception:
+            pass
         return None, str(e)
 
 

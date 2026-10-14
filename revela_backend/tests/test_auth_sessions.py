@@ -280,6 +280,10 @@ class ActiveSessionTests(unittest.TestCase):
             "a mobile device",
             str(sessions.ActiveSessionConflict("mobile")),
         )
+        self.assertNotIn(
+            "wait",
+            str(sessions.ActiveSessionConflict("mobile")).lower(),
+        )
         # Must not read like an admin revocation to the clients' text matchers.
         message = str(sessions.ActiveSessionConflict("web")).lower()
         for trigger in ("revoked", "deactivated", "administrator", "removed", "cannot access"):

@@ -102,6 +102,8 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
         from app import _start_permit_expiry_scheduler
 
         scheduler = MagicMock()
+        app = MagicMock()
+        app.config = {"REVELA_QA_MODE": False}
         with (
             patch(
                 "apscheduler.schedulers.background.BackgroundScheduler",
@@ -110,7 +112,7 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
             patch("apscheduler.triggers.cron.CronTrigger") as cron_trigger,
             patch("atexit.register"),
         ):
-            _start_permit_expiry_scheduler(MagicMock())
+            _start_permit_expiry_scheduler(app)
 
         jobs = {
             call.kwargs["id"]: call

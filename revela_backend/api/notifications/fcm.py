@@ -3,12 +3,15 @@ import logging
 import os
 
 from api.models.user import get_fcm_token
+from api.utils.qa_safety import is_qa_mode
 
 logger = logging.getLogger(__name__)
 
 
 def _messaging_client():
     """Initialise Firebase Admin once from the configured service-account credentials."""
+    if is_qa_mode():
+        return None
     try:
         import glob
         import json
@@ -72,6 +75,8 @@ def _messaging_client():
 
 def send_inspection_dispatch_push(report_id, inspector_user_id, business_name):
     """Send a visible, high-priority FCM alert to an assigned inspector."""
+    if is_qa_mode():
+        return False
     inspector_fcm_token = get_fcm_token(inspector_user_id)
     if not inspector_fcm_token:
         logger.error(

@@ -2,6 +2,7 @@ import random
 import bcrypt
 import os
 import requests
+from api.utils.qa_safety import is_qa_mode
 from api.models.user import find_user_by_email, find_user_by_id, update_last_login, update_password
 from api.models.otp import (
     create_otp,
@@ -115,6 +116,8 @@ def request_otp(identifier):
 
 def send_otp_via_philsms(phone_number, otp_code, is_final_attempt=False):
     """Send OTP via PhilSMS API gateway."""
+    if is_qa_mode():
+        return False
     try:
         # Format phone number to PhilSMS format (639XXXXXXXXX)
         formatted_phone = format_phone_number(phone_number)
@@ -219,6 +222,8 @@ def format_phone_number(phone):
 
 def send_otp_email(email, otp_code, is_final_attempt=False):
     """Send OTP via Resend email API."""
+    if is_qa_mode():
+        return False
     try:
         if is_final_attempt:
             subject = "REVELA Password Reset OTP (Final Daily Attempt)"

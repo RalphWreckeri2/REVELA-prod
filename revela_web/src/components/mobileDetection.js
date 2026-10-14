@@ -38,6 +38,16 @@
 // difference. A bare 768px breakpoint would wrongly admit large phones in
 // landscape and wrongly block nothing useful, which is why it is not used.
 export const MIN_SUPPORTED_SHORT_SIDE = 560;
+const LEGAL_DOCUMENT_PATHS = new Set([
+  "/terms",
+  "/privacy",
+  "/cookies",
+  "/cookie-policy",
+]);
+
+export function isLegalDocumentPath(pathname) {
+  return LEGAL_DOCUMENT_PATHS.has(pathname);
+}
 
 /** Tablets always take precedence: no tablet is blocked for a "Mobile" token. */
 const TABLET_USER_AGENT =

@@ -4,6 +4,7 @@ venv/
 __pycache__/
 *.pyc
 .env
+/revela_backend/.env.qa
 revela_backend/instance/
 
 # Node

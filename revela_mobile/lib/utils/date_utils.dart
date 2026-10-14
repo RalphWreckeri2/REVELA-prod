@@ -1,11 +1,51 @@
 import 'package:intl/intl.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
 
 class AppDateUtils {
   AppDateUtils._();
 
+  static final tz.Location _manila = _loadManilaLocation();
   static final _deadlineFmt = DateFormat('MMM d, yyyy');
   static final _timestampFmt = DateFormat("MMM d · h:mm a");
   static final _shortFmt = DateFormat('MMM d, yyyy');
+  static final _manilaTimestampFmt = DateFormat("MMM d · h:mm a");
+
+  static tz.Location _loadManilaLocation() {
+    tzdata.initializeTimeZones();
+    return tz.getLocation('Asia/Manila');
+  }
+
+  static DateTime? parseTimestampAsUtc(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return null;
+    final value = raw.trim();
+    try {
+      if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+        return DateTime.parse('${value}T00:00:00Z');
+      }
+      final normalized = value.replaceAll(' ', 'T');
+      final hasZone =
+          normalized.toUpperCase().endsWith('Z') ||
+          RegExp(r'[+-]\d{2}:?\d{2}$').hasMatch(normalized);
+      return DateTime.parse(hasZone ? normalized : '${normalized}Z').toUtc();
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static DateTime? parseToManila(String? raw) {
+    final instant = parseTimestampAsUtc(raw);
+    if (instant == null) return null;
+    return tz.TZDateTime.from(instant, _manila);
+  }
+
+  static String formatTimestampInManila(
+    String? raw, {
+    String unavailableLabel = 'Timestamp unavailable',
+  }) {
+    final date = parseToManila(raw);
+    return date == null ? unavailableLabel : _manilaTimestampFmt.format(date);
+  }
 
   /// Parses any ISO or MySQL timestamp string into a local DateTime.
   /// Treats timestamps without explicit timezone offset as UTC (from MySQL).
@@ -64,7 +104,8 @@ class AppDateUtils {
     final sec = diff.inSeconds;
 
     if (sec >= 0 && sec < 60 || sec < 0 && sec.abs() < 60) return 'Just now';
-    if (diff.inMinutes > 0 && diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inMinutes > 0 && diff.inMinutes < 60)
+      return '${diff.inMinutes}m ago';
     if (diff.inHours > 0 && diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays == 1) return 'Yesterday';
     if (diff.inDays > 1 && diff.inDays < 7) return '${diff.inDays} days ago';

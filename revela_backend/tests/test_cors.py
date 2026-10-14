@@ -125,22 +125,56 @@ def _build_app(cors_env):
     import importlib
     import os as _os
 
-    import config
-
-    importlib.reload(config)
-    import app as app_module
-
-    importlib.reload(app_module)
-
     previous = _os.environ.pop("CORS_ORIGINS", None)
+    previous_qa_mode = _os.environ.get("REVELA_QA_MODE")
     try:
+        _os.environ["REVELA_QA_MODE"] = "0"
         if cors_env is not None:
             _os.environ["CORS_ORIGINS"] = cors_env
-        return app_module.create_app()
+
+        import config
+
+        importlib.reload(config)
+        import app as app_module
+
+        importlib.reload(app_module)
+
+        with (
+            patch.object(app_module.mysql, "init_app") as init_mysql,
+            patch.object(
+                app_module,
+                "_start_permit_expiry_scheduler",
+            ) as start_scheduler,
+        ):
+            app = app_module.create_app()
+            init_mysql.assert_called_once_with(app)
+            start_scheduler.assert_called_once_with(app)
+        return app
     finally:
         _os.environ.pop("CORS_ORIGINS", None)
         if previous is not None:
             _os.environ["CORS_ORIGINS"] = previous
+        if previous_qa_mode is None:
+            _os.environ.pop("REVELA_QA_MODE", None)
+        else:
+            _os.environ["REVELA_QA_MODE"] = previous_qa_mode
+
+
+def _post_login_with_mocked_auth(client, origin):
+    from api.auth import routes as auth_routes
+
+    with patch.object(
+        auth_routes,
+        "login_user",
+        return_value=(None, "Invalid email or password"),
+    ) as login_user:
+        response = client.post(
+            "/api/auth/login",
+            headers={"Origin": origin, "Content-Type": "application/json"},
+            json={"email": "nobody@example.com", "password": "wrong"},
+        )
+        login_user.assert_called_once_with("nobody@example.com", "wrong")
+        return response
 
 
 class LoginCorsIntegrationTests(unittest.TestCase):
@@ -155,11 +189,7 @@ class LoginCorsIntegrationTests(unittest.TestCase):
         cls.client = cls.app.test_client()
 
     def _post_login(self, origin):
-        return self.client.post(
-            "/api/auth/login",
-            headers={"Origin": origin, "Content-Type": "application/json"},
-            json={"email": "nobody@example.com", "password": "wrong"},
-        )
+        return _post_login_with_mocked_auth(self.client, origin)
 
     def _preflight_login(self, origin):
         return self.client.options(
@@ -194,7 +224,7 @@ class LoginCorsIntegrationTests(unittest.TestCase):
     def test_login_reaches_the_route_rather_than_being_blocked(self):
         """A CORS failure hides the real status; assert the route actually ran."""
         response = self._post_login(PRODUCTION_WWW)
-        self.assertIn(response.status_code, (400, 401))
+        self.assertEqual(response.status_code, 401)
         self.assertIn("error", response.get_json())
 
     # ── OPTIONS preflight ────────────────────────────────────────────────────
@@ -299,10 +329,9 @@ class MissingEnvironmentVariableTests(unittest.TestCase):
     def test_production_frontend_still_works_without_the_variable(self):
         app = _build_app(None)
         client = app.test_client()
-        response = client.post(
-            "/api/auth/login",
-            headers={"Origin": PRODUCTION_WWW, "Content-Type": "application/json"},
-            json={"email": "nobody@example.com", "password": "wrong"},
+        response = _post_login_with_mocked_auth(
+            client,
+            PRODUCTION_WWW,
         )
         self.assertEqual(
             response.headers.get("Access-Control-Allow-Origin"), PRODUCTION_WWW
@@ -315,10 +344,9 @@ class ApexOnlyConfigurationTests(unittest.TestCase):
     def test_apex_only_config_still_allows_www(self):
         app = _build_app(PRODUCTION_APEX)
         client = app.test_client()
-        response = client.post(
-            "/api/auth/login",
-            headers={"Origin": PRODUCTION_WWW, "Content-Type": "application/json"},
-            json={"email": "nobody@example.com", "password": "wrong"},
+        response = _post_login_with_mocked_auth(
+            client,
+            PRODUCTION_WWW,
         )
         self.assertEqual(
             response.headers.get("Access-Control-Allow-Origin"), PRODUCTION_WWW
