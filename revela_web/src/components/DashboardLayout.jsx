@@ -151,12 +151,29 @@ function NavBadge({ variant = "red", count }) {
 
 function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin }) {
   const location = useLocation();
+  const [tooltip, setTooltip] = useState(null);
+
+  const showTooltip = (event, label) => {
+    if (!collapsed || window.matchMedia("(max-width: 768px)").matches) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    setTooltip({ label, left: bounds.right + 12, top: bounds.top + bounds.height / 2 });
+  };
+  const hideTooltip = (event) => {
+    if (!event.currentTarget.matches(":hover, :focus-visible")) setTooltip(null);
+  };
+  const tooltipProps = (label) => ({
+    "aria-label": label,
+    onMouseEnter: (event) => showTooltip(event, label),
+    onFocus: (event) => showTooltip(event, label),
+    onMouseLeave: hideTooltip,
+    onBlur: hideTooltip,
+  });
 
   return (
-    <aside className="saas-sidebar">
+    <aside className="saas-sidebar" id="revela-sidebar">
       {/* Brand */}
       <div className="sidebar-brand">
-        <div className="brand-logo">
+        <div className="brand-logo sidebar-brand-logo">
           <img src={myLogo} alt="REVELA Logo" className="logo-img" />
         </div>
         <h2>REVELA</h2>
@@ -166,10 +183,14 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin 
           onClick={onToggleCollapsed}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-expanded={!collapsed}
+          aria-controls="revela-sidebar"
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d={collapsed ? "M9 18l6-6-6-6" : "M15 18l-6-6 6-6"} />
+          <span className="brand-logo sidebar-toggle-logo" aria-hidden="true">
+            <img src={myLogo} alt="" className="logo-img" />
+          </span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M15 18l-6-6 6-6" />
           </svg>
         </button>
       </div>
@@ -194,13 +215,14 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin 
                   key={label}
                   to={path}
                   className={`menu-item${isActive ? " active" : ""}`}
+                  {...tooltipProps(label)}
                 >
                   {icon}
                   <span className="menu-item-label">{label}</span>
                   {badge && <NavBadge variant={badge.variant} count={badge.count} />}
                 </Link>
               ) : (
-                <a key={label} href={href} className="menu-item">
+                <a key={label} href={href} className="menu-item" {...tooltipProps(label)}>
                   {icon}
                   <span className="menu-item-label">{label}</span>
                   {badge && <NavBadge variant={badge.variant} count={badge.count} />}
@@ -214,7 +236,7 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin 
 
       {/* Logout & System Info */}
       <div className="sidebar-footer">
-        <button className="logout-btn" onClick={onLogout}>
+        <button className="logout-btn" onClick={onLogout} {...tooltipProps("Logout")}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
@@ -245,6 +267,11 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin 
           </button>
         </div>
       </div>
+      {collapsed && tooltip && (
+        <span className="sidebar-icon-tooltip" style={{ left: tooltip.left, top: tooltip.top }} aria-hidden="true">
+          {tooltip.label}
+        </span>
+      )}
     </aside>
   );
 }
@@ -841,6 +868,10 @@ export default function DashboardLayout({ children, onLogout, className = "" }) 
       
       <button 
         className="mobile-toggle" 
+        type="button"
+        aria-label={isMobileMenuOpen ? "Close navigation" : "Open navigation"}
+        aria-expanded={isMobileMenuOpen}
+        aria-controls="revela-sidebar"
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
       >
 

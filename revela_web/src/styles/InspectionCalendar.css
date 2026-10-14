@@ -1,0 +1,14 @@
+.inspection-calendar-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.inspection-calendar-tabs button { min-height: 40px; padding: 8px 16px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-modal-bg); color: var(--color-muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.inspection-calendar-tabs button[aria-selected="true"] { border-color: var(--color-primary); background: var(--color-primary-light); color: var(--color-primary-dark); }
+.inspection-calendar-scope { margin-bottom: 20px; padding: 16px 20px; }
+.inspection-calendar-scope h2 { margin: 0 0 6px; font-size: 16px; color: var(--color-ink); }
+.inspection-calendar-scope p { margin: 5px 0 0; font-size: 12px; line-height: 1.6; color: var(--color-muted); }
+.inspection-calendar-selected-full { margin-top: 20px; }
+.inspection-calendar-selected-full .inspection-calendar-summary-item dt { font-size: 12px; }
+.inspection-calendar-deadline-meta { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 8px 0; }
+.inspection-calendar-deadline-meta > div { display: flex; gap: 6px; font-size: 12px; line-height: 1.6; }
+.inspection-calendar-deadline-meta dt { color: var(--color-muted); }
+.inspection-calendar-deadline-meta dd { margin: 0; color: var(--color-ink); overflow-wrap: anywhere; }
+.inspection-calendar-assignment-name { margin: 0; color: var(--color-ink); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.inspection-calendar-show-more { margin-top: 14px; min-height: 40px; }

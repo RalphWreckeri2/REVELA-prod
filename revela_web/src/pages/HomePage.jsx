@@ -191,10 +191,6 @@ function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh
             </Link>
           ))}
         </nav>
-        <button className="overview-refresh" type="button" onClick={onRefresh} disabled={isRefreshing}>
-          <OverviewIcon kind="refresh" />
-          {isRefreshing ? "Refreshing dashboard…" : "Refresh dashboard"}
-        </button>
       </div>
 
       <div className="hero-right">
@@ -213,7 +209,13 @@ function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh
         </div>
 
         <section className="hero-status-card" aria-labelledby="overview-system-status">
-          <h2 id="overview-system-status">System Status</h2>
+          <div className="hero-status-header">
+            <h2 id="overview-system-status">System Status</h2>
+            <button className="overview-refresh" type="button" onClick={onRefresh} disabled={isRefreshing}>
+              <OverviewIcon kind="refresh" />
+              <span>{isRefreshing ? "Refreshing dashboard…" : "Refresh dashboard"}</span>
+            </button>
+          </div>
           <dl>
             <SystemStatusRow label="Dashboard data" value={dashboardValue} tone={dashboardLoading ? "wait" : dashboardError || metricsPartial ? "error" : "ready"} />
             <SystemStatusRow label="Maps library" value={mapsError ? "Unavailable" : mapsReady ? "Ready" : "Loading…"} tone={mapsError ? "error" : mapsReady ? "ready" : "wait"} />

@@ -1,17 +1,15 @@
 /**
  * InspectionCalendar.jsx
  *
- * Full-page inspection activity calendar.
- *
- * Reads `GET /api/inspections/calendar?month=YYYY-MM&date=YYYY-MM-DD`, which
- * already returns both the per-day activity counts for the whole month and the
- * detailed lifecycle events for the selected day. Everything rendered below is
- * derived from that single response - no extra requests, no invented data.
+ * Deadline-first calendar of latest report rows, with the existing persisted
+ * lifecycle calendar retained separately under Activity history.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { Link } from "react-router-dom";
-import { getInspectionCalendarRequest } from "../services/api";
+import { getInspectionCalendarRequest, getInspectionsRequest } from "../services/api";
+import { deadlineGroups, deadlineStatusCounts, loadLatestAssignments, manilaToday } from "./deadlineCalendar";
+import "../styles/InspectionCalendar.css";
 
 // ── Event vocabulary (mirrors the backend lifecycle event types) ───────────────
 const EVENT_TYPES = {
@@ -58,7 +56,7 @@ const formatLongDate = (iso) =>
 
 /**
  * Reads HH:MM straight out of the stored timestamp so the displayed time is the
- * recorded local time, never shifted by the viewer's timezone.
+ * recorded UTC time, never shifted by the viewer's timezone.
  */
 const formatClock = (value) => {
   const match = String(value || "").match(/T?(\d{2}):(\d{2})/);
@@ -77,6 +75,57 @@ const flagToken = (value) => String(value || "").trim().split(/\s+/)[0].toLowerC
 const toIsoDateTime = (value) => String(value || "").trim().replace(" ", "T");
 
 const eventCountLabel = (count) => `${count} ${count === 1 ? "event" : "events"}`;
+const deadlineCountLabel = (count) => `${count} ${count === 1 ? "deadline" : "deadlines"}`;
+
+function DeadlineAssignments({ date, reports }) {
+  const [visible, setVisible] = useState(6);
+  const counts = deadlineStatusCounts(reports);
+  const breakdown = [
+    ["Pending field submission", counts.pending],
+    ["Submitted awaiting review", counts.submitted],
+    ["Verified", counts.verified],
+    ...(counts.other ? [["Other statuses", counts.other]] : []),
+  ];
+  return <>
+    <header className="inspection-calendar-activities-header">
+      <div>
+        <p className="inspection-calendar-eyebrow">Latest recorded assignments · Selected deadline date</p>
+        <h2 id="inspection-calendar-deadline-selected-label">{formatLongDate(date)}</h2>
+      </div>
+      <span className="inspection-calendar-count">{deadlineCountLabel(reports.length)}</span>
+    </header>
+    <dl className="inspection-calendar-summary">
+      {breakdown.map(([label, count]) => <div className="inspection-calendar-summary-item" key={label}><dt>{label}</dt><dd>{count}</dd></div>)}
+    </dl>
+    {reports.length ? <>
+      <ol className="inspection-calendar-list">
+        {reports.slice(0, visible).map(report => {
+          const tone = STATUS_TONE[report.verificationStatus] || STATUS_TONE.Verified;
+          const deadline = report.recordedDeadline;
+          return <li className="inspection-calendar-activity" key={report.reportID}>
+            <span className="inspection-calendar-activity-rail" style={{ background: tone.rail }} aria-hidden="true" />
+            <div className="inspection-calendar-activity-body">
+              <div className="inspection-calendar-activity-top">
+                <h3 className="inspection-calendar-assignment-name">{report.detectedName || "Establishment name unavailable"}</h3>
+                <span className="inspection-calendar-status" style={{ color: tone.fg, background: tone.bg }}>{report.verificationStatus || "Status unavailable"}</span>
+              </div>
+              <dl className="inspection-calendar-deadline-meta">
+                <div><dt>Barangay:</dt><dd>{report.barangayName || "Unavailable"}</dd></div>
+                <div><dt>Inspector:</dt><dd>{report.inspectorName || "Unavailable"}</dd></div>
+                <div><dt>Deadline:</dt><dd><time dateTime={deadline.dateTime}>{deadline.date} · {deadline.clock || "Time not supplied"}</time> · Asia/Manila</dd></div>
+              </dl>
+              <div className="inspection-calendar-activity-foot">
+                <span className="inspection-calendar-activity-meta">Report #{report.reportID}{report.logID != null ? ` · Location #${report.logID}` : ""}</span>
+                {report.logID != null && <Link className="inspection-calendar-record-link" to={`/inspections?search=${encodeURIComponent(report.logID)}`}>Search Dispatch for location #{report.logID}</Link>}
+              </div>
+            </div>
+          </li>;
+        })}
+      </ol>
+      {visible < reports.length && <button className="ghost-btn inspection-calendar-show-more" type="button" onClick={() => setVisible(count => count + 6)}>Show more ({reports.length - visible} remaining)</button>}
+    </> : <p className="inspection-calendar-empty-state">No latest recorded assignments have a valid deadline on this date.</p>}
+  </>;
+}
 
 // ── Icons ──────────────────────────────────────────────────────────────────────
 const Icon = {
@@ -115,7 +164,7 @@ const Icon = {
 };
 
 /** The mini-calendar and month view share selection, counts, and keyboard behavior. */
-function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCounts, hasCounts, compact = false, onSelectDate }) {
+function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCounts, hasCounts, compact = false, onSelectDate, countLabel = eventCountLabel, deadlines = false }) {
   const dayCount = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
 
   const handleDateKey = (event, day) => {
@@ -148,8 +197,8 @@ function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCount
         const isSelected = selectedDate === date;
         const isToday = date === todayIso;
         const countDescription = hasCounts
-          ? `${eventCountLabel(count)} recorded`
-          : "activity counts not loaded";
+          ? `${countLabel(count)} recorded`
+          : deadlines ? "deadline counts unavailable" : "activity counts not loaded";
 
         return (
           <button
@@ -168,13 +217,13 @@ function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCount
             tabIndex={isSelected ? 0 : -1}
             aria-pressed={isSelected}
             aria-current={isToday ? "date" : undefined}
-            aria-controls="inspection-calendar-selected-activity"
+            aria-controls={deadlines ? "inspection-calendar-selected-deadlines" : "inspection-calendar-selected-activity"}
             aria-label={`${formatLongDate(date)}${isToday ? " (today)" : ""}, ${countDescription}`}
           >
             <span className="inspection-calendar-day-number">{day}</span>
-            {count > 0 && (
+            {(count > 0 || (deadlines && !hasCounts && !compact)) && (
               <span className="inspection-calendar-day-events" aria-hidden="true">
-                {compact ? null : eventCountLabel(count)}
+                {compact ? null : hasCounts ? countLabel(count) : "—"}
               </span>
             )}
           </button>
@@ -185,21 +234,27 @@ function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCount
 }
 
 export default function InspectionCalendar({ token, initialDate }) {
+  const [view, setView] = useState("deadlines");
+  const deadlines = view === "deadlines";
   const [visibleMonth, setVisibleMonth] = useState(() => {
-    const date = initialDate ? parseIsoDate(initialDate) : new Date();
+    const date = parseIsoDate(initialDate || manilaToday());
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
-  const [selectedDate, setSelectedDate] = useState(() => initialDate || toIsoDate(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => initialDate || manilaToday());
   const [calendar, setCalendar] = useState(null);
   const [requestState, setRequestState] = useState(null);
   const [refreshVersion, setRefreshVersion] = useState(0);
+  const [deadlineVersion, setDeadlineVersion] = useState(0);
+  const [deadlineData, setDeadlineData] = useState(null);
+  const [deadlineRequest, setDeadlineRequest] = useState(null);
+  const deadlineCache = useRef(null);
 
-  const todayIso = toIsoDate(new Date());
+  const todayIso = deadlines ? manilaToday() : toIsoDate(new Date());
   const monthIso = `${visibleMonth.getFullYear()}-${String(visibleMonth.getMonth() + 1).padStart(2, "0")}`;
   const monthLabel = formatMonth(visibleMonth);
 
   useEffect(() => {
-    if (!token) return undefined;
+    if (!token || deadlines) return undefined;
     let isCurrent = true;
     const request = { token, month: monthIso, date: selectedDate, refreshVersion };
     const loadCalendar = async () => {
@@ -229,28 +284,67 @@ export default function InspectionCalendar({ token, initialDate }) {
     void Promise.resolve().then(loadCalendar);
     // Ignore older responses after rapid date/month changes or unmounting.
     return () => { isCurrent = false; };
-  }, [token, monthIso, selectedDate, refreshVersion]);
+  }, [token, monthIso, selectedDate, refreshVersion, deadlines]);
+
+  useEffect(() => {
+    if (!token || !deadlines) return undefined;
+    if (deadlineCache.current?.token === token && deadlineCache.current?.version === deadlineVersion) return undefined;
+    let isCurrent = true;
+    const request = { token, version: deadlineVersion };
+    const load = async () => {
+      if (!isCurrent) return;
+      setDeadlineRequest({ ...request, status: "loading", error: "" });
+      try {
+        const rows = await loadLatestAssignments(params => getInspectionsRequest(params, token), {
+          isCurrent: () => isCurrent,
+          onProgress: progress => { if (isCurrent) setDeadlineRequest({ ...request, ...progress, status: "loading", error: "" }); },
+        });
+        if (!isCurrent || !rows) return;
+        deadlineCache.current = { ...request, rows };
+        setDeadlineData({ ...request, rows });
+        setDeadlineRequest(previous => ({ ...previous, ...request, status: "success", error: "" }));
+      } catch (requestError) {
+        if (isCurrent) setDeadlineRequest(previous => ({ ...previous, ...request, status: "error", error: requestError.message || "Could not load assignment deadlines." }));
+      }
+    };
+    void Promise.resolve().then(load);
+    return () => { isCurrent = false; };
+  }, [token, deadlines, deadlineVersion]);
 
   const requestMatches = requestState?.token === token &&
     requestState?.month === monthIso && requestState?.date === selectedDate &&
     requestState?.refreshVersion === refreshVersion;
-  const loading = !requestMatches || requestState.status === "loading";
-  const error = requestMatches ? requestState.error : "";
+  const activityLoading = !requestMatches || requestState.status === "loading";
+  const activityError = requestMatches ? requestState.error : "";
   // Monthly counts can stay visible while another day in the same month loads.
   // Day details are never rendered until the response matches the current date.
   const monthData = calendar?.token === token && calendar?.data.month === monthIso &&
-    calendar?.refreshVersion === refreshVersion && !error ? calendar.data : null;
-  const dayReady = !loading && !error && monthData?.selectedDate === selectedDate;
+    calendar?.refreshVersion === refreshVersion && !activityError ? calendar.data : null;
+  const dayReady = !activityLoading && !activityError && monthData?.selectedDate === selectedDate;
   const activities = dayReady ? monthData.activities : NO_ACTIVITIES;
 
-  const dayCounts = useMemo(
+  const activityDayCounts = useMemo(
     () => new Map((monthData?.days || [])
       .filter((day) => day.date.startsWith(`${monthIso}-`) && day.count > 0)
       .map((day) => [day.date, day.count])),
     [monthData, monthIso],
   );
-  const monthlyEvents = [...dayCounts.values()].reduce((total, count) => total + count, 0);
-  const latestActiveDate = [...dayCounts.keys()].sort().at(-1);
+  const monthlyEvents = [...activityDayCounts.values()].reduce((total, count) => total + count, 0);
+  const latestActiveDate = [...activityDayCounts.keys()].sort().at(-1);
+  const deadlineRequestMatches = deadlineRequest?.token === token && deadlineRequest?.version === deadlineVersion;
+  const deadlineReady = deadlineRequestMatches && deadlineRequest.status === "success"
+    && deadlineData?.token === token && deadlineData?.version === deadlineVersion;
+  const deadlineLoading = !deadlineRequestMatches || deadlineRequest.status === "loading";
+  const groups = useMemo(() => deadlineGroups(deadlineReady ? deadlineData.rows : []), [deadlineReady, deadlineData]);
+  const deadlineDayCounts = useMemo(() => new Map([...groups.days].filter(([date]) => date.startsWith(`${monthIso}-`)).map(([date, rows]) => [date, rows.length])), [groups, monthIso]);
+  const monthlyDeadlines = [...deadlineDayCounts.values()].reduce((sum, count) => sum + count, 0);
+  const selectedAssignments = groups.days.get(selectedDate) || [];
+  const dayCounts = deadlines ? deadlineDayCounts : activityDayCounts;
+  const hasCounts = deadlines ? deadlineReady : Boolean(monthData);
+  const loading = deadlines ? deadlineLoading : activityLoading;
+  const error = deadlines ? deadlineRequestMatches ? deadlineRequest.error : "" : activityError;
+  const progress = deadlineRequestMatches && deadlineRequest.pages
+    ? `Page ${deadlineRequest.page} of ${deadlineRequest.pages}: ${deadlineRequest.loaded} of ${deadlineRequest.total} unique exposed rows loaded.` : "";
 
   /** Cells are padded to whole weeks so every row keeps a consistent height. */
   const monthCells = useMemo(() => {
@@ -288,23 +382,45 @@ export default function InspectionCalendar({ token, initialDate }) {
   };
 
   const goToToday = () => {
-    const today = new Date();
+    const today = deadlines ? parseIsoDate(manilaToday()) : new Date();
     setVisibleMonth(new Date(today.getFullYear(), today.getMonth(), 1));
     setSelectedDate(toIsoDate(today));
   };
 
-  const refreshCalendar = () => setRefreshVersion((version) => version + 1);
+  const refreshCalendar = () => deadlines ? setDeadlineVersion(version => version + 1) : setRefreshVersion(version => version + 1);
   const sharedDateProps = {
     visibleMonth, monthCells, selectedDate, todayIso, dayCounts,
-    hasCounts: Boolean(monthData), onSelectDate: setSelectedDate,
+    hasCounts, onSelectDate: setSelectedDate, deadlines,
+    countLabel: deadlines ? deadlineCountLabel : eventCountLabel,
   };
 
   return (
-    <section className="inspection-calendar-page" aria-label="Inspection activity calendar">
+    <section className="inspection-calendar-page" aria-label="Inspection calendar">
+      <div className="inspection-calendar-tabs" role="tablist" aria-label="Inspection calendar view">
+        {[['deadlines', 'Deadlines'], ['activity', 'Activity history']].map(([mode, label]) => <button
+          key={mode} id={`inspection-calendar-tab-${mode}`} type="button" role="tab" aria-selected={view === mode}
+          aria-controls="inspection-calendar-view" tabIndex={view === mode ? 0 : -1}
+          onClick={() => setView(mode)} onKeyDown={event => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === "Home" ? "deadlines" : event.key === "End" ? "activity" : mode === "deadlines" ? "activity" : "deadlines";
+            setView(next); document.getElementById(`inspection-calendar-tab-${next}`)?.focus();
+          }}
+        >{label}</button>)}
+      </div>
       <p id="inspection-calendar-keyboard-help" className="sr-only">
         Use the arrow keys to select dates in this month. Home selects the first day; End selects the last day.
-        Recorded activity for the selected day appears below the calendar.
+        Selected-day {deadlines ? "assignments" : "activity"} appears below the calendar.
       </p>
+      <div id="inspection-calendar-view" role="tabpanel" aria-labelledby={`inspection-calendar-tab-${view}`}>
+      <section className="inspection-calendar-card inspection-calendar-scope" aria-label="Calendar counting scope">
+        <h2>{deadlines ? "Latest recorded assignments" : "Activity history · UTC recording dates"}</h2>
+        {deadlines ? <>
+          <p>Counts use unique latest report rows and their deadlines, including Submitted and Verified—not lifecycle events or completion dates. Reassignment can replace earlier deadlines; this is not complete historical scheduling.</p>
+          <p>Timezone-less deadlines are treated as Asia/Manila wall time for this view. This convention cannot establish the original timezone of old records. Offset pagination can shift during concurrent changes; even validated pages are not a guaranteed stable snapshot.</p>
+          {deadlineReady ? <p>{deadlineData.rows.length} unique latest rows retrieved; {groups.excluded} missing/invalid deadlines excluded.</p> : <p role="status">{progress} Deadline totals remain unavailable until pagination finishes successfully.</p>}
+        </> : <p>Counts and times use the existing recorded UTC dates without conversion. An inspection can have multiple lifecycle events; these are not deadline counts or completed-on-date counts.</p>}
+      </section>
       <div className="inspection-calendar-layout">
         <aside className="inspection-calendar-card inspection-calendar-sidebar" aria-label="Calendar shortcuts and month overview">
           <div className="inspection-calendar-create">
@@ -325,25 +441,25 @@ export default function InspectionCalendar({ token, initialDate }) {
             <MonthDates {...sharedDateProps} compact />
           </section>
 
-          <section className="inspection-calendar-sidebar-section inspection-calendar-totals" aria-label={`Monthly activity for ${monthLabel}`}>
-            <h3>Monthly activity</h3>
+          <section className="inspection-calendar-sidebar-section inspection-calendar-totals" aria-label={`Monthly ${deadlines ? "deadlines" : "activity"} for ${monthLabel}`}>
+            <h3>{deadlines ? "Monthly deadlines" : "Monthly activity"}</h3>
             <dl>
               <div>
-                <dt>Lifecycle events</dt>
-                <dd>{monthData ? monthlyEvents : "—"}</dd>
+                <dt>{deadlines ? "Recorded deadlines" : "Lifecycle events"}</dt>
+                <dd>{hasCounts ? deadlines ? monthlyDeadlines : monthlyEvents : "—"}</dd>
               </div>
               <div>
-                <dt>Active days</dt>
-                <dd>{monthData ? dayCounts.size : "—"}</dd>
+                <dt>{deadlines ? "Days with deadlines" : "Active days"}</dt>
+                <dd>{hasCounts ? dayCounts.size : "—"}</dd>
               </div>
             </dl>
-            <p>An inspection can have multiple events.</p>
+            <p>{deadlines ? "Submitted and Verified remain on their recorded deadline date until that deadline is replaced." : "An inspection can have multiple events. UTC recording dates."}</p>
           </section>
 
           <section className="inspection-calendar-sidebar-section inspection-calendar-legend" aria-labelledby="inspection-calendar-legend-label">
-            <h3 id="inspection-calendar-legend-label">Activity legend</h3>
+            <h3 id="inspection-calendar-legend-label">{deadlines ? "Deadline" : "Activity"} legend</h3>
             <ul>
-              <li><span className="inspection-calendar-legend-marker is-activity" aria-hidden="true" />Recorded activity</li>
+              <li><span className="inspection-calendar-legend-marker is-activity" aria-hidden="true" />{deadlines ? "Recorded deadline" : "Recorded activity"}</li>
               <li><span className="inspection-calendar-legend-marker is-today" aria-hidden="true" />Today</li>
               <li><span className="inspection-calendar-legend-marker is-selected" aria-hidden="true" />Selected date</li>
             </ul>
@@ -357,7 +473,7 @@ export default function InspectionCalendar({ token, initialDate }) {
               <div className="inspection-calendar-month-heading">
                 <h2 id="inspection-calendar-month-label">{monthLabel}</h2>
                 <p className="inspection-calendar-toolbar-context" role="status">
-                  {loading
+                  {deadlines ? loading ? "Loading latest assignment pages…" : error ? "Deadline counts unavailable" : "Latest recorded assignments · Manila deadline dates" : loading
                     ? monthData ? "Loading selected-day activity…" : "Loading calendar activity…"
                     : error ? "Activity unavailable" : "Recorded inspection activity · Month view"}
                 </p>
@@ -391,7 +507,7 @@ export default function InspectionCalendar({ token, initialDate }) {
                 className="ghost-btn"
                 onClick={refreshCalendar}
                 disabled={loading}
-                aria-label="Refresh inspection activity"
+                aria-label={deadlines ? "Refresh assignment deadlines" : "Refresh inspection activity"}
               >
                 <Icon.Refresh />
                 Refresh
@@ -417,21 +533,31 @@ export default function InspectionCalendar({ token, initialDate }) {
 
           <div className="inspection-calendar-footer">
             <p className="inspection-calendar-key">
-              {error ? "Activity counts are unavailable. Try loading the calendar again."
+              {deadlines ? error ? "Deadline counts are unavailable. Retry the paginated load." : !deadlineReady ? "Loading deadlines; no final counts are shown." : "Select a date to review its latest recorded assignments below." : error ? "Activity counts are unavailable. Try loading the calendar again."
                 : monthData && monthlyEvents === 0 ? "No recorded events this month. Select a date to review its history."
                 : "Select a date to review its recorded activity below."}
               <span className="inspection-calendar-scroll-hint"> Scroll sideways to see all weekdays if needed.</span>
             </p>
-            <a className="inspection-calendar-detail-link" href="#inspection-calendar-selected-activity">
-              View selected-day activity <span aria-hidden="true">↓</span>
+            <a className="inspection-calendar-detail-link" href={deadlines ? "#inspection-calendar-selected-deadlines" : "#inspection-calendar-selected-activity"}>
+              View selected-day {deadlines ? "assignments" : "activity"} <span aria-hidden="true">↓</span>
             </a>
           </div>
         </section>
+        </div>
+      </div>
 
         {/* ── Selected-date panel ────────────────────────────────────────── */}
-        <section
+        {deadlines ? <section
+          id="inspection-calendar-selected-deadlines" className="inspection-calendar-card inspection-calendar-activities inspection-calendar-selected-full"
+          aria-labelledby="inspection-calendar-deadline-selected-label" aria-busy={loading} tabIndex={-1}
+        >
+          {deadlineReady ? <DeadlineAssignments key={selectedDate} date={selectedDate} reports={selectedAssignments} /> : <>
+            <h2 id="inspection-calendar-deadline-selected-label">{formatLongDate(selectedDate)}</h2>
+            <p className={`inspection-calendar-state${error ? " is-error" : ""}`} role="status">{error || "Loading latest recorded assignments…"} {progress} No final deadline count is available.</p>
+          </>}
+        </section> : <section
           id="inspection-calendar-selected-activity"
-          className="inspection-calendar-card inspection-calendar-activities"
+          className="inspection-calendar-card inspection-calendar-activities inspection-calendar-selected-full"
           aria-labelledby="inspection-calendar-selected-label"
           aria-busy={loading}
           tabIndex={-1}
@@ -440,7 +566,7 @@ export default function InspectionCalendar({ token, initialDate }) {
             <div className="inspection-calendar-activities-heading">
               <p className="inspection-calendar-eyebrow">Selected-day activity</p>
               <h2 id="inspection-calendar-selected-label">{formatLongDate(selectedDate)}</h2>
-              <p className="inspection-calendar-activities-description">Recorded lifecycle events, in chronological order.</p>
+              <p className="inspection-calendar-activities-description">Recorded lifecycle events, in chronological order. UTC recording dates and times.</p>
             </div>
             {dayReady && <span className="inspection-calendar-count">{eventCountLabel(activities.length)}</span>}
           </header>
@@ -501,7 +627,7 @@ export default function InspectionCalendar({ token, initialDate }) {
                           {meta.label}
                         </span>
                         {clock && (
-                          <time dateTime={toIsoDateTime(activity.eventTimestamp)}>{clock}</time>
+                          <time dateTime={toIsoDateTime(activity.eventTimestamp)}>{clock} UTC</time>
                         )}
                       </div>
 
@@ -570,8 +696,7 @@ export default function InspectionCalendar({ token, initialDate }) {
               )}
             </div>
           )}
-        </section>
-        </div>
+        </section>}
       </div>
     </section>
   );

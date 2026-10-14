@@ -24,6 +24,36 @@ import AboutCreditsModal from "../components/AboutCreditsModal";
 import InstructionalManualModal from "../components/InstructionalManualModal";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
+import "../styles/SettingsPage.css";
+
+function SettingsSection({ id, title, summary, status, initialOpen = false, children }) {
+  const [open, setOpen] = useState(initialOpen);
+  return (
+    <section className="saas-card frosted-glass settings-section" aria-labelledby={`${id}-title`}>
+      <h2 className="settings-section-heading">
+        <button
+          className="settings-section-toggle" type="button" aria-expanded={open} aria-controls={`${id}-body`}
+          aria-labelledby={`${id}-title`} aria-describedby={`${id}-summary${status ? ` ${id}-state` : ""}`}
+          onClick={event => { event.currentTarget.focus(); setOpen(current => !current); }}
+        >
+          <span className="settings-section-copy">
+            <span id={`${id}-title`} className="settings-section-title">{title}</span>
+            <span id={`${id}-summary`} className="settings-section-summary">{summary}</span>
+          </span>
+          {status && <span id={`${id}-state`} className={`settings-section-state is-${status.tone || "neutral"}`} role="status">{status.text}</span>}
+          <svg className="settings-section-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+        </button>
+      </h2>
+      <div className="settings-section-body" id={`${id}-body`} hidden={!open}>{children}</div>
+    </section>
+  );
+}
+
+const policySignature = (config, rows) => JSON.stringify([
+  config.w1_risk, config.w2_sector, config.w3_distance, config.bplo_lat, config.bplo_lng,
+  rows.map(row => [row.name, Number(row.score)]),
+]);
+const policySummary = (config, count) => `Weights ${config.w1_risk}/${config.w2_sector}/${config.w3_distance} · ${count} defined rule${count === 1 ? "" : "s"} · Base ${config.bplo_lat ?? "—"}, ${config.bplo_lng ?? "—"}`;
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const EyeIcon = () => (
@@ -307,13 +337,27 @@ function MapPickerModal({ isDark, center, marker, onPick, onClose, isClosing }) 
 
 export default function SettingsPage() {
   const { token, user, refreshUser } = useContext(AuthContext);
-  const [emailAlerts, setEmailAlerts] = useState(true);
+  const savedEmailAlerts = localStorage.getItem("revela_emailAlerts");
+  const serverEmailAlerts = typeof user?.emailInspectionAlerts === "boolean" ? user.emailInspectionAlerts : null;
+  const emailAlertsSeed = serverEmailAlerts !== null ? serverEmailAlerts
+    : savedEmailAlerts === null ? null : savedEmailAlerts === "true";
+  const [emailAlerts, setEmailAlerts] = useState(() => emailAlertsSeed ?? true);
+  const [emailAlertsEdited, setEmailAlertsEdited] = useState(false);
+  const [lastEmailAlertsSeed, setLastEmailAlertsSeed] = useState(emailAlertsSeed);
+  if (emailAlertsSeed !== lastEmailAlertsSeed) {
+    setLastEmailAlertsSeed(emailAlertsSeed);
+    if (emailAlertsSeed !== null && !emailAlertsEdited) setEmailAlerts(emailAlertsSeed);
+  }
   const { theme, previewTheme, isDark, setTheme, setPreviewTheme } = useTheme();
 
   const activeTheme = previewTheme || theme;
 
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [preferencesError, setPreferencesError] = useState("");
+  const [policyLoading, setPolicyLoading] = useState(true);
+  const [policyError, setPolicyError] = useState("");
+  const [savedPolicy, setSavedPolicy] = useState(null);
 
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -341,6 +385,7 @@ export default function SettingsPage() {
   // Evidence Storage & Archival states
   const [storageStats, setStorageStats] = useState(null);
   const [storageLoading, setStorageLoading] = useState(false);
+  const [storageError, setStorageError] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("older_180d");
   const [downloadingArchive, setDownloadingArchive] = useState(false);
   const [cleaningStorage, setCleaningStorage] = useState(false);
@@ -353,49 +398,36 @@ export default function SettingsPage() {
   const fetchStorageStats = useCallback(() => {
     if (token) {
       setStorageLoading(true);
+      setStorageError("");
       getEvidenceStorageStatsRequest(token)
         .then(data => {
           if (data) setStorageStats(data);
         })
         .catch(err => {
+          setStorageError(err.message || "Could not load evidence usage.");
           console.error("Failed to load evidence storage stats:", err);
         })
         .finally(() => setStorageLoading(false));
     }
   }, [token]);
 
-  // Seed the email-alert toggle from the server profile, falling back to the
-  // last locally-saved choice.
-  //
-  // Derived during render instead of in an effect so the toggle shows the real
-  // saved value on the very first paint. As an effect it rendered the default
-  // first and then corrected itself, which showed up as a brief flicker.
-  const savedEmailAlerts = localStorage.getItem("revela_emailAlerts");
-  const serverEmailAlerts = typeof user?.emailInspectionAlerts === "boolean"
-    ? user.emailInspectionAlerts
-    : null;
-  const emailAlertsSeed = serverEmailAlerts !== null
-    ? serverEmailAlerts
-    : savedEmailAlerts === null
-      ? null
-      : savedEmailAlerts === "true";
-  const [lastEmailAlertsSeed, setLastEmailAlertsSeed] = useState(emailAlertsSeed);
-  if (emailAlertsSeed !== null && emailAlertsSeed !== lastEmailAlertsSeed) {
-    setLastEmailAlertsSeed(emailAlertsSeed);
-    setEmailAlerts(emailAlertsSeed);
-  }
-
   // Load initial settings on mount
   useEffect(() => {
+    setPolicyLoading(true);
+    setPolicyError("");
     getWlcConfigRequest(token).then(data => {
       if (data) {
         setWlcConfig(data);
+        setSavedPolicy(data);
         if (data.sectors) {
           const loadedSectors = Object.entries(data.sectors).map(([name, score]) => ({ name, score }));
           setSectors(loadedSectors);
         }
       }
-    }).catch(console.error);
+    }).catch(err => {
+      setPolicyError(err.message || "Could not load policy.");
+      console.error(err);
+    }).finally(() => setPolicyLoading(false));
 
     fetchStorageStats();
 
@@ -407,6 +439,7 @@ export default function SettingsPage() {
 
   const handleExecuteCleanup = async (filterToClean) => {
     setCleaningStorage(true);
+    setStorageError("");
     try {
       const res = await cleanupEvidenceStorageRequest(filterToClean, token);
       await Swal.fire({
@@ -417,6 +450,7 @@ export default function SettingsPage() {
       });
       fetchStorageStats();
     } catch (err) {
+      setStorageError(err.message || "Cleanup failed.");
       Swal.fire({
         icon: "error",
         title: "Cleanup Failed",
@@ -429,6 +463,7 @@ export default function SettingsPage() {
 
   const handleDownloadArchive = async () => {
     setDownloadingArchive(true);
+    setStorageError("");
     try {
       const { filename } = await downloadEvidenceArchiveRequest(selectedFilter, token);
 
@@ -460,6 +495,7 @@ export default function SettingsPage() {
         await handleExecuteCleanup(selectedFilter);
       }
     } catch (err) {
+      setStorageError(err.message || "Archive download failed.");
       Swal.fire({
         icon: "error",
         title: "Archive Download Failed",
@@ -507,6 +543,7 @@ export default function SettingsPage() {
 
   const handleSavePreferences = async () => {
     setSavingPreferences(true);
+    setPreferencesError("");
     localStorage.setItem("revela_emailAlerts", emailAlerts);
     if (previewTheme) {
       setTheme(previewTheme);
@@ -522,6 +559,7 @@ export default function SettingsPage() {
         showConfirmButton: false,
       });
     } catch (err) {
+      setPreferencesError(err.message || "Preferences save failed.");
       Swal.fire({
         icon: "error",
         title: "Save failed",
@@ -534,14 +572,17 @@ export default function SettingsPage() {
 
   const handleSavePolicy = async () => {
     setSavingPolicy(true);
+    setPolicyError("");
 
     try {
       const sectorObj = {};
       sectors.forEach(s => { if (s.name) sectorObj[s.name] = Number(s.score); });
 
       await updateWlcConfigRequest({ ...wlcConfig, sectors: sectorObj }, token);
+      setSavedPolicy({ ...wlcConfig, sectors: sectorObj });
       Swal.fire({ icon: 'success', title: 'Saved', text: 'Settings updated successfully.', timer: 2000, showConfirmButton: false });
     } catch (err) {
+      setPolicyError(err.message || "Policy save failed.");
       Swal.fire('Error', err.message || "Failed to update WLC config", 'error');
     }
     setSavingPolicy(false);
@@ -646,10 +687,24 @@ export default function SettingsPage() {
     }
   };
 
+  const preferencesDirty = (previewTheme && previewTheme !== theme)
+    || (emailAlertsSeed === null ? emailAlertsEdited : emailAlerts !== emailAlertsSeed);
+  const savedPolicyRows = Object.entries(savedPolicy?.sectors || {}).map(([name, score]) => ({ name, score }));
+  const policyDirty = savedPolicy && policySignature(wlcConfig, sectors) !== policySignature(savedPolicy, savedPolicyRows);
+  const selectedStorage = storageStats?.categories?.[selectedFilter];
+  const preferencesSummary = <>
+    <span>Saved: appearance {theme} (browser) · Email {emailAlertsSeed === null ? "unavailable" : emailAlertsSeed ? "On" : "Off"}{emailAlertsSeed !== null ? serverEmailAlerts !== null ? " (account)" : " (browser fallback)" : ""}</span>
+    {preferencesDirty && <span className="settings-draft-summary">Draft: appearance {activeTheme} · Email {emailAlerts ? "On" : "Off"}</span>}
+  </>;
+  const policyHeaderSummary = <>
+    <span>{savedPolicy ? `Saved: ${policySummary(savedPolicy, savedPolicyRows.length)}` : policyLoading ? "Loading saved system-wide policy…" : "Saved policy unavailable; displayed inputs are unconfirmed."}</span>
+    {policyDirty && <span className="settings-draft-summary">Draft: {policySummary(wlcConfig, sectors.length)}</span>}
+  </>;
+
   if (!token) return null;
 
   return (
-    <DashboardLayout>
+    <DashboardLayout className="settings-page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Settings</h1>
@@ -657,11 +712,12 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <div className="settings-sections">
         {/* Local UI Preferences */}
-        <section className="saas-card frosted-glass">
+        <SettingsSection id="settings-preferences" title="Preferences" initialOpen summary={preferencesSummary}
+          status={savingPreferences ? { text: "Saving…" } : preferencesError ? { text: "Save failed", tone: "error" } : preferencesDirty ? { text: "Unsaved changes", tone: "draft" } : null}>
           <div style={{ marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18 }}>Local UI Preferences</h3>
+            {preferencesError && <p className="settings-error" role="alert">{preferencesError}</p>}
             <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Control dashboard alerts and appearance. Email inspection alerts are saved to your account and used when inspectors submit field evidence.</p>
           </div>
           <div style={{ display: "grid", gap: 16 }}>
@@ -680,7 +736,8 @@ export default function SettingsPage() {
                     <button
                       key={opt.label}
                       type="button"
-                      onClick={() => setEmailAlerts(opt.value)}
+                      aria-pressed={isActive}
+                      onClick={() => { setEmailAlertsEdited(true); setEmailAlerts(opt.value); }}
                       style={{
                         display: "inline-flex", alignItems: "center", padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13,
                         fontWeight: isActive ? 600 : 500, fontFamily: "inherit",
@@ -742,6 +799,7 @@ export default function SettingsPage() {
                       key={opt.value}
                       type="button"
                       onClick={() => setPreviewTheme(opt.value)}
+                      aria-pressed={isActive}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -773,12 +831,13 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-        </section>
+        </SettingsSection>
 
         {/* System Policy (OPS WLC) */}
-        <section className="saas-card frosted-glass">
+        <SettingsSection id="settings-policy" title="System Policy (OPS WLC)" summary={policyHeaderSummary}
+          status={savingPolicy ? { text: "Saving…" } : policyLoading ? { text: "Loading…" } : policyError ? { text: "Policy error", tone: "error" } : policyDirty ? { text: "Unsaved changes", tone: "draft" } : null}>
           <div style={{ marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18 }}>System Policy (OPS WLC)</h3>
+            {policyError && <p className="settings-error" role="alert">{policyError}</p>}
             <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Set up priority score scenarios, linked weights, and dynamic sector rules.</p>
           </div>
           <div style={{ display: "grid", gap: 16 }}>
@@ -910,12 +969,12 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-        </section>
+        </SettingsSection>
 
         {/* System Security */}
-        <section className="saas-card frosted-glass">
+        <SettingsSection id="settings-security" title="Account Security"
+          summary={typeof user?.is_2fa_enabled === "boolean" ? `Your account · Two-factor authentication ${user.is_2fa_enabled ? "enabled" : "disabled"}` : "Your account · Two-factor authentication status unavailable"}>
           <div style={{ marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18 }}>System Security</h3>
             <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Manage sign-in protection and admin access controls. Changes here are applied immediately.</p>
           </div>
           <div style={{ display: "grid", gap: 12 }}>
@@ -941,16 +1000,16 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-        </section>
+        </SettingsSection>
 
         {/* Evidence Storage & Archival */}
-        <section className="saas-card frosted-glass">
+        <SettingsSection id="settings-evidence" title="Inspection Evidence Storage & Archival"
+          summary={storageStats ? `${storageStats.totalDiskMB} MB · ${storageStats.totalFilesOnDisk} evidence files${selectedStorage ? ` · ${selectedStorage.label}: ${selectedStorage.reportCount} reports / ${selectedStorage.photoCount} photos eligible` : ""}` : storageLoading ? "Loading evidence usage…" : "Evidence usage unavailable"}
+          status={cleaningStorage ? { text: "Clearing…" } : downloadingArchive ? { text: "Downloading…" } : storageLoading ? { text: "Loading…" } : storageError ? { text: "Storage error", tone: "error" } : null}>
           <div style={{ marginBottom: 16 }}>
+            {storageError && <p className="settings-error" role="alert">{storageError}</p>}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
-                <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
-                  Inspection Evidence Storage &amp; Archival
-                </h3>
                 <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>
                   Manage server storage on Railway. Download verified inspection photos and audit manifests to municipal PC backup, then safely clear server disk space.
                 </p>
@@ -1135,17 +1194,14 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
-        </section>
+        </SettingsSection>
 
         {/* Instructional Material & System SOP */}
-        <section className="saas-card frosted-glass">
+        <SettingsSection id="settings-manual" title="Manual / SOP" summary="BPLO manual · Roles, map, registry, inspections, reports, and API usage guides">
           <div style={{ marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                  <h3 style={{ margin: 0, color: "var(--color-ink)", fontSize: 18, fontWeight: 800 }}>
-                    Instructional Material &amp; Standard Operating Procedures (SOP)
-                  </h3>
                   <span
                     style={{
                       fontSize: 10.5,
@@ -1287,12 +1343,11 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
-        </section>
+        </SettingsSection>
 
         {/* Legal & Support */}
-        <section className="saas-card frosted-glass">
+        <SettingsSection id="settings-legal" title="Legal & Support" summary="Terms, privacy, cookie/storage policy, manual, and About & Credits">
           <div style={{ marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 8px", color: "var(--color-ink)", fontSize: 18 }}>Legal &amp; Support</h3>
             <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Review the platform's terms of service, official operating procedures, and privacy policy.</p>
           </div>
           <div style={{ display: "grid", gap: 12 }}>
@@ -1332,7 +1387,7 @@ export default function SettingsPage() {
               <button type="button" style={{ background: "none", border: "none", color: "var(--color-primary)", fontWeight: 600, cursor: "pointer", fontSize: 13, padding: "8px 12px" }} onClick={() => setShowAboutDoc(true)}>View</button>
             </div>
           </div>
-        </section>
+        </SettingsSection>
       </div>
 
       <AnimatePresence isVisible={showInstructionalModal}>

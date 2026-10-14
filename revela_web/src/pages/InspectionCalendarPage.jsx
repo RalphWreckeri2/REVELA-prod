@@ -47,7 +47,7 @@ export default function InspectionCalendarPage() {
           </Link>
           <h1 className="page-title">Inspection Calendar</h1>
           <p className="page-subtitle">
-            Review recorded inspection activity by date.
+            Review latest assignment deadlines or recorded inspection activity by date.
           </p>
         </div>
       </header>
