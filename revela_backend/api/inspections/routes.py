@@ -14,6 +14,7 @@ from api.inspections.service import (
     assign_inspection,
     submit_inspection,
     InspectionSubmissionConflict,
+    InspectionAssignmentConflict,
     reassign_submitted_report,
     verify_inspection,
     get_all_inspections,
@@ -151,6 +152,11 @@ def assign():
         assigned_by=assigned_by,
     )
     if error:
+        if isinstance(error, InspectionAssignmentConflict):
+            return jsonify({
+                "error": str(error),
+                "code": "inspection_assignment_conflict",
+            }), 409
         return jsonify({"error": error}), 500
     try:
         notify_inspection_assigned(

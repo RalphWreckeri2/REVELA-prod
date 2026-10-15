@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from app import mysql
+from api.registry.colors import _effective_flag_color_sql
 from api.models.inspection_lifecycle_events import (
     get_latest_inspection_cycle_id,
     log_inspection_event,
@@ -314,6 +315,22 @@ def get_inspector_reports_history(user_id):
 
 # ── Assign inspection ─────────────────────────────────────────────────────────
 
+class InspectionAssignmentConflict(Exception):
+    """The requested assignment is not allowed in the pin's current state.
+
+    Distinct from InspectionSubmissionConflict, which is about an inspector
+    handing work back. Surfaces as HTTP 409.
+    """
+
+
+# Effective colours a business may still be inspected in. Green means the
+# business is registered and compliant; Black is a permanent offender. Both
+# are decided on the effective colour - the same value the Map renders - not
+# the raw pin column, so a stale pin cannot make an ineligible business look
+# eligible or vice versa.
+INSPECTABLE_FLAG_COLORS = frozenset({"Red", "Yellow", "Orange", "Purple"})
+
+
 def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
     """
     Create an INSPECTION_REPORTS row linking a geospatial log to an inspector.
@@ -324,15 +341,39 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         cursor = mysql.connection.cursor()
         _ensure_gps_columns(cursor)
 
-        # Guard: check the log exists
+        # Guard: check the log exists, and resolve the effective colour in the
+        # same round trip. _effective_flag_color_sql is the expression the
+        # Map and Registry screens render, so eligibility and display cannot
+        # disagree. For a pin with no registry match it falls back to the
+        # pin's own colour, which is the only case where the registry cannot
+        # speak.
         cursor.execute(
-            "SELECT logID, flagColor FROM geospatial_logs WHERE logID = %s",
-            (log_id,)
+            f"""
+            SELECT g.logID, g.flagColor,
+                   {_effective_flag_color_sql("g")} AS effectiveFlagColor
+            FROM geospatial_logs g
+            WHERE g.logID = %s
+            """,
+            (log_id,),
         )
         flag = cursor.fetchone()
         if not flag:
             cursor.close()
             return None, f"Flag #{log_id} not found"
+
+        # Guard: eligibility, decided on the effective colour.
+        effective_color = (flag.get("effectiveFlagColor")
+                           or flag.get("flagColor"))
+        if effective_color not in INSPECTABLE_FLAG_COLORS:
+            if effective_color == "Green":
+                reason = ("Green (registered) businesses cannot be inspected")
+            elif effective_color == "Black":
+                reason = ("Black businesses no longer accept inspections")
+            else:
+                reason = (f"{effective_color or 'Uncoloured'} businesses "
+                          f"cannot be inspected")
+            cursor.close()
+            return None, InspectionAssignmentConflict(reason)
 
         # Guard: inspector user exists and has Inspector role
         cursor.execute(
@@ -356,7 +397,8 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
 
         if existing and existing["verificationStatus"] in ('Assigned', 'Reassigned', 'In Progress'):
             cursor.close()
-            return None, "This business is already undergoing inspection and cannot be double-booked."
+            return None, InspectionAssignmentConflict(
+                "This business is already undergoing inspection and cannot be double-booked.")
 
         # First-ever dispatch → 'Assigned'. Any existing report means the
         # admin is RE-dispatching, so it lands in 'Reassigned'.
