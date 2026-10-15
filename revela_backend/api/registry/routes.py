@@ -20,6 +20,7 @@ from api.registry.service import (
     RegistryLadderConflict,
     RegistryLadderUnavailable,
     clear_warning,
+    unlock_black_dispatch,
     SyncProtectionLookupError,
     OpenInspectionLookupError,
 )
@@ -614,6 +615,35 @@ def clear_warning_route(business_id):
         return jsonify({
             "error": str(exc),
             "code": "warning_clear_refused",
+        }), 409
+    if error:
+        return jsonify({"error": str(error)}), 500
+    return jsonify(summary), 200
+
+
+# ── POST /api/registry/<id>/unlock-black-dispatch ─────────────────────────────
+# SUPER_ADMIN exact match only. An ordinary Admin is refused here; see
+# api/middleware/decorators.py, which does not accept "System Administrator".
+@registry_bp.route("/<path:business_id>/unlock-black-dispatch",
+                   methods=["POST"])
+@super_admin_required()
+def unlock_black_dispatch_route(business_id):
+    """Grant ONE inspection of a Black locked business.
+
+    Does not lift the lock. The business stays Black and is dispatchable once.
+    """
+    data = request.get_json(silent=True) or {}
+    reason = data.get("reason")
+
+    try:
+        summary, error = unlock_black_dispatch(
+            business_id, get_jwt_identity(), reason)
+    except RegistryNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except (RegistryLadderConflict, RegistryLadderUnavailable) as exc:
+        return jsonify({
+            "error": str(exc),
+            "code": "black_unlock_refused",
         }), 409
     if error:
         return jsonify({"error": str(error)}), 500

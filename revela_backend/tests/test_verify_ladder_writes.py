@@ -38,7 +38,8 @@ class LadderVerifyHarness(unittest.TestCase):
     def _run(self, *, result, notice_level=0, ladder=True,
              pin_business_id="BIZ-1", registry_business_id="BIZ-1",
              warning_level=0, black_locked=0, application_status="Active",
-             admin_user_id=2, registry_rowcount=1):
+             admin_user_id=2, registry_rowcount=1, black_dispatch_unlocked=0,
+             migrated=True):
         cursor = MagicMock()
         cursor.lastrowid = 1
         # One router for both execute and fetchone, so a statement and the
@@ -66,7 +67,9 @@ class LadderVerifyHarness(unittest.TestCase):
             matched["has_row"] = False
             if kind == "probe":
                 cursor.fetchall.return_value = (
-                    [("warningLevel",), ("blackLocked",)] if ladder else [])
+                    [("warningLevel",), ("blackLocked",),
+                     ("blackDispatchUnlocked",)] if (ladder and migrated)
+                    else [])
                 return
             if kind in ("report", "registry_read", "lock_read", "pin_colour"):
                 matched["has_row"] = True
@@ -78,6 +81,12 @@ class LadderVerifyHarness(unittest.TestCase):
         def fetchone():
             kind = classify(cursor.execute.call_args.args[0])
             has_row = registry_business_id == pin_business_id
+            if kind == "probe":
+                # locks.lock_column_available() probes information_schema with
+                # fetchone(). If this returns None the guard reads the column
+                # as absent, and every Black refusal test silently passes for
+                # the wrong reason.
+                return ("blackLocked",) if migrated else None
             if kind == "report":
                 return {
                     "reportID": 4, "targetID": 22, "userID": 9,
@@ -99,6 +108,8 @@ class LadderVerifyHarness(unittest.TestCase):
                 if ladder:
                     row["warningLevel"] = warning_level
                     row["blackLocked"] = black_locked
+                if migrated:
+                    row["blackDispatchUnlocked"] = black_dispatch_unlocked
                 return row
             return None
 

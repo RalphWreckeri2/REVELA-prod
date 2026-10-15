@@ -16,6 +16,11 @@ from api.registry.locks import (
     assert_not_black_locked,
     record_enforcement_event,
 )
+from api.registry.service import (
+    BLACK_UNLOCK_COLUMNS,
+    _consume_black_dispatch_unlock,
+    _has_columns,
+)
 from api.models.inspection_lifecycle_events import (
     get_latest_inspection_cycle_id,
     log_inspection_event,
@@ -387,10 +392,22 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # disagree. For a pin with no registry match it falls back to the
         # pin's own colour, which is the only case where the registry cannot
         # speak. The ladder columns are only read once they exist.
+        # blackDispatchUnlocked is deliberately NOT part of the colour
+        # precedence: an unlocked business is still Black on every screen. It
+        # only opens this gate, and only once. A missing column reads as 0, so
+        # an un-migrated database keeps Black blocked.
+        unlock_available = _has_columns(cursor, BLACK_UNLOCK_COLUMNS)
+        unlock_expr = (
+            "COALESCE((SELECT r2.blackDispatchUnlocked"
+            "         FROM official_registry r2"
+            "         WHERE r2.businessID = g.businessID LIMIT 1), 0)"
+            if unlock_available else "0")
+
         cursor.execute(
             f"""
-            SELECT g.logID, g.flagColor,
-                   {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor
+            SELECT g.logID, g.flagColor, g.businessID,
+                   {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor,
+                   {unlock_expr} AS blackDispatchUnlocked
             FROM geospatial_logs g
             WHERE g.logID = %s
             """,
@@ -404,11 +421,15 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # Guard: eligibility, decided on the effective colour.
         effective_color = (flag.get("effectiveFlagColor")
                            or flag.get("flagColor"))
-        if effective_color not in INSPECTABLE_FLAG_COLORS:
+        dispatch_unlocked = bool(_coerce_notice_level(
+            flag.get("blackDispatchUnlocked")))
+        black_passed = effective_color == "Black" and dispatch_unlocked
+        if effective_color not in INSPECTABLE_FLAG_COLORS and not black_passed:
             if effective_color == "Green":
                 reason = ("Green (registered) businesses cannot be inspected")
             elif effective_color == "Black":
-                reason = ("Black businesses no longer accept inspections")
+                reason = ("Black businesses only accept an inspection while a "
+                          "SUPER_ADMIN has unlocked one")
             else:
                 reason = (f"{effective_color or 'Uncoloured'} businesses "
                           f"cannot be inspected")
@@ -865,6 +886,29 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
             (inspector_user_id, deadline, report_id),
         )
 
+        # Sending a report back to the field is one of the ways a single-use
+        # Black dispatch grant can stop being spent. The grant paid for ONE
+        # inspection; if that inspection is bounced, the grant goes back to
+        # zero rather than lingering until someone remembers.
+        #
+        # Only for a Reassigned (bounced) report. A Verified report being sent
+        # back for a fresh look keeps its grant, because the inspection it paid
+        # for did happen.
+        relocked = False
+        if report["verificationStatus"] == "Submitted":
+            cursor.execute(
+                "SELECT g.businessID FROM geospatial_logs g WHERE g.logID = %s",
+                (report["targetID"],),
+            )
+            pin = cursor.fetchone()
+            pin_business_id = pin.get("businessID") if isinstance(
+                pin, dict) else (pin[0] if pin else None)
+            if pin_business_id and _has_columns(
+                    cursor, BLACK_UNLOCK_COLUMNS):
+                relocked = _consume_black_dispatch_unlock(
+                    cursor, pin_business_id, assigned_by,
+                    reason="Inspection sent back for redo")
+
         log_inspection_event(
             cursor,
             report_id,
@@ -967,15 +1011,29 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             )
 
         registry_row = None
+        dispatch_unlock_available = False
         if pin_business_id:
-            wanted = ("applicationStatus, warningLevel, blackLocked"
-                      if ladder_available else "applicationStatus")
+            wanted = ["applicationStatus"]
+            if ladder_available:
+                wanted += ["warningLevel", "blackLocked"]
+            if _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
+                wanted += ["blackDispatchUnlocked"]
+                dispatch_unlock_available = True
             cursor.execute(
-                f"SELECT {wanted} FROM official_registry "
+                f"SELECT {', '.join(wanted)} FROM official_registry "
                 "WHERE businessID = %s LIMIT 1",
                 (pin_business_id,),
             )
             registry_row = cursor.fetchone()
+
+        # A SUPER_ADMIN granted exactly one inspection of this Black business.
+        # The grant opens this verify and nothing else: the business stays
+        # Black and blackLocked is never touched.
+        dispatch_unlocked = bool(
+            dispatch_unlock_available
+            and registry_row is not None
+            and _coerce_notice_level(
+                registry_row.get("blackDispatchUnlocked")))
 
         previous_level = (_coerce_notice_level(registry_row.get("warningLevel"))
                           if registry_row else 0)
@@ -999,7 +1057,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     f"report carries level {notice_level}."
                 )
 
-        if pin_business_id:
+        if pin_business_id and not dispatch_unlocked:
             try:
                 assert_not_black_locked(
                     cursor, pin_business_id,
@@ -1055,12 +1113,18 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
         """, (report_id,))
 
         # Propagate result → geospatial_logs
-        cursor.execute("""
-            UPDATE geospatial_logs
-            SET flagColor = %s,
-                noticeLevel = %s
-            WHERE logID = %s
-        """, (result_color, notice_level, report["targetID"]))
+        #
+        # An unlocked-Black verify leaves the pin alone. The pin colour is the
+        # last thing that would still read as something other than Black, and
+        # a Black business briefly rendering Green on the map is exactly the
+        # drift this ladder exists to prevent.
+        if not dispatch_unlocked:
+            cursor.execute("""
+                UPDATE geospatial_logs
+                SET flagColor = %s,
+                    noticeLevel = %s
+                WHERE logID = %s
+            """, (result_color, notice_level, report["targetID"]))
 
         registry_closed = False
         registry_warning = None
@@ -1116,7 +1180,27 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                             "show as Closed."
                         )
 
-        if registry_row is not None:
+        if registry_row is not None and dispatch_unlocked:
+            # The one inspection the grant paid for. Record what was found and
+            # when, and nothing else: applicationStatus, warningLevel,
+            # blackLocked and blackDispatchUnlocked's own semantics all stay
+            # as they are. The business was Black before this verify and is
+            # Black after it.
+            cursor.execute(
+                """UPDATE official_registry
+                   SET lastInspectionResult = %s,
+                       lastInspectedAt = NOW()
+                   WHERE businessID = %s""",
+                (result_color, pin_business_id),
+            )
+            registry_updated = cursor.rowcount > 0
+            if not registry_updated:
+                registry_warning = (
+                    f"The registry row for {pin_business_id} could not be "
+                    "stamped with this inspection result."
+                )
+
+        elif registry_row is not None:
             # A registered target always records what was verified and when.
             # Orange and Black deliberately leave applicationStatus alone: a
             # warning is a warning level, not a permit status.
@@ -1177,6 +1261,12 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     reason=event["reason"],
                 )
 
+        # Single use. The grant is spent the moment the inspection it paid for
+        # reaches a verified state. blackLocked is not touched.
+        unlock_spent = dispatch_unlocked and _consume_black_dispatch_unlock(
+            cursor, pin_business_id, verified_by_user_id,
+            reason="Inspection verified")
+
         log_inspection_event(
             cursor,
             report_id,
@@ -1230,6 +1320,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             # move the ladder columns, and all of them stamp
             # lastInspectionResult / lastInspectedAt.
             "registryUpdated":  registry_updated,
+            # True when this verify consumed a single-use Black dispatch grant.
+            "blackDispatchUnlockSpent": bool(unlock_spent),
         }, None
 
     except Exception as e:

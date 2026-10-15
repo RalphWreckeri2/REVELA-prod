@@ -130,14 +130,20 @@ def assert_not_black_locked(cursor, business_id, *, action):
 
 # ── Append-only enforcement history ──────────────────────────────────────────
 
-#: The four event types registry_enforcement_events accepts.
+#: The event types registry_enforcement_events accepts.
+#:
+#: black_relocked is Phase 3A and needs migrations/20261016_01. Until that
+#: migration runs, an insert carrying it is rejected by the ENUM, which is
+#: safe: the single-use grant is only spendable after the migration anyway.
 WARNING_ISSUED = "warning_issued"
 WARNING_CLEARED = "warning_cleared"
 BLACK_LOCKED = "black_locked"
 BLACK_UNLOCKED = "black_unlocked"
+BLACK_RELOCKED = "black_relocked"
 
 ENFORCEMENT_EVENT_TYPES = (
     WARNING_ISSUED, WARNING_CLEARED, BLACK_LOCKED, BLACK_UNLOCKED,
+    BLACK_RELOCKED,
 )
 
 _INSERT_ENFORCEMENT_EVENT_SQL = """INSERT INTO registry_enforcement_events (

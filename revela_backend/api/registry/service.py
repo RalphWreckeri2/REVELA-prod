@@ -16,6 +16,8 @@ from api.registry.colors import (
     status_to_color,
 )
 from api.registry.locks import (
+    BLACK_RELOCKED,
+    BLACK_UNLOCKED,
     WARNING_CLEARED,
     BlackLockedError,
     assert_not_black_locked,
@@ -1468,6 +1470,10 @@ CLEAR_WARNING_COLUMNS = (
     "warningClearReason",
 )
 
+#: Columns unlock_black_dispatch needs.
+BLACK_UNLOCK_COLUMNS = ("blackLocked", "blackDispatchUnlocked")
+
+
 def _coerce_int(value):
     """Read a ladder column as an int. None and rubbish both count as 0."""
     if value is None or value is False:
@@ -1680,6 +1686,110 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
     except Exception as e:
         mysql.connection.rollback()
         return None, str(e)
+
+
+def unlock_black_dispatch(business_id, unlocked_by_user_id, reason=None):
+    """Grant ONE inspection of a Black locked business. SUPER_ADMIN only.
+
+    This does not lift the lock. blackLocked stays 1, applicationStatus is
+    untouched and the business keeps rendering Black on every screen. The only
+    thing it changes is the eligibility gate, which will accept one dispatch.
+
+    Single use: _consume_black_dispatch_unlock spends the grant when an
+    inspection on an unlocked Black business is verified, cancelled or
+    reassigned away.
+
+    Returns (summary, error) with the same error types as clear_warning.
+    """
+    try:
+        cursor = mysql.connection.cursor()
+
+        if not _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
+            cursor.close()
+            return None, _ladder_not_migrated("Unlocking a Black business")
+
+        state = _load_ladder_state(cursor, business_id, BLACK_UNLOCK_COLUMNS)
+        if state is None:
+            cursor.close()
+            return None, RegistryNotFoundError("Business not found")
+
+        if not _coerce_int(state.get("blackLocked")):
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This business is not Black locked, so there is nothing to "
+                "unlock for inspection."
+            )
+
+        if _coerce_int(state.get("blackDispatchUnlocked")):
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This business is already unlocked for one inspection. The "
+                "grant is single use; it is spent when that inspection is "
+                "verified, cancelled or reassigned away."
+            )
+
+        cursor.execute(
+            """UPDATE official_registry
+               SET blackDispatchUnlocked = 1,
+                   blackUnlockedAt = NOW(),
+                   blackUnlockedBy = %s,
+                   blackUnlockReason = %s
+               WHERE businessID = %s""",
+            (unlocked_by_user_id, reason, business_id),
+        )
+        if cursor.rowcount != 1:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                f"The registry row for {business_id} could not be updated, so "
+                "it was not unlocked."
+            )
+
+        record_enforcement_event(
+            cursor, business_id=business_id, event_type=BLACK_UNLOCKED,
+            actor_user_id=unlocked_by_user_id, reason=reason,
+            previous_black=1, new_black=1)
+
+        mysql.connection.commit()
+        cursor.close()
+        return {
+            "businessID": business_id,
+            "blackDispatchUnlocked": True,
+            # Stays Black. The unlock is a dispatch permission, not a change of
+            # state, and the payload says so so a client cannot infer a colour
+            # from it.
+            "blackLocked": True,
+        }, None
+
+    except (RegistryLadderConflict, RegistryLadderUnavailable,
+            RegistryNotFoundError):
+        raise
+    except Exception as e:
+        mysql.connection.rollback()
+        return None, str(e)
+
+
+def _consume_black_dispatch_unlock(cursor, business_id, actor_user_id,
+                                   reason=None):
+    """Spend a single-use grant. Returns True if one was spent.
+
+    Called when an inspection on an unlocked Black business reaches a terminal
+    state. blackLocked is NOT touched: the business was Black before the grant
+    and is Black after it.
+    """
+    cursor.execute(
+        """UPDATE official_registry
+           SET blackDispatchUnlocked = 0
+           WHERE businessID = %s AND blackDispatchUnlocked = 1""",
+        (business_id,),
+    )
+    if cursor.rowcount == 0:
+        return False
+    record_enforcement_event(
+        cursor, business_id=business_id, event_type=BLACK_RELOCKED,
+        actor_user_id=actor_user_id, reason=reason,
+        previous_black=1, new_black=1)
+    return True
 
 
 def _load_sync_protection_keys(cursor):

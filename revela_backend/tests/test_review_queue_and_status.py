@@ -265,7 +265,11 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
             {"reportID": 8, "targetID": 22, "verificationStatus": "Submitted"},
             {"userID": 9, "fullName": "Inspector", "userRole": "Inspector"},
             {"flagColor": "Red"},
+            # Sending a report back spends a single-use Black dispatch grant,
+            # so the pin's businessID is read to find the registry row.
+            {"businessID": "BIZ-1"},
         ]
+        mock_cursor.fetchall.return_value = [("blackDispatchUnlocked",)]
 
         result, error = inspection_service.reassign_submitted_report(
             report_id=8,
