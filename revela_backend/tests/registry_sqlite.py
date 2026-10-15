@@ -114,6 +114,19 @@ class RegistryCursor:
             sql = re.sub(
                 r"ORDER BY \(r_chk\.businessID = (\w+)\.businessID\) DESC,\s*"
                 r"\(r_chk\.placeID = \1\.placeID\) DESC\s*LIMIT 1", "LIMIT 1", sql)
+            # Fixtures have one matching row per LATERAL lookup. Retain its
+            # matching predicate; only remove MySQL's unsupported join syntax.
+            def lateral(match):
+                table, condition, alias = match.group("table", "condition", "alias")
+                for row in self.connection.db.execute(f"PRAGMA table_info({table})"):
+                    name = row["name"]
+                    condition = re.sub(rf"(?<![\w.]){name}\b", f"{alias}.{name}", condition)
+                return f"LEFT JOIN {table} {alias} ON ({condition})"
+
+            sql = re.sub(
+                r"LEFT JOIN LATERAL \(\s*SELECT .*? FROM (?P<table>official_registry|geospatial_logs)\s+"
+                r"WHERE (?P<condition>.*?)\s+ORDER BY .*?LIMIT 1\s*\) (?P<alias>\w+) ON TRUE",
+                lateral, sql, flags=re.DOTALL)
             if "UPDATE geospatial_logs g" in sql and "JOIN official_registry r ON" in sql:
                 join, assignments = re.search(
                     r"JOIN official_registry r ON\s*(.*?)\s+SET\s+(.*)", sql, re.DOTALL).groups()
@@ -125,7 +138,7 @@ class RegistryCursor:
                 # Keep r visible to SET as well as WHERE, as in MySQL's JOIN
                 # update (the expiry expression reads r.warningLevel).
                 sql = f"UPDATE geospatial_logs AS g SET {assignments} FROM official_registry AS r WHERE {join}"
-            sql = sql.replace("%s", "?").replace("UTC_TIMESTAMP(6)", "CURRENT_TIMESTAMP").replace("NOW()", "CURRENT_TIMESTAMP").replace("CURDATE()", "CURRENT_DATE")
+            sql = sql.replace(" FOR UPDATE", "").replace("%s", "?").replace("UTC_TIMESTAMP(6)", "CURRENT_TIMESTAMP").replace("NOW()", "CURRENT_TIMESTAMP").replace("CURDATE()", "CURRENT_DATE")
         self.cursor.execute(sql, params)
         return self
 

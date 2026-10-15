@@ -78,3 +78,27 @@ therefore needs no implementation.
 For the registry-only Orange failure, the test was correct: impossible Orange
 requests should be rejected before a lock lookup. Production validation order
 was fixed; that test's assertions were not changed.
+
+## Part 2 verification
+
+Admin escalation now resolves the current effective color, locks the registry
+row, writes Revoked + blackLocked/At/By, updates the pin and records black_locked
+in one transaction. Red/Yellow/Orange work at any warning level without an
+inspection. Black, Green, Purple and non-admin callers are refused with typed
+errors. Missing ladder columns give a clear conflict. Unregistered pins only
+change their pin; virtual registry flags get a real registry lock.
+
+The Map's registry-only branch had a second precedence copy. It now calls the
+shared CASE builder. Registry readers also use that shared row rule when there
+is no physical pin, so a virtual Black business is Black on both screens.
+Verified Black inspection behavior was not changed.
+
+New `tests/test_black_escalation.py` executes escalation, actual Map/Registry
+payload queries, audit rollback and later sync against the isolated database.
+The existing SQL adapter gained LATERAL / FOR UPDATE syntax substitutions for
+these fixtures; production CASE arms and color sync are not mocked. No existing
+test assertion was changed in this part.
+
+Full backend: **888 passed, 4 accepted failures, 28 skipped; 554 passing
+subtests**. Frontend `npm run verify` passed. The CORS verification gap remains
+the same local MySQL 1045 error.

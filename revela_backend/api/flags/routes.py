@@ -12,6 +12,9 @@ from api.flags.service import (
     update_flag_color,
     BlackLockedError,
     escalate_to_black,
+    FlagEscalationForbidden,
+    FlagEscalationConflict,
+    FlagEscalationNotFound,
     delete_flag,
     reconcile_existing_flags,
     update_flag_location,
@@ -369,10 +372,16 @@ def yellow_flag_route():
 @flags_bp.route("/<int(signed=True):log_id>/black", methods=["PATCH"])
 @admin_required()
 def black_flag_route(log_id):
-    """Escalate a Red or Yellow flag to Black."""
-    success, error = escalate_to_black(log_id)
+    """Admin: escalate a Red, Yellow or Orange flag and record the real lock."""
+    success, error = escalate_to_black(log_id, actor_user_id=get_jwt_identity())
     if not success:
-        return jsonify({"error": error}), 400
+        if isinstance(error, FlagEscalationForbidden):
+            return jsonify({"error": str(error), "code": "black_escalation_forbidden"}), 403
+        if isinstance(error, FlagEscalationNotFound):
+            return jsonify({"error": str(error), "code": "flag_not_found"}), 404
+        if isinstance(error, FlagEscalationConflict):
+            return jsonify({"error": str(error), "code": "black_escalation_conflict"}), 409
+        return jsonify({"error": str(error)}), 500
     return jsonify({"message": f"Flag #{log_id} escalated to Black"}), 200
 
 

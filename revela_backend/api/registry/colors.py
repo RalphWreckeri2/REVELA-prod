@@ -211,23 +211,34 @@ def _effective_flag_color_sql(alias="g", *, ladder=False):
     Revoked wins in both paths. Verified Orange history is used only with
     ladder=False; migrated readers get Orange only from the warning level.
     """
-    registry_status = _registry_status_sql(alias)
+    return _color_case_sql(
+        _registry_status_sql(alias),
+        lock=_registry_column_sql(alias, "blackLocked") if ladder else None,
+        orange=(f"COALESCE({_registry_column_sql(alias, 'warningLevel')}, 0) >= {FIRST_WARNING_LEVEL}"
+                if ladder else _verified_orange_sql(alias)),
+        fallback=f"{alias}.flagColor",
+    )
 
-    lock_arm = ""
-    if ladder:
-        # COALESCE so a pin with no registry row, or a row whose columns are
-        # still NULL, resolves to "no lock, no warning" instead of falling
-        # through the CASE.
-        lock_arm = f"        WHEN COALESCE({_registry_column_sql(alias, 'blackLocked')}, 0) <> 0 THEN 'Black'\n"
-    orange = (f"COALESCE({_registry_column_sql(alias, 'warningLevel')}, 0) >= {FIRST_WARNING_LEVEL}"
-              if ladder else _verified_orange_sql(alias))
 
+def registry_row_color_sql(alias="r", *, ladder=False):
+    """The same rule for a registry row with no physical pin to join."""
+    return _color_case_sql(
+        f"{alias}.applicationStatus",
+        lock=f"{alias}.blackLocked" if ladder else None,
+        orange=f"COALESCE({alias}.warningLevel, 0) >= {FIRST_WARNING_LEVEL}" if ladder else None,
+        fallback="'Yellow'",
+    )
+
+
+def _color_case_sql(registry_status, *, lock, orange, fallback):
+    """One precedence ladder for pin-centric and registry-only projections."""
+    lock_arm = f"        WHEN COALESCE({lock}, 0) <> 0 THEN 'Black'\n" if lock else ""
+    orange_arm = f"        WHEN {orange} THEN 'Orange'\n" if orange else ""
     return f"""CASE
 {lock_arm}        WHEN {registry_status} IN ('Revoked', 'Blacklisted') THEN 'Black'
-        WHEN {orange} THEN 'Orange'
-        WHEN {registry_status} = 'Active' THEN 'Green'
+{orange_arm}        WHEN {registry_status} = 'Active' THEN 'Green'
         WHEN {registry_status} = 'Expired' THEN 'Red'
         WHEN {registry_status} = 'Closed' THEN 'Purple'
         WHEN {registry_status} = 'Pending' THEN 'Yellow'
-        ELSE {alias}.flagColor
+        ELSE {fallback}
     END"""

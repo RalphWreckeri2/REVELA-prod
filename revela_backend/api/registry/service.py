@@ -14,6 +14,7 @@ from api.registry.colors import (
     _effective_flag_color_sql,
     ladder_columns_available,
     status_to_color,
+    registry_row_color_sql,
 )
 from api.models.geospatial import (
     SOURCE_COLUMN,
@@ -3340,6 +3341,7 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         # that does not have warningLevel / blackLocked yet.
         effective_flag_color = _effective_flag_color_sql(
             "g", ladder=ladder_columns_available(cursor))
+        effective_flag_color = f"COALESCE(({effective_flag_color}), ({registry_row_color_sql('r', ladder=ladder_columns_available(cursor))}))"
         # warningLevel / blackLocked / blackDispatchUnlocked for the page's
         # Clear Warning and Unlock buttons. Zeros where the columns are absent.
         ladder_select = _ladder_select_sql(cursor)
@@ -3418,6 +3420,7 @@ def get_business_by_id(business_id):
         # pin column, and read the ladder columns only when they exist.
         effective_flag_color = _effective_flag_color_sql(
             "g", ladder=ladder_columns_available(cursor))
+        effective_flag_color = f"COALESCE(({effective_flag_color}), ({registry_row_color_sql('r', ladder=ladder_columns_available(cursor))}))"
         # Same three fields as the list, from one builder, so the detail
         # modal and the list row can never disagree.
         ladder_select = _ladder_select_sql(cursor)

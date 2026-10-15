@@ -17,7 +17,7 @@ import requests as http
 import json
 from geopy.distance import geodesic
 from app import mysql
-from api.registry.service import _flag_source_sql
+from api.registry.service import _flag_source_sql, _has_columns
 from api.models.geospatial import (
     SOURCE_DETECTION,
     geospatial_source_column_exists,
@@ -25,8 +25,14 @@ from api.models.geospatial import (
     SOURCE_REGISTRY_DETECTED,
     with_source,
 )
-from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
-from api.registry.locks import BlackLockedError, assert_not_black_locked
+from api.registry.colors import (
+    _effective_flag_color_sql, _registry_column_sql, ladder_columns_available,
+    registry_row_color_sql, status_to_color,
+)
+from api.registry.locks import (
+    BLACK_LOCKED, BlackLockedError, assert_not_black_locked,
+    record_enforcement_event,
+)
 from shapely import prepare
 from shapely.affinity import scale
 from shapely.geometry import mapping, shape, Point
@@ -2955,18 +2961,7 @@ def _registry_row_flag_color_sql(alias="r", *, ladder=False):
 
     ELSE 'Yellow' matches status_to_color()'s unknown-status fallback.
     """
-    ladder_arms = ""
-    if ladder:
-        ladder_arms = (f"        WHEN COALESCE({alias}.blackLocked, 0) <> 0 THEN 'Black'\n"
-                       f"        WHEN COALESCE({alias}.warningLevel, 0) >= 1 THEN 'Orange'\n")
-    return f"""CASE
-{ladder_arms}        WHEN {alias}.applicationStatus = 'Active' THEN 'Green'
-        WHEN {alias}.applicationStatus = 'Expired' THEN 'Red'
-        WHEN {alias}.applicationStatus IN ('Revoked', 'Blacklisted') THEN 'Black'
-        WHEN {alias}.applicationStatus = 'Closed' THEN 'Purple'
-        WHEN {alias}.applicationStatus = 'Pending' THEN 'Yellow'
-        ELSE 'Yellow'
-    END"""
+    return registry_row_color_sql(alias, ladder=ladder)
 
 
 def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_user_id=None):
@@ -3693,43 +3688,86 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
 
 # ── Escalate to Black Flag ────────────────────────────────────────────────────
 
-def escalate_to_black(log_id):
-    """Update flagColor to Black. Only valid if current status is Red, Yellow, or Orange."""
+class FlagEscalationForbidden(PermissionError):
+    """Only a current admin may escalate a business. HTTP 403."""
+
+
+class FlagEscalationConflict(RuntimeError):
+    """The current color or missing ladder prevents escalation. HTTP 409."""
+
+
+class FlagEscalationNotFound(LookupError):
+    """The requested pin or registry business does not exist. HTTP 404."""
+
+
+def escalate_to_black(log_id, actor_user_id):
+    """Admin escalation from Red/Yellow/Orange, independent of warning level.
+
+    The pin, registry lock and audit event commit together. Registry-only flags
+    use negative business IDs; unregistered physical pins only change the pin.
+    This action does not require an inspection or change Black verification.
+    """
+    cursor = None
+    committed = False
     try:
-        if log_id < 0:
-            return update_flag_color(log_id, "Black")
-
         cursor = mysql.connection.cursor()
-
         cursor.execute(
-            "SELECT flagColor, detectedName, barangayID FROM geospatial_logs WHERE logID = %s",
-            (log_id,)
-        )
-        row = cursor.fetchone()
+            "SELECT userRole FROM users WHERE userID = %s AND isActive = 1",
+            (actor_user_id,))
+        actor = cursor.fetchone()
+        if not actor or actor.get("userRole") not in ("Admin", "SUPER_ADMIN", "System Administrator"):
+            return False, FlagEscalationForbidden("Only an admin may escalate to Black.")
 
-        if not row:
-            cursor.close()
-            return False, "Flag not found"
+        if not _has_columns(cursor, ("warningLevel", "blackLocked", "blackLockedAt", "blackLockedBy")):
+            return False, FlagEscalationConflict(
+                "Cannot escalate to Black: the enforcement ladder columns are missing.")
 
-        if row["flagColor"] not in ("Red", "Yellow", "Orange"):
-            cursor.close()
-            return False, f"Cannot escalate from '{row['flagColor']}' to Black"
+        registry_id = -log_id if log_id < 0 else None
+        pin = None
+        if log_id >= 0:
+            cursor.execute(f"""
+                SELECT g.logID,
+                       {_registry_column_sql('g', 'businessID')} AS registryBusinessID,
+                       {_effective_flag_color_sql('g', ladder=True)} AS effectiveFlagColor
+                FROM geospatial_logs g WHERE g.logID = %s FOR UPDATE
+            """, (log_id,))
+            pin = cursor.fetchone()
+            if pin is None:
+                return False, FlagEscalationNotFound("Flag not found")
+            registry_id = pin.get("registryBusinessID")
 
-        cursor.execute("""
-            UPDATE geospatial_logs
-            SET flagColor = 'Black'
-            WHERE logID = %s
-        """, (log_id,))
+        registry = None
+        if registry_id is not None:
+            cursor.execute("""SELECT businessID, applicationStatus, warningLevel, blackLocked
+                FROM official_registry WHERE businessID = %s FOR UPDATE""", (registry_id,))
+            registry = cursor.fetchone()
+        if log_id < 0 and registry is None:
+            return False, FlagEscalationNotFound("Business not found")
 
-        # Propagate changes: if marked Black, set registry status to Revoked
-        cursor.execute("""
-            UPDATE official_registry
-            SET applicationStatus = 'Revoked'
-            WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
-        """, (row["detectedName"], row["barangayID"]))
+        current_color = (status_to_color(
+            registry["applicationStatus"], warning_level=registry["warningLevel"],
+            black_locked=registry["blackLocked"]) if registry else pin["effectiveFlagColor"])
+        if current_color not in ("Red", "Yellow", "Orange"):
+            return False, FlagEscalationConflict(
+                "This business is already Black." if current_color == "Black" else
+                f"Cannot escalate from '{current_color}' to Black.")
+
+        if registry:
+            cursor.execute("""UPDATE official_registry
+                SET applicationStatus = 'Revoked', blackLocked = 1,
+                    blackLockedAt = NOW(), blackLockedBy = %s
+                WHERE businessID = %s""", (actor_user_id, registry_id))
+            record_enforcement_event(
+                cursor, business_id=registry_id, event_type=BLACK_LOCKED,
+                actor_user_id=actor_user_id, reason="Admin escalation from Map",
+                previous_level=registry["warningLevel"], new_level=registry["warningLevel"],
+                previous_black=registry["blackLocked"], new_black=True)
+            cursor.execute("UPDATE geospatial_logs SET flagColor = 'Black' WHERE businessID = %s", (registry_id,))
+        if pin:
+            cursor.execute("UPDATE geospatial_logs SET flagColor = 'Black' WHERE logID = %s", (log_id,))
 
         mysql.connection.commit()
-        cursor.close()
+        committed = True
 
         try:
             from api.notifications import hub
@@ -3745,6 +3783,12 @@ def escalate_to_black(log_id):
 
     except Exception as e:
         return False, str(e)
+    finally:
+        if cursor is not None:
+            # Read refusals release any row locks as well as closing the cursor.
+            if not committed:
+                mysql.connection.rollback()
+            cursor.close()
 
 
 # ── Delete Flag ───────────────────────────────────────────────────────────────
