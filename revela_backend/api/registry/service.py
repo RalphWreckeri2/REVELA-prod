@@ -16,6 +16,7 @@ from api.registry.colors import (
     status_to_color,
 )
 from api.models.geospatial import (
+    SOURCE_COLUMN,
     SOURCE_REGISTRY,
     geospatial_source_column_exists,
     with_source,
@@ -1824,6 +1825,46 @@ def _flag_source_sql(alias, fallback, cursor):
     return f"COALESCE({stored}, ({fallback}))"
 
 
+#: Columns the pin projection must expose under the alias `g`.
+#:
+#: _effective_flag_color_sql and _flag_source_sql are written against an alias
+#: that carries all of these: g.logID and g.flagColor for the inspection and
+#: ELSE arms, and g.businessID / g.placeID / g.barangayID / g.detectedName for
+#: the registry match. The Registry readers get that alias from a LATERAL
+#: derived table, and a derived table exposes ONLY what it selects - so a column
+#: missing here is not a NULL, it is "Unknown column 'g.x'", which MySQL raises
+#: at execution time and which 500s the whole page.
+_REGISTRY_PIN_LATERAL_COLUMNS = (
+    "logID", "placeID", "flagColor",
+    "businessID", "barangayID", "detectedName",
+)
+
+
+def _registry_pin_lateral_sql(cursor):
+    """LEFT JOIN LATERAL projecting the registry row's most recent pin as `g`.
+
+    Both Registry readers join this. The colour builders must be handed a `g`
+    that carries every column they reference, so the projection is defined once
+    here rather than spelled out at each call site.
+
+    `source` joins the projection only when geospatial_logs has the column:
+    naming a column that is not there breaks the query outright, so an
+    unmigrated database must not see it.
+    """
+    columns = list(_REGISTRY_PIN_LATERAL_COLUMNS)
+    if geospatial_source_column_exists(cursor):
+        columns.append(SOURCE_COLUMN)
+    projection = ", ".join(columns)
+    return f"""LEFT JOIN LATERAL (
+                SELECT {projection}
+                FROM geospatial_logs
+                WHERE (businessID IS NOT NULL AND businessID = r.businessID)
+                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName)
+                ORDER BY (businessID = r.businessID) DESC, detectedDate DESC
+                LIMIT 1
+            ) g ON TRUE"""
+
+
 def _ladder_select_sql(cursor):
     """SELECT list for the ladder fields the Registry page buttons read.
 
@@ -3323,14 +3364,7 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                 {ladder_select}
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
-            LEFT JOIN LATERAL (
-                SELECT logID, placeID, flagColor
-                FROM geospatial_logs
-                WHERE (businessID IS NOT NULL AND businessID = r.businessID)
-                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName)
-                ORDER BY (businessID = r.businessID) DESC, detectedDate DESC
-                LIMIT 1
-            ) g ON TRUE
+            {_registry_pin_lateral_sql(cursor)}
             {where}
             ORDER BY r.businessName ASC
             LIMIT %s OFFSET %s
@@ -3409,14 +3443,7 @@ def get_business_by_id(business_id):
                 {ladder_select}
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
-            LEFT JOIN LATERAL (
-                SELECT logID, placeID, flagColor
-                FROM geospatial_logs
-                WHERE (businessID IS NOT NULL AND businessID = r.businessID)
-                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName)
-                ORDER BY (businessID = r.businessID) DESC, detectedDate DESC
-                LIMIT 1
-            ) g ON TRUE
+            {_registry_pin_lateral_sql(cursor)}
             WHERE r.businessID = %s
             """,
             (business_id,),
