@@ -1619,7 +1619,8 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
                 f"{level}, not above 0."
             )
 
-        if _coerce_int(state.get("blackLocked")):
+        if (_coerce_int(state.get("blackLocked"))
+                or state.get("applicationStatus") in ("Revoked", "Blacklisted")):
             cursor.close()
             return None, RegistryLadderConflict(
                 "This business is Black locked, so its warning cannot be "
@@ -1690,6 +1691,11 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
 
         mysql.connection.commit()
         cursor.close()
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins({"type": "registry_updated", "businessID": business_id})
+        except Exception:
+            pass
         return {
             "businessID": business_id,
             "warningCleared": True,
@@ -1731,7 +1737,8 @@ def unlock_black_dispatch(business_id, unlocked_by_user_id, reason=None):
             cursor.close()
             return None, RegistryNotFoundError("Business not found")
 
-        if not _coerce_int(state.get("blackLocked")):
+        if (not _coerce_int(state.get("blackLocked"))
+                and state.get("applicationStatus") not in ("Revoked", "Blacklisted")):
             cursor.close()
             return None, RegistryLadderConflict(
                 "This business is not Black locked, so there is nothing to "
@@ -1776,7 +1783,7 @@ def unlock_black_dispatch(business_id, unlocked_by_user_id, reason=None):
             # Stays Black. The unlock is a dispatch permission, not a change of
             # state, and the payload says so so a client cannot infer a colour
             # from it.
-            "blackLocked": True,
+            "blackLocked": bool(_coerce_int(state.get("blackLocked"))),
         }, None
 
     except (RegistryLadderConflict, RegistryLadderUnavailable,

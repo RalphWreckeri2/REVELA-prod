@@ -29,7 +29,25 @@ export function canClearWarning(business, role) {
   if (!ADMIN_ROLES.includes(role)) return false;
   if (!business) return false;
   if (isBlackLocked(business)) return false;
+  if (business.flagColor === "Black") return false;
+  if (Number(business.hasNonVerifiedInspection) > 0) return false;
   return warningLevel(business) > 0;
+}
+
+export function canClearInspectionWarning(report, role) {
+  return report?.verificationStatus === "Verified"
+    && report.businessID != null
+    && Number(report.hasNonVerifiedInspection) === 0
+    && canClearWarning(report, role);
+}
+
+/** Refresh the open detail before notifying the Map of the successful change. */
+export async function clearInspectionWarning({ report, role, reason, token, request, refresh, onChanged }) {
+  if (!canClearInspectionWarning(report, role)) throw new Error("This inspection's warning cannot be cleared.");
+  const result = await request(report.businessID, reason, token);
+  await refresh();
+  onChanged?.(result);
+  return result;
 }
 
 /**
@@ -49,14 +67,12 @@ export function warningLevel(business) {
 }
 
 export function isBlackLocked(business) {
-  // blackLocked wins the ladder precedence, so this is the single source of
-  // "this business is Black" on the client. A Black colour alone is not
-  // enough: Revoked and Blacklisted permits are also Black but are not locked.
-  return Boolean(business?.blackLocked);
+  return Number(business?.blackLocked) === 1
+    || ["Revoked", "Blacklisted"].includes(business?.applicationStatus);
 }
 
 export function isBlackDispatchUnlocked(business) {
-  return Boolean(business?.blackDispatchUnlocked);
+  return Number(business?.blackDispatchUnlocked) === 1;
 }
 
 /**
@@ -70,6 +86,7 @@ export function clearWarningBlockedReason(business, role) {
   if (isBlackLocked(business)) {
     return "This business is Black locked. Only a SUPER_ADMIN unlock applies.";
   }
+  if (Number(business.hasNonVerifiedInspection) > 0) return "An inspection is not yet Verified";
   if (warningLevel(business) <= 0) return "There is no warning to clear";
   return "Not available";
 }

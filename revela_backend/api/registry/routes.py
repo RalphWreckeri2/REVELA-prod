@@ -619,6 +619,10 @@ def clear_warning_route(business_id):
             "code": "warning_clear_refused",
         }), 409
     if error:
+        if isinstance(error, RegistryNotFoundError):
+            return jsonify({"error": str(error)}), 404
+        if isinstance(error, (RegistryLadderConflict, RegistryLadderUnavailable)):
+            return jsonify({"error": str(error), "code": "warning_clear_refused"}), 409
         return jsonify({"error": str(error)}), 500
     return jsonify(summary), 200
 
@@ -648,6 +652,10 @@ def unlock_black_dispatch_route(business_id):
             "code": "black_unlock_refused",
         }), 409
     if error:
+        if isinstance(error, RegistryNotFoundError):
+            return jsonify({"error": str(error)}), 404
+        if isinstance(error, (RegistryLadderConflict, RegistryLadderUnavailable)):
+            return jsonify({"error": str(error), "code": "black_unlock_refused"}), 409
         return jsonify({"error": str(error)}), 500
     return jsonify(summary), 200
 

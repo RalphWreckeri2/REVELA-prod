@@ -1397,6 +1397,9 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
         unlock = _black_dispatch_unlock_sql(cursor)
         warning = f"COALESCE({_registry_column_sql('g', 'warningLevel')}, 0)" if ladder else "0"
         locked = f"COALESCE({_registry_column_sql('g', 'blackLocked')}, 0)" if ladder else "0"
+        business_id = f"COALESCE({_registry_column_sql('g', 'businessID')}, g.businessID)"
+        business_name = f"COALESCE({_registry_column_sql('g', 'businessName')}, g.detectedName)"
+        business_barangay = f"COALESCE({_registry_column_sql('g', 'barangayID')}, g.barangayID)"
 
         cursor.execute(
             f"""
@@ -1423,6 +1426,16 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
                 {warning} AS warningLevel,
                 {locked} AS blackLocked,
                 {unlock} AS blackDispatchUnlocked,
+                EXISTS (
+                    SELECT 1 FROM inspection_reports pending
+                    JOIN geospatial_logs pending_g ON pending_g.logID = pending.targetID
+                    WHERE pending.targetType = 'geospatial_log'
+                      AND (pending.verificationStatus IS NULL OR pending.verificationStatus <> 'Verified')
+                      AND (pending_g.businessID = {business_id}
+                           OR (pending_g.businessID IS NULL
+                               AND pending_g.detectedName = {business_name}
+                               AND pending_g.barangayID = {business_barangay}))
+                ) AS hasNonVerifiedInspection,
                 g.latitude,
                 g.longitude,
                 b.barangayName,

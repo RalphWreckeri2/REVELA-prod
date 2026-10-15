@@ -8,6 +8,8 @@ import {
   isBlackDispatchAllowed,
   isBlackLocked,
   warningLevel,
+  canClearInspectionWarning,
+  clearInspectionWarning,
 } from "./registryLadderPolicy.js";
 import {
   canDispatchFlag,
@@ -78,10 +80,11 @@ test("Unlock is not offered twice for one grant", () => {
   assert.equal(canUnlockBlackDispatch(unlocked, "SUPER_ADMIN"), false);
 });
 
-test("a Black colour alone does not count as locked", () => {
-  // Revoked and Blacklisted permits render Black but are not locked, so they
-  // are not unlockable.
-  assert.equal(isBlackLocked(business({ applicationStatus: "Revoked" })), false);
+test("Revoked counts as Black even without a stored lock bit", () => {
+  const revoked = business({ applicationStatus: "Revoked", warningLevel: 1, blackLocked: 0 });
+  assert.equal(isBlackLocked(revoked), true);
+  assert.equal(canClearWarning(revoked, "Admin"), false);
+  assert.equal(canUnlockBlackDispatch(revoked, "SUPER_ADMIN"), true);
 });
 
 test("a missing business never shows either button", () => {
@@ -231,4 +234,43 @@ test("the Black dispatch rule reads the same payload", () => {
   const unlocked = { ...locked, blackDispatchUnlocked: 1 };
   assert.equal(canDispatchFlag(locked, { isAdmin: true }), false);
   assert.equal(canDispatchFlag(unlocked, { isAdmin: true }), true);
+});
+
+const inspection = (over = {}) => ({ ...registryRow({ warningLevel: 1, flagColor: "Orange" }),
+  reportID: 7, verificationStatus: "Verified", hasNonVerifiedInspection: 0, ...over });
+
+test("Inspection Clear Warning requires a Verified warned business and no open inspection", () => {
+  assert.equal(canClearInspectionWarning(inspection(), "Admin"), true);
+  for (const changes of [{ verificationStatus: "Submitted" }, { warningLevel: 0 },
+    { hasNonVerifiedInspection: 1 }, { hasNonVerifiedInspection: undefined },
+    { businessID: null }, { blackLocked: 1 }, { applicationStatus: "Revoked" }, { flagColor: "Black" }]) {
+    assert.equal(canClearInspectionWarning(inspection(changes), "Admin"), false);
+  }
+  assert.equal(canClearInspectionWarning(inspection(), "Inspector"), false);
+});
+
+test("clearing an Inspection warning refreshes detail before notifying the Map", async () => {
+  const calls = [];
+  const report = inspection();
+  const result = await clearInspectionWarning({ report, role: "Admin", reason: "resolved", token: "test-token",
+    request: async (...args) => { calls.push(["clear", ...args]); return { warningLevel: 0 }; },
+    refresh: async () => { calls.push(["refresh-detail"]); },
+    onChanged: () => calls.push(["refresh-map"]),
+  });
+  assert.equal(result.warningLevel, 0);
+  assert.deepEqual(calls, [["clear", "BIZ-1", "resolved", "test-token"], ["refresh-detail"], ["refresh-map"]]);
+});
+
+test("a refused clear cannot trigger a success refresh", async () => {
+  const calls = [];
+  await assert.rejects(clearInspectionWarning({ report: inspection(), role: "Admin",
+    request: async () => { throw new Error("Inspection is still open"); },
+    refresh: async () => calls.push("refresh"), onChanged: () => calls.push("changed"),
+  }), /Inspection is still open/);
+  assert.deepEqual(calls, []);
+});
+
+test("driver string zero never creates a lock or an unlock grant", () => {
+  assert.equal(isBlackLocked(business({ blackLocked: "0" })), false);
+  assert.equal(canDispatchFlag({ color: "Black", blackDispatchUnlocked: "0" }, { isAdmin: true }), false);
 });

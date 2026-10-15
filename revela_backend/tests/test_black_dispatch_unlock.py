@@ -85,7 +85,7 @@ class UnlockTests(Harness):
         self.assertEqual(params[3], "appeal")
 
     def test_a_business_that_is_not_black_is_refused(self):
-        summary, error = self._unlock(self._cursor(blackLocked=0))
+        summary, error = self._unlock(self._cursor(blackLocked=0, applicationStatus="Active"))
         self.assertIsNone(summary)
         self.assertIsInstance(error, registry_service.RegistryLadderConflict)
         self.assertIn("not Black locked", str(error))

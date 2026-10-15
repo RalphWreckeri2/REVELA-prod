@@ -139,3 +139,34 @@ was appended to `src/components/dispatchEligibility.test.js`.
 
 Full backend: **924 passed, 4 accepted failures, 28 skipped; 554 passing
 subtests**. Frontend `npm run verify` passed with 147 policy tests.
+
+## Part 5 verification
+
+Verified inspection details now show Clear Warning through registryLadderPolicy
+for an admin, with a registry business, warningLevel > 0, a non-Black current
+state and an explicit zero non-Verified-inspection count. That count is computed
+on the backend across all matching pins, not just the loaded reports. The
+existing clear-warning route is reused. After success the open detail is
+refetched and a registry update refreshes the Map; the server also publishes
+the update for other open clients.
+
+Clear Warning and the existing single-use unlock now consistently recognize
+Revoked without a lock bit. Their routes map returned typed conflicts to 409
+as well as raised ones (the old routes only handled the latter). The unlock
+does not alter permit status or the lock bit. Verified Black was not changed.
+
+Existing tests changed:
+- `src/components/registryLadderPolicy.test.js`: replace the old assertion that
+  Revoked is not Black; add Inspection eligibility, ordered refresh, failed-clear
+  and string-zero coverage.
+- `tests/test_black_dispatch_unlock.py::test_a_business_that_is_not_black_is_refused`:
+  make the fixture truly non-Black (Active + lock=0 instead of Revoked + lock=0).
+  Every refusal assertion is retained.
+
+New `tests/test_inspection_clear_warning.py` executes the actual Inspection
+payload, clear route, linked/legacy open-inspection checks and all six verified
+results from Pending/Expired/Closed. Pending returns to Yellow after clearing,
+applicationStatus stays Pending, and the historical report is preserved.
+
+Full backend: **955 passed, 4 accepted failures, 28 skipped; 554 passing
+subtests**. Frontend `npm run verify` passed with 151 policy tests.

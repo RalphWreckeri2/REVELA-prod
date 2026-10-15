@@ -18,11 +18,13 @@ import {
   verifyInspectionRequest,
   getInspectorsRequest,
   parseInspectionEvidence,
+  clearWarningRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
 import AnimatePresence from "../components/AnimatePresence";
 import InspectionDialog from "../components/InspectionDialog";
 import { canFollowUpInspection } from "../components/dispatchEligibility";
+import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
 import { inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, matchesDispatchSearch, matchesGridSearch } from "./inspectionPresentation";
 import "../styles/InspectionPage.css";
 
@@ -516,9 +518,36 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 }
 
 // ── Detail Modal ───────────────────────────────────────────────────────────────
-function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
+function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared, onAssign, onVerify, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [enlargedImage, setEnlargedImage] = useState(null);
+  const [clearingWarning, setClearingWarning] = useState(false);
+  const [clearError, setClearError] = useState("");
   const photoReturnRef = useRef(null);
+
+  const handleClearWarning = async () => {
+    const { isConfirmed, value } = await Swal.fire({
+      title: "Clear this warning?",
+      text: "The warning level returns to 0. The permit status stays the same.",
+      input: "text", inputPlaceholder: "Reason (optional)",
+      showCancelButton: true, confirmButtonText: "Clear warning",
+    });
+    if (!isConfirmed) return;
+    setClearingWarning(true);
+    setClearError("");
+    try {
+      await clearInspectionWarning({
+        report, role, reason: value || null, token, request: clearWarningRequest,
+        refresh: onWarningCleared,
+        onChanged: () => window.dispatchEvent(new CustomEvent("revela:registry-update", {
+          detail: { businessID: report.businessID },
+        })),
+      });
+    } catch (err) {
+      setClearError(err.message || "Could not clear the warning.");
+    } finally {
+      setClearingWarning(false);
+    }
+  };
   
   const flagMeta    = FLAG_COLOR[report.flagColor]   ?? FLAG_COLOR.Red;
   const resultMeta  = FLAG_COLOR[report.inspectionResult] ?? null;
@@ -526,7 +555,7 @@ function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onC
 
   return (
     <InspectionDialog
-      title="Inspection Details" onClose={onClose} isClosing={isClosing} panelStyle={{ width: 520 }}
+      title="Inspection Details" onClose={onClose} busy={clearingWarning} isClosing={isClosing} panelStyle={{ width: 520 }}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
 
@@ -669,6 +698,7 @@ function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onC
           );
         })()}
 
+        {clearError && <div style={s.errorBanner} role="alert">{clearError}</div>}
         {isAdmin && (
           <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
             {(report.verificationStatus === "Assigned" ||
@@ -704,6 +734,12 @@ function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onC
                 onClick={(e) => { e.stopPropagation(); onAssign(report); }}
               >
                 <Icon.Send size={18} /> Follow-up
+              </button>
+            )}
+            {canClearInspectionWarning(report, role) && (
+              <button className="ghost-btn" disabled={clearingWarning} onClick={handleClearWarning}
+                style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1 }}>
+                {clearingWarning ? "Clearing…" : "Clear Warning"}
               </button>
             )}
           </div>
@@ -934,6 +970,9 @@ export default function InspectionPage() {
         setTotal(result.total ?? 0);
         setTotalRows(result.total_rows ?? result.total ?? 0);
       }
+      setDetailTarget(current => current
+        ? (result.data ?? []).find(row => row.reportID === current.reportID) ?? current
+        : null);
     } catch (err) {
       if (!isSilent) {
         setError(err.message || "Failed to load inspections.");
@@ -1151,6 +1190,8 @@ export default function InspectionPage() {
           report={detailTarget}
           token={token}
           isAdmin={isAdmin}
+          role={user?.role}
+          onWarningCleared={() => fetchReports(true)}
           onAssign={(r) => { actionReturnRef.current = detailReturnRef.current; setDetailTarget(null); setAssignTarget(r); }}
           onVerify={(r) => { actionReturnRef.current = detailReturnRef.current; setDetailTarget(null); setVerifyTarget(r); }}
           onClose={() => setDetailTarget(null)}
