@@ -880,7 +880,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                  SELECT ir.reportID, ir.targetID, ir.userID, ir.inspectionResult,
                      ir.noticeLevel, ir.verificationStatus, ir.verifiedLatitude,
                      ir.verifiedLongitude, ir.verifiedAccuracy, ir.nearestLandmark,
-                     g.detectedName, g.barangayID
+                     g.detectedName, g.barangayID, g.businessID
                  FROM inspection_reports ir
                  LEFT JOIN geospatial_logs g ON g.logID = ir.targetID
             WHERE ir.reportID = %s
@@ -958,18 +958,54 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             WHERE logID = %s
         """, (report["inspectionResult"], report["noticeLevel"], report["targetID"]))
 
-        # If verified result is Purple (Closed / Abandoned),
-        # also mark the official_registry entry as 'Closed'.
+        # If verified result is Purple (Closed / Abandoned), also mark the
+        # official_registry entry as 'Closed'.
+        #
+        # Matching by name alone is not safe: two businesses can share a name
+        # in one barangay, and closing the wrong one is worse than not closing
+        # either. Prefer the pin's businessID; fall back to name + barangay
+        # only for legacy pins that carry none. Either way the affected row
+        # count is checked - previously a zero-row update still returned
+        # "Verified" and the admin believed the permit had been closed.
+        registry_closed = False
+        registry_warning = None
         if report["inspectionResult"] == "Purple":
-            cursor.execute(
-                "SELECT detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
-            geo_row = cursor.fetchone()
-            if geo_row and geo_row["detectedName"]:
+            pin_business_id = report.get("businessID")
+            if pin_business_id:
                 cursor.execute("""
                     UPDATE official_registry
                     SET applicationStatus = 'Closed'
-                    WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
-                """, (geo_row["detectedName"], geo_row["barangayID"]))
+                    WHERE businessID = %s
+                """, (pin_business_id,))
+                registry_closed = cursor.rowcount > 0
+                if not registry_closed:
+                    registry_warning = (
+                        f"Pin is linked to business {pin_business_id}, but no "
+                        f"registry row with that ID was updated; the permit "
+                        f"status may not show as Closed."
+                    )
+            else:
+                # Legacy pin with no businessID. Not an error - there may be
+                # no registry record at all for an unregistered pin.
+                cursor.execute(
+                    """SELECT detectedName, barangayID
+                       FROM geospatial_logs WHERE logID = %s""",
+                    (report["targetID"],),
+                )
+                geo_row = cursor.fetchone()
+                if geo_row and geo_row["detectedName"]:
+                    cursor.execute("""
+                        UPDATE official_registry
+                        SET applicationStatus = 'Closed'
+                        WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
+                    """, (geo_row["detectedName"], geo_row["barangayID"]))
+                    registry_closed = cursor.rowcount > 0
+                    if not registry_closed:
+                        registry_warning = (
+                            "Pin has no business ID and no registry row matched "
+                            "its name and barangay; the permit status may not "
+                            "show as Closed."
+                        )
 
         log_inspection_event(
             cursor,
@@ -980,7 +1016,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             assigned_to_user_id=report["userID"],
             flag_color_at_event=geo_flag["flagColor"] if geo_flag else None,
             inspection_result=report["inspectionResult"],
-            remarks="Map location updated to inspector GPS" if location_updated else None,
+            remarks=("Map location updated to inspector GPS" if location_updated
+                     else registry_warning),
             cycle_id=cycle_id,
         )
 
@@ -996,6 +1033,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 "status": "Verified",
                 "newFlagColor": report["inspectionResult"],
                 "locationUpdated": location_updated,
+                "registryClosed": registry_closed,
+                "registryWarning": registry_warning,
             })
         except Exception:
             pass
@@ -1006,6 +1045,11 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             "newFlagColor":     report["inspectionResult"],
             "status":           "Verified",
             "locationUpdated":  location_updated,
+            # registryClosed is True only when an official_registry row was
+            # actually updated. registryWarning explains a verified Purple whose
+            # registry row could not be reached, so the admin is not misled.
+            "registryClosed":   registry_closed,
+            "registryWarning":  registry_warning,
         }, None
 
     except Exception as e:
