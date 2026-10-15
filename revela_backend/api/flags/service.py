@@ -22,6 +22,7 @@ from api.models.geospatial import (
     SOURCE_DETECTION,
     geospatial_source_column_exists,
     SOURCE_MANUAL,
+    SOURCE_REGISTRY,
     SOURCE_REGISTRY_DETECTED,
     with_source,
 )
@@ -3138,7 +3139,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     b.barangayName             AS barangayName,
                     r.businessSize             AS businessSize,
                     r.businessAddress          AS resolvedAddress,
-                    'registry_only'            AS flagSource,
+                    '{SOURCE_REGISTRY}'        AS flagSource,
                     NULL                       AS verificationStatus,
                     r.matchStatus              AS matchStatus,
                     r.coordSource              AS coordSource,

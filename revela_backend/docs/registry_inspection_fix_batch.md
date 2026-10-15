@@ -170,3 +170,54 @@ applicationStatus stays Pending, and the historical report is preserved.
 
 Full backend: **955 passed, 4 accepted failures, 28 skipped; 554 passing
 subtests**. Frontend `npm run verify` passed with 151 policy tests.
+
+## Part 7 and final verification
+
+The Map's virtual registry branch was still emitting `registry_only`, while
+the frontend recognizes `registry`. It now emits the canonical SOURCE_REGISTRY
+value and displays **Official BPLO Registry**. New real-payload backend coverage
+checks this with and without the source column; the frontend source test was
+extended without changing any previous label or unknown-source assertion.
+
+Final full backend: **957 passed, 4 accepted failures, 28 skipped; 554 passing
+subtests**. Final frontend `npm run verify`: lint, context checks, **152 tests**
+and production build passed. The same four failures remain; none disappeared.
+The CORS failure remains the accepted environment-related verification gap
+(local MySQL 1045), not a pass. Vite retains its pre-existing large-chunk warning.
+
+No new skips or expected-failure marks were added. Probe caches are reset for
+every backend test. The new workflows execute the real color builders and
+color sync. SQLite substitutes unsupported MySQL syntax, so these checks do
+not replace live MySQL concurrency/deployment verification or a browser smoke
+test. No production backfill or deployment was executed.
+
+## Line-level existing-test ledger
+
+Line numbers refer to the final files. Backend paths are relative to
+`revela_backend`; frontend paths are relative to `revela_web`.
+
+| Existing file and lines | Change and reason |
+| --- | --- |
+| `tests/test_enforcement_ladder_colors.py:150,183–187,406–427,448–455` | Expected-color helper and three tests now require Black to outrank Orange, including the historical comparison. |
+| `tests/test_enforcement_ladder_colors.py:457–473` | Add real-builder Pending/clear/history and Revoked regressions. |
+| `tests/test_black_guard_wiring.py:59` | Cursor fixture recognizes the expanded lock/status read; existing test assertions retained. |
+| `tests/test_verify_ladder_writes.py:55,103–104` | Cursor fixture recognizes the expanded read and includes applicationStatus; existing assertions retained. |
+| `tests/test_black_lock_guard.py:63–72` | Add Revoked guard coverage with and without ladder columns; old tests retained. |
+| `tests/test_sync_ladder_protection.py:39–63,98–105` | Extend preload fixture and add unmigrated Revoked protection coverage; old assertions retained. |
+| `tests/test_yellow_flag_idempotency.py:44–55` | Retry DB count 2→3 for the source-column probe; explicitly check that probe and retain duplicate-key/notification assertions. |
+| `tests/test_yellow_flag_idempotency.py:75–83` | Legacy DB count 1→2 for that probe; retain single-insert/notification checks. |
+| `tests/test_yellow_flag_validation.py:65–78` | Valid offsite DB count 2→3 for that probe, explicitly asserted. |
+| `tests/test_black_dispatch_unlock.py:382–389` | Replace obsolete unmigrated guard bypass with typed Revoked refusal and zero writes. |
+| `tests/test_black_dispatch_unlock.py:87–91` | Non-Black refusal fixture is now Active + lock=0; all refusal assertions retained. |
+| `tests/test_registry_snap.py:15–105` | Real in-memory rows and real sync/color execution; assert persisted coordinates/color and one color write. Cached fixture IDs now follow actual SQL order. |
+| `tests/test_registry_snap.py:107–158` | Remove sync mock; API failure must leave only the SELECT, no writes and no commit. |
+| `tests/test_delete_isolation.py:226–240` | Real virtual-business deletion instead of an unconstrained mock; retain exact-delete assertions and additionally verify row removal. |
+| `src/components/dispatchEligibility.test.js:92–127` | Append three Follow-up policy tests and one real-shape Map grant test; no old assertion changed. |
+| `src/components/registryLadderPolicy.test.js:83–88` | Replace the obsolete Revoked-is-not-Black expectation with the agreed Black rule, Clear Warning refusal and SUPER_ADMIN unlock eligibility. |
+| `src/components/registryLadderPolicy.test.js:242–276` | Append Inspection eligibility, ordered refresh, failure and string-zero tests. |
+| `src/components/flagSource.test.js:91–99` | Append registry-only payload label/filter coverage; old unknown-source assertions retained. |
+
+New test/support files: `tests/conftest.py`, `tests/registry_sqlite.py`,
+`tests/test_registry_color_workflows.py`, `tests/test_black_escalation.py`,
+`tests/test_follow_up_black.py`, `tests/test_black_delete_and_map_payload.py`,
+`tests/test_inspection_clear_warning.py`, `tests/test_registry_only_source_label.py`.

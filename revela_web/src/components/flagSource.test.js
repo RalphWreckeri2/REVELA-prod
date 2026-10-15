@@ -87,3 +87,13 @@ test("the filter pills carry the stored vocabulary as their values", () => {
   assert.deepEqual(SOURCE_FILTERS.map((f) => f.label),
     ["All Sources", "Registry Only", "Registry + Maps"]);
 });
+
+test("registry-only API flag has a recognized origin label and filter", () => {
+  const payload = { data: [{ logID: -5, businessID: "5", detectedName: "ACME",
+    flagColor: "Orange", flagSource: "registry", blackDispatchUnlocked: 0 }] };
+  const source = payload.data[0].flagSource;
+  assert.equal(sourceLabel(source), "Official BPLO Registry");
+  assert.notEqual(sourceLabel(source), UNKNOWN_SOURCE_LABEL);
+  assert.equal(matchesSourceFilter(source, "registry"), true);
+  assert.equal(matchesSourceFilter(source, "registry_detected"), false);
+});
