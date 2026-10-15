@@ -32,21 +32,33 @@ from api.registry.colors import _effective_flag_color_sql
 _STATUS_LOOKUP = re.compile(
     r"\(\s*SELECT\s+r_chk\.applicationStatus.*?LIMIT\s+1\s*\)", re.DOTALL)
 
+# The two ladder lookups. Present only when the builder is called with
+# ladder=True; substituted here so these tests keep working either way.
+_LOCK_LOOKUP = re.compile(
+    r"\(\s*SELECT\s+r_chk\.blackLocked.*?LIMIT\s+1\s*\)", re.DOTALL)
+_WARNING_LOOKUP = re.compile(
+    r"\(\s*SELECT\s+r_chk\.warningLevel.*?LIMIT\s+1\s*\)", re.DOTALL)
+
 # Aliases used by api/analytics/routes.py for geospatial_logs relations.
 GEO_ALIASES = ("g", "g2")
 
 
 def _with_registry_status(expression, status):
-    """Replace the correlated lookup with the value the row resolves to."""
-    if status is None:
-        replacement = "NULL"
-    else:
-        replacement = "'%s'" % status
-    substituted, count = _STATUS_LOOKUP.subn(replacement, expression)
-    if count != 5:
+    """Replace the correlated lookups with the values the row resolves to.
+
+    This asserts that no lookup was left behind, rather than how many there
+    were. The old "expected 5" check was counting textual occurrences of the
+    status subquery - one per CASE arm - so adding or removing an arm broke
+    this test without any behaviour changing.
+    """
+    replacement = "NULL" if status is None else "'%s'" % status
+    substituted = _STATUS_LOOKUP.sub(lambda m: replacement, expression)
+    substituted = _LOCK_LOOKUP.sub("0", substituted)
+    substituted = _WARNING_LOOKUP.sub("0", substituted)
+    if "SELECT r_chk." in substituted:
         raise AssertionError(
-            "expected 5 registry-status lookups in the expression, found %d; "
-            "the shared builder changed shape" % count)
+            "a correlated registry lookup was not substituted; the shared "
+            "builder grew a lookup this helper does not cover:\n%s" % substituted)
     return substituted
 
 

@@ -28,6 +28,10 @@ from api.registry.colors import _effective_flag_color_sql
 
 _STATUS_LOOKUP = re.compile(
     r"\(\s*SELECT\s+r_chk\.applicationStatus.*?LIMIT\s+1\s*\)", re.DOTALL)
+_LOCK_LOOKUP = re.compile(
+    r"\(\s*SELECT\s+r_chk\.blackLocked.*?LIMIT\s+1\s*\)", re.DOTALL)
+_WARNING_LOOKUP = re.compile(
+    r"\(\s*SELECT\s+r_chk\.warningLevel.*?LIMIT\s+1\s*\)", re.DOTALL)
 
 INSPECTOR = {"userID": 9, "fullName": "Inspector", "userRole": "Inspector"}
 
@@ -35,10 +39,17 @@ INSPECTOR = {"userID": 9, "fullName": "Inspector", "userRole": "Inspector"}
 def _sqlite_registry_status(status):
     """Run the real expression for one row, standing in for the registry."""
     expression = _effective_flag_color_sql("g")
-    substituted, count = _STATUS_LOOKUP.subn(
-        "NULL" if status is None else "'%s'" % status, expression)
-    if count != 5:
-        raise AssertionError(f"expected 5 lookups, found {count}")
+    substituted = _STATUS_LOOKUP.sub(
+        lambda m: "NULL" if status is None else "'%s'" % status, expression)
+    substituted = _LOCK_LOOKUP.sub("0", substituted)
+    substituted = _WARNING_LOOKUP.sub("0", substituted)
+    # Assert the substitution covered every correlated lookup, not how many
+    # there were. The old "expected 5" check counted textual occurrences - one
+    # per CASE arm - so a new arm broke this test with no behaviour change.
+    if "SELECT r_chk." in substituted:
+        raise AssertionError(
+            "a correlated registry lookup was not substituted; the shared "
+            "builder grew a lookup this helper does not cover:\n%s" % substituted)
     con = sqlite3.connect(":memory:")
     con.executescript("""
         CREATE TABLE geospatial_logs (
