@@ -1383,6 +1383,15 @@ class RegistryNotFoundError(LookupError):
     """The requested registry record does not exist. HTTP 404."""
 
 
+class SyncProtectionLookupError(RuntimeError):
+    """The pre-run protection lookup failed, so sync must not start.
+
+    Same fail-closed contract as OpenInspectionLookupError: if we cannot tell
+    which rows are protected, syncing anyway would overwrite exactly the rows
+    the guard exists to protect.
+    """
+
+
 class OpenInspectionLookupError(RuntimeError):
     """Raised when the open-inspection guard cannot be evaluated."""
 
@@ -1433,6 +1442,46 @@ def _load_open_inspection_keys(cursor):
     return business_ids, name_brgy_pairs
 
 
+def _load_sync_protection_keys(cursor):
+    """Preload the rows this sync run must not touch.
+
+    Returns (black_locked_ids, closed_ids), both sets of businessID.
+
+    Black locked: a permanent habitual-offender lock. Sync may not touch it -
+    it must never see the row, never move its pin and never recolour it.
+
+    Closed: the permit is gone. Sync may not reopen it by accident. A manual
+    admin edit can still reopen one; this guard is about a CSV import silently
+    resurrecting a closed business.
+
+    The Black preload needs the ladder columns. On a database without them
+    there is nothing to protect against, so the set is empty and the Closed
+    skip still applies.
+
+    Fails closed. A caller that cannot answer this question must abort rather
+    than guess.
+    """
+    black_locked_ids = set()
+    closed_ids = set()
+
+    if ladder_columns_available(cursor):
+        cursor.execute("""
+            SELECT businessID FROM official_registry
+            WHERE blackLocked = 1 AND businessID IS NOT NULL
+        """)
+        for row in cursor.fetchall() or ():
+            black_locked_ids.add(row.get("businessID"))
+
+    cursor.execute("""
+        SELECT businessID FROM official_registry
+        WHERE applicationStatus = 'Closed' AND businessID IS NOT NULL
+    """)
+    for row in cursor.fetchall() or ():
+        closed_ids.add(row.get("businessID"))
+
+    return black_locked_ids, closed_ids
+
+
 def sync_registry(file, ext: str):
     """Parse CSV/Excel → geocode → upsert OFFICIAL_REGISTRY.
     Existing rows match on businessID and only changed business fields are
@@ -1471,6 +1520,8 @@ def sync_registry(file, ext: str):
         unchanged = 0
         skipped = 0
         skipped_open_inspection = 0
+        skipped_black_lock = 0
+        skipped_closed = 0
         invalid_status_rows = 0
         invalid_status_values = {}
         geocoded_ok = 0
@@ -1502,6 +1553,19 @@ def sync_registry(file, ext: str):
             raise OpenInspectionLookupError(
                 "Could not check open inspections; sync aborted, "
                 f"nothing was changed. ({exc})"
+            ) from exc
+
+        # Same contract, same reason: Black locked and Closed rows are frozen
+        # for this run. Loaded once so the per-row cost stays zero, and raised
+        # before anything is written.
+        try:
+            black_locked_ids, closed_ids = _load_sync_protection_keys(cursor)
+        except SyncProtectionLookupError:
+            raise
+        except Exception as exc:
+            raise SyncProtectionLookupError(
+                "Could not read the Black lock / Closed protections; sync "
+                f"aborted, nothing was changed. ({exc})"
             ) from exc
 
         for idx, row in df.iterrows():
@@ -1587,6 +1651,26 @@ def sync_registry(file, ext: str):
                 errors.append(
                     f"Row {idx + 2}: open inspection in progress — skipped")
                 continue
+
+            # Black locked or Closed: frozen for this run, like an open
+            # inspection. Sits before the status validation, before any
+            # geocoding and before _sync_flag_color. `skipped` stays the
+            # running total for every reason a row is dropped.
+            if existing:
+                if biz_id in black_locked_ids:
+                    skipped += 1
+                    skipped_black_lock += 1
+                    errors.append(
+                        f"Row {idx + 2}: business is Black locked "
+                        "— skipped")
+                    continue
+                if biz_id in closed_ids:
+                    skipped += 1
+                    skipped_closed += 1
+                    errors.append(
+                        f"Row {idx + 2}: permit is Closed — skipped "
+                        "(reopen it from the registry page)")
+                    continue
 
             # Status of Application (license/permit standing).
             # Rejected before any geocoding, so a bad row costs no quota.
@@ -2077,6 +2161,8 @@ def sync_registry(file, ext: str):
             "cache_hits":       cache_hits,
             "skipped":          skipped,
             "skipped_open_inspection": skipped_open_inspection,
+            "skipped_black_lock": skipped_black_lock,
+            "skipped_closed": skipped_closed,
             "invalid_status_rows": invalid_status_rows,
             "invalid_status_values": invalid_status_values,
             # errors is truncated below; the two counters above are not.
