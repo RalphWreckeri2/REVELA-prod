@@ -1320,6 +1320,52 @@ def upload_registry(file, ext: str):
         return None, str(e)
 
 
+def _load_open_inspection_keys(cursor):
+    """Batch-load the businesses whose inspection is not yet verified.
+
+    "Open" deliberately means verificationStatus <> 'Verified' rather than an
+    explicit list, so a new assignment state cannot silently become syncable.
+
+    Rows are matched through the map pin the way every other join in this
+    module does: geospatial_logs.businessID where the pin carries one, and
+    barangayID + detectedName for legacy pins with businessID IS NULL.
+
+    Returns (business_ids, name_brgy_pairs). Both are empty on failure so a
+    read problem degrades to "sync normally" rather than "skip everything".
+    """
+    business_ids = set()
+    name_brgy_pairs = set()
+    try:
+        cursor.execute("""
+            SELECT DISTINCT g.businessID
+            FROM geospatial_logs g
+            JOIN inspection_reports ir
+              ON ir.targetID = g.logID
+             AND ir.targetType = 'geospatial_log'
+            WHERE ir.verificationStatus <> 'Verified'
+              AND g.businessID IS NOT NULL
+        """)
+        for row in cursor.fetchall() or ():
+            business_ids.add(row.get("businessID"))
+
+        cursor.execute("""
+            SELECT DISTINCT g.detectedName, g.barangayID
+            FROM geospatial_logs g
+            JOIN inspection_reports ir
+              ON ir.targetID = g.logID
+             AND ir.targetType = 'geospatial_log'
+            WHERE ir.verificationStatus <> 'Verified'
+              AND g.businessID IS NULL
+        """)
+        for row in cursor.fetchall() or ():
+            name_brgy_pairs.add((row.get("detectedName"),
+                                 row.get("barangayID")))
+    except Exception as exc:
+        print(f"[registry sync] open-inspection lookup unavailable: {exc}")
+        return set(), set()
+    return business_ids, name_brgy_pairs
+
+
 def sync_registry(file, ext: str):
     """Parse CSV/Excel → geocode → upsert OFFICIAL_REGISTRY.
     Existing rows match on businessID and only changed business fields are
@@ -1357,6 +1403,7 @@ def sync_registry(file, ext: str):
         updated = 0
         unchanged = 0
         skipped = 0
+        skipped_open_inspection = 0
         geocoded_ok = 0
         geocoded_failed = 0
         coordinates_out_of_bounds = 0
@@ -1373,6 +1420,11 @@ def sync_registry(file, ext: str):
         # Load all barangays once upfront instead of one DB cursor per row.
         barangay_lookup = _load_barangay_lookup()
         cursor = mysql.connection.cursor()
+
+        # Rows under inspection are frozen for this run. Loaded once so the
+        # per-row cost stays zero.
+        open_inspection_ids, open_inspection_names = _load_open_inspection_keys(
+            cursor)
 
         for idx, row in df.iterrows():
             if idx % 5 == 0:
@@ -1442,6 +1494,21 @@ def sync_registry(file, ext: str):
                 (biz_id,),
             )
             existing = cursor.fetchone()
+
+            # An inspection is in flight for this business: leave the whole
+            # row alone. This sits before any UPDATE, before the coordinate
+            # resolution below, and well before _sync_flag_color, which runs
+            # outside the business_fields_changed guard. New rows (no existing
+            # record) are unaffected and fall through to the INSERT branch.
+            if existing and (
+                biz_id in open_inspection_ids
+                or (name_key, barangay_id) in open_inspection_names
+            ):
+                skipped += 1
+                skipped_open_inspection += 1
+                errors.append(
+                    f"Row {idx + 2}: open inspection in progress — skipped")
+                continue
 
             is_locked = False
             is_rejected = False
@@ -1923,6 +1990,7 @@ def sync_registry(file, ext: str):
             "api_error":        api_error_count,
             "cache_hits":       cache_hits,
             "skipped":          skipped,
+            "skipped_open_inspection": skipped_open_inspection,
             "errors":           errors[:20],
         }, None
 
