@@ -1367,6 +1367,14 @@ def upload_registry(file, ext: str):
         return None, str(e)
 
 
+class RegistryValidationError(ValueError):
+    """Caller-supplied registry data failed validation. HTTP 400."""
+
+
+class RegistryNotFoundError(LookupError):
+    """The requested registry record does not exist. HTTP 404."""
+
+
 class OpenInspectionLookupError(RuntimeError):
     """Raised when the open-inspection guard cannot be evaluated."""
 
@@ -2541,7 +2549,7 @@ def update_business(business_id, data: dict):
         row = cursor.fetchone()
         if not row:
             cursor.close()
-            return False, "Business not found"
+            return False, RegistryNotFoundError("Business not found")
 
         old_name = row["businessName"]
         barangay_id = row["barangayID"]
@@ -2554,7 +2562,7 @@ def update_business(business_id, data: dict):
                 data["applicationStatus"])
             if new_status is None:
                 cursor.close()
-                return False, status_error
+                return False, RegistryValidationError(status_error)
 
         # Build dynamic query to only update provided fields
         update_fields = []

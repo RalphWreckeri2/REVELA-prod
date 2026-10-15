@@ -156,7 +156,8 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
             "NOPE", {"applicationStatus": "Expired"})
 
         self.assertFalse(ok)
-        self.assertEqual(error, "Business not found")
+        self.assertIsInstance(error, service.RegistryNotFoundError)
+        self.assertEqual(str(error), "Business not found")
         self.assertFalse([
             call for call in cursor.execute.call_args_list
             if "UPDATE geospatial_logs" in call.args[0]

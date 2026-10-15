@@ -241,7 +241,7 @@ class ManualEditRejectsBadStatusTests(unittest.TestCase):
                 (ok, error), cursor, mysql = self._update(
                     {"applicationStatus": value})
                 self.assertFalse(ok)
-                self.assertIn("permit status", error)
+                self.assertIn("permit status", str(error))
                 self.assertEqual(
                     [c.args[0] for c in cursor.execute.call_args_list
                      if "UPDATE official_registry" in c.args[0]], [],
@@ -259,7 +259,7 @@ class ManualEditRejectsBadStatusTests(unittest.TestCase):
     def test_manual_edit_rejects_empty_status(self):
         (ok, error), _, _ = self._update({"applicationStatus": ""})
         self.assertFalse(ok)
-        self.assertIn("missing permit status", error)
+        self.assertIn("missing permit status", str(error))
 
     def test_manual_edit_without_status_is_unaffected(self):
         (ok, error), _, _ = self._update({"businessName": "Acme Store"})

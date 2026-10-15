@@ -14,6 +14,8 @@ from api.registry.service import (
     update_business,
     delete_business,
     snap_unresolved_pins,
+    RegistryValidationError,
+    RegistryNotFoundError,
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.registry import places_resolver
@@ -561,8 +563,14 @@ def edit_business(business_id):
     success, error = update_business(business_id, data)
 
     if error:
-        status_code = 404 if error == "Business not found" else 500
-        return jsonify({"error": error}), status_code
+        # Typed errors, not message text, so the code cannot drift from the copy.
+        if isinstance(error, RegistryNotFoundError):
+            status_code = 404
+        elif isinstance(error, RegistryValidationError):
+            status_code = 400
+        else:
+            status_code = 500
+        return jsonify({"error": str(error)}), status_code
 
     return jsonify({"message": "Business updated successfully"}), 200
 
