@@ -2451,12 +2451,16 @@ def update_business(business_id, data: dict):
 
             # Keep the map pin in sync when the permit status changes
             # (otherwise an Expired/Revoked/Closed business stays Green on the map)
+            # business_id is required: pins created from the registry already carry
+            # businessID, so the name+barangay fallback inside _sync_flag_color can
+            # never match them (it only matches pins where businessID IS NULL).
             if "applicationStatus" in data:
                 _sync_flag_color(
                     cursor,
                     barangay_id,
                     current_name,
                     _normalise_status(data["applicationStatus"]),
+                    business_id=business_id,
                 )
 
             mysql.connection.commit()
