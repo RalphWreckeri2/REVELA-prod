@@ -134,3 +134,101 @@ test("Green stays blocked even on a re-dispatch", () => {
   assert.equal(canDispatchFlag({ color: "Green", verificationStatus: "Verified" }, { isAdmin: true }), false);
   assert.equal(canDispatchFlag({ color: "Green", hasActiveInspection: true }, { isAdmin: true }), false);
 });
+
+/**
+ * The rows below are the shape get_business_by_id actually returns: the
+ * registry's own snake_case columns alongside the ladder's camelCase ones,
+ * plus the derived flagColor and flagSource the readers compute.
+ *
+ * These are the cases the buttons exist for. If the readers ever rename a key
+ * or stop returning one, these fail rather than the buttons quietly vanishing.
+ */
+const registryRow = (over = {}) => ({
+  businessID: "BIZ-1",
+  businessName: "ACME STORE",
+  applicationStatus: "Active",
+  latitude: 13.96,
+  longitude: 121.11,
+  coordSource: "manual",
+  matchStatus: "approved",
+  matchScore: null,
+  placeID: null,
+  lastRenewalDate: "2026-01-15",
+  barangayID: 1,
+  barangayName: "Poblacion",
+  flagSource: "registry_and_maps",
+  flagColor: "Green",
+  warningLevel: 0,
+  blackLocked: 0,
+  blackDispatchUnlocked: 0,
+  ...over,
+});
+
+test("an Active business with a warning shows Clear Warning to an admin", () => {
+  const row = registryRow({ warningLevel: 1, flagColor: "Orange" });
+  assert.equal(canClearWarning(row, "Admin"), true);
+  assert.equal(canClearWarning(row, "SUPER_ADMIN"), true);
+});
+
+test("an Active business with no warning shows nothing", () => {
+  const row = registryRow();
+  assert.equal(canClearWarning(row, "Admin"), false);
+  assert.equal(clearWarningBlockedReason(row, "Admin"),
+    "There is no warning to clear");
+});
+
+test("a warned business still shows nothing to a non-admin", () => {
+  const row = registryRow({ warningLevel: 2, flagColor: "Orange" });
+  assert.equal(canClearWarning(row, "Inspector"), false);
+  assert.equal(clearWarningBlockedReason(row, "Inspector"), "Admins only");
+});
+
+test("a locked Black business shows Unlock only to SUPER_ADMIN", () => {
+  const row = registryRow({
+    applicationStatus: "Revoked",
+    flagColor: "Black",
+    warningLevel: 3,
+    blackLocked: 1,
+  });
+  assert.equal(canUnlockBlackDispatch(row, "SUPER_ADMIN"), true);
+  assert.equal(canUnlockBlackDispatch(row, "Admin"), false);
+  assert.equal(canUnlockBlackDispatch(row, "System Administrator"), false);
+});
+
+test("an unlocked Black business hides Unlock", () => {
+  const row = registryRow({
+    applicationStatus: "Revoked",
+    flagColor: "Black",
+    warningLevel: 3,
+    blackLocked: 1,
+    blackDispatchUnlocked: 1,
+  });
+  assert.equal(canUnlockBlackDispatch(row, "SUPER_ADMIN"), false);
+});
+
+test("a locked Black business cannot have its warning cleared", () => {
+  const row = registryRow({
+    applicationStatus: "Revoked",
+    flagColor: "Black",
+    warningLevel: 3,
+    blackLocked: 1,
+  });
+  assert.equal(canClearWarning(row, "SUPER_ADMIN"), false);
+  assert.equal(clearWarningBlockedReason(row, "SUPER_ADMIN"),
+    "This business is Black locked. Only a SUPER_ADMIN unlock applies.");
+});
+
+test("an unmigrated payload - all zeros - shows neither button", () => {
+  // What the readers return when the columns do not exist.
+  const row = registryRow({ warningLevel: 0, blackLocked: 0, blackDispatchUnlocked: 0 });
+  assert.equal(canClearWarning(row, "SUPER_ADMIN"), false);
+  assert.equal(canUnlockBlackDispatch(row, "SUPER_ADMIN"), false);
+  assert.equal(canDispatchFlag({ ...row, color: "Black" }, { isAdmin: true }), false);
+});
+
+test("the Black dispatch rule reads the same payload", () => {
+  const locked = { ...registryRow({ flagColor: "Black", blackLocked: 1 }), color: "Black" };
+  const unlocked = { ...locked, blackDispatchUnlocked: 1 };
+  assert.equal(canDispatchFlag(locked, { isAdmin: true }), false);
+  assert.equal(canDispatchFlag(unlocked, { isAdmin: true }), true);
+});

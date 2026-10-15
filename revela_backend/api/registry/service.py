@@ -1792,6 +1792,30 @@ def _consume_black_dispatch_unlock(cursor, business_id, actor_user_id,
     return True
 
 
+def _ladder_select_sql(cursor):
+    """SELECT list for the ladder fields the Registry page buttons read.
+
+    Returns SQL, not values: a column that does not exist yet is selected as a
+    literal 0, never named. MySQL raises "Unknown column" at execution time
+    for a column that is not there, so naming one on an un-migrated database
+    would break the whole Registry page rather than just hide a button.
+
+    The aliases are the wire contract. registryLadderPolicy.js reads
+    warningLevel, blackLocked and blackDispatchUnlocked; changing either side
+    silently breaks both buttons.
+    """
+    parts = []
+    if ladder_columns_available(cursor):
+        parts += ["r.warningLevel", "r.blackLocked"]
+    else:
+        parts += ["0 AS warningLevel", "0 AS blackLocked"]
+    if _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
+        parts += ["r.blackDispatchUnlocked"]
+    else:
+        parts += ["0 AS blackDispatchUnlocked"]
+    return ",\n                ".join(parts)
+
+
 def _load_sync_protection_keys(cursor):
     """Preload the rows this sync run must not touch.
 
@@ -3238,6 +3262,9 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         # that does not have warningLevel / blackLocked yet.
         effective_flag_color = _effective_flag_color_sql(
             "g", ladder=ladder_columns_available(cursor))
+        # warningLevel / blackLocked / blackDispatchUnlocked for the page's
+        # Clear Warning and Unlock buttons. Zeros where the columns are absent.
+        ladder_select = _ladder_select_sql(cursor)
         cursor.execute(
             f"""
             SELECT
@@ -3263,7 +3290,8 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                     WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
                     ELSE 'registry_only'
                 END AS flagSource,
-                {effective_flag_color} AS flagColor
+                {effective_flag_color} AS flagColor,
+                {ladder_select}
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
             LEFT JOIN LATERAL (
@@ -3322,6 +3350,9 @@ def get_business_by_id(business_id):
         # pin column, and read the ladder columns only when they exist.
         effective_flag_color = _effective_flag_color_sql(
             "g", ladder=ladder_columns_available(cursor))
+        # Same three fields as the list, from one builder, so the detail
+        # modal and the list row can never disagree.
+        ladder_select = _ladder_select_sql(cursor)
 
         cursor.execute(
             f"""
@@ -3348,7 +3379,8 @@ def get_business_by_id(business_id):
                     WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
                     ELSE 'registry_only'
                 END AS flagSource,
-                {effective_flag_color} AS flagColor
+                {effective_flag_color} AS flagColor,
+                {ladder_select}
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
             LEFT JOIN LATERAL (
