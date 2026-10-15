@@ -2169,6 +2169,12 @@ def sync_registry(file, ext: str):
             "errors":           errors[:20],
         }, None
 
+    except (OpenInspectionLookupError, SyncProtectionLookupError):
+        # Keep the type. The route answers 409 for these because nothing was
+        # written and the caller should retry rather than treat it as a server
+        # fault. Stringifying them here would force the route to decide by
+        # matching message text, which a reword would silently break.
+        raise
     except Exception as e:
         return None, str(e)
 

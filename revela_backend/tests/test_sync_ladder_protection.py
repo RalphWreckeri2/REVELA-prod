@@ -173,8 +173,13 @@ class SyncAbortsOnAFailedPreloadTests(SyncHarness):
                          return_value=(set(), set())),
         ):
             mock_mysql.connection.cursor.return_value = cursor
-            result, error = registry_service.sync_registry(
-                io.BytesIO(CSV), ".csv")
+            # sync_registry re-raises the typed lookup errors now.
+            try:
+                result, error = registry_service.sync_registry(
+                    io.BytesIO(CSV), ".csv")
+            except (registry_service.SyncProtectionLookupError,
+                    registry_service.OpenInspectionLookupError) as exc:
+                result, error = None, exc
         return (result, error), cursor
 
     def test_the_preload_actually_runs_in_this_harness(self):
@@ -187,27 +192,70 @@ class SyncAbortsOnAFailedPreloadTests(SyncHarness):
     def test_a_failed_black_preload_aborts_with_no_writes(self):
         (result, error), cursor = self._run(fail_on="black")
         self.assertIsNone(result)
-        self.assertIn("Black lock", error)
-        self.assertIn("nothing was changed", error)
+        self.assertIsInstance(error, registry_service.SyncProtectionLookupError)
         self.assertEqual(cursor.writes(), [])
 
     def test_a_failed_closed_preload_aborts_with_no_writes(self):
         (result, error), cursor = self._run(fail_on="closed")
         self.assertIsNone(result)
-        self.assertIn("nothing was changed", error)
+        self.assertIsInstance(error, registry_service.SyncProtectionLookupError)
         self.assertEqual(cursor.writes(), [])
 
-    def test_the_message_the_route_keys_on_is_present(self):
-        (result, error), _ = self._run(fail_on="black")
-        # The route answers 409 when "changed" is in the message.
-        self.assertIn("changed", error)
+    def test_the_error_is_typed_not_stringified(self):
+        """The whole point of Part 0: the route must not read the message."""
+        (_, error), _ = self._run(fail_on="black")
+        self.assertNotIsInstance(error, str)
 
-    def test_an_open_inspection_failure_keeps_its_own_message(self):
+    def test_an_open_inspection_failure_keeps_its_own_type(self):
         """The two guards stay distinguishable to the caller."""
         (result, error), _ = self._run(
             open_inspection=RuntimeError("boom"))
         self.assertIsNone(result)
-        self.assertIn("open inspections", error)
+        self.assertIsInstance(error,
+                              registry_service.OpenInspectionLookupError)
+
+    def test_the_message_still_explains_itself(self):
+        (_, error), _ = self._run(fail_on="black")
+        self.assertIn("nothing was changed", str(error))
+
+
+class SyncRouteAnswers409Tests(unittest.TestCase):
+    """The status code must not depend on the wording of the message."""
+
+    def _route(self, error):
+        from flask import Flask
+        from api.registry import routes as registry_routes
+
+        with patch.object(registry_routes, "sync_registry",
+                          return_value=(None, error)):
+            app = Flask(__name__)
+            data = {"file": (io.BytesIO(b"a,b\n1,2\n"), "x.csv")}
+            with app.test_request_context(
+                    "/api/registry/sync", method="POST",
+                    data=data, content_type="multipart/form-data"):
+                return registry_routes.sync.__wrapped__()
+
+    def test_a_protection_lookup_failure_answers_409(self):
+        response = self._route(registry_service.SyncProtectionLookupError(
+            "Could not read the protections; sync aborted, nothing was changed."))
+        self.assertEqual(response[1], 409)
+
+    def test_an_open_inspection_failure_answers_409(self):
+        response = self._route(registry_service.OpenInspectionLookupError(
+            "Could not check open inspections; sync aborted."))
+        self.assertEqual(response[1], 409)
+
+    def test_the_status_survives_a_reword(self):
+        """Reword the message entirely; 409 must not become 500."""
+        for message in ("nope", "sync aborted", "", "zzz nothing at all"):
+            with self.subTest(message=message):
+                response = self._route(
+                    registry_service.SyncProtectionLookupError(message))
+                self.assertEqual(response[1], 409)
+
+    def test_an_ordinary_failure_is_still_500(self):
+        response = self._route("something else went wrong")
+        self.assertEqual(response[1], 500)
 
 
 class SyncSkipsProtectedRowsTests(SyncHarness):

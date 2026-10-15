@@ -17,6 +17,8 @@ from api.registry.service import (
     RegistryValidationError,
     RegistryNotFoundError,
     BlackLockedError,
+    SyncProtectionLookupError,
+    OpenInspectionLookupError,
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.registry import places_resolver
@@ -350,13 +352,19 @@ def sync():
     summary, error = sync_registry(file, ext)
 
     if error:
-        if "cancelled by user" in error:
-            return jsonify({"message": error}), 200
-        if "quota reached" in error or "Remaining geocoding quota" in error:
-            return jsonify({"error": error}), 429
-        if "Maximum" in error and "synced per batch" in error:
-            return jsonify({"error": error}), 400
-        return jsonify({"error": error}), 500
+        # Typed errors first: a pre-run guard aborted, so nothing was written.
+        # Checked by type so rewording the message cannot change the status.
+        if isinstance(error, (SyncProtectionLookupError,
+                              OpenInspectionLookupError)):
+            return jsonify({"error": str(error)}), 409
+        message = str(error)
+        if "cancelled by user" in message:
+            return jsonify({"message": message}), 200
+        if "quota reached" in message or "Remaining geocoding quota" in message:
+            return jsonify({"error": message}), 429
+        if "Maximum" in message and "synced per batch" in message:
+            return jsonify({"error": message}), 400
+        return jsonify({"error": message}), 500
 
     return jsonify(summary), 200
 

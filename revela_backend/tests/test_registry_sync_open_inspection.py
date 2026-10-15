@@ -344,11 +344,16 @@ class SyncOpenInspectionTests(unittest.TestCase):
             patch.object(service, "insert_green_flag"),
             patch("api.notifications.hub.publish_to_admins"),
         ):
-            summary, error = service.sync_registry(
-                _csv(["BIZ-1,Acme Store,Barangay I,New Main Street,Expired\n"]),
-                ".csv")
+            # sync_registry now re-raises the typed lookup error instead of
+            # stringifying it, so the route can answer 409 without matching
+            # message text. The fail-closed contract is unchanged: nothing is
+            # written and the call does not continue.
+            with self.assertRaises(service.OpenInspectionLookupError) as caught:
+                service.sync_registry(
+                    _csv(["BIZ-1,Acme Store,Barangay I,New Main Street,Expired\n"]),
+                    ".csv")
 
-        self.assertIsNone(summary)
+        error = str(caught.exception)
         self.assertIn("Could not check open inspections", error)
         self.assertIn("nothing was changed", error)
         # Nothing may be written, for any row, new or existing.
