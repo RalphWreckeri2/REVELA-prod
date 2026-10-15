@@ -23,6 +23,21 @@ from api.registry import service
 from api.registry.colors import _effective_flag_color_sql
 
 
+def _colour_query(calls):
+    """Pick the query that actually selects flagColor.
+
+    The readers now call ladder_columns_available(), which issues its own
+    information_schema probe on the same cursor before the real query. That
+    shifts the query's position in the call list, so selecting by index is no
+    longer reliable; pick by content instead.
+    """
+    for call in calls:
+        sql = call[0][0]
+        if "AS flagColor" in sql:
+            return sql
+    raise AssertionError("no query selecting AS flagColor was executed")
+
+
 class RegistryDerivedColourTests(unittest.TestCase):
 
     def _list_sql(self):
@@ -36,7 +51,7 @@ class RegistryDerivedColourTests(unittest.TestCase):
             data, error = service.get_all_businesses(barangay_id=1)
         self.assertIsNone(error)
         self.assertIsNotNone(data)
-        return cursor.execute.call_args[0][0]
+        return _colour_query(cursor.execute.call_args_list)
 
     def _detail_sql(self):
         cursor = MagicMock()
@@ -56,9 +71,9 @@ class RegistryDerivedColourTests(unittest.TestCase):
             mock_mysql.connection = connection
             row, error = service.get_business_by_id("BIZ-1")
         self.assertIsNone(error)
-        # get_business_by_id runs two queries: the registry row, then the
-        # inspection history. The colour comes from the first.
-        return cursor.execute.call_args_list[0][0][0]
+        # get_business_by_id runs the registry row query, then the inspection
+        # history. The colour comes from the first.
+        return _colour_query(cursor.execute.call_args_list)
 
     # -- the registry must no longer select the raw stored pin colour ---------
 
