@@ -42,7 +42,12 @@ class StatefulDetectionCursor:
         self._row = None
         self.lastrowid = None
 
-        if "select count(*) as total from official_registry" in sql:
+        if "information_schema.columns" in sql:
+            # Schema probe. This fake database has not had
+            # migrations/20261017_01_geospatial_source.sql applied, so answer
+            # "the column is absent" and the INSERTs omit `source`.
+            self._row = None
+        elif "select count(*) as total from official_registry" in sql:
             self._row = {"total": len(self.database.registry)}
         elif "select barangayid, barangayname from barangays" in sql:
             self._rows = list(self.database.barangays)
@@ -196,7 +201,17 @@ class StatefulDetectionCursor:
         pass
 
 
+from api.models.geospatial import reset_source_column_cache
+
+
 class NearbyNewDetectionIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        # geospatial_source_column_exists caches for the life of the process,
+        # so a test that answered the probe would decide it for every later
+        # test in the run.
+        reset_source_column_cache()
+        self.addCleanup(reset_source_column_cache)
+
     def test_detection_matches_filters_flags_and_resumes_offline(self):
         point_a = (13.9667, 121.1167)
         point_b = (13.9750, 121.1167)

@@ -24,6 +24,12 @@ import {
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
 import { canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
+import {
+  SOURCE_FILTERS,
+  isInspectorReported as isInspectorReportedFlag,
+  matchesSourceFilter,
+  sourceLabel,
+} from "../components/flagSource";
 import { AuthContext } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -614,7 +620,7 @@ function normalizeFlag(flag) {
     barangay: flag.barangayName ?? "Unknown Barangay",
     address: flag.resolvedAddress ?? flag.nearestLandmark ?? "",
     notes: flag.notes || "",
-    source: flag.flagSource ?? "registry_only",
+    source: flag.flagSource ?? "unknown",
     size: flag.businessSize ?? "—",
     coords,
     latitude: lat,
@@ -635,16 +641,10 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
   const dispatchButtonText = dispatchButtonLabel(flag);
 
 
-  // Source labels
-  const sourceLabel = flag.source === "registry_and_maps"
-    ? "Registry & Google Maps"
-    : flag.source === "maps_only"
-      ? "Google Maps only"
-      : flag.source === "inspector_reported"
-        ? "Inspector Field Report"
-        : "Official BPLO Registry";
-
-  const isInspectorReported = flag.source === "inspector_reported";
+  // Source labels. The vocabulary is the one stored on the pin by
+  // migrations/20261017_01_geospatial_source.sql, not the labels the Map used
+  // to infer from which columns were set. See flagSource.js.
+  const isInspectorReported = isInspectorReportedFlag(flag.source);
   const mapsUrl = flag.latitude
     ? `https://www.google.com/maps/search/?api=1&query=${flag.latitude},${flag.longitude}${flag.placeID ? `&query_place_id=${flag.placeID}` : ''}`
     : null;
@@ -713,7 +713,7 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
             <div style={{ color: "var(--color-muted)" }}><Icon.Calendar size={16} /></div>
-            <div>{sourceLabel} <span style={{ color: "var(--color-muted)" }}>&bull; {flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
+            <div>{sourceLabel(flag.source)} <span style={{ color: "var(--color-muted)" }}>&bull; {flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
           </div>
         </div>
 
@@ -3731,7 +3731,7 @@ export default function MapPage() {
       String(f.id || "").toLowerCase().includes(cleanQ) ||
       String(f.logID || "").toLowerCase().includes(cleanQ)
     );
-    const matchSource = filterSource === "all" || f.source === filterSource;
+    const matchSource = matchesSourceFilter(f.source, filterSource);
     return matchColor && matchSearch && matchSource;
   });
 
@@ -4322,11 +4322,7 @@ export default function MapPage() {
             {/* Source filter — shows only when Green is selected */}
             {filterColor === "Green" && (
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                {[
-                  { value: "all", label: "All Sources" },
-                  { value: "registry_only", label: "Registry Only" },
-                  { value: "registry_and_maps", label: "Registry + Maps" },
-                ].map(s => {
+                {SOURCE_FILTERS.map(s => {
                   const isSelected = filterSource === s.value;
                   return (
                     <button

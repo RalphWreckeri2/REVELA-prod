@@ -17,6 +17,14 @@ import requests as http
 import json
 from geopy.distance import geodesic
 from app import mysql
+from api.registry.service import _flag_source_sql
+from api.models.geospatial import (
+    SOURCE_DETECTION,
+    geospatial_source_column_exists,
+    SOURCE_MANUAL,
+    SOURCE_REGISTRY_DETECTED,
+    with_source,
+)
 from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
 from api.registry.locks import BlackLockedError, assert_not_black_locked
 from shapely import prepare
@@ -1043,15 +1051,20 @@ def _match_registry_to_google(
     elif lat and lng and barangay_id:
         final_lat = reg_lat if (is_locked and reg_lat is not None) else lat
         final_lng = reg_lng if (is_locked and reg_lng is not None) else lng
-        _detection_execute(cursor, """
-            INSERT INTO geospatial_logs
-                (barangayID, businessID, reportID, detectedName, latitude, longitude,
-                 flagColor, placeID, nearestLandmark, placeTypes)
-            VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            barangay_id, business_id, detected_name, final_lat, final_lng,
-            target_color, place_id, poi_address, serialized_types
-        ))
+        _columns, _values, _params = with_source(
+            cursor,
+            """(barangayID, businessID, reportID, detectedName, latitude, longitude,
+                 flagColor, placeID, nearestLandmark, placeTypes)""",
+            "(%s, %s, NULL, %s, %s, %s, %s, %s, %s, %s)",
+            (barangay_id, business_id, detected_name, final_lat, final_lng,
+             target_color, place_id, poi_address, serialized_types),
+            # A registry business Google Places also found.
+            SOURCE_REGISTRY_DETECTED,
+        )
+        _detection_execute(
+            cursor,
+            f"INSERT INTO geospatial_logs {_columns} VALUES {_values}",
+            _params)
 
     if operation_type == "reconciled":
         from api.registry.audit import record_registry_workflow_event
@@ -2359,12 +2372,19 @@ def _insert_red_flag(
     serialized_types = json.dumps(
         sorted(set(poi_types))) if poi_types else None
     cursor = mysql.connection.cursor()
-    _detection_execute(cursor, """
-        INSERT INTO geospatial_logs
-            (barangayID, reportID, detectedName, latitude, longitude,
-             flagColor, placeID, nearestLandmark, placeTypes)
-        VALUES (%s, NULL, %s, %s, %s, 'Red', %s, %s, %s)
-    """, (barangay_id, place_name, lat, lng, place_id, address, serialized_types))
+    _columns, _values, _params = with_source(
+        cursor,
+        """(barangayID, reportID, detectedName, latitude, longitude,
+             flagColor, placeID, nearestLandmark, placeTypes)""",
+        "(%s, NULL, %s, %s, %s, 'Red', %s, %s, %s)",
+        (barangay_id, place_name, lat, lng, place_id, address,
+         serialized_types),
+        # Found by a scan, with no registry link.
+        SOURCE_DETECTION,
+    )
+    _detection_execute(
+        cursor, f"INSERT INTO geospatial_logs {_columns} VALUES {_values}",
+        _params)
     flag_id = cursor.lastrowid
     if commit:
         _detection_commit()
@@ -2903,6 +2923,26 @@ def _run_detection_cycle(user_id=None, mode="quick"):
 
 # ── Get all flags ─────────────────────────────────────────────────────────────
 
+#: The label the Map used to infer for a pin, kept verbatim - same rules, same
+#: columns - as the fallback for databases without geospatial_logs.source.
+#:
+#: It is expressed in the NEW vocabulary rather than the old one. The old
+#: names (registry_only, registry_and_maps, maps_only, inspector_reported)
+#: described a guess; the new ones describe the same guess in the same
+#: vocabulary the stored column uses. Emitting both would leave the frontend
+#: carrying two vocabularies forever.
+#:
+#: 'registry' and 'registry_detected' here are guesses about a registry-only
+#: business; 'detection' and 'manual' are guesses about a pin. Only the stored
+#: column knows for sure, which is why it wins whenever it exists.
+_OLD_MAP_FLAG_SOURCE = """CASE
+        WHEN g.reportedByUserID IS NOT NULL AND g.flagColor != 'Green' THEN 'manual'
+        WHEN g.placeID IS NOT NULL AND r.businessID IS NOT NULL THEN 'registry_detected'
+        WHEN g.placeID IS NULL AND r.businessID IS NOT NULL THEN 'registry'
+        ELSE 'detection'
+    END"""
+
+
 def _registry_row_flag_color_sql(alias="r", *, ladder=False):
     """Flag colour for an official_registry row that has no geospatial_log pin.
 
@@ -3048,12 +3088,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     b.barangayName,
                     r.businessSize,
                     COALESCE(g.nearestLandmark, r.businessAddress) AS resolvedAddress,
-                    CASE
-                        WHEN g.reportedByUserID IS NOT NULL AND g.flagColor != 'Green' THEN 'inspector_reported'
-                        WHEN g.placeID IS NOT NULL AND r.businessID IS NOT NULL THEN 'registry_and_maps'
-                        WHEN g.placeID IS NULL AND r.businessID IS NOT NULL THEN 'registry_only'
-                        ELSE 'maps_only'
-                    END AS flagSource,
+                    {_flag_source_sql("g", _OLD_MAP_FLAG_SOURCE, cursor)}
+                        AS flagSource,
                     (
                         SELECT verificationStatus
                         FROM inspection_reports
@@ -3250,16 +3286,22 @@ def insert_yellow_flag(
         cursor = mysql.connection.cursor()
         _validate_yellow_flag_barangay(cursor, lat, lng, barangay_id)
         if client_submission_id:
-            cursor.execute("""
-                INSERT INTO geospatial_logs
-                    (barangayID, reportID, detectedName, latitude, longitude,
-                     flagColor, notes, reportedByUserID, clientSubmissionID)
-                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE logID = LAST_INSERT_ID(logID)
-            """, (
-                barangay_id, business_name, lat, lng, flag_color, notes,
-                reported_by_user_id, client_submission_id,
-            ))
+            # Both branches are an inspector reporting from the field. The
+            # idempotent branch is the same event retried, not a different
+            # kind of flag.
+            _columns, _values, _params = with_source(
+                cursor,
+                """(barangayID, reportID, detectedName, latitude, longitude,
+                     flagColor, notes, reportedByUserID, clientSubmissionID)""",
+                "(%s, NULL, %s, %s, %s, %s, %s, %s, %s)",
+                (barangay_id, business_name, lat, lng, flag_color, notes,
+                 reported_by_user_id, client_submission_id),
+                SOURCE_MANUAL,
+            )
+            cursor.execute(
+                f"""INSERT INTO geospatial_logs {_columns} VALUES {_values}
+                    ON DUPLICATE KEY UPDATE logID = LAST_INSERT_ID(logID)""",
+                _params)
             created = cursor.rowcount == 1
             log_id = cursor.lastrowid
             cursor.execute("""
@@ -3295,12 +3337,18 @@ def insert_yellow_flag(
                         "This submission ID was already used for different report data."
                     )
         else:
-            cursor.execute("""
-                INSERT INTO geospatial_logs
-                    (barangayID, reportID, detectedName, latitude, longitude,
-                     flagColor, notes, reportedByUserID)
-                VALUES (%s, NULL, %s, %s, %s, %s, %s, %s)
-            """, (barangay_id, business_name, lat, lng, flag_color, notes, reported_by_user_id))
+            _columns, _values, _params = with_source(
+                cursor,
+                """(barangayID, reportID, detectedName, latitude, longitude,
+                     flagColor, notes, reportedByUserID)""",
+                "(%s, NULL, %s, %s, %s, %s, %s, %s)",
+                (barangay_id, business_name, lat, lng, flag_color, notes,
+                 reported_by_user_id),
+                SOURCE_MANUAL,
+            )
+            cursor.execute(
+                f"INSERT INTO geospatial_logs {_columns} VALUES {_values}",
+                _params)
             created = True
             log_id = cursor.lastrowid
         mysql.connection.commit()

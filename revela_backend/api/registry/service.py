@@ -15,6 +15,11 @@ from api.registry.colors import (
     ladder_columns_available,
     status_to_color,
 )
+from api.models.geospatial import (
+    SOURCE_REGISTRY,
+    geospatial_source_column_exists,
+    with_source,
+)
 from api.registry.locks import (
     BLACK_RELOCKED,
     BLACK_UNLOCKED,
@@ -1012,14 +1017,19 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
         )
         return True
     elif lat is not None and lng is not None:
-        cursor.execute(
-            """
-            INSERT INTO geospatial_logs
-                (barangayID, businessID, detectedName, latitude, longitude, flagColor, nearestLandmark)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (barangay_id, business_id, name_clean, lat, lng, flag_color, address),
+        _columns, _values, _params = with_source(
+            cursor,
+            """(barangayID, businessID, detectedName, latitude, longitude,
+                 flagColor, nearestLandmark)""",
+            "(%s, %s, %s, %s, %s, %s, %s)",
+            (barangay_id, business_id, name_clean, lat, lng, flag_color,
+             address),
+            # Seeded from official_registry, not found by a scan.
+            SOURCE_REGISTRY,
         )
+        cursor.execute(
+            f"INSERT INTO geospatial_logs {_columns} VALUES {_values}",
+            _params)
         return True
     return False
 
@@ -1790,6 +1800,28 @@ def _consume_black_dispatch_unlock(cursor, business_id, actor_user_id,
         actor_user_id=actor_user_id, reason=reason,
         previous_black=1, new_black=1)
     return True
+
+
+#: The label the registry readers used to infer. Kept verbatim as the
+#: fallback for databases without geospatial_logs.source: it still answers the
+#: only question we can answer there, "is there a map pin for this row?".
+_OLD_REGISTRY_FLAG_SOURCE = """CASE
+        WHEN g.logID IS NULL THEN NULL
+        WHEN g.placeID IS NOT NULL THEN 'registry_detected'
+        ELSE 'registry'
+    END"""
+
+
+def _flag_source_sql(alias, fallback, cursor):
+    """Prefer the stored source; fall back to the old inferred label.
+
+    The old CASE answers "where did this pin come from?" by guessing from
+    which columns happen to be set. That guess is what the source column
+    replaces. When the column is absent the guess is all there is, so it stays.
+    """
+    stored = (f"{alias}.source"
+              if geospatial_source_column_exists(cursor) else "NULL")
+    return f"COALESCE({stored}, ({fallback}))"
 
 
 def _ladder_select_sql(cursor):
@@ -3285,11 +3317,8 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                 r.lastRenewalDate,
                 b.barangayID,
                 b.barangayName,
-                CASE
-                    WHEN g.logID IS NULL THEN NULL
-                    WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
-                    ELSE 'registry_only'
-                END AS flagSource,
+                {_flag_source_sql("g", _OLD_REGISTRY_FLAG_SOURCE, cursor)}
+                    AS flagSource,
                 {effective_flag_color} AS flagColor,
                 {ladder_select}
             FROM official_registry r
@@ -3374,11 +3403,8 @@ def get_business_by_id(business_id):
                 r.lastRenewalDate,
                 b.barangayID,
                 b.barangayName,
-                CASE
-                    WHEN g.logID IS NULL THEN NULL
-                    WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
-                    ELSE 'registry_only'
-                END AS flagSource,
+                {_flag_source_sql("g", _OLD_REGISTRY_FLAG_SOURCE, cursor)}
+                    AS flagSource,
                 {effective_flag_color} AS flagColor,
                 {ladder_select}
             FROM official_registry r
