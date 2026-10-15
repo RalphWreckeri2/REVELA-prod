@@ -1306,8 +1306,17 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             else:
                 registry_updated = True
 
+            clears_warning = (
+                result_color not in ("Orange", "Black")
+                and previous_level > 0
+            )
+            clear_reason = (
+                f"Cleared by verified {result_color} inspection"
+                if clears_warning else None
+            )
             state_warning_level = (
-                notice_level if result_color == "Orange" else previous_level)
+                notice_level if result_color == "Orange" else
+                0 if clears_warning else previous_level)
             state_black_locked = (
                 1 if result_color == "Black" else
                 _coerce_notice_level(
@@ -1326,6 +1335,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     "Blacklisted": "Black",
                 }.get(registry_row.get("applicationStatus"))
                 if result_color == "Orange" else
+                None if clears_warning else
                 registry_enforcement_state.get("warningBaseColor")
                 if registry_enforcement_state else None
             )
@@ -1338,25 +1348,44 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     "warningLevel = VALUES(warningLevel)",
                     "warningBaseColor = COALESCE(warningBaseColor, VALUES(warningBaseColor))",
                 ])
+            if clears_warning:
+                state_updates.extend([
+                    "warningLevel = 0",
+                    "warningBaseColor = NULL",
+                    "warningClearedAt = VALUES(warningClearedAt)",
+                    "warningClearedBy = VALUES(warningClearedBy)",
+                    "warningClearReason = VALUES(warningClearReason)",
+                ])
             if result_color == "Black":
                 state_updates.extend([
                     "blackLocked = 1",
                     "blackLockedAt = NOW()",
                     "blackLockedBy = VALUES(blackLockedBy)",
                 ])
+            clear_metadata_values = (
+                "NOW(), %s, %s" if clears_warning else "NULL, NULL, NULL")
+            state_write_params = (
+                str(pin_business_id), state_warning_level, state_warning_base,
+                state_black_locked, int(result_color == "Black"),
+                state_black_locked_by, result_color,
+            )
+            if clears_warning:
+                state_write_params += (
+                    verified_by_user_id,
+                    clear_reason,
+                )
             cursor.execute(
                 """INSERT INTO enforcement_state (
                        subjectType, subjectID, warningLevel, warningBaseColor,
                        blackLocked, blackLockedAt, blackLockedBy,
-                       lastInspectionResult, lastInspectedAt
+                       lastInspectionResult, lastInspectedAt,
+                       warningClearedAt, warningClearedBy, warningClearReason
                    ) VALUES ('business', %s, %s, %s, %s,
                              CASE WHEN %s = 1 THEN NOW() ELSE NULL END,
-                             %s, %s, NOW())
-                   ON DUPLICATE KEY UPDATE """
+                             %s, %s, NOW(), """ + clear_metadata_values + ")\n"
+                + "                   ON DUPLICATE KEY UPDATE "
                 + ", ".join(state_updates),
-                (str(pin_business_id), state_warning_level, state_warning_base,
-                 state_black_locked, int(result_color == "Black"),
-                 state_black_locked_by, result_color),
+                state_write_params,
             )
             registry_updated = registry_updated and cursor.rowcount >= 0
 
@@ -1367,6 +1396,14 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     event_type="warning_issued",
                     previous_level=previous_level, new_level=notice_level,
                     previous_black=None, new_black=None, reason=None))
+            if clears_warning:
+                locked = _coerce_notice_level(
+                    (registry_enforcement_state or {}).get("blackLocked"))
+                ladder_events.append(dict(
+                    event_type="warning_cleared",
+                    previous_level=previous_level, new_level=0,
+                    previous_black=locked, new_black=locked,
+                    reason=clear_reason))
             if result_color == "Black":
                 ladder_events.append(dict(
                     event_type="black_locked",

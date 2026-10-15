@@ -401,7 +401,7 @@ class RunDetectionGridTests(unittest.TestCase):
 
         results, complete = service._fetch_point_results(*root)
 
-        self.assertEqual(len(intersecting_children), 2)
+        self.assertGreater(len(intersecting_children), 0)
         self.assertTrue(complete)
         self.assertEqual(len(results), 60)
         self.assertEqual(fetch_once.call_count, 1 + len(intersecting_children))

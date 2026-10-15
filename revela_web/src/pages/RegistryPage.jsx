@@ -131,6 +131,10 @@ function getFlagVariant(flag) {
   return "default";
 }
 
+function getPermitVariant(status, flagColor) {
+  return flagColor ? getFlagVariant(flagColor) : getStatusVariant(status);
+}
+
 function formatCoord(v) {
   if (v == null || v === "") return "—";
   const n = Number(v);
@@ -345,7 +349,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                   }}
                   >
                     {kind === "permit"
-                      ? <StatusBadge variant={getStatusVariant(value)}>{value}</StatusBadge>
+                      ? <StatusBadge variant={getPermitVariant(value, business.flagColor)}>{value}</StatusBadge>
                       : kind === "regType" && value !== "—"
                         ? <StatusBadge variant={String(value).toLowerCase() === "new" ? "blue" : "purple"}>{value}</StatusBadge>
                         : kind === "flag" && value !== "—"
@@ -843,7 +847,7 @@ export default function RegistryPage() {
                       {b.lastRenewalDate ? b.lastRenewalDate.slice(0, 10) : "—"}
                     </td>
                     <td style={styles.td}>
-                      <StatusBadge variant={getStatusVariant(b.applicationStatus)}>
+                      <StatusBadge variant={getPermitVariant(b.applicationStatus, b.flagColor)}>
                         {b.applicationStatus}
                       </StatusBadge>
                     </td>

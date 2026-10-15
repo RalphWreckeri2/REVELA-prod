@@ -173,6 +173,10 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
         def execute(sql, params=None):
             normalized_sql = " ".join(sql.split())
             if normalized_sql.startswith("SELECT COUNT(*) AS cnt FROM official_registry"):
+                self.assertIn(
+                    "r.lastRenewalDate < MAKEDATE(YEAR(CURDATE()), 1)",
+                    normalized_sql,
+                )
                 year = simulated_today["value"].year
                 eligible = [
                     business for business in businesses
@@ -182,7 +186,7 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
                 cursor.fetchone.return_value = {"cnt": len(eligible)}
             elif normalized_sql.startswith("UPDATE geospatial_logs"):
                 self.assertIn(
-                    "YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'",
+                    "r.lastRenewalDate < MAKEDATE(YEAR(CURDATE()), 1) AND r.applicationStatus = 'Active'",
                     normalized_sql,
                 )
                 self.assertIn(
@@ -200,7 +204,7 @@ class PermitExpirationSchedulerTests(unittest.TestCase):
                         )
             elif normalized_sql.startswith("UPDATE official_registry"):
                 self.assertIn(
-                    "YEAR(lastRenewalDate) < YEAR(CURDATE()) AND applicationStatus = 'Active'",
+                    "r.lastRenewalDate < MAKEDATE(YEAR(CURDATE()), 1) AND r.applicationStatus = 'Active'",
                     normalized_sql,
                 )
                 for business in businesses:
@@ -261,6 +265,16 @@ class RegistryImportHardeningTests(unittest.TestCase):
         schema_check.start()
         self.addCleanup(schema_check.stop)
 
+    def test_cancel_aware_commit_does_not_commit_after_cancel(self):
+        commit = MagicMock()
+        service.set_cancel("registry_import", True)
+        try:
+            self.assertFalse(service.commit_unless_cancelled(
+                "registry_import", commit))
+            commit.assert_not_called()
+        finally:
+            service.set_cancel("registry_import", False)
+
     @staticmethod
     def _fixed_import_date():
         actual_date = datetime_module.date
@@ -272,7 +286,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
 
         return FixedDate
 
-    def _run_mocked_initial_import(self, status, renewal_date, verified_orange=False):
+    def _run_mocked_initial_import(self, status, renewal_date, verified_orange=False,
+                                   cancel_before_commit=False):
         cursor = MagicMock()
         cursor.fetchall.return_value = []
         cursor.fetchone.return_value = {
@@ -310,7 +325,18 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(
                 service, "_coordinate_pair_within_municipality", return_value=True),
-            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(
+                service,
+                "is_cancelled",
+                return_value=False,
+            ),
+            patch.object(
+                service,
+                "commit_unless_cancelled",
+                side_effect=lambda _task, commit: (
+                    False if cancel_before_commit else (commit() or True)
+                ),
+            ),
             patch.object(service.places_resolver, "reset_run_state"),
             patch.object(service.places_resolver, "record_coord_meta"),
             patch.object(service.places_resolver,
@@ -320,6 +346,7 @@ class RegistryImportHardeningTests(unittest.TestCase):
         ):
             summary, error = service.upload_registry(
                 BytesIO(b"mocked csv"), ".csv")
+        self.last_import_connection = mysql.connection
         insert_call = next(
             call for call in cursor.execute.call_args_list
             if "INSERT IGNORE INTO official_registry" in call.args[0]
@@ -393,6 +420,16 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertIn("UPDATE geospatial_logs", flag_update.args[0])
         self.assertEqual(summary["inserted"], 1)
 
+    def test_cancel_before_import_commit_rolls_back_the_insert(self):
+        summary, error, _, _, _ = self._run_mocked_initial_import(
+            "Active", "2026-02-10", cancel_before_commit=True
+        )
+
+        self.assertIsNone(summary)
+        self.assertIn("Import cancelled by user", error)
+        self.last_import_connection.rollback.assert_called_once()
+        self.last_import_connection.commit.assert_not_called()
+
     @staticmethod
     def _existing_sync_record(index):
         return {
@@ -428,7 +465,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
             "registrationType": "Renewal",
         }
 
-    def _run_mocked_sync(self, frame, existing_rows, resolve_result=None):
+    def _run_mocked_sync(self, frame, existing_rows, resolve_result=None,
+                         cancel_before_commit=False):
         cursor = MagicMock()
         cursor.fetchone.side_effect = list(existing_rows)
         cursor.rowcount = 1
@@ -463,7 +501,18 @@ class RegistryImportHardeningTests(unittest.TestCase):
             patch.object(service, "_resolve_barangay_id", return_value=1),
             patch.object(
                 service, "_coordinate_pair_within_municipality", return_value=True),
-            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(
+                service,
+                "is_cancelled",
+                return_value=False,
+            ),
+            patch.object(
+                service,
+                "commit_unless_cancelled",
+                side_effect=lambda _task, commit: (
+                    False if cancel_before_commit else (commit() or True)
+                ),
+            ),
             patch.object(service.places_resolver, "reset_run_state"),
             patch.object(
                 service.places_resolver,
@@ -480,7 +529,27 @@ class RegistryImportHardeningTests(unittest.TestCase):
         ):
             summary, error = service.sync_registry(
                 BytesIO(b"mocked csv"), ".csv")
+        self.last_sync_connection = mysql.connection
         return summary, error, cursor, resolve_location
+
+    def test_cancel_before_sync_commit_rolls_back_updates(self):
+        existing = self._existing_sync_record(1)
+        frame_record = self._sync_frame_record(1)
+        frame_record["businessName"] = "Changed Business 1"
+        summary, error, cursor, _ = self._run_mocked_sync(
+            pd.DataFrame([frame_record]),
+            [existing],
+            cancel_before_commit=True,
+        )
+
+        self.assertIsNone(summary)
+        self.assertIn("Sync cancelled by user", error)
+        self.assertTrue(any(
+            "UPDATE official_registry SET" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        self.last_sync_connection.rollback.assert_called_once()
+        self.last_sync_connection.commit.assert_not_called()
 
     def test_sync_ten_rows_counts_only_three_business_changes(self):
         existing = [self._existing_sync_record(index) for index in range(10)]

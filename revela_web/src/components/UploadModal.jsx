@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Papa from "papaparse";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { uploadRegistryFile, syncRegistryFile, cancelRegistryImport } from "../services/api";
 
@@ -146,8 +146,6 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
   const [error,         setError]         = useState("");
   const [showColumns,   setShowColumns]   = useState(false);
 
-  const abortControllerRef = useRef(null);
-
   // Counter state
   const displayed = useRegistryProgress({
     active:     loading,
@@ -225,23 +223,27 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
 
     setLoading(true);
     setError("");
-    abortControllerRef.current = new AbortController();
     try {
       const uploadFn = isSync ? syncRegistryFile : uploadRegistryFile;
-      const result = await uploadFn(file, token, abortControllerRef.current.signal);
+      const result = await uploadFn(file, token);
+      if (result?.message?.toLowerCase().includes("cancelled by user")) {
+        setError(result.message);
+        return;
+      }
       setSummary(result);
     } catch (err) {
       if (err.name === "AbortError") return;
       setError(err.message || "Upload failed. Please try again.");
     } finally {
       setLoading(false);
+      setCancelling(false);
     }
   };
 
   const handleCancelUpload = async () => {
     const result = await Swal.fire({
       title: 'Are you sure?',
-      text: "Everything loaded will be rolled back.",
+      text: "Unsaved registry changes will be rolled back. Geocoding requests already sent cannot be undone.",
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
@@ -251,13 +253,15 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
 
     if (result.isConfirmed) {
       setCancelling(true);
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+      setError("");
+      try {
+        await cancelRegistryImport(token);
+      } catch (err) {
+        setCancelling(false);
+        setError(
+          `Cancellation request failed; the import may still be running. ${err.message || ""}`,
+        );
       }
-      await cancelRegistryImport(token);
-      setLoading(false);
-      setCancelling(false);
-      setError("Upload cancelled by user — no data was saved.");
     }
   };
 

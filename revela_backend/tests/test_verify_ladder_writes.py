@@ -248,6 +248,31 @@ class OrangeLadderTests(LadderVerifyHarness):
         self.assertEqual(params[5], 0)   # previousLevel
         self.assertEqual(params[6], 1)   # newLevel
 
+    def test_non_orange_non_black_after_warning_clears_and_records_event(self):
+        for result in ("Red", "Yellow", "Green", "Purple"):
+            with self.subTest(result=result):
+                (_, error), cursor = self._run(
+                    result=result, warning_level=2, admin_user_id=42)
+                self.assertIsNone(error)
+                sql, params = self._registry_update(cursor)
+                self.assertIn("warningLevel = 0", sql)
+                self.assertIn("warningBaseColor = NULL", sql)
+                self.assertIn(
+                    "warningClearedAt = VALUES(warningClearedAt)", sql)
+                self.assertIn(
+                    "warningClearedBy = VALUES(warningClearedBy)", sql)
+                self.assertIn(42, params)
+                events = self._events(cursor)
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0][1][2], "warning_cleared")
+                self.assertEqual(events[0][1][3], 42)
+                self.assertEqual(events[0][1][5], 2)
+                self.assertEqual(events[0][1][6], 0)
+                self.assertEqual(
+                    events[0][1][4],
+                    f"Cleared by verified {result} inspection",
+                )
+
     def test_every_registered_verify_stamps_the_last_result(self):
         for result, level, current in (("Red", 0, 0), ("Yellow", 0, 0),
                                        ("Green", 0, 0), ("Orange", 2, 1),

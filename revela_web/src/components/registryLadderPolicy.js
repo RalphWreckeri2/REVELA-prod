@@ -34,6 +34,7 @@ export function canClearWarning(business, role) {
 
 export function canClearInspectionWarning(report, role) {
   if (
+    report?.inspectionResult !== "Orange" ||
     report?.verificationStatus !== "Verified" ||
     Number(report.hasNonVerifiedInspection) !== 0 ||
     !ADMIN_ROLES.includes(role)

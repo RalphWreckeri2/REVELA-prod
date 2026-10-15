@@ -296,6 +296,7 @@ test("the Black dispatch rule reads the same payload", () => {
 const inspection = (over = {}) => ({
   ...registryRow({ warningLevel: 1, flagColor: "Orange" }),
   reportID: 7,
+  inspectionResult: "Orange",
   verificationStatus: "Verified",
   hasNonVerifiedInspection: 0,
   ...over,
@@ -305,6 +306,7 @@ test("Inspection Clear Warning requires a Verified warned business and no open i
   assert.equal(canClearInspectionWarning(inspection(), "Admin"), true);
   for (const changes of [
     { verificationStatus: "Submitted" },
+    { inspectionResult: "Green", flagColor: "Green" },
     { warningLevel: 0 },
     { hasNonVerifiedInspection: 1 },
     { hasNonVerifiedInspection: undefined },

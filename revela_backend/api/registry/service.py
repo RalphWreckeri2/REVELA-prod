@@ -8,7 +8,11 @@ import threading
 from datetime import date
 from app import mysql
 from api.models.geospatial import insert_green_flag
-from api.utils.cancellation import is_cancelled, set_cancel
+from api.utils.cancellation import (
+    commit_unless_cancelled,
+    is_cancelled,
+    set_cancel,
+)
 from api.registry import places_resolver
 from api.registry.colors import (
     _effective_flag_color_sql,
@@ -1348,7 +1352,13 @@ def upload_registry(file, ext: str):
             else:
                 skipped += 1
 
-        mysql.connection.commit()
+        if not commit_unless_cancelled(
+            "registry_import", mysql.connection.commit
+        ):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, "Import cancelled by user — no data was saved."
+
         cursor.close()
         _log_registry_places_summary(
             "registry import",
@@ -2714,7 +2724,13 @@ def sync_registry(file, ext: str):
                             business_id=biz_id
                         )
 
-        mysql.connection.commit()
+        if not commit_unless_cancelled(
+            "registry_import", mysql.connection.commit
+        ):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, "Sync cancelled by user — no data was saved."
+
         cursor.close()
         _log_registry_places_summary(
             "registry sync",
@@ -3685,12 +3701,17 @@ def check_and_expire_old_permits():
             # the pin colour is unknowable, so expire and leave the pin alone.
             pass
 
+        # Keep the indexed column bare so idx_reg_renewal can use a range scan.
+        previous_year_predicate = (
+            "r.lastRenewalDate < MAKEDATE(YEAR(CURDATE()), 1)"
+        )
+
         # 1. Count active businesses from previous years
         cursor.execute(
             f"""SELECT COUNT(*) AS cnt
                                 FROM official_registry r
                                 {registry_state_join}
-                                WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE())
+                                WHERE {previous_year_predicate}
                                     AND r.applicationStatus = 'Active'{lock_guard}"""
         )
         row = cursor.fetchone()
@@ -3716,7 +3737,7 @@ def check_and_expire_old_permits():
                     WHEN {warning_sql} THEN 'Orange'
                     ELSE 'Red'
                 END
-                                WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE())
+                                WHERE {previous_year_predicate}
                                     AND r.applicationStatus = 'Active'{lock_guard}
                                 """,
             )
@@ -3726,7 +3747,7 @@ def check_and_expire_old_permits():
                 f"""UPDATE official_registry r
                                         {registry_state_join}
                                         SET r.applicationStatus = 'Expired'
-                                        WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE())
+                                        WHERE {previous_year_predicate}
                                             AND r.applicationStatus = 'Active'{lock_guard}"""
             )
 
