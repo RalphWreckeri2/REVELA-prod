@@ -7,6 +7,7 @@ changes nothing. Those three are what these tests pin.
 No database is involved. The fake cursor answers the plan queries and records
 every write, so a test can assert on the exact statements that would run.
 """
+from scripts import backfill_enforcement_ladder as backfill
 import io
 import os
 import sys
@@ -16,8 +17,6 @@ from contextlib import redirect_stdout
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from scripts import backfill_enforcement_ladder as backfill
-
 
 class FakeCursor:
     """Answers the plan queries from a fixture and records every write."""
@@ -26,8 +25,11 @@ class FakeCursor:
         # answers maps a fragment of the query to the rows it returns.
         self.answers = answers or {}
         self.columns = columns if columns is not None else {
-            "official_registry": {"warningLevel", "blackLocked",
-                                  "blackDispatchUnlocked"},
+            "enforcement_state": {"subjectType", "subjectID", "warningLevel",
+                                  "warningBaseColor", "blackLocked",
+                                  "blackLockedAt", "blackLockedBy",
+                                  "blackLockReason"},
+            "enforcement_events": {"subjectType", "subjectID", "eventType"},
             "geospatial_logs": {"source"},
         }
         self.queries = []
@@ -47,7 +49,8 @@ class FakeCursor:
             return
         if "information_schema.COLUMNS" in flat:
             table = params[0]
-            self._rows = [(name,) for name in sorted(self.columns.get(table, ()))]
+            self._rows = [(name,)
+                          for name in sorted(self.columns.get(table, ()))]
             return
         for needle, rows in self.answers.items():
             if needle in flat:
@@ -81,7 +84,7 @@ class BackfillDryRunTests(unittest.TestCase):
             "r.applicationStatus IS NOT NULL": [
                 {"businessID": "B1", "businessName": "One",
                  "current_level": 0, "orange_count": 2}],
-            "g.flagColor = 'Black' AND r.blackLocked = 0": [
+            "g.flagColor = 'Black' AND COALESCE(es.blackLocked, 0) = 0": [
                 {"businessID": "B2", "businessName": "Two"}],
         })
         summary, output = self._run(cursor)
@@ -100,7 +103,7 @@ class BackfillDryRunTests(unittest.TestCase):
                 {"businessID": "B1", "businessName": "One",
                  "current_level": 0, "orange_count": 1}],
             "g.flagColor = 'Black' AND r.businessID IS NULL": [],
-            "g.flagColor = 'Black' AND r.blackLocked = 0": [],
+            "g.flagColor = 'Black' AND COALESCE(es.blackLocked, 0) = 0": [],
             "r.applicationStatus IN ('Revoked'": [],
         })
         summary, output = self._run(cursor)
@@ -147,7 +150,7 @@ class WarningLevelTests(unittest.TestCase):
         self.assertTrue(cursor.writes)
         sql, params = cursor.writes[0][0], cursor.writes[0][1]
         self.assertIn("warningLevel", sql)
-        self.assertEqual(params, (3, "B1"))
+        self.assertEqual(params, ("B1", 3))
 
 
 class UnguessedOrangeTests(unittest.TestCase):
@@ -189,7 +192,8 @@ class ReRunSafetyTests(unittest.TestCase):
         self.assertIn("current_level <> LEAST(orange_count", sql)
 
     def test_already_locked_rows_are_not_in_the_lock_plan(self):
-        self.assertIn("r.blackLocked = 0", backfill.plan_black_lock(None))
+        self.assertIn("COALESCE(es.blackLocked, 0) = 0",
+                      backfill.plan_black_lock(None))
 
     def test_already_correct_sources_are_not_in_the_source_plan(self):
         for _label, sql in backfill.plan_source(None):
@@ -209,7 +213,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_it_names_the_columns_it_needs(self):
         self.assertIn("warningLevel", backfill.REQUIRED_COLUMNS
-                      ["official_registry"])
+                      ["enforcement_state"])
         self.assertIn("source", backfill.REQUIRED_COLUMNS["geospatial_logs"])
 
     def test_a_complete_schema_passes(self):
@@ -217,11 +221,13 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(backfill.missing_columns(cursor), [])
 
     def test_a_missing_column_is_reported(self):
-        cursor = FakeCursor(columns={"official_registry": {"warningLevel"},
+        cursor = FakeCursor(columns={"enforcement_state": {"warningLevel"},
+                                     "enforcement_events": set(),
                                      "geospatial_logs": {"source"}})
         missing = backfill.missing_columns(cursor)
-        self.assertIn("official_registry.blackLocked", missing)
-        self.assertIn("official_registry.blackDispatchUnlocked", missing)
+        self.assertIn("enforcement_state.blackLocked", missing)
+        self.assertIn("enforcement_state.subjectID", missing)
+        self.assertIn("enforcement_events.eventType", missing)
 
     def test_the_plan_refuses_to_run_without_the_columns(self):
         """No half-applying. The runner raises before any write."""

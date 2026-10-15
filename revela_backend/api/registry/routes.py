@@ -21,7 +21,6 @@ from api.registry.service import (
     RegistryLadderConflict,
     RegistryLadderUnavailable,
     clear_warning,
-    unlock_black_dispatch,
     SyncProtectionLookupError,
     OpenInspectionLookupError,
 )
@@ -634,30 +633,11 @@ def clear_warning_route(business_id):
                    methods=["POST"])
 @super_admin_required()
 def unlock_black_dispatch_route(business_id):
-    """Grant ONE inspection of a Black locked business.
-
-    Does not lift the lock. The business stays Black and is dispatchable once.
-    """
-    data = request.get_json(silent=True) or {}
-    reason = data.get("reason")
-
-    try:
-        summary, error = unlock_black_dispatch(
-            business_id, get_jwt_identity(), reason)
-    except RegistryNotFoundError as exc:
-        return jsonify({"error": str(exc)}), 404
-    except (RegistryLadderConflict, RegistryLadderUnavailable) as exc:
-        return jsonify({
-            "error": str(exc),
-            "code": "black_unlock_refused",
-        }), 409
-    if error:
-        if isinstance(error, RegistryNotFoundError):
-            return jsonify({"error": str(error)}), 404
-        if isinstance(error, (RegistryLadderConflict, RegistryLadderUnavailable)):
-            return jsonify({"error": str(error), "code": "black_unlock_refused"}), 409
-        return jsonify({"error": str(error)}), 500
-    return jsonify(summary), 200
+    """Retained for old clients; Black businesses are never dispatchable."""
+    return jsonify({
+        "error": "Black businesses cannot be dispatched for inspection.",
+        "code": "black_dispatch_forbidden",
+    }), 409
 
 
 # ── DELETE /api/registry/<id> ─────────────────────────────────────────────────
@@ -665,7 +645,8 @@ def unlock_black_dispatch_route(business_id):
 @admin_required()
 def delete_business_route(business_id):
     """Delete a single business record by ID."""
-    success, error = delete_business(business_id, actor_role=get_current_role())
+    success, error = delete_business(
+        business_id, actor_role=get_current_role())
 
     if error:
         if isinstance(error, BlackBusinessDeletionForbidden):

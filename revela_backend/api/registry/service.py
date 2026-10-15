@@ -24,7 +24,6 @@ from api.models.geospatial import (
 )
 from api.registry.locks import (
     BLACK_RELOCKED,
-    BLACK_UNLOCKED,
     WARNING_CLEARED,
     BlackLockedError,
     BlackBusinessDeletionForbidden,
@@ -985,7 +984,8 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
         WHERE ir.targetType = 'geospatial_log' AND ir.targetID = g.logID
           AND ir.verificationStatus = 'Verified' AND ir.inspectionResult = 'Orange'
     )"""
-    color_sql = _effective_flag_color_sql("g", ladder=True) if ladder else "NULL"
+    color_sql = _effective_flag_color_sql(
+        "g", ladder=True) if ladder else "NULL"
 
     cursor.execute(
         f"""
@@ -1480,15 +1480,14 @@ class RegistryLadderUnavailable(RuntimeError):
     """
 
 
-#: Columns clear_warning needs on top of the Phase 1 ladder columns. Grouped
-#: because the action refuses outright when any of them is absent, rather than
-#: clearing the level and leaving no record of who did it.
+#: Enforcement-state fields clear_warning needs. The action refuses if the
+#: generalized state schema is unavailable rather than losing audit metadata.
 CLEAR_WARNING_COLUMNS = (
     "warningLevel", "blackLocked", "warningClearedAt", "warningClearedBy",
     "warningClearReason",
 )
 
-#: Columns unlock_black_dispatch needs.
+#: Legacy state fields retained for old in-flight verification compatibility.
 BLACK_UNLOCK_COLUMNS = ("blackLocked", "blackDispatchUnlocked")
 
 
@@ -1502,8 +1501,8 @@ def _coerce_int(value):
         return 0
 
 
-def _has_columns(cursor, names):
-    """True when every name in `names` exists on official_registry.
+def _has_enforcement_columns(cursor, names):
+    """True when every named enforcement column exists on enforcement_state.
 
     Asked in one round trip. Unlike the Phase 1 cached probe this is not
     memoised: these actions are admin-scale, not on a request path, and a
@@ -1514,26 +1513,32 @@ def _has_columns(cursor, names):
     cursor.execute(
         "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
         "WHERE TABLE_SCHEMA = DATABASE() "
-        "  AND TABLE_NAME = 'official_registry' "
+        "  AND TABLE_NAME = 'enforcement_state' "
         f"  AND COLUMN_NAME IN ({placeholders})",
         tuple(names),
     )
     found = set()
     for row in cursor.fetchall() or ():
         found.add(row.get("COLUMN_NAME") if isinstance(row, dict)
-                 else row[0])
+                  else row[0])
     return all(name in found for name in names)
 
 
 def _load_ladder_state(cursor, business_id, columns):
-    """Read the ladder columns for one business, or None if it has no row.
+    """Read permit status and enforcement state for a registered business.
 
-    Returns None rather than raising when there is no row, so callers can tell
-    "no such business" from "not migrated".
+    Returns None when the Registry business does not exist. A missing state
+    row returns NULL enforcement values, which behave as the field defaults.
     """
+    state_columns = ", ".join(f"es.{column}" for column in columns)
     cursor.execute(
-        f"SELECT applicationStatus, {', '.join(columns)} "
-        "FROM official_registry WHERE businessID = %s LIMIT 1",
+        f"""SELECT r.applicationStatus, {state_columns}
+            FROM official_registry r
+            LEFT JOIN enforcement_state es
+              ON es.subjectType = 'business'
+             AND es.subjectID = CAST(r.businessID AS CHAR)
+            WHERE r.businessID = %s
+            LIMIT 1""",
         (business_id,),
     )
     row = cursor.fetchone()
@@ -1547,8 +1552,7 @@ def _load_ladder_state(cursor, business_id, columns):
 def _ladder_not_migrated(what):
     return RegistryLadderUnavailable(
         f"{what} is unavailable: this database has not had the enforcement "
-        "ladder migrations applied, so official_registry has no columns to "
-        "record it in. Nothing was changed."
+        "state migration applied. Nothing was changed."
     )
 
 
@@ -1566,7 +1570,8 @@ def _clear_pin_mirror(cursor, business_id):
     answer than a screen would show.
     """
     registry = _effective_flag_color_sql(
-        "g", ladder=_has_columns(cursor, ("warningLevel", "blackLocked")))
+        "g", ladder=_has_enforcement_columns(
+            cursor, ("warningLevel", "blackLocked")))
     cursor.execute(
         f"""
         UPDATE geospatial_logs g
@@ -1602,7 +1607,7 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
     try:
         cursor = mysql.connection.cursor()
 
-        if not _has_columns(cursor, CLEAR_WARNING_COLUMNS):
+        if not _has_enforcement_columns(cursor, CLEAR_WARNING_COLUMNS):
             cursor.close()
             return None, _ladder_not_migrated("Clearing a warning")
 
@@ -1664,20 +1669,23 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
             )
 
         cursor.execute(
-            """UPDATE official_registry
+            """UPDATE enforcement_state
                SET warningLevel = 0,
+                   warningBaseColor = NULL,
                    warningClearedAt = NOW(),
                    warningClearedBy = %s,
                    warningClearReason = %s
-               WHERE businessID = %s""",
-            (cleared_by_user_id, reason, business_id),
+               WHERE subjectType = 'business'
+                 AND subjectID = %s
+                 AND warningLevel > 0""",
+            (cleared_by_user_id, reason, str(business_id)),
         )
         if cursor.rowcount != 1:
             mysql.connection.rollback()
             cursor.close()
             return None, RegistryLadderConflict(
-                f"The registry row for {business_id} could not be updated, so "
-                "the warning was not cleared."
+                f"The enforcement state for {business_id} could not be updated, "
+                "so the warning was not cleared."
             )
 
         pins_updated = _clear_pin_mirror(cursor, business_id)
@@ -1693,7 +1701,8 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
         cursor.close()
         try:
             from api.notifications import hub
-            hub.publish_to_admins({"type": "registry_updated", "businessID": business_id})
+            hub.publish_to_admins(
+                {"type": "registry_updated", "businessID": business_id})
         except Exception:
             pass
         return {
@@ -1713,84 +1722,189 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
 
 
 def unlock_black_dispatch(business_id, unlocked_by_user_id, reason=None):
-    """Grant ONE inspection of a Black locked business. SUPER_ADMIN only.
+    """Reject the legacy unlock operation; Black businesses are never dispatched."""
+    return None, RegistryLadderConflict(
+        "Black businesses cannot be dispatched for inspection.")
 
-    This does not lift the lock. blackLocked stays 1, applicationStatus is
-    untouched and the business keeps rendering Black on every screen. The only
-    thing it changes is the eligibility gate, which will accept one dispatch.
 
-    Single use: _consume_black_dispatch_unlock spends the grant when an
-    inspection on an unlocked Black business is verified, cancelled or
-    reassigned away.
+def _enforcement_tables_available(cursor):
+    cursor.execute(
+        "SELECT TABLE_NAME FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() "
+        "AND TABLE_NAME IN (%s, %s)",
+        ("enforcement_state", "enforcement_events"),
+    )
+    found = set()
+    for row in cursor.fetchall() or ():
+        found.add(row.get("TABLE_NAME") if isinstance(row, dict) else row[0])
+    return found == {"enforcement_state", "enforcement_events"}
 
-    Returns (summary, error) with the same error types as clear_warning.
+
+def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
+    """Clear an Orange warning on an unregistered detection pin.
+
+    Requires the generalized enforcement tables. The base color must be known
+    so clearing the warning never guesses Green or leaves the pin Orange.
     """
+    cursor = None
     try:
         cursor = mysql.connection.cursor()
-
-        if not _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
+        if not _enforcement_tables_available(cursor):
             cursor.close()
-            return None, _ladder_not_migrated("Unlocking a Black business")
-
-        state = _load_ladder_state(cursor, business_id, BLACK_UNLOCK_COLUMNS)
-        if state is None:
-            cursor.close()
-            return None, RegistryNotFoundError("Business not found")
-
-        if (not _coerce_int(state.get("blackLocked"))
-                and state.get("applicationStatus") not in ("Revoked", "Blacklisted")):
-            cursor.close()
-            return None, RegistryLadderConflict(
-                "This business is not Black locked, so there is nothing to "
-                "unlock for inspection."
-            )
-
-        if _coerce_int(state.get("blackDispatchUnlocked")):
-            cursor.close()
-            return None, RegistryLadderConflict(
-                "This business is already unlocked for one inspection. The "
-                "grant is single use; it is spent when that inspection is "
-                "verified, cancelled or reassigned away."
+            return None, RegistryLadderUnavailable(
+                "Clearing a detection-pin warning requires the enforcement "
+                "state and event tables. Apply the enforcement-state migration first."
             )
 
         cursor.execute(
-            """UPDATE official_registry
-               SET blackDispatchUnlocked = 1,
-                   blackUnlockedAt = NOW(),
-                   blackUnlockedBy = %s,
-                   blackUnlockReason = %s
-               WHERE businessID = %s""",
-            (unlocked_by_user_id, reason, business_id),
+            """SELECT g.logID, g.businessID, g.placeID, g.detectedName,
+                      g.barangayID, g.flagColor, es.warningLevel,
+                      es.blackLocked, es.warningBaseColor
+               FROM geospatial_logs g
+               LEFT JOIN enforcement_state es
+                 ON es.subjectType = 'geospatial_log'
+                AND es.subjectID = CAST(g.logID AS CHAR)
+               WHERE g.logID = %s
+               FOR UPDATE""",
+            (log_id,),
+        )
+        pin = cursor.fetchone()
+        if not pin:
+            cursor.close()
+            return None, RegistryNotFoundError(f"Detection pin #{log_id} not found")
+
+        cursor.execute(
+            """SELECT r.businessID
+               FROM official_registry r
+               WHERE (%s IS NOT NULL AND r.businessID = %s)
+                  OR (%s IS NOT NULL AND r.placeID = %s
+                      AND (%s IS NULL OR r.businessID = %s))
+                  OR (%s IS NULL AND r.barangayID = %s
+                      AND r.businessName = %s)
+               LIMIT 1""",
+            (pin["businessID"], pin["businessID"],
+             pin["placeID"], pin["placeID"], pin["businessID"], pin["businessID"],
+             pin["businessID"], pin["barangayID"], pin["detectedName"]),
+        )
+        linked_registry_row = cursor.fetchone()
+        if linked_registry_row:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This pin is linked to a Registry business. Clear its warning "
+                "from the linked Inspection record instead."
+            )
+
+        level = _coerce_int(pin.get("warningLevel"))
+        if level <= 0 or pin.get("flagColor") != "Orange":
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This detection pin has no active Orange warning to clear."
+            )
+        if _coerce_int(pin.get("blackLocked")) or pin.get("flagColor") == "Black":
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "A Black-locked detection pin cannot have its warning cleared."
+            )
+
+        base_color = pin.get("warningBaseColor")
+        if base_color not in ("Red", "Yellow", "Green", "Purple"):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "The pin's pre-warning color is unknown, so it cannot be "
+                "cleared without guessing. Review its inspection history first."
+            )
+
+        cursor.execute(
+            """SELECT reportID, verificationStatus
+               FROM inspection_reports
+               WHERE targetType = 'geospatial_log'
+                 AND targetID = %s
+                 AND (verificationStatus IS NULL OR verificationStatus <> 'Verified')
+               ORDER BY irTimestamp DESC
+               LIMIT 1""",
+            (log_id,),
+        )
+        pending = cursor.fetchone()
+        if pending:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This detection pin has an inspection that is not yet Verified. "
+                "Verify it or send it back first."
+            )
+
+        cursor.execute(
+            """UPDATE enforcement_state
+               SET warningLevel = 0,
+                   warningBaseColor = NULL,
+                   warningClearedAt = NOW(),
+                   warningClearedBy = %s,
+                   warningClearReason = %s
+               WHERE subjectType = 'geospatial_log'
+                 AND subjectID = %s
+                 AND warningLevel > 0""",
+            (cleared_by_user_id, reason, str(log_id)),
         )
         if cursor.rowcount != 1:
             mysql.connection.rollback()
             cursor.close()
             return None, RegistryLadderConflict(
-                f"The registry row for {business_id} could not be updated, so "
-                "it was not unlocked."
+                "The detection-pin warning changed before it could be cleared. "
+                "Refresh and try again."
             )
 
-        record_enforcement_event(
-            cursor, business_id=business_id, event_type=BLACK_UNLOCKED,
-            actor_user_id=unlocked_by_user_id, reason=reason,
-            previous_black=1, new_black=1)
+        cursor.execute(
+            """UPDATE geospatial_logs
+               SET noticeLevel = 0, flagColor = %s
+               WHERE logID = %s AND flagColor = 'Orange'""",
+            (base_color, log_id),
+        )
+        if cursor.rowcount != 1:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "The detection pin changed before it could be cleared. "
+                "Refresh and try again."
+            )
+
+        cursor.execute(
+            """INSERT INTO enforcement_events (
+                   subjectType, subjectID, eventType, actorUserID, reason,
+                   previousLevel, newLevel, previousBlack, newBlack
+               ) VALUES ('geospatial_log', %s, 'warning_cleared', %s, %s,
+                         %s, 0, 0, 0)""",
+            (str(log_id), cleared_by_user_id, reason, level),
+        )
 
         mysql.connection.commit()
         cursor.close()
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins(
+                {"type": "registry_updated", "logID": log_id})
+        except Exception:
+            pass
         return {
-            "businessID": business_id,
-            "blackDispatchUnlocked": True,
-            # Stays Black. The unlock is a dispatch permission, not a change of
-            # state, and the payload says so so a client cannot infer a colour
-            # from it.
-            "blackLocked": bool(_coerce_int(state.get("blackLocked"))),
+            "logID": log_id,
+            "subjectType": "geospatial_log",
+            "warningCleared": True,
+            "previousWarningLevel": level,
+            "warningLevel": 0,
+            "flagColor": base_color,
         }, None
-
     except (RegistryLadderConflict, RegistryLadderUnavailable,
             RegistryNotFoundError):
+        if cursor is not None:
+            cursor.close()
         raise
     except Exception as e:
         mysql.connection.rollback()
+        if cursor is not None:
+            cursor.close()
         return None, str(e)
 
 
@@ -1803,10 +1917,12 @@ def _consume_black_dispatch_unlock(cursor, business_id, actor_user_id,
     and is Black after it.
     """
     cursor.execute(
-        """UPDATE official_registry
+        """UPDATE enforcement_state
            SET blackDispatchUnlocked = 0
-           WHERE businessID = %s AND blackDispatchUnlocked = 1""",
-        (business_id,),
+              WHERE subjectType = 'business'
+                 AND subjectID = %s
+                 AND blackDispatchUnlocked = 1""",
+        (str(business_id),),
     )
     if cursor.rowcount == 0:
         return False
@@ -1882,10 +1998,8 @@ def _registry_pin_lateral_sql(cursor):
 def _ladder_select_sql(cursor):
     """SELECT list for the ladder fields the Registry page buttons read.
 
-    Returns SQL, not values: a column that does not exist yet is selected as a
-    literal 0, never named. MySQL raises "Unknown column" at execution time
-    for a column that is not there, so naming one on an un-migrated database
-    would break the whole Registry page rather than just hide a button.
+    Returns SQL, not values: if the enforcement table is unavailable, fields
+    resolve to literal 0 rather than breaking Registry reads.
 
     The aliases are the wire contract. registryLadderPolicy.js reads
     warningLevel, blackLocked and blackDispatchUnlocked; changing either side
@@ -1893,11 +2007,22 @@ def _ladder_select_sql(cursor):
     """
     parts = []
     if ladder_columns_available(cursor):
-        parts += ["r.warningLevel", "r.blackLocked"]
+        parts += [
+            "(SELECT es.warningLevel FROM enforcement_state es "
+            "WHERE es.subjectType = 'business' "
+            "AND es.subjectID = CAST(r.businessID AS CHAR) LIMIT 1) AS warningLevel",
+            "(SELECT es.blackLocked FROM enforcement_state es "
+            "WHERE es.subjectType = 'business' "
+            "AND es.subjectID = CAST(r.businessID AS CHAR) LIMIT 1) AS blackLocked",
+        ]
     else:
         parts += ["0 AS warningLevel", "0 AS blackLocked"]
-    if _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
-        parts += ["r.blackDispatchUnlocked"]
+    if _has_enforcement_columns(cursor, BLACK_UNLOCK_COLUMNS):
+        parts += [
+            "(SELECT es.blackDispatchUnlocked FROM enforcement_state es "
+            "WHERE es.subjectType = 'business' "
+            "AND es.subjectID = CAST(r.businessID AS CHAR) LIMIT 1) AS blackDispatchUnlocked"
+        ]
     else:
         parts += ["0 AS blackDispatchUnlocked"]
     return ",\n                ".join(parts)
@@ -1924,12 +2049,20 @@ def _load_sync_protection_keys(cursor):
     black_locked_ids = set()
     closed_ids = set()
 
-    black_condition = "applicationStatus IN ('Revoked', 'Blacklisted')"
+    black_condition = "r.applicationStatus IN ('Revoked', 'Blacklisted')"
+    registry_state_join = ""
     if ladder_columns_available(cursor):
-        black_condition = f"(blackLocked = 1 OR {black_condition})"
+        registry_state_join = """
+            LEFT JOIN enforcement_state es
+              ON es.subjectType = 'business'
+             AND es.subjectID = CAST(r.businessID AS CHAR)
+        """
+        black_condition = (
+            f"(COALESCE(es.blackLocked, 0) = 1 OR {black_condition})")
     cursor.execute(f"""
-        SELECT businessID FROM official_registry
-        WHERE {black_condition} AND businessID IS NOT NULL
+        SELECT r.businessID FROM official_registry r
+        {registry_state_join}
+        WHERE {black_condition} AND r.businessID IS NOT NULL
     """)
     for row in cursor.fetchall() or ():
         black_locked_ids.add(row.get("businessID"))
@@ -3537,10 +3670,16 @@ def check_and_expire_old_permits():
         # rollover either. The lock is independent of applicationStatus, so
         # without this a habitual offender would silently be re-registered as
         # merely Expired.
+        registry_state_join = ""
         lock_guard = ""
         ladder = ladder_columns_available(cursor)
         if ladder:
-            lock_guard = " AND COALESCE(blackLocked, 0) = 0"
+            registry_state_join = """
+                LEFT JOIN enforcement_state es
+                  ON es.subjectType = 'business'
+                 AND es.subjectID = CAST(r.businessID AS CHAR)
+            """
+            lock_guard = " AND COALESCE(es.blackLocked, 0) = 0"
         else:
             # Column absent. The permit status below still needs expiring; only
             # the pin colour is unknowable, so expire and leave the pin alone.
@@ -3548,10 +3687,11 @@ def check_and_expire_old_permits():
 
         # 1. Count active businesses from previous years
         cursor.execute(
-            """
-            SELECT COUNT(*) AS cnt FROM official_registry
-            WHERE YEAR(lastRenewalDate) < YEAR(CURDATE()) AND applicationStatus = 'Active'
-            """ + lock_guard
+            f"""SELECT COUNT(*) AS cnt
+                                FROM official_registry r
+                                {registry_state_join}
+                                WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE())
+                                    AND r.applicationStatus = 'Active'{lock_guard}"""
         )
         row = cursor.fetchone()
         cnt = row["cnt"] if row else 0
@@ -3562,7 +3702,7 @@ def check_and_expire_old_permits():
             # 2. Update map flag colors in geospatial_logs to Red (Expired)
             # utf8mb4_unicode_ci handles case-insensitive matching — LOWER(TRIM())
             # wrapping on column sides prevents the new indexes from being used.
-            warning_sql = ("COALESCE(r.warningLevel, 0) >= 1" if ladder else """EXISTS (
+            warning_sql = ("COALESCE(es.warningLevel, 0) >= 1" if ladder else """EXISTS (
                 SELECT 1 FROM inspection_reports ir
                 WHERE ir.targetType = 'geospatial_log' AND ir.targetID = g.logID
                   AND ir.verificationStatus = 'Verified' AND ir.inspectionResult = 'Orange'
@@ -3571,21 +3711,23 @@ def check_and_expire_old_permits():
                 f"""
                 UPDATE geospatial_logs g
                 JOIN official_registry r ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
+                {registry_state_join}
                 SET g.flagColor = CASE
                     WHEN {warning_sql} THEN 'Orange'
                     ELSE 'Red'
                 END
-                WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'
-                """ + lock_guard.replace("blackLocked", "r.blackLocked")
+                                WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE())
+                                    AND r.applicationStatus = 'Active'{lock_guard}
+                                """,
             )
 
             # 3. Update registry status to 'Expired'
             cursor.execute(
-                """
-                UPDATE official_registry
-                SET applicationStatus = 'Expired'
-                WHERE YEAR(lastRenewalDate) < YEAR(CURDATE()) AND applicationStatus = 'Active'
-                """ + lock_guard
+                f"""UPDATE official_registry r
+                                        {registry_state_join}
+                                        SET r.applicationStatus = 'Expired'
+                                        WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE())
+                                            AND r.applicationStatus = 'Active'{lock_guard}"""
             )
 
             # 4. Fetch admin userIDs

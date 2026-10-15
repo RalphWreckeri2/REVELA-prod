@@ -8,6 +8,10 @@ Both column caches are reset per test: ladder_columns_available and
 lock_column_available cache for the life of the process, so whichever test
 touched them first would otherwise decide the answer for every test after it.
 """
+from api.registry.locks import reset_lock_column_cache
+from api.registry.colors import reset_ladder_column_cache
+from api.registry import service as registry_service
+from api.inspections import service as inspection_service
 import os
 import sys
 import unittest
@@ -17,15 +21,11 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
-from api.inspections import service as inspection_service
-from api.registry import service as registry_service
-from api.registry.colors import reset_ladder_column_cache
-from api.registry.locks import reset_lock_column_cache
 
 from test_clear_warning import LadderCursor, Harness  # noqa: E402
 
 UNLOCK_COLUMNS = ["applicationStatus", "warningLevel", "blackLocked",
-                 "blackDispatchUnlocked"]
+                  "blackDispatchUnlocked"]
 
 
 def locked_row(**over):
@@ -40,69 +40,14 @@ def locked_row(**over):
 
 class UnlockTests(Harness):
 
-    def _cursor(self, **over):
-        return LadderCursor(columns=UNLOCK_COLUMNS,
-                            rows={"SELECT applicationStatus": locked_row(**over)},
-                            pending=None)
-
-    def test_unlocks_and_records_who_and_when(self):
-        cursor = self._cursor()
+    def test_legacy_unlock_is_refused_without_database_access(self):
+        cursor = LadderCursor(columns=UNLOCK_COLUMNS,
+                              rows={"SELECT applicationStatus": locked_row()})
         summary, error = self._unlock(cursor, reason="court order", user=9)
-        self.assertIsNone(error)
-        self.assertTrue(summary["blackDispatchUnlocked"])
-        sql, params = next((s, p) for s, p in cursor.calls
-                           if "UPDATE official_registry" in s)
-        self.assertIn("blackDispatchUnlocked = 1", sql)
-        self.assertIn("blackUnlockedAt = NOW()", sql)
-        self.assertIn("blackUnlockedBy = %s", sql)
-        self.assertIn(9, params)
-
-    def test_it_does_not_touch_the_lock_or_the_permit(self):
-        cursor = self._cursor()
-        self._unlock(cursor)
-        sql = next(s for s, _ in cursor.calls
-                   if "UPDATE official_registry" in s)
-        self.assertNotIn("blackLocked =", sql)
-        self.assertNotIn("applicationStatus =", sql)
-
-    def test_the_payload_says_it_is_still_black(self):
-        summary, _ = self._unlock(self._cursor())
-        self.assertTrue(summary["blackLocked"],
-                        "the client must not infer a colour change from this")
-
-    def test_the_reason_is_optional(self):
-        summary, error = self._unlock(self._cursor(), reason=None)
-        self.assertIsNone(error)
-        self.assertTrue(summary["blackDispatchUnlocked"])
-
-    def test_writes_the_black_unlocked_event(self):
-        cursor = self._cursor()
-        self._unlock(cursor, reason="appeal", user=9)
-        _, params = next((s, p) for s, p in cursor.calls
-                         if "registry_enforcement_events" in s)
-        self.assertEqual(params[1], "black_unlocked")
-        self.assertEqual(params[2], 9)
-        self.assertEqual(params[3], "appeal")
-
-    def test_a_business_that_is_not_black_is_refused(self):
-        summary, error = self._unlock(self._cursor(blackLocked=0, applicationStatus="Active"))
         self.assertIsNone(summary)
         self.assertIsInstance(error, registry_service.RegistryLadderConflict)
-        self.assertIn("not Black locked", str(error))
-
-    def test_unlocking_twice_is_refused(self):
-        summary, error = self._unlock(self._cursor(blackDispatchUnlocked=1))
-        self.assertIsNone(summary)
-        self.assertIsInstance(error, registry_service.RegistryLadderConflict)
-        self.assertIn("single use", str(error))
-
-    def test_missing_columns_refuse_closed(self):
-        cursor = LadderCursor(columns=["applicationStatus", "blackLocked"])
-        summary, error = self._unlock(cursor)
-        self.assertIsNone(summary)
-        self.assertIsInstance(
-            error, registry_service.RegistryLadderUnavailable)
-        self.assertEqual(cursor.writes(), [])
+        self.assertIn("cannot be dispatched", str(error))
+        self.assertEqual(cursor.calls, [])
 
 
 # ── who may unlock ───────────────────────────────────────────────────────────
@@ -115,14 +60,14 @@ class SuperAdminOnlyTests(unittest.TestCase):
         from api.middleware import decorators
 
         with patch.object(decorators, "verify_jwt_in_request"), \
-             patch.object(decorators, "get_jwt",
-                          return_value={"role": role, "session_id": "s"}), \
-             patch.object(decorators, "get_jwt_identity", return_value=1), \
-             patch.object(decorators, "find_user_by_id",
-                          return_value={"userID": 1, "userRole": role,
-                                        "isActive": True}), \
-             patch.object(decorators, "check_active_session",
-                          return_value=(True, None)):
+            patch.object(decorators, "get_jwt",
+                         return_value={"role": role, "session_id": "s"}), \
+            patch.object(decorators, "get_jwt_identity", return_value=1), \
+            patch.object(decorators, "find_user_by_id",
+                         return_value={"userID": 1, "userRole": role,
+                                       "isActive": True}), \
+            patch.object(decorators, "check_active_session",
+                         return_value=(True, None)):
             app = Flask(__name__)
 
             @decorators.super_admin_required()
@@ -154,15 +99,11 @@ class SuperAdminOnlyTests(unittest.TestCase):
         self.assertNotIn(
             "@admin_required()\ndef unlock_black_dispatch_route", module)
 
-    def test_a_refusal_answers_409_with_the_server_message(self):
+    def test_unlock_route_always_refuses_without_calling_service(self):
         from flask import Flask
         from api.registry import routes as registry_routes
 
         with (
-            patch.object(registry_routes, "unlock_black_dispatch",
-                         side_effect=registry_service.RegistryLadderConflict(
-                             "This business is already unlocked for one "
-                             "inspection.")),
             patch.object(registry_routes, "get_jwt_identity", return_value=9),
         ):
             app = Flask(__name__)
@@ -173,16 +114,14 @@ class SuperAdminOnlyTests(unittest.TestCase):
                     .__wrapped__("BIZ-1")
         self.assertEqual(response[1], 409)
         body = response[0].get_json()
-        self.assertEqual(body["code"], "black_unlock_refused")
-        self.assertIn("already unlocked", body["error"])
+        self.assertEqual(body["code"], "black_dispatch_forbidden")
+        self.assertIn("cannot be dispatched", body["error"])
 
-    def test_success_answers_200(self):
+    def test_unlock_route_never_answers_success(self):
         from flask import Flask
         from api.registry import routes as registry_routes
 
         with (
-            patch.object(registry_routes, "unlock_black_dispatch",
-                         return_value=({"blackDispatchUnlocked": True}, None)),
             patch.object(registry_routes, "get_jwt_identity", return_value=9),
         ):
             app = Flask(__name__)
@@ -191,7 +130,7 @@ class SuperAdminOnlyTests(unittest.TestCase):
                     json={}):
                 response = registry_routes.unlock_black_dispatch_route \
                     .__wrapped__("BIZ-1")
-        self.assertEqual(response[1], 200)
+        self.assertEqual(response[1], 409)
 
 
 # ── the eligibility gate ─────────────────────────────────────────────────────
@@ -264,21 +203,23 @@ class EligibilityGateTests(unittest.TestCase):
             mock_mysql.connection.cursor.return_value = cursor
             return inspection_service.assign_inspection(22, 9, None, 2)
 
-    def test_a_normal_black_is_blocked(self):
+    def test_a_black_is_blocked(self):
         result, error = self._assign(colour="Black", unlocked=0)
         self.assertIsNone(result)
         self.assertIsInstance(
             error, inspection_service.InspectionAssignmentConflict)
-        self.assertIn("SUPER_ADMIN", str(error))
+        self.assertIn("cannot be dispatched", str(error))
 
-    def test_an_unlocked_black_is_allowed(self):
+    def test_an_unlocked_black_is_still_blocked(self):
         result, error = self._assign(colour="Black", unlocked=1)
-        self.assertIsNone(error)
-        self.assertEqual(result["status"], "Assigned")
+        self.assertIsNone(result)
+        self.assertIsInstance(
+            error, inspection_service.InspectionAssignmentConflict)
+        self.assertIn("cannot be dispatched", str(error))
 
-    def test_a_black_without_the_unlock_column_stays_blocked(self):
+    def test_a_black_without_the_legacy_unlock_column_is_blocked(self):
         result, error = self._assign(colour="Black", unlocked=None,
-                                    unlock_column=False)
+                                     unlock_column=False)
         self.assertIsNone(result)
         self.assertIsInstance(
             error, inspection_service.InspectionAssignmentConflict)
@@ -328,7 +269,7 @@ class VerifyOnUnlockedBlackTests(Harness):
     @staticmethod
     def _registry_update(cursor):
         rows = [" ".join(c.args[0].split()) for c in cursor.execute.call_args_list
-                if "UPDATE official_registry" in c.args[0]
+                if "enforcement_state" in c.args[0]
                 and "lastInspectedAt" in c.args[0]]
         return rows[0] if rows else ""
 
@@ -367,9 +308,9 @@ class VerifyOnUnlockedBlackTests(Harness):
         self.assertIsNone(error)
         self.assertTrue(out["blackDispatchUnlockSpent"])
         events = [c for c in cursor.execute.call_args_list
-                  if "registry_enforcement_events" in c.args[0]]
+                  if "enforcement_events" in c.args[0]]
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].args[1][1], "black_relocked")
+        self.assertEqual(events[0].args[1][2], "black_relocked")
 
     def test_a_refused_verify_writes_nothing_at_all(self):
         (_, error), cursor = self._verify(unlocked=0)
@@ -383,7 +324,8 @@ class VerifyOnUnlockedBlackTests(Harness):
         """Revoked is Black even when a lock or dispatch grant cannot be read."""
         (result, error), cursor = self._verify(unlocked=1, migrated=False)
         self.assertIsNone(result)
-        self.assertIsInstance(error, inspection_service.InspectionVerificationConflict)
+        self.assertIsInstance(
+            error, inspection_service.InspectionVerificationConflict)
         self.assertEqual([c for c in cursor.execute.call_args_list
                           if c.args[0].lstrip().upper().startswith(
                               ("UPDATE", "INSERT", "DELETE"))], [])
@@ -404,18 +346,17 @@ class RelockTests(Harness):
         spent, cursor = self._consume(rowcount=0)
         self.assertFalse(spent)
         self.assertEqual([s for s, _ in cursor.calls
-                          if "registry_enforcement_events" in s], [])
+                          if "enforcement_events" in s], [])
 
     def test_spending_writes_the_relock_event(self):
         spent, cursor = self._consume(rowcount=1)
         self.assertTrue(spent)
-        sql = next(s for s, _ in cursor.calls
-                   if "UPDATE official_registry" in s)
+        sql = next(s for s, _ in cursor.calls if "UPDATE enforcement_state" in s)
         self.assertIn("blackDispatchUnlocked = 0", sql)
         self.assertNotIn("blackLocked =", sql)
-        _, params = next((s, p) for s, p in cursor.calls
-                         if "registry_enforcement_events" in s)
-        self.assertEqual(params[1], "black_relocked")
+        _, params = next((s, p)
+                         for s, p in cursor.calls if "enforcement_events" in s)
+        self.assertEqual(params[2], "black_relocked")
 
     def test_sending_a_report_back_spends_the_grant(self):
         """The 'cancelled or reassigned away' path that exists in this codebase.

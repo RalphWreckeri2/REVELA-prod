@@ -35,17 +35,17 @@ def test_only_exact_super_admin_can_delete_black(db, status, locked, role):
 
 
 @pytest.mark.parametrize("status,locked", [("Revoked", 0), ("Active", 1)])
-def test_super_admin_can_delete_black_business_and_linked_pin(db, status, locked):
+def test_super_admin_cannot_delete_black_business_and_linked_pin(db, status, locked):
     db.seed(status=status, locked=locked)
     ok, error = registry.delete_business("B-1", actor_role="SUPER_ADMIN")
-    assert error is None
-    assert ok
-    assert db.rows("SELECT * FROM official_registry") == []
-    assert db.rows("SELECT * FROM geospatial_logs") == []
-    assert db.rows("SELECT * FROM inspection_reports") == []
+    assert not ok
+    assert isinstance(error, BlackBusinessDeletionForbidden)
+    assert len(db.rows("SELECT * FROM official_registry")) == 1
+    assert len(db.rows("SELECT * FROM geospatial_logs")) == 1
+    assert len(db.rows("SELECT * FROM inspection_reports")) == 1
 
 
-def test_unmigrated_revoked_still_requires_super_admin(db):
+def test_unmigrated_revoked_cannot_be_deleted_by_admin_or_super_admin(db):
     db.seed(status="Revoked", locked=0)
     db.db.execute("ALTER TABLE official_registry DROP COLUMN warningLevel")
     db.db.execute("ALTER TABLE official_registry DROP COLUMN blackLocked")
@@ -56,7 +56,7 @@ def test_unmigrated_revoked_still_requires_super_admin(db):
 
 
 @pytest.mark.parametrize("virtual", [False, True])
-@pytest.mark.parametrize("role,expected", [("Admin", 403), ("System Administrator", 403), ("SUPER_ADMIN", 200)])
+@pytest.mark.parametrize("role,expected", [("Admin", 403), ("System Administrator", 403), ("SUPER_ADMIN", 403)])
 def test_registry_and_virtual_map_delete_routes_enforce_black_role(db, virtual, role, expected):
     db.seed(status="Revoked", report=False)
     if virtual:
@@ -66,10 +66,12 @@ def test_registry_and_virtual_map_delete_routes_enforce_black_role(db, virtual, 
     app = Flask(__name__)
     app.config["JWT_SECRET_KEY"] = "isolated-registry-test-secret-key-32-chars"
     JWTManager(app)
-    app.register_blueprint(registry_routes.registry_bp, url_prefix="/api/registry")
+    app.register_blueprint(registry_routes.registry_bp,
+                           url_prefix="/api/registry")
     app.register_blueprint(flag_routes.flags_bp, url_prefix="/api/flags")
     with app.app_context():
-        token = create_access_token(identity="2", additional_claims={"role": role})
+        token = create_access_token(
+            identity="2", additional_claims={"role": role})
     with patch("api.middleware.decorators._verify_user_and_session", return_value=None):
         response = app.test_client().delete("/api/flags/-5" if virtual else "/api/registry/B-1",
                                             headers={"Authorization": f"Bearer {token}"})
@@ -77,15 +79,26 @@ def test_registry_and_virtual_map_delete_routes_enforce_black_role(db, virtual, 
     if expected == 403:
         assert response.get_json()["code"] == "black_delete_forbidden"
         assert len(db.rows("SELECT * FROM official_registry")) == 1
-    else:
-        assert db.rows("SELECT * FROM official_registry") == []
+    assert len(db.rows("SELECT * FROM official_registry")) == 1
+
+
+def test_unregistered_black_pin_cannot_be_deleted_by_super_admin(db):
+    db.db.execute(
+        "INSERT INTO geospatial_logs (logID, barangayID, detectedName, flagColor) VALUES (20, 1, 'FIELD SHOP', 'Black')")
+    db.commit()
+    ok, error = flags.delete_flag(20, actor_role="SUPER_ADMIN")
+    assert not ok
+    assert isinstance(error, BlackBusinessDeletionForbidden)
+    assert db.rows("SELECT flagColor FROM geospatial_logs WHERE logID = 20") == [
+        {"flagColor": "Black"}]
 
 
 @pytest.mark.parametrize("virtual", [False, True])
-@pytest.mark.parametrize("unlocked", [0, 1])
-def test_actual_map_payload_exposes_unlock_without_changing_black_color(db, virtual, unlocked):
+@pytest.mark.parametrize("legacy_grant", [0, 1])
+def test_map_payload_ignores_legacy_black_dispatch_grants(db, virtual, legacy_grant):
     db.seed(status="Revoked", locked=1, report=False)
-    db.db.execute("UPDATE official_registry SET blackDispatchUnlocked = ?", (unlocked,))
+    db.db.execute("""UPDATE enforcement_state SET blackDispatchUnlocked = ?
+        WHERE subjectType = 'business'""", (legacy_grant,))
     if virtual:
         db.db.execute("DELETE FROM geospatial_logs")
         db.db.execute("UPDATE official_registry SET businessID = '5'")
@@ -95,14 +108,15 @@ def test_actual_map_payload_exposes_unlock_without_changing_black_color(db, virt
     payload = json.loads(json.dumps(payload))
     assert payload["total"] == 1
     assert payload["data"][0]["flagColor"] == "Black"
-    assert payload["data"][0]["blackDispatchUnlocked"] == unlocked
+    assert payload["data"][0]["blackDispatchUnlocked"] == 0
     assert "logID" in payload["data"][0]
     assert "flagSource" in payload["data"][0]
 
 
 def test_map_payload_without_unlock_column_is_zero(db):
     db.seed(status="Revoked", locked=1, report=False)
-    db.db.execute("ALTER TABLE official_registry DROP COLUMN blackDispatchUnlocked")
+    db.db.execute(
+        "ALTER TABLE enforcement_state DROP COLUMN blackDispatchUnlocked")
     db.commit()
     payload, error = flags.get_flags()
     assert error is None

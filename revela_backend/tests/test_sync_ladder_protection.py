@@ -9,6 +9,9 @@ counter arithmetic.
 Both caches are reset per test, because ladder_columns_available and
 lock_column_available cache for the life of the process.
 """
+from api.registry.locks import reset_lock_column_cache
+from api.registry.colors import reset_ladder_column_cache
+from api.registry import service as registry_service
 import io
 import os
 import sys
@@ -17,10 +20,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.registry import service as registry_service
-from api.registry.colors import reset_ladder_column_cache
-from api.registry.locks import reset_lock_column_cache
 
 
 class SyncHarness(unittest.TestCase):
@@ -57,7 +56,7 @@ class SyncHarness(unittest.TestCase):
 
         def fetchall(self):
             flat = self.calls[-1] if self.calls else ""
-            if "blackLocked = 1" in flat:
+            if "COALESCE(es.blackLocked, 0) = 1" in flat:
                 return [{"businessID": b} for b in self.black + self.revoked]
             if "applicationStatus IN ('Revoked', 'Blacklisted')" in flat:
                 return [{"businessID": b} for b in self.revoked]
@@ -93,7 +92,8 @@ class PreloadTests(SyncHarness):
     def test_the_black_query_is_not_issued_without_the_columns(self):
         cursor = self._PreloadCursor(migrated=False)
         self._preload(cursor)
-        self.assertFalse(any("blackLocked = 1" in c for c in cursor.calls))
+        self.assertFalse(any("COALESCE(es.blackLocked, 0) = 1" in c
+                             for c in cursor.calls))
 
     def test_revoked_is_preloaded_even_without_ladder_columns(self):
         for migrated in (True, False):
@@ -104,7 +104,7 @@ class PreloadTests(SyncHarness):
                 self.assertEqual(black, {"R-1"})
 
     def test_a_failed_black_lookup_raises(self):
-        cursor = self._PreloadCursor(fail_on="blackLocked = 1")
+        cursor = self._PreloadCursor(fail_on="COALESCE(es.blackLocked, 0) = 1")
         with self.assertRaises(RuntimeError):
             self._preload(cursor)
 
@@ -138,7 +138,7 @@ class _PreloadCursor:
     def execute(self, sql, params=()):
         flat = self._flat(sql)
         self.calls.append(flat)
-        if self.fail_on == "black" and "blackLocked = 1" in flat:
+        if self.fail_on == "black" and "COALESCE(es.blackLocked, 0) = 1" in flat:
             raise RuntimeError("connection lost")
         if self.fail_on == "closed" and "applicationStatus = 'Closed'" in flat:
             raise RuntimeError("connection lost")
@@ -148,7 +148,7 @@ class _PreloadCursor:
 
     def fetchall(self):
         flat = self.calls[-1] if self.calls else ""
-        if "blackLocked = 1" in flat:
+        if "COALESCE(es.blackLocked, 0) = 1" in flat:
             return [{"businessID": "BIZ-9"}]
         if "applicationStatus = 'Closed'" in flat:
             return [{"businessID": "BIZ-9"}]
@@ -196,20 +196,23 @@ class SyncAbortsOnAFailedPreloadTests(SyncHarness):
     def test_the_preload_actually_runs_in_this_harness(self):
         """Guards the guard: without this the tests below prove nothing."""
         _, cursor = self._run()
-        self.assertTrue(any("blackLocked = 1" in c for c in cursor.calls))
+        self.assertTrue(any("COALESCE(es.blackLocked, 0) = 1" in c
+                            for c in cursor.calls))
         self.assertTrue(any("applicationStatus = 'Closed'" in c
                             for c in cursor.calls))
 
     def test_a_failed_black_preload_aborts_with_no_writes(self):
         (result, error), cursor = self._run(fail_on="black")
         self.assertIsNone(result)
-        self.assertIsInstance(error, registry_service.SyncProtectionLookupError)
+        self.assertIsInstance(
+            error, registry_service.SyncProtectionLookupError)
         self.assertEqual(cursor.writes(), [])
 
     def test_a_failed_closed_preload_aborts_with_no_writes(self):
         (result, error), cursor = self._run(fail_on="closed")
         self.assertIsNone(result)
-        self.assertIsInstance(error, registry_service.SyncProtectionLookupError)
+        self.assertIsInstance(
+            error, registry_service.SyncProtectionLookupError)
         self.assertEqual(cursor.writes(), [])
 
     def test_the_error_is_typed_not_stringified(self):
@@ -307,7 +310,7 @@ class SyncSkipsProtectedRowsTests(SyncHarness):
 
         def fetchall(self):
             flat = self.calls[-1] if self.calls else ""
-            if "blackLocked = 1" in flat:
+            if "COALESCE(es.blackLocked, 0) = 1" in flat:
                 return [{"businessID": "BIZ-1"}]
             if "applicationStatus = 'Closed'" in flat:
                 return [{"businessID": "BIZ-2"}]
@@ -445,7 +448,8 @@ class ClosedReopenTests(SyncHarness):
 
         update = inspect.getsource(registry_service.update_business)
         self.assertIn("assert_not_black_locked", update)
-        self.assertNotIn("Closed", update.split("assert_not_black_locked")[1][:400])
+        self.assertNotIn("Closed", update.split(
+            "assert_not_black_locked")[1][:400])
 
 
 if __name__ == "__main__":

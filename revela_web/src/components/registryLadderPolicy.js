@@ -7,8 +7,6 @@
  *
  * The server enforces the same rules and is the authority:
  *   clear_warning            POST /api/registry/<id>/clear-warning      Admin
- *   unlock_black_dispatch    POST /api/registry/<id>/unlock-black-dispatch
- *                                                            SUPER_ADMIN only
  *   assign_inspection        the eligibility gate, on the effective colour
  *
  * These helpers only decide whether to SHOW a button. A stale "false" hides a
@@ -35,30 +33,51 @@ export function canClearWarning(business, role) {
 }
 
 export function canClearInspectionWarning(report, role) {
-  return report?.verificationStatus === "Verified"
-    && report.businessID != null
-    && Number(report.hasNonVerifiedInspection) === 0
-    && canClearWarning(report, role);
+  if (
+    report?.verificationStatus !== "Verified" ||
+    Number(report.hasNonVerifiedInspection) !== 0 ||
+    !ADMIN_ROLES.includes(role)
+  )
+    return false;
+  if (report.businessID != null) return canClearWarning(report, role);
+
+  return (
+    report.logID != null &&
+    report.flagColor === "Orange" &&
+    warningLevel(report) > 0 &&
+    !isBlackLocked(report) &&
+    ["Red", "Yellow", "Green", "Purple"].includes(report.warningBaseColor)
+  );
 }
 
 /** Refresh the open detail before notifying the Map of the successful change. */
-export async function clearInspectionWarning({ report, role, reason, token, request, refresh, onChanged }) {
-  if (!canClearInspectionWarning(report, role)) throw new Error("This inspection's warning cannot be cleared.");
-  const result = await request(report.businessID, reason, token);
+export async function clearInspectionWarning({
+  report,
+  role,
+  reason,
+  token,
+  request,
+  refresh,
+  onChanged,
+}) {
+  if (!canClearInspectionWarning(report, role))
+    throw new Error("This inspection's warning cannot be cleared.");
+  const isPinSubject = report.businessID == null;
+  const subjectId = isPinSubject ? report.logID : report.businessID;
+  const result = await request(
+    subjectId,
+    reason,
+    token,
+    isPinSubject ? "geospatial_log" : "business",
+  );
   await refresh();
   onChanged?.(result);
   return result;
 }
 
-/**
- * "Unlock for Inspection" is SUPER_ADMIN only, Black rows only, and never
- * offered twice for the same grant.
- */
-export function canUnlockBlackDispatch(business, role) {
-  if (role !== "SUPER_ADMIN") return false;
-  if (!business) return false;
-  if (!isBlackLocked(business)) return false;
-  return !isBlackDispatchUnlocked(business);
+/** Black dispatch unlocks are no longer supported. */
+export function canUnlockBlackDispatch() {
+  return false;
 }
 
 export function warningLevel(business) {
@@ -67,12 +86,14 @@ export function warningLevel(business) {
 }
 
 export function isBlackLocked(business) {
-  return Number(business?.blackLocked) === 1
-    || ["Revoked", "Blacklisted"].includes(business?.applicationStatus);
+  return (
+    Number(business?.blackLocked) === 1 ||
+    ["Revoked", "Blacklisted"].includes(business?.applicationStatus)
+  );
 }
 
-export function isBlackDispatchUnlocked(business) {
-  return Number(business?.blackDispatchUnlocked) === 1;
+export function isBlackDispatchUnlocked() {
+  return false;
 }
 
 /**
@@ -84,21 +105,15 @@ export function clearWarningBlockedReason(business, role) {
   if (!ADMIN_ROLES.includes(role)) return "Admins only";
   if (!business) return "No business selected";
   if (isBlackLocked(business)) {
-    return "This business is Black locked. Only a SUPER_ADMIN unlock applies.";
+    return "Warnings cannot be cleared while this business is Black locked.";
   }
-  if (Number(business.hasNonVerifiedInspection) > 0) return "An inspection is not yet Verified";
+  if (Number(business.hasNonVerifiedInspection) > 0)
+    return "An inspection is not yet Verified";
   if (warningLevel(business) <= 0) return "There is no warning to clear";
   return "Not available";
 }
 
-/**
- * Black is dispatchable only while a SUPER_ADMIN grant is open.
- *
- * Mirrors assign_inspection: the gate reads the effective colour, and Black
- * passes only when blackDispatchUnlocked is set. A missing field is treated
- * as not unlocked, which keeps Black blocked on an un-migrated database.
- */
+/** Black is never dispatchable, regardless of legacy grant fields. */
 export function isBlackDispatchAllowed(flag) {
-  if (flag?.color !== "Black") return true;
-  return isBlackDispatchUnlocked(flag);
+  return flag?.color !== "Black";
 }

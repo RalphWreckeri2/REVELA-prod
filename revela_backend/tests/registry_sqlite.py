@@ -13,7 +13,8 @@ class RegistryDB:
     def __init__(self, *, ladder=True):
         self.db = sqlite3.connect(":memory:")
         self.db.row_factory = sqlite3.Row
-        self.db.create_function("YEAR", 1, lambda value: int(str(value)[:4]) if value else None)
+        self.db.create_function("YEAR", 1, lambda value: int(
+            str(value)[:4]) if value else None)
         self.connection = self
         self.calls = []
         self.db.executescript("""
@@ -56,6 +57,22 @@ class RegistryDB:
                 eventID INTEGER PRIMARY KEY AUTOINCREMENT, businessID TEXT, eventType TEXT,
                 actorUserID INTEGER, reason TEXT, previousLevel INTEGER, newLevel INTEGER,
                 previousBlack INTEGER, newBlack INTEGER);
+            CREATE TABLE enforcement_state (
+                enforcementID INTEGER PRIMARY KEY AUTOINCREMENT,
+                subjectType TEXT NOT NULL, subjectID TEXT NOT NULL,
+                warningLevel INTEGER NOT NULL DEFAULT 0, warningBaseColor TEXT,
+                blackLocked INTEGER NOT NULL DEFAULT 0, blackLockedAt TEXT,
+                blackLockedBy INTEGER, blackLockReason TEXT,
+                blackDispatchUnlocked INTEGER NOT NULL DEFAULT 0,
+                blackUnlockedAt TEXT, blackUnlockedBy INTEGER, blackUnlockReason TEXT,
+                warningClearedAt TEXT, warningClearedBy INTEGER, warningClearReason TEXT,
+                lastInspectionResult TEXT, lastInspectedAt TEXT,
+                UNIQUE(subjectType, subjectID));
+            CREATE TABLE enforcement_events (
+                eventID INTEGER PRIMARY KEY AUTOINCREMENT,
+                subjectType TEXT NOT NULL, subjectID TEXT NOT NULL, eventType TEXT NOT NULL,
+                actorUserID INTEGER, reason TEXT, previousLevel INTEGER, newLevel INTEGER,
+                previousBlack INTEGER, newBlack INTEGER, createdAt TEXT DEFAULT CURRENT_TIMESTAMP);
             CREATE TABLE revela_notifications (
                 recipientUserId INTEGER, type TEXT, title TEXT, body TEXT, link TEXT);
         """)
@@ -86,6 +103,9 @@ class RegistryDB:
              latitude, longitude, lastRenewalDate)
             VALUES ('B-1', 'ACME', 1, ?, ?, ?, 13.9667, 121.1167, '2020-01-01')""",
                         (status, level, locked))
+        self.db.execute("""INSERT INTO enforcement_state
+            (subjectType, subjectID, warningLevel, blackLocked)
+            VALUES ('business', 'B-1', ?, ?)""", (level, locked))
         self.db.execute("""INSERT INTO geospatial_logs
             (logID, businessID, detectedName, barangayID, flagColor, noticeLevel, latitude, longitude, source)
             VALUES (1, 'B-1', 'ACME', 1, ?, ?, 13.9667, 121.1167, 'registry')""", (color, level))
@@ -105,40 +125,58 @@ class RegistryCursor:
         self.connection.calls.append((sql, params))
         if "information_schema.COLUMNS" in sql:
             table = re.search(r"TABLE_NAME\s*=\s*'([^']+)'", sql)[1]
-            sql = "SELECT name AS COLUMN_NAME FROM pragma_table_info(?) WHERE name IN (" + ",".join("?" for _ in params) + ")"
+            sql = "SELECT name AS COLUMN_NAME FROM pragma_table_info(?) WHERE name IN (" + ",".join(
+                "?" for _ in params) + ")"
             params = (table, *params)
+        elif "information_schema.TABLES" in sql:
+            sql = "SELECT name AS TABLE_NAME FROM sqlite_master WHERE type = 'table' AND name IN (" + ",".join(
+                "?" for _ in params) + ")"
         elif sql.strip().startswith("SHOW COLUMNS"):
-            table, column = re.search(r"SHOW COLUMNS FROM (\w+) LIKE '([^']+)'", sql).groups()
-            sql, params = "SELECT name FROM pragma_table_info(?) WHERE name = ?", (table, column)
+            table, column = re.search(
+                r"SHOW COLUMNS FROM (\w+) LIKE '([^']+)'", sql).groups()
+            sql, params = "SELECT name FROM pragma_table_info(?) WHERE name = ?", (
+                table, column)
         else:
             sql = re.sub(
                 r"ORDER BY \(r_chk\.businessID = (\w+)\.businessID\) DESC,\s*"
                 r"\(r_chk\.placeID = \1\.placeID\) DESC\s*LIMIT 1", "LIMIT 1", sql)
             # Fixtures have one matching row per LATERAL lookup. Retain its
             # matching predicate; only remove MySQL's unsupported join syntax.
+
             def lateral(match):
-                table, condition, alias = match.group("table", "condition", "alias")
+                table, condition, alias = match.group(
+                    "table", "condition", "alias")
                 for row in self.connection.db.execute(f"PRAGMA table_info({table})"):
                     name = row["name"]
-                    condition = re.sub(rf"(?<![\w.]){name}\b", f"{alias}.{name}", condition)
+                    condition = re.sub(
+                        rf"(?<![\w.]){name}\b", f"{alias}.{name}", condition)
                 return f"LEFT JOIN {table} {alias} ON ({condition})"
 
             sql = re.sub(
                 r"LEFT JOIN LATERAL \(\s*SELECT .*? FROM (?P<table>official_registry|geospatial_logs)\s+"
                 r"WHERE (?P<condition>.*?)\s+ORDER BY .*?LIMIT 1\s*\) (?P<alias>\w+) ON TRUE",
                 lateral, sql, flags=re.DOTALL)
+            if "ON DUPLICATE KEY UPDATE" in sql:
+                sql = sql.replace(
+                    "ON DUPLICATE KEY UPDATE",
+                    "ON CONFLICT(subjectType, subjectID) DO UPDATE SET",
+                )
+                sql = re.sub(r"VALUES\((\w+)\)", r"excluded.\1", sql)
             if "UPDATE geospatial_logs g" in sql and "JOIN official_registry r ON" in sql:
                 join, assignments = re.search(
                     r"JOIN official_registry r ON\s*(.*?)\s+SET\s+(.*)", sql, re.DOTALL).groups()
                 where = re.search(r"\n\s*WHERE YEAR\(r\.", assignments)
                 if where:
-                    assignments, condition = assignments[:where.start()], assignments[where.start():].strip()[6:]
+                    assignments, condition = assignments[:where.start(
+                    )], assignments[where.start():].strip()[6:]
                     join = f"({join}) AND ({condition})"
-                assignments = assignments.replace("g.noticeLevel =", "noticeLevel =").replace("g.flagColor =", "flagColor =")
+                assignments = assignments.replace("g.noticeLevel =", "noticeLevel =").replace(
+                    "g.flagColor =", "flagColor =")
                 # Keep r visible to SET as well as WHERE, as in MySQL's JOIN
                 # update (the expiry expression reads r.warningLevel).
                 sql = f"UPDATE geospatial_logs AS g SET {assignments} FROM official_registry AS r WHERE {join}"
-            sql = sql.replace(" FOR UPDATE", "").replace("%s", "?").replace("UTC_TIMESTAMP(6)", "CURRENT_TIMESTAMP").replace("NOW()", "CURRENT_TIMESTAMP").replace("CURDATE()", "CURRENT_DATE")
+            sql = sql.replace(" FOR UPDATE", "").replace("%s", "?").replace("UTC_TIMESTAMP(6)", "CURRENT_TIMESTAMP").replace(
+                "NOW()", "CURRENT_TIMESTAMP").replace("CURDATE()", "CURRENT_DATE")
         self.cursor.execute(sql, params)
         return self
 

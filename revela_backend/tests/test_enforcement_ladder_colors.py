@@ -19,6 +19,12 @@ The previous implementation of colors.py is embedded verbatim below as
 _PREVIOUS_COLORS_SOURCE so the "behaves identically" claims are checked against
 the real old code rather than against a paraphrase of it.
 """
+from api.registry.colors import (
+    _effective_flag_color_sql,
+    ladder_columns_available,
+    reset_ladder_column_cache,
+    status_to_color,
+)
 import os
 import re
 import sqlite3
@@ -29,12 +35,6 @@ from unittest.mock import MagicMock
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from api.registry.colors import (
-    _effective_flag_color_sql,
-    ladder_columns_available,
-    reset_ladder_column_cache,
-    status_to_color,
-)
 
 # ── The previous colors.py, verbatim from git HEAD ────────────────────────────
 # Used only as an oracle for "did this change anything it should not have?".
@@ -198,7 +198,8 @@ class StatusToColorTests(unittest.TestCase):
                                  "Green")
 
     def test_string_levels_from_a_driver_are_accepted(self):
-        self.assertEqual(status_to_color("Active", warning_level="2"), "Orange")
+        self.assertEqual(status_to_color(
+            "Active", warning_level="2"), "Orange")
 
     def test_agrees_with_the_existing_registry_python_mapping(self):
         """api/registry/service.py still carries the old status-only table.
@@ -221,9 +222,9 @@ class StatusToColorTests(unittest.TestCase):
 _STATUS_LOOKUP = re.compile(
     r"\(\s*SELECT\s+r_chk\.applicationStatus.*?LIMIT\s+1\s*\)", re.DOTALL)
 _LOCK_LOOKUP = re.compile(
-    r"\(\s*SELECT\s+r_chk\.blackLocked.*?LIMIT\s+1\s*\)", re.DOTALL)
+    r"\(\s*SELECT\s+es\.blackLocked.*?LIMIT\s+1\s*\)", re.DOTALL)
 _WARNING_LOOKUP = re.compile(
-    r"\(\s*SELECT\s+r_chk\.warningLevel.*?LIMIT\s+1\s*\)", re.DOTALL)
+    r"\(\s*SELECT\s+es\.warningLevel.*?LIMIT\s+1\s*\)", re.DOTALL)
 
 
 def _connection():
@@ -237,6 +238,9 @@ def _connection():
         CREATE TABLE official_registry (
             businessID TEXT, barangayID INTEGER, businessName TEXT,
             applicationStatus TEXT, placeID TEXT);
+        CREATE TABLE enforcement_state (
+            subjectType TEXT, subjectID TEXT, warningLevel INTEGER,
+            blackLocked INTEGER);
         CREATE TABLE inspection_reports (
             targetType TEXT, targetID INTEGER, verificationStatus TEXT,
             inspectionResult TEXT);
@@ -266,7 +270,7 @@ def _substitute(expression, *, status, warning_level=None, black_locked=None):
         raise AssertionError(
             "expected 5 registry-status lookups, found %d; the shared builder "
             "changed shape" % status_count)
-    if (lock_count, warning_count) not in ((0, 0), (1, 1)):
+    if (lock_count, warning_count) not in ((0, 0), (2, 2)):
         raise AssertionError(
             "ladder lookups should be both absent or both present, got "
             "blackLocked=%d warningLevel=%d" % (lock_count, warning_count))
@@ -291,6 +295,13 @@ def _run_expression(expression, *, status, warning_level, black_locked,
             con.execute(
                 "INSERT INTO official_registry VALUES (?,?,?,?,?)",
                 ("BIZ-1", 7, "ACME STORE", status, None))
+            con.execute(
+                "INSERT INTO enforcement_state VALUES (?,?,?,?)",
+                ("business", "BIZ-1", warning_level, black_locked))
+        else:
+            con.execute(
+                "INSERT INTO enforcement_state VALUES (?,?,?,?)",
+                ("geospatial_log", "1", warning_level, black_locked))
         if verified_orange:
             con.execute(
                 "INSERT INTO inspection_reports VALUES (?,?,?,?)",
@@ -361,8 +372,10 @@ class DefaultExpressionTests(unittest.TestCase):
         self.assertNotIn("warningLevel", expression)
         self.assertNotIn("blackLocked", expression)
         # And the ladder flag actually does add them.
-        self.assertIn("warningLevel", _effective_flag_color_sql("g", ladder=True))
-        self.assertIn("blackLocked", _effective_flag_color_sql("g", ladder=True))
+        self.assertIn("warningLevel",
+                      _effective_flag_color_sql("g", ladder=True))
+        self.assertIn(
+            "blackLocked", _effective_flag_color_sql("g", ladder=True))
 
 
 class BehaviourIsUnchangedTests(unittest.TestCase):
@@ -383,7 +396,8 @@ class BehaviourIsUnchangedTests(unittest.TestCase):
         for status in ALL_STATUSES:
             with self.subTest(status=status):
                 self.assertEqual(
-                    self._current_default(status=status, verified_orange=False),
+                    self._current_default(
+                        status=status, verified_orange=False),
                     self._previous(status=status, verified_orange=False))
 
     def test_identical_for_every_status_at_warning_zero_and_lock_zero(self):
@@ -462,7 +476,8 @@ class LadderExpressionTests(unittest.TestCase):
             _shipped_color(status="Pending", warning_level=0, ladder=True,
                            verified_orange=True, stored_colour="Orange"),
             "Yellow")
-        self.assertNotIn("inspection_reports", _effective_flag_color_sql("g", ladder=True))
+        self.assertNotIn("inspection_reports",
+                         _effective_flag_color_sql("g", ladder=True))
 
     def test_revoked_beats_a_warning_in_both_database_versions(self):
         for ladder in (False, True):
@@ -538,13 +553,13 @@ class LadderExpressionTests(unittest.TestCase):
         LIMIT. The status lookup is emitted once per CASE arm, hence five.
         """
         expression = _effective_flag_color_sql("g", ladder=True)
-        self.assertEqual(expression.count("SELECT r_chk.blackLocked"), 1)
-        self.assertEqual(expression.count("SELECT r_chk.warningLevel"), 1)
+        self.assertEqual(expression.count("SELECT es.blackLocked"), 2)
+        self.assertEqual(expression.count("SELECT es.warningLevel"), 2)
         self.assertEqual(expression.count("SELECT r_chk.applicationStatus"), 5)
 
         ranking = "(r_chk.businessID = g.businessID) DESC"
         self.assertEqual(expression.count(ranking), 7)
-        self.assertEqual(expression.count(ranking),
+        self.assertEqual(expression.count(ranking) + 2,
                          expression.count("LIMIT 1"))
 
 
@@ -566,8 +581,10 @@ class LadderColumnProbeTests(unittest.TestCase):
         self.assertFalse(ladder_columns_available(self._cursor([])))
 
     def test_reports_missing_when_only_one_column_exists(self):
-        self.assertFalse(ladder_columns_available(self._cursor(["warningLevel"])))
-        self.assertFalse(ladder_columns_available(self._cursor(["blackLocked"])))
+        self.assertFalse(ladder_columns_available(
+            self._cursor(["warningLevel"])))
+        self.assertFalse(ladder_columns_available(
+            self._cursor(["blackLocked"])))
 
     def test_reports_present_once_both_columns_exist(self):
         self.assertTrue(

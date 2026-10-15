@@ -1,4 +1,4 @@
-"""Phase 3A, Parts 2 and 3: Clear Warning and the Black dispatch unlock.
+"""Clear Warning on registry-backed enforcement state.
 
 Neither the colour logic nor _sync_flag_color is mocked. _clear_pin_mirror
 runs the real shared builder against the real registry row; the tests read
@@ -9,6 +9,9 @@ Both column caches are reset per test: ladder_columns_available and
 lock_column_available cache for the life of the process, so whichever test
 touched them first would otherwise decide the answer for every test after it.
 """
+from api.registry.locks import reset_lock_column_cache
+from api.registry.colors import reset_ladder_column_cache
+from api.registry import service as registry_service
 import os
 import sys
 import unittest
@@ -16,10 +19,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.registry import service as registry_service
-from api.registry.colors import reset_ladder_column_cache
-from api.registry.locks import reset_lock_column_cache
 
 
 class LadderCursor:
@@ -34,7 +33,7 @@ class LadderCursor:
     def __init__(self, *, columns=None, rows=None, pending=None,
                  rowcount=1, closed_ids=()):
         self.columns = set(columns if columns is not None else [
-            "applicationStatus", "warningLevel", "blackLocked",
+            "warningLevel", "warningBaseColor", "blackLocked",
             "warningClearedAt", "warningClearedBy", "warningClearReason",
             "blackDispatchUnlocked",
         ])
@@ -113,6 +112,7 @@ class Harness(unittest.TestCase):
     @staticmethod
     def _row(**over):
         base = {"applicationStatus": "Active", "warningLevel": 2,
+                "warningBaseColor": "Green",
                 "blackLocked": 0, "warningClearedAt": None,
                 "warningClearedBy": None, "warningClearReason": None,
                 "blackDispatchUnlocked": 0}
@@ -127,13 +127,13 @@ class ClearWarningTests(Harness):
 
     def test_clears_the_level_and_stamps_the_record(self):
         cursor = LadderCursor(rows={
-            "SELECT applicationStatus": self._row(warningLevel=2)})
+            "SELECT r.applicationStatus": self._row(warningLevel=2)})
         summary, error = self._clear(cursor, reason="repaired")
         self.assertIsNone(error)
         self.assertTrue(summary["warningCleared"])
         self.assertEqual(summary["previousWarningLevel"], 2)
         self.assertEqual(summary["warningLevel"], 0)
-        update = [s for s in cursor.writes("UPDATE official_registry")
+        update = [s for s in cursor.writes("UPDATE enforcement_state")
                   if "warningLevel = 0" in s]
         self.assertEqual(len(update), 1)
         self.assertIn("warningClearedAt = NOW()", update[0])
@@ -142,28 +142,28 @@ class ClearWarningTests(Harness):
 
     def test_writes_the_audit_row_with_both_levels(self):
         cursor = LadderCursor(rows={
-            "SELECT applicationStatus": self._row(warningLevel=3)})
+            "SELECT r.applicationStatus": self._row(warningLevel=3)})
         self._clear(cursor, reason="fixed", user=42)
-        events = cursor.writes("INSERT INTO registry_enforcement_events")
+        events = cursor.writes("INSERT INTO enforcement_events")
         self.assertEqual(len(events), 1)
         sql, params = next((s, p) for s, p in cursor.calls
-                           if "registry_enforcement_events" in s)
-        self.assertEqual(params[1], "warning_cleared")
-        self.assertEqual(params[2], 42)
-        self.assertEqual(params[3], "fixed")
-        self.assertEqual(params[4], 3)   # previousLevel
-        self.assertEqual(params[5], 0)   # newLevel
+                           if "enforcement_events" in s)
+        self.assertEqual(params[2], "warning_cleared")
+        self.assertEqual(params[3], 42)
+        self.assertEqual(params[4], "fixed")
+        self.assertEqual(params[5], 3)   # previousLevel
+        self.assertEqual(params[6], 0)   # newLevel
 
     def test_the_reason_is_optional(self):
         cursor = LadderCursor(rows={
-            "SELECT applicationStatus": self._row(warningLevel=1)})
+            "SELECT r.applicationStatus": self._row(warningLevel=1)})
         summary, error = self._clear(cursor, reason=None)
         self.assertIsNone(error)
         self.assertTrue(summary["warningCleared"])
 
     def test_level_zero_is_refused(self):
         cursor = LadderCursor(rows={
-            "SELECT applicationStatus": self._row(warningLevel=0)})
+            "SELECT r.applicationStatus": self._row(warningLevel=0)})
         summary, error = self._clear(cursor)
         self.assertIsNone(summary)
         self.assertIsInstance(error, registry_service.RegistryLadderConflict)
@@ -171,13 +171,13 @@ class ClearWarningTests(Harness):
 
     def test_a_black_locked_business_is_refused(self):
         cursor = LadderCursor(rows={
-            "SELECT applicationStatus": self._row(warningLevel=2,
-                                                   blackLocked=1)})
+            "SELECT r.applicationStatus": self._row(warningLevel=2,
+                                                    blackLocked=1)})
         summary, error = self._clear(cursor)
         self.assertIsNone(summary)
         self.assertIsInstance(error, registry_service.RegistryLadderConflict)
         self.assertIn("Black locked", str(error))
-        self.assertEqual(cursor.writes("UPDATE official_registry"), [])
+        self.assertEqual(cursor.writes("UPDATE enforcement_state"), [])
 
     def test_missing_columns_refuse_closed(self):
         cursor = LadderCursor(columns=["applicationStatus", "warningLevel"])
@@ -189,7 +189,7 @@ class ClearWarningTests(Harness):
 
     def test_a_row_that_will_not_update_is_refused_and_rolls_back(self):
         cursor = LadderCursor(
-            rows={"SELECT applicationStatus": self._row(warningLevel=2)},
+            rows={"SELECT r.applicationStatus": self._row(warningLevel=2)},
             rowcount=0)
         summary, error = self._clear(cursor)
         self.assertIsNone(summary)
@@ -207,7 +207,7 @@ class ClearWarningInFlightTests(Harness):
 
     def _cursor(self, status):
         return LadderCursor(
-            rows={"SELECT applicationStatus": self._row(warningLevel=1)},
+            rows={"SELECT r.applicationStatus": self._row(warningLevel=1)},
             pending={"reportID": 77, "verificationStatus": status})
 
     def test_every_non_verified_status_blocks(self):
@@ -226,7 +226,7 @@ class ClearWarningInFlightTests(Harness):
 
     def test_a_verified_inspection_does_not_block(self):
         cursor = LadderCursor(
-            rows={"SELECT applicationStatus": self._row(warningLevel=1)},
+            rows={"SELECT r.applicationStatus": self._row(warningLevel=1)},
             pending=None)
         summary, error = self._clear(cursor)
         self.assertIsNone(error)
@@ -241,7 +241,7 @@ class ClearWarningRestoresTheStatusColour(Harness):
 
     def test_the_pin_mirror_uses_the_shared_builder(self):
         cursor = LadderCursor(rows={
-            "SELECT applicationStatus": self._row(warningLevel=1)})
+            "SELECT r.applicationStatus": self._row(warningLevel=1)})
         self._clear(cursor)
         pin = [s for s in cursor.writes("UPDATE geospatial_logs")]
         self.assertEqual(len(pin), 1)

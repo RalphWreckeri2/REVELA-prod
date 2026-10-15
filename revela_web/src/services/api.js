@@ -516,18 +516,24 @@ export async function getBusinessByIdRequest(id, token) {
   }
 }
 
-export async function clearWarningRequest(businessId, reason, token) {
-  const res = await fetch(
-    `${BASE_URL}/registry/${encodeURIComponent(businessId)}/clear-warning`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ reason }),
+export async function clearWarningRequest(
+  subjectId,
+  reason,
+  token,
+  subjectType = "business",
+) {
+  const endpoint =
+    subjectType === "geospatial_log"
+      ? `/flags/${encodeURIComponent(subjectId)}/clear-warning`
+      : `/registry/${encodeURIComponent(subjectId)}/clear-warning`;
+  const res = await fetch(`${BASE_URL}${endpoint}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
     },
-  );
+    body: JSON.stringify({ reason }),
+  });
   // handleResponse already throws the server's message for a 409, which is
   // exactly what the detail modal shows back to the admin.
   return await handleResponse(res);

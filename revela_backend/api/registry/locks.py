@@ -1,35 +1,19 @@
-"""Black-lock guard for official_registry.
+"""Black-lock guard and enforcement audit writer.
 
 Black means the permanent blackLocked bit OR a Revoked permit. Revoked must
-remain protected even on databases without the optional ladder columns.
-The legacy Blacklisted status is the compatibility spelling of Revoked.
+remain protected independently of enforcement_state. The legacy Blacklisted
+status is the compatibility spelling of Revoked.
 
 This module imports nothing, like its sibling api/registry/colors.py, so it
 stays cheap to import and trivial to unit test with a fake cursor.
 """
 
-#: The column this guard reads. Absent until the ladder migration is applied.
-LOCK_COLUMN = "blackLocked"
-
-_LOCK_PROBE_SQL = """SELECT COLUMN_NAME
-FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = DATABASE()
-  AND TABLE_NAME = 'official_registry'
-  AND COLUMN_NAME = %s"""
-
-_LOCK_READ_SQL = f"""SELECT {LOCK_COLUMN}, applicationStatus
-FROM official_registry
-WHERE businessID = %s
-LIMIT 1"""
-
-_lock_column_present = None
-
 
 class BlackLockedError(RuntimeError):
     """Raised when an action was refused because the business is Black locked.
 
-    Carries business_id and action so a Phase 2 route can log the refusal into
-    registry_enforcement_events without re-deriving either value from the
+    Carries business_id and action so a route can log the refusal into
+    enforcement_events without re-deriving either value from the
     message string.
     """
 
@@ -38,29 +22,13 @@ class BlackLockedError(RuntimeError):
         self.business_id = business_id
         super().__init__(
             f"Refused to {action}: business {business_id} is Black locked. "
-            "Only a SUPER_ADMIN unlock may clear the lock."
+            "Black businesses cannot be edited or deleted."
         )
 
 
-def lock_column_available(cursor):
-    """True once official_registry.blackLocked exists. Probed once, then cached.
-
-    Cached because the answer cannot change without a migration, and this is
-    called on write paths. Pass a fresh cursor after a migration, or call
-    reset_lock_column_cache().
-    """
-    global _lock_column_present
-    if _lock_column_present is not None:
-        return _lock_column_present
-    cursor.execute(_LOCK_PROBE_SQL, (LOCK_COLUMN,))
-    _lock_column_present = cursor.fetchone() is not None
-    return _lock_column_present
-
-
 def reset_lock_column_cache():
-    """Forget the probe result. For tests and for re-probing after a migration."""
-    global _lock_column_present
-    _lock_column_present = None
+    """Compatibility no-op retained for callers and tests."""
+    return None
 
 
 def _truthy_lock_value(raw):
@@ -73,7 +41,7 @@ def _truthy_lock_value(raw):
     if raw is None:
         return False
     if isinstance(raw, dict):
-        raw = raw.get(LOCK_COLUMN)
+        raw = raw.get("blackLocked")
         if raw is None:
             return False
     if isinstance(raw, str):
@@ -82,21 +50,26 @@ def _truthy_lock_value(raw):
 
 
 def is_black_locked(cursor, business_id):
-    """True for a lock bit or Revoked status, even without ladder columns."""
+    """True for enforcement_state.blackLocked or a revoked permit."""
     if not business_id:
         return False
-    has_lock = lock_column_available(cursor)
-    sql = (_LOCK_READ_SQL if has_lock else
-           "SELECT applicationStatus FROM official_registry WHERE businessID = %s LIMIT 1")
-    cursor.execute(sql, (business_id,))
+    cursor.execute(
+        """SELECT es.blackLocked, r.applicationStatus
+           FROM official_registry r
+           LEFT JOIN enforcement_state es
+             ON es.subjectType = 'business'
+            AND es.subjectID = CAST(r.businessID AS CHAR)
+           WHERE r.businessID = %s
+           LIMIT 1""",
+        (business_id,),
+    )
     row = cursor.fetchone()
     if row is None:
         return False
     if isinstance(row, dict):
-        return (has_lock and _truthy_lock_value(row)) or row.get(
+        return _truthy_lock_value(row) or row.get(
             "applicationStatus") in ("Revoked", "Blacklisted")
-    status = (row[1] if len(row) > 1 else None) if has_lock else row[0]
-    return (has_lock and _truthy_lock_value(row[0])) or status in (
+    return _truthy_lock_value(row[0]) or row[1] in (
         "Revoked", "Blacklisted")
 
 
@@ -116,19 +89,15 @@ class BlackBusinessDeletionForbidden(PermissionError):
 
 
 def assert_business_deletable(cursor, business_id, actor_role):
-    if actor_role != "SUPER_ADMIN" and is_black_locked(cursor, business_id):
+    if is_black_locked(cursor, business_id):
         raise BlackBusinessDeletionForbidden(
-            "Only SUPER_ADMIN may delete a Black business (locked or Revoked).")
+            "Black businesses cannot be deleted, including by SUPER_ADMIN.")
     return True
 
 
 # ── Append-only enforcement history ──────────────────────────────────────────
 
-#: The event types registry_enforcement_events accepts.
-#:
-#: black_relocked is Phase 3A and needs migrations/20261016_01. Until that
-#: migration runs, an insert carrying it is rejected by the ENUM, which is
-#: safe: the single-use grant is only spendable after the migration anyway.
+#: The event types enforcement_events accepts, including legacy grant history.
 WARNING_ISSUED = "warning_issued"
 WARNING_CLEARED = "warning_cleared"
 BLACK_LOCKED = "black_locked"
@@ -140,29 +109,34 @@ ENFORCEMENT_EVENT_TYPES = (
     BLACK_RELOCKED,
 )
 
-_INSERT_ENFORCEMENT_EVENT_SQL = """INSERT INTO registry_enforcement_events (
-    businessID, eventType, actorUserID, reason,
+_INSERT_ENFORCEMENT_EVENT_SQL = """INSERT INTO enforcement_events (
+    subjectType, subjectID, eventType, actorUserID, reason,
     previousLevel, newLevel, previousBlack, newBlack
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
 
 
-def record_enforcement_event(cursor, *, business_id, event_type,
+def record_enforcement_event(cursor, *, business_id=None, subject_type="business",
+                             subject_id=None, event_type,
                              actor_user_id=None, reason=None,
                              previous_level=None, new_level=None,
                              previous_black=None, new_black=None):
-    """Append one row to registry_enforcement_events on the caller's cursor.
+    """Append one row to enforcement_events on the caller's cursor.
 
     Deliberately takes a cursor rather than opening its own connection, so the
     event lands in the same transaction as the change it records. If the
     transaction rolls back, so does the history.
 
-    The caller is responsible for ensuring the table exists; see the migration
-    preflight in migrations/20261015_01_enforcement_ladder_schema.sql.
+    Pass business_id for registered records, or subject_type/subject_id for
+    a geospatial pin. The caller owns the transaction.
     """
     if event_type not in ENFORCEMENT_EVENT_TYPES:
         raise ValueError("unknown enforcement event type: %r" % (event_type,))
+    resolved_subject_id = subject_id if subject_id is not None else business_id
+    if resolved_subject_id is None:
+        raise ValueError("an enforcement event requires a subject ID")
     cursor.execute(_INSERT_ENFORCEMENT_EVENT_SQL, (
-        business_id, event_type, actor_user_id, reason,
+        subject_type, str(
+            resolved_subject_id), event_type, actor_user_id, reason,
         _as_int(previous_level), _as_int(new_level),
         None if previous_black is None else int(bool(previous_black)),
         None if new_black is None else int(bool(new_black)),

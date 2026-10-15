@@ -34,19 +34,20 @@ def test_current_black_payload_and_typed_follow_up_refusal(db, status, locked):
 
 
 @pytest.mark.parametrize("legacy", [False, True])
-def test_black_follow_up_accepts_grant_for_linked_and_legacy_pins(db, legacy):
+def test_black_follow_up_refuses_even_with_a_legacy_grant(db, legacy):
     db.seed(status="Revoked", locked=0)
-    db.db.execute("UPDATE official_registry SET blackDispatchUnlocked = 1")
+    db.db.execute("""UPDATE enforcement_state SET blackDispatchUnlocked = 1
+        WHERE subjectType = 'business'""")
     if legacy:
         db.db.execute("UPDATE geospatial_logs SET businessID = NULL")
     db.commit()
     payload, error = inspections.get_all_inspections()
     assert error is None
     assert payload["data"][0]["flagColor"] == "Black"
-    assert payload["data"][0]["blackDispatchUnlocked"] == 1
+    assert payload["data"][0]["blackDispatchUnlocked"] == 0
     result, error = inspections.assign_inspection(1, 9, None, 2)
-    assert error is None
-    assert result["status"] == "Reassigned"
+    assert result is None
+    assert isinstance(error, inspections.BlackInspectionAssignmentConflict)
 
 
 @pytest.mark.parametrize("status,level", [("Pending", 0), ("Expired", 0), ("Closed", 0), ("Pending", 1)])
@@ -62,7 +63,8 @@ def test_green_assignment_remains_blocked(db):
     result, error = inspections.assign_inspection(1, 9, None, 2)
     assert result is None
     assert isinstance(error, inspections.InspectionAssignmentConflict)
-    assert db.rows("SELECT verificationStatus FROM inspection_reports") == [{"verificationStatus": "Verified"}]
+    assert db.rows("SELECT verificationStatus FROM inspection_reports") == [
+        {"verificationStatus": "Verified"}]
 
 
 @pytest.mark.parametrize("message", ["Black", "reworded", ""])

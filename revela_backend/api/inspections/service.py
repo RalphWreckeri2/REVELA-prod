@@ -21,7 +21,7 @@ from api.registry.locks import (
 from api.registry.service import (
     BLACK_UNLOCK_COLUMNS,
     _consume_black_dispatch_unlock,
-    _has_columns,
+    _has_enforcement_columns,
 )
 from api.models.inspection_lifecycle_events import (
     get_latest_inspection_cycle_id,
@@ -152,7 +152,8 @@ def _ensure_gps_columns(cursor):
     if _gps_columns_ensured:
         return
     try:
-        cursor.execute("SHOW COLUMNS FROM inspection_reports LIKE 'verifiedLatitude'")
+        cursor.execute(
+            "SHOW COLUMNS FROM inspection_reports LIKE 'verifiedLatitude'")
         if not cursor.fetchone():
             cursor.execute("""
                 ALTER TABLE inspection_reports
@@ -383,10 +384,17 @@ INSPECTABLE_FLAG_COLORS = frozenset({"Red", "Yellow", "Orange", "Purple"})
 
 
 def _black_dispatch_unlock_sql(cursor):
-    """Read the grant from the same registry match as the color builder."""
-    if not _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
-        return "0"
-    return f"COALESCE({_registry_column_sql('g', 'blackDispatchUnlocked')}, 0)"
+    """Black dispatch is disabled; legacy grants never appear in payloads."""
+    return "0"
+
+
+def _enforcement_state_table_available(cursor):
+    cursor.execute(
+        "SELECT TABLE_NAME FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s",
+        ("enforcement_state",),
+    )
+    return cursor.fetchone() is not None
 
 
 def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
@@ -405,17 +413,11 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # disagree. For a pin with no registry match it falls back to the
         # pin's own colour, which is the only case where the registry cannot
         # speak. The ladder columns are only read once they exist.
-        # blackDispatchUnlocked is deliberately NOT part of the colour
-        # precedence: an unlocked business is still Black on every screen. It
-        # only opens this gate, and only once. A missing column reads as 0, so
-        # an un-migrated database keeps Black blocked.
-        unlock_expr = _black_dispatch_unlock_sql(cursor)
 
         cursor.execute(
             f"""
             SELECT g.logID, g.flagColor, g.businessID,
-                   {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor,
-                   {unlock_expr} AS blackDispatchUnlocked
+                   {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor
             FROM geospatial_logs g
             WHERE g.logID = %s
             """,
@@ -429,15 +431,11 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # Guard: eligibility, decided on the effective colour.
         effective_color = (flag.get("effectiveFlagColor")
                            or flag.get("flagColor"))
-        dispatch_unlocked = bool(_coerce_notice_level(
-            flag.get("blackDispatchUnlocked")))
-        if effective_color == "Black" and not dispatch_unlocked:
+        if effective_color == "Black":
             cursor.close()
             return None, BlackInspectionAssignmentConflict(
-                "Black businesses only accept an inspection while a "
-                "SUPER_ADMIN has unlocked one")
-        black_passed = effective_color == "Black" and dispatch_unlocked
-        if effective_color not in INSPECTABLE_FLAG_COLORS and not black_passed:
+                "Black businesses cannot be dispatched for inspection")
+        if effective_color not in INSPECTABLE_FLAG_COLORS:
             if effective_color == "Green":
                 reason = ("Green (registered) businesses cannot be inspected")
             else:
@@ -913,7 +911,7 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
             pin = cursor.fetchone()
             pin_business_id = pin.get("businessID") if isinstance(
                 pin, dict) else (pin[0] if pin else None)
-            if pin_business_id and _has_columns(
+            if pin_business_id and _has_enforcement_columns(
                     cursor, BLACK_UNLOCK_COLUMNS):
                 relocked = _consume_black_dispatch_unlock(
                     cursor, pin_business_id, assigned_by,
@@ -996,7 +994,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
 
         cycle_id = get_latest_inspection_cycle_id(cursor, report_id)
         cursor.execute(
-            "SELECT flagColor FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
+            "SELECT flagColor, noticeLevel FROM geospatial_logs WHERE logID = %s",
+            (report["targetID"],))
         geo_flag = cursor.fetchone()
 
         # ── Decide everything before writing anything ───────────────────────────
@@ -1021,37 +1020,73 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             )
 
         registry_row = None
+        registry_enforcement_state = None
+        pin_enforcement_state = None
+        pin_warning_base_color = None
         dispatch_unlock_available = False
         if pin_business_id:
-            wanted = ["applicationStatus"]
-            if ladder_available:
-                wanted += ["warningLevel", "blackLocked"]
-            if _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
-                wanted += ["blackDispatchUnlocked"]
-                dispatch_unlock_available = True
             cursor.execute(
-                f"SELECT {', '.join(wanted)} FROM official_registry "
+                "SELECT applicationStatus FROM official_registry "
                 "WHERE businessID = %s LIMIT 1",
                 (pin_business_id,),
             )
             registry_row = cursor.fetchone()
+            if registry_row is not None and ladder_available:
+                cursor.execute(
+                    """SELECT warningLevel, blackLocked, blackDispatchUnlocked,
+                              warningBaseColor
+                       FROM enforcement_state
+                       WHERE subjectType = 'business' AND subjectID = %s
+                       FOR UPDATE""",
+                    (str(pin_business_id),),
+                )
+                registry_enforcement_state = cursor.fetchone() or {}
+                dispatch_unlock_available = True
+
+        if registry_row is None:
+            pin_state_available = _enforcement_state_table_available(cursor)
+            if result_color == "Orange" and not pin_state_available:
+                cursor.close()
+                return None, InspectionVerificationConflict(
+                    "An Orange result on an unregistered pin cannot be verified "
+                    "until the enforcement-state migration is applied."
+                )
+            if pin_state_available:
+                cursor.execute(
+                    """SELECT warningLevel, blackLocked, warningBaseColor
+                       FROM enforcement_state
+                       WHERE subjectType = 'geospatial_log' AND subjectID = %s
+                       FOR UPDATE""",
+                    (str(report["targetID"]),),
+                )
+                pin_enforcement_state = cursor.fetchone()
 
         # A SUPER_ADMIN granted exactly one inspection of this Black business.
         # The grant opens this verify and nothing else: the business stays
         # Black and blackLocked is never touched.
         dispatch_unlocked = bool(
             dispatch_unlock_available
-            and registry_row is not None
+            and registry_enforcement_state is not None
             and _coerce_notice_level(
-                registry_row.get("blackDispatchUnlocked")))
+                registry_enforcement_state.get("blackDispatchUnlocked")))
 
-        previous_level = (_coerce_notice_level(registry_row.get("warningLevel"))
-                          if registry_row else 0)
+        previous_level = (
+            _coerce_notice_level(
+                registry_enforcement_state.get("warningLevel"))
+            if registry_enforcement_state is not None else
+            _coerce_notice_level(pin_enforcement_state.get("warningLevel"))
+            if pin_enforcement_state else
+            _coerce_notice_level(geo_flag.get("noticeLevel"))
+            if geo_flag else 0
+        )
 
-        # The ladder only advances one step at a time, and only for a business
-        # the registry knows. An unregistered pin has no ladder to advance, so
-        # its notice level is just recorded on the pin as before.
-        if result_color == "Orange" and registry_row is not None:
+        if result_color == "Orange":
+            if pin_enforcement_state and _coerce_notice_level(
+                    pin_enforcement_state.get("blackLocked")):
+                cursor.close()
+                return None, InspectionVerificationConflict(
+                    "This detection pin is Black locked and cannot receive an Orange warning."
+                )
             expected_level = previous_level + 1
             if not 1 <= notice_level <= 3:
                 cursor.close()
@@ -1066,6 +1101,38 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     f"the next Orange must be level {expected_level}. This "
                     f"report carries level {notice_level}."
                 )
+            if registry_row is None:
+                pin_warning_base_color = (
+                    pin_enforcement_state.get("warningBaseColor")
+                    if pin_enforcement_state else None
+                )
+                if pin_warning_base_color not in ("Red", "Yellow", "Green", "Purple"):
+                    current_color = geo_flag.get(
+                        "flagColor") if geo_flag else None
+                    if current_color in ("Red", "Yellow", "Green", "Purple"):
+                        pin_warning_base_color = current_color
+                    else:
+                        cursor.execute(
+                            """SELECT flagColorAtEvent
+                               FROM inspection_lifecycle_events
+                               WHERE targetLogID = %s
+                                 AND eventType IN ('dispatched', 'reassigned')
+                                 AND flagColorAtEvent IN ('Red', 'Yellow', 'Green', 'Purple')
+                               ORDER BY eventID ASC
+                               LIMIT 1""",
+                            (report["targetID"],),
+                        )
+                        baseline = cursor.fetchone()
+                        pin_warning_base_color = (
+                            baseline.get(
+                                "flagColorAtEvent") if baseline else None
+                        )
+                if pin_warning_base_color not in ("Red", "Yellow", "Green", "Purple"):
+                    cursor.close()
+                    return None, InspectionVerificationConflict(
+                        "The pin's pre-warning color is unknown, so this Orange "
+                        "result cannot be verified without guessing."
+                    )
 
         if pin_business_id and not dispatch_unlocked:
             try:
@@ -1128,13 +1195,20 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
         # last thing that would still read as something other than Black, and
         # a Black business briefly rendering Green on the map is exactly the
         # drift this ladder exists to prevent.
+        pin_result_color = result_color
+        if (pin_business_id is None and registry_row is None
+                and pin_enforcement_state
+                and _coerce_notice_level(pin_enforcement_state.get("warningLevel")) > 0
+                and result_color not in ("Orange", "Black")):
+            pin_result_color = "Orange"
+
         if not dispatch_unlocked:
             cursor.execute("""
                 UPDATE geospatial_logs
                 SET flagColor = %s,
                     noticeLevel = %s
                 WHERE logID = %s
-            """, (result_color, notice_level, report["targetID"]))
+            """, (pin_result_color, notice_level, report["targetID"]))
 
         registry_closed = False
         registry_warning = None
@@ -1197,11 +1271,11 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             # as they are. The business was Black before this verify and is
             # Black after it.
             cursor.execute(
-                """UPDATE official_registry
+                """UPDATE enforcement_state
                    SET lastInspectionResult = %s,
                        lastInspectedAt = NOW()
-                   WHERE businessID = %s""",
-                (result_color, pin_business_id),
+                   WHERE subjectType = 'business' AND subjectID = %s""",
+                (result_color, str(pin_business_id)),
             )
             registry_updated = cursor.rowcount > 0
             if not registry_updated:
@@ -1217,32 +1291,74 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             new_status = {
                 "Red": "Expired", "Yellow": "Pending", "Green": "Active",
             }.get(result_color)
-
-            assignments = ["lastInspectionResult = %s", "lastInspectedAt = NOW()"]
-            params = [result_color]
             if new_status:
-                assignments.insert(0, "applicationStatus = %s")
-                params.insert(0, new_status)
-            if result_color == "Orange":
-                assignments.append("warningLevel = %s")
-                params.append(notice_level)
-            if result_color == "Black":
-                assignments.append("blackLocked = 1")
-                assignments.append("blackLockedAt = NOW()")
-                assignments.append("blackLockedBy = %s")
-                params.append(verified_by_user_id)
-
-            cursor.execute(
-                f"UPDATE official_registry SET {', '.join(assignments)} "
-                "WHERE businessID = %s",
-                params + [pin_business_id],
-            )
-            registry_updated = cursor.rowcount > 0
-            if not registry_updated:
-                registry_warning = (
-                    f"The registry row for {pin_business_id} could not be "
-                    f"updated; the ladder state may not have been recorded."
+                cursor.execute(
+                    "UPDATE official_registry SET applicationStatus = %s "
+                    "WHERE businessID = %s",
+                    (new_status, pin_business_id),
                 )
+                registry_updated = cursor.rowcount > 0
+                if not registry_updated:
+                    registry_warning = (
+                        f"The registry row for {pin_business_id} could not be "
+                        "updated; its permit status may be stale."
+                    )
+            else:
+                registry_updated = True
+
+            state_warning_level = (
+                notice_level if result_color == "Orange" else previous_level)
+            state_black_locked = (
+                1 if result_color == "Black" else
+                _coerce_notice_level(
+                    registry_enforcement_state.get("blackLocked"))
+                if registry_enforcement_state else 0
+            )
+            state_black_locked_by = (
+                verified_by_user_id if result_color == "Black" else
+                registry_enforcement_state.get("blackLockedBy")
+                if registry_enforcement_state else None
+            )
+            state_warning_base = (
+                {
+                    "Active": "Green", "Expired": "Red", "Pending": "Yellow",
+                    "Closed": "Purple", "Revoked": "Black",
+                    "Blacklisted": "Black",
+                }.get(registry_row.get("applicationStatus"))
+                if result_color == "Orange" else
+                registry_enforcement_state.get("warningBaseColor")
+                if registry_enforcement_state else None
+            )
+            state_updates = [
+                "lastInspectionResult = VALUES(lastInspectionResult)",
+                "lastInspectedAt = NOW()",
+            ]
+            if result_color == "Orange":
+                state_updates.extend([
+                    "warningLevel = VALUES(warningLevel)",
+                    "warningBaseColor = COALESCE(warningBaseColor, VALUES(warningBaseColor))",
+                ])
+            if result_color == "Black":
+                state_updates.extend([
+                    "blackLocked = 1",
+                    "blackLockedAt = NOW()",
+                    "blackLockedBy = VALUES(blackLockedBy)",
+                ])
+            cursor.execute(
+                """INSERT INTO enforcement_state (
+                       subjectType, subjectID, warningLevel, warningBaseColor,
+                       blackLocked, blackLockedAt, blackLockedBy,
+                       lastInspectionResult, lastInspectedAt
+                   ) VALUES ('business', %s, %s, %s, %s,
+                             CASE WHEN %s = 1 THEN NOW() ELSE NULL END,
+                             %s, %s, NOW())
+                   ON DUPLICATE KEY UPDATE """
+                + ", ".join(state_updates),
+                (str(pin_business_id), state_warning_level, state_warning_base,
+                 state_black_locked, int(result_color == "Black"),
+                 state_black_locked_by, result_color),
+            )
+            registry_updated = registry_updated and cursor.rowcount >= 0
 
             # The audit trail shares this cursor, so it commits or rolls back
             # with the change it describes.
@@ -1255,7 +1371,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 ladder_events.append(dict(
                     event_type="black_locked",
                     previous_level=previous_level, new_level=previous_level,
-                    previous_black=registry_row.get("blackLocked"),
+                    previous_black=(registry_enforcement_state or {}).get(
+                        "blackLocked"),
                     new_black=True, reason=None))
 
             for event in ladder_events:
@@ -1270,6 +1387,46 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     new_black=event["new_black"],
                     reason=event["reason"],
                 )
+
+        elif result_color == "Orange":
+            if pin_enforcement_state:
+                cursor.execute(
+                    """UPDATE enforcement_state
+                       SET warningLevel = %s,
+                           warningBaseColor = COALESCE(warningBaseColor, %s),
+                           lastInspectionResult = 'Orange',
+                           lastInspectedAt = NOW()
+                       WHERE subjectType = 'geospatial_log' AND subjectID = %s""",
+                    (notice_level, pin_warning_base_color,
+                     str(report["targetID"])),
+                )
+            else:
+                cursor.execute(
+                    """INSERT INTO enforcement_state (
+                           subjectType, subjectID, warningLevel, warningBaseColor,
+                           lastInspectionResult, lastInspectedAt
+                       ) VALUES ('geospatial_log', %s, %s, %s, 'Orange', NOW())""",
+                    (str(report["targetID"]),
+                     notice_level, pin_warning_base_color),
+                )
+            cursor.execute(
+                """INSERT INTO enforcement_events (
+                       subjectType, subjectID, eventType, actorUserID, reason,
+                       previousLevel, newLevel, previousBlack, newBlack
+                   ) VALUES ('geospatial_log', %s, 'warning_issued', %s, NULL,
+                             %s, %s, 0, 0)""",
+                (str(report["targetID"]), verified_by_user_id,
+                 previous_level, notice_level),
+            )
+
+        elif (registry_row is None and pin_business_id is None
+              and pin_enforcement_state):
+            cursor.execute(
+                """UPDATE enforcement_state
+                   SET lastInspectionResult = %s, lastInspectedAt = NOW()
+                   WHERE subjectType = 'geospatial_log' AND subjectID = %s""",
+                (result_color, str(report["targetID"])),
+            )
 
         # Single use. The grant is spent the moment the inspection it paid for
         # reaches a verified state. blackLocked is not touched.
@@ -1307,8 +1464,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 "registryWarning": registry_warning,
                 "registryUpdated": registry_updated,
                 "warningLevel": previous_level if result_color == "Orange"
-                                else notice_level if result_color == "Black"
-                                else None,
+                else notice_level if result_color == "Black"
+                else None,
                 "blackLocked": result_color == "Black",
             })
         except Exception:
@@ -1393,13 +1550,43 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
         total_rows = counts.get("all_rows", 0)
 
         ladder = ladder_columns_available(cursor)
-        effective_color = _effective_flag_color_sql("g", ladder=ladder)
-        unlock = _black_dispatch_unlock_sql(cursor)
-        warning = f"COALESCE({_registry_column_sql('g', 'warningLevel')}, 0)" if ladder else "0"
-        locked = f"COALESCE({_registry_column_sql('g', 'blackLocked')}, 0)" if ladder else "0"
+        pin_state_available = _enforcement_state_table_available(cursor)
+        registry_effective_color = _effective_flag_color_sql(
+            "g", ladder=ladder)
+        registry_unlock = _black_dispatch_unlock_sql(cursor)
         business_id = f"COALESCE({_registry_column_sql('g', 'businessID')}, g.businessID)"
         business_name = f"COALESCE({_registry_column_sql('g', 'businessName')}, g.detectedName)"
         business_barangay = f"COALESCE({_registry_column_sql('g', 'barangayID')}, g.barangayID)"
+        registry_warning = f"COALESCE({_registry_column_sql('g', 'warningLevel')}, 0)" if ladder else "0"
+        registry_lock = f"COALESCE({_registry_column_sql('g', 'blackLocked')}, 0)" if ladder else "0"
+        if pin_state_available:
+            effective_color = (
+                f"CASE WHEN {business_id} IS NULL "
+                "AND COALESCE(pin_enforcement.blackLocked, 0) = 1 THEN 'Black' "
+                f"WHEN {business_id} IS NULL "
+                "AND COALESCE(pin_enforcement.warningLevel, 0) > 0 THEN 'Orange' "
+                f"ELSE {registry_effective_color} END"
+            )
+            warning = (f"CASE WHEN {business_id} IS NULL "
+                       f"THEN COALESCE(pin_enforcement.warningLevel, 0) "
+                       f"ELSE {registry_warning} END")
+            locked = (f"CASE WHEN {business_id} IS NULL "
+                      f"THEN COALESCE(pin_enforcement.blackLocked, 0) "
+                      f"ELSE {registry_lock} END")
+            unlock = (f"CASE WHEN {business_id} IS NULL "
+                      f"THEN COALESCE(pin_enforcement.blackDispatchUnlocked, 0) "
+                      f"ELSE {registry_unlock} END")
+            warning_base_color = "pin_enforcement.warningBaseColor"
+            pin_state_join = """LEFT JOIN enforcement_state pin_enforcement
+                ON pin_enforcement.subjectType = 'geospatial_log'
+               AND pin_enforcement.subjectID = CAST(g.logID AS CHAR)"""
+        else:
+            effective_color = registry_effective_color
+            warning = registry_warning
+            locked = registry_lock
+            unlock = registry_unlock
+            warning_base_color = "NULL"
+            pin_state_join = ""
 
         cursor.execute(
             f"""
@@ -1424,6 +1611,7 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
                 COALESCE({_registry_column_sql('g', 'businessID')}, g.businessID) AS businessID,
                 {_registry_column_sql('g', 'applicationStatus')} AS applicationStatus,
                 {warning} AS warningLevel,
+                {warning_base_color} AS warningBaseColor,
                 {locked} AS blackLocked,
                 {unlock} AS blackDispatchUnlocked,
                 EXISTS (
@@ -1450,6 +1638,7 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
             JOIN geospatial_logs g  ON ir.targetID  = g.logID
             LEFT JOIN barangays b   ON g.barangayID = b.barangayID
             LEFT JOIN users u       ON ir.userID    = u.userID
+            {pin_state_join}
             {where}
             ORDER BY ir.irTimestamp DESC
             LIMIT %s OFFSET %s

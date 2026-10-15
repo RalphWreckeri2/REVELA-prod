@@ -7,6 +7,7 @@ from flask_jwt_extended import JWTManager, create_access_token
 
 from api.inspections import service as inspections
 from api.registry import service as registry, routes
+from api.flags.routes import flags_bp
 from registry_sqlite import RegistryDB
 
 
@@ -38,7 +39,133 @@ def test_clear_refreshes_actual_inspection_payload_without_changing_permit_statu
     assert after["flagColor"] == "Yellow"
     assert after["applicationStatus"] == "Pending"
     assert after["noticeLevel"] == 1  # The historical report is preserved.
-    assert db.rows("SELECT noticeLevel FROM geospatial_logs") == [{"noticeLevel": 0}]
+    assert db.rows("SELECT noticeLevel FROM geospatial_logs") == [
+        {"noticeLevel": 0}]
+
+
+def seed_unregistered_orange_pin(db, *, base_color="Red", locked=0, status="Verified"):
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID, businessID, barangayID, detectedName, flagColor, noticeLevel)
+        VALUES (20, NULL, 1, 'FIELD SHOP', 'Orange', 2)""")
+    db.db.execute("""INSERT INTO enforcement_state
+        (subjectType, subjectID, warningLevel, warningBaseColor, blackLocked)
+        VALUES ('geospatial_log', '20', 2, ?, ?)""", (base_color, locked))
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID, targetID, targetType, userID, verificationStatus, inspectionResult)
+        VALUES (20, 20, 'geospatial_log', 9, ?, 'Orange')""", (status,))
+    db.commit()
+
+
+def test_unregistered_pin_warning_survives_later_green_and_clears_to_base(db):
+    db.seed()
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID, businessID, barangayID, detectedName, flagColor, noticeLevel)
+        VALUES (20, NULL, 1, 'FIELD SHOP', 'Yellow', 0)""")
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID, targetID, targetType, userID, verificationStatus, inspectionResult, noticeLevel)
+        VALUES (20, 20, 'geospatial_log', 9, 'Submitted', 'Orange', 1)""")
+    db.commit()
+
+    result, error = inspections.verify_inspection(20, verified_by_user_id=2)
+    assert error is None
+    assert result["status"] == "Verified"
+    assert db.rows("SELECT warningLevel, warningBaseColor FROM enforcement_state WHERE subjectID = '20'") == [
+        {"warningLevel": 1, "warningBaseColor": "Yellow"}]
+
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID, targetID, targetType, userID, verificationStatus, inspectionResult, noticeLevel)
+        VALUES (21, 20, 'geospatial_log', 9, 'Submitted', 'Green', 1)""")
+    db.commit()
+    result, error = inspections.verify_inspection(21, verified_by_user_id=2)
+    assert error is None
+    payload, error = inspections.get_all_inspections()
+    assert error is None
+    latest = next(row for row in payload["data"] if row["reportID"] == 21)
+    assert latest["flagColor"] == "Orange"
+    assert latest["warningLevel"] == 1
+    assert latest["warningBaseColor"] == "Yellow"
+
+    result, error = registry.clear_pin_warning(20, 2, "Complied")
+    assert error is None
+    assert result["flagColor"] == "Yellow"
+    assert db.rows("SELECT flagColor, noticeLevel FROM geospatial_logs WHERE logID = 20") == [
+        {"flagColor": "Yellow", "noticeLevel": 0}]
+
+
+def test_unregistered_pin_clear_resets_warning_restores_base_and_audits_reason(db):
+    db.seed()
+    seed_unregistered_orange_pin(db, base_color="Yellow")
+
+    result, error = registry.clear_pin_warning(20, 2, "Complied")
+
+    assert error is None
+    assert result == {
+        "logID": 20,
+        "subjectType": "geospatial_log",
+        "warningCleared": True,
+        "previousWarningLevel": 2,
+        "warningLevel": 0,
+        "flagColor": "Yellow",
+    }
+    assert db.rows("SELECT flagColor, noticeLevel FROM geospatial_logs WHERE logID = 20") == [
+        {"flagColor": "Yellow", "noticeLevel": 0}]
+    assert db.rows("SELECT warningLevel, warningBaseColor, warningClearReason FROM enforcement_state WHERE subjectID = '20'") == [
+        {"warningLevel": 0, "warningBaseColor": None, "warningClearReason": "Complied"}]
+    assert db.rows("SELECT subjectType, subjectID, eventType, reason, previousLevel, newLevel FROM enforcement_events") == [
+        {"subjectType": "geospatial_log", "subjectID": "20", "eventType": "warning_cleared",
+         "reason": "Complied", "previousLevel": 2, "newLevel": 0}]
+
+
+@pytest.mark.parametrize("changes, message", [
+    ({"warningBaseColor": None}, "pre-warning color is unknown"),
+    ({"blackLocked": 1}, "Black-locked"),
+])
+def test_unregistered_pin_clear_refuses_unsafe_state_without_writes(db, changes, message):
+    db.seed()
+    seed_unregistered_orange_pin(db, **changes)
+
+    result, error = registry.clear_pin_warning(20, 2, "test")
+
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
+    assert message in str(error)
+    assert db.rows("SELECT warningLevel FROM enforcement_state WHERE subjectID = '20'") == [
+        {"warningLevel": 2}]
+    assert db.rows("SELECT flagColor FROM geospatial_logs WHERE logID = 20") == [
+        {"flagColor": "Orange"}]
+    assert db.rows("SELECT * FROM enforcement_events") == []
+
+
+def test_unregistered_pin_clear_refuses_an_open_inspection(db):
+    db.seed()
+    seed_unregistered_orange_pin(db, status="In Progress")
+
+    result, error = registry.clear_pin_warning(20, 2)
+
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
+    assert "not yet Verified" in str(error)
+    assert db.rows("SELECT * FROM enforcement_events") == []
+
+
+def test_unregistered_pin_clear_route_is_admin_only_and_uses_pin_id(db):
+    db.seed()
+    seed_unregistered_orange_pin(db)
+    app = Flask(__name__)
+    app.config["JWT_SECRET_KEY"] = "isolated-registry-test-secret-key-32-chars"
+    JWTManager(app)
+    app.register_blueprint(flags_bp, url_prefix="/api/flags")
+    with app.app_context():
+        token = create_access_token(
+            identity="2", additional_claims={"role": "Admin"})
+    with patch("api.middleware.decorators._verify_user_and_session", return_value=None):
+        response = app.test_client().post(
+            "/api/flags/20/clear-warning", json={"reason": "Verified"},
+            headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.get_json()["logID"] == 20
+    assert db.rows("SELECT reason FROM enforcement_events") == [
+        {"reason": "Verified"}]
 
 
 @pytest.mark.parametrize("pending_status", ["Assigned", "Reassigned", "Submitted", None])
@@ -54,7 +181,8 @@ def test_non_verified_inspection_on_another_pin_blocks_clear(db, pending_status,
     result, error = registry.clear_warning("B-1", 2)
     assert result is None
     assert isinstance(error, registry.RegistryLadderConflict)
-    assert db.rows("SELECT warningLevel FROM official_registry") == [{"warningLevel": 1}]
+    assert db.rows("SELECT warningLevel FROM official_registry") == [
+        {"warningLevel": 1}]
 
 
 @pytest.mark.parametrize("role,status,expected", [("Admin", "Pending", 200), ("Inspector", "Pending", 403), ("Admin", "Revoked", 409)])
@@ -65,13 +193,16 @@ def test_existing_clear_route_enforces_role_and_maps_returned_typed_conflicts(db
     JWTManager(app)
     app.register_blueprint(routes.registry_bp, url_prefix="/api/registry")
     with app.app_context():
-        token = create_access_token(identity="2", additional_claims={"role": role})
+        token = create_access_token(
+            identity="2", additional_claims={"role": role})
     with patch("api.middleware.decorators._verify_user_and_session", return_value=None):
-        response = app.test_client().post("/api/registry/B-1/clear-warning", json={}, headers={"Authorization": f"Bearer {token}"})
+        response = app.test_client().post("/api/registry/B-1/clear-warning", json={},
+                                          headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == expected
     if expected == 409:
         assert response.get_json()["code"] == "warning_clear_refused"
-    assert db.rows("SELECT applicationStatus FROM official_registry")[0]["applicationStatus"] == status
+    assert db.rows("SELECT applicationStatus FROM official_registry")[
+        0]["applicationStatus"] == status
 
 
 def test_revoked_without_lock_can_receive_the_existing_single_use_dispatch_grant(db):
@@ -89,7 +220,8 @@ def test_revoked_without_lock_can_receive_the_existing_single_use_dispatch_grant
 def test_verified_yellow_red_or_purple_can_end_in_any_color(db, initial_status, result_color):
     db.seed(status=initial_status, level=0)
     notice = 1 if result_color == "Orange" else 0
-    db.db.execute("UPDATE inspection_reports SET verificationStatus = 'Submitted', inspectionResult = ?, noticeLevel = ?", (result_color, notice))
+    db.db.execute(
+        "UPDATE inspection_reports SET verificationStatus = 'Submitted', inspectionResult = ?, noticeLevel = ?", (result_color, notice))
     db.commit()
     result, error = inspections.verify_inspection(1, verified_by_user_id=2)
     assert error is None
@@ -97,5 +229,6 @@ def test_verified_yellow_red_or_purple_can_end_in_any_color(db, initial_status, 
     assert report_one()["flagColor"] == result_color
     if result_color == "Black":
         # Existing verified-Black semantics: lock it, preserve permit status.
-        row = db.rows("SELECT applicationStatus, blackLocked FROM official_registry")[0]
+        row = db.rows(
+            "SELECT applicationStatus, blackLocked FROM official_registry")[0]
         assert row == {"applicationStatus": initial_status, "blackLocked": 1}

@@ -12,6 +12,10 @@ probe, the report read, the registry read and the enforcement-event insert,
 and it records every statement so the tests can assert on the SQL that would
 have run.
 """
+from api.registry.locks import reset_lock_column_cache
+from api.registry.colors import reset_ladder_column_cache
+from api.inspections.service import InspectionVerificationConflict
+from api.inspections import service as inspection_service
 import os
 import sys
 import unittest
@@ -19,11 +23,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.inspections import service as inspection_service
-from api.inspections.service import InspectionVerificationConflict
-from api.registry.colors import reset_ladder_column_cache
-from api.registry.locks import reset_lock_column_cache
 
 
 class LadderVerifyHarness(unittest.TestCase):
@@ -44,22 +43,28 @@ class LadderVerifyHarness(unittest.TestCase):
         cursor.lastrowid = 1
         # One router for both execute and fetchone, so a statement and the
         # row it returns can never drift apart.
-        matched = {"has_row": False, "rowcount": 1}
+        matched = {"has_row": False, "rowcount": 1, "state_subject": None}
 
         def classify(sql):
             flat = " ".join(sql.split())
             if "information_schema.COLUMNS" in flat:
                 return "probe"
+            if "information_schema.TABLES" in flat:
+                return "table_probe"
             if "FROM inspection_reports ir" in flat:
                 return "report"
-            if "SELECT blackLocked, applicationStatus FROM official_registry" in flat:
+            if "LEFT JOIN enforcement_state es" in flat and "FROM official_registry r" in flat:
                 return "lock_read"
             if flat.startswith("SELECT applicationStatus"):
                 return "registry_read"
-            if "SELECT flagColor FROM geospatial_logs" in flat:
+            if "FROM enforcement_state" in flat and flat.startswith("SELECT"):
+                return "state_read"
+            if "SELECT flagColor, noticeLevel FROM geospatial_logs" in flat:
                 return "pin_colour"
             if "UPDATE official_registry" in flat:
                 return "registry_write"
+            if "INSERT INTO enforcement_state" in flat:
+                return "state_write"
             return "other"
 
         def execute(sql, params=()):
@@ -70,6 +75,13 @@ class LadderVerifyHarness(unittest.TestCase):
                     [("warningLevel",), ("blackLocked",),
                      ("blackDispatchUnlocked",)] if (ladder and migrated)
                     else [])
+                return
+            if kind == "table_probe":
+                cursor.fetchone.return_value = {
+                    "TABLE_NAME": "enforcement_state"} if migrated else None
+                return
+            if kind == "state_read":
+                matched["state_subject"] = params[0]
                 return
             if kind in ("report", "registry_read", "lock_read", "pin_colour"):
                 matched["has_row"] = True
@@ -87,6 +99,18 @@ class LadderVerifyHarness(unittest.TestCase):
                 # as absent, and every Black refusal test silently passes for
                 # the wrong reason.
                 return ("blackLocked",) if migrated else None
+            if kind == "table_probe":
+                return {"TABLE_NAME": "enforcement_state"} if migrated else None
+            if kind == "state_read":
+                subject_id = matched["state_subject"]
+                if subject_id == str(pin_business_id):
+                    return {
+                        "warningLevel": warning_level,
+                        "blackLocked": black_locked,
+                        "blackDispatchUnlocked": black_dispatch_unlocked,
+                        "warningBaseColor": "Red",
+                    }
+                return None
             if kind == "report":
                 return {
                     "reportID": 4, "targetID": 22, "userID": 9,
@@ -98,20 +122,14 @@ class LadderVerifyHarness(unittest.TestCase):
                     "businessID": pin_business_id,
                 }
             if kind == "pin_colour":
-                return {"flagColor": "Red"}
+                return {"flagColor": "Red", "noticeLevel": 0}
             if kind == "lock_read":
                 return {"blackLocked": black_locked,
                         "applicationStatus": application_status} if has_row else None
             if kind == "registry_read":
                 if not has_row:
                     return None
-                row = {"applicationStatus": application_status}
-                if ladder:
-                    row["warningLevel"] = warning_level
-                    row["blackLocked"] = black_locked
-                if migrated:
-                    row["blackDispatchUnlocked"] = black_dispatch_unlocked
-                return row
+                return {"applicationStatus": application_status}
             return None
 
         cursor.execute.side_effect = execute
@@ -140,13 +158,13 @@ class LadderVerifyHarness(unittest.TestCase):
 
     @classmethod
     def _registry_update(cls, cursor):
-        rows = [s for s in cls._statements(cursor, "UPDATE official_registry")
-                if "lastInspectedAt" in s[0]]
+        rows = [s for s in cls._statements(cursor, "INSERT INTO enforcement_state")
+                if "lastInspectionResult" in s[0]]
         return rows[0] if rows else None
 
     @classmethod
     def _events(cls, cursor):
-        return cls._statements(cursor, "INSERT INTO registry_enforcement_events")
+        return cls._statements(cursor, "INSERT INTO enforcement_events")
 
     @classmethod
     def _pin_update(cls, cursor):
@@ -166,7 +184,7 @@ class OrangeLadderTests(LadderVerifyHarness):
                     warning_level=current)
                 self.assertIsNone(error)
                 sql, params = self._registry_update(cursor)
-                self.assertIn("warningLevel = %s", sql)
+                self.assertIn("warningLevel = VALUES(warningLevel)", sql)
                 self.assertIn(submitted, params)
                 self.assertTrue(result["registryUpdated"])
 
@@ -194,8 +212,10 @@ class OrangeLadderTests(LadderVerifyHarness):
             result="Orange", notice_level=3, warning_level=0)
         self.assertIsInstance(error, InspectionVerificationConflict)
         # No report update, no pin update, no registry update, no event.
-        self.assertEqual(self._statements(cursor, "UPDATE inspection_reports"), [])
-        self.assertEqual(self._statements(cursor, "UPDATE geospatial_logs"), [])
+        self.assertEqual(self._statements(
+            cursor, "UPDATE inspection_reports"), [])
+        self.assertEqual(self._statements(
+            cursor, "UPDATE geospatial_logs"), [])
         self.assertEqual(self._registry_update(cursor), None)
         self.assertEqual(self._events(cursor), [])
 
@@ -221,11 +241,12 @@ class OrangeLadderTests(LadderVerifyHarness):
         events = self._events(cursor)
         self.assertEqual(len(events), 1)
         params = events[0][1]
-        self.assertEqual(params[0], "BIZ-1")
-        self.assertEqual(params[1], "warning_issued")
-        self.assertEqual(params[2], 42)
-        self.assertEqual(params[4], 0)   # previousLevel
-        self.assertEqual(params[5], 1)   # newLevel
+        self.assertEqual(params[0], "business")
+        self.assertEqual(params[1], "BIZ-1")
+        self.assertEqual(params[2], "warning_issued")
+        self.assertEqual(params[3], 42)
+        self.assertEqual(params[5], 0)   # previousLevel
+        self.assertEqual(params[6], 1)   # newLevel
 
     def test_every_registered_verify_stamps_the_last_result(self):
         for result, level, current in (("Red", 0, 0), ("Yellow", 0, 0),
@@ -236,7 +257,8 @@ class OrangeLadderTests(LadderVerifyHarness):
                     result=result, notice_level=level, warning_level=current)
                 self.assertIsNone(error)
                 sql, params = self._registry_update(cursor)
-                self.assertIn("lastInspectionResult = %s", sql)
+                self.assertIn(
+                    "lastInspectionResult = VALUES(lastInspectionResult)", sql)
                 self.assertIn("lastInspectedAt = NOW()", sql)
                 self.assertIn(result, params)
 
@@ -253,7 +275,7 @@ class BlackLockWriteTests(LadderVerifyHarness):
         sql, params = self._registry_update(cursor)
         self.assertIn("blackLocked = 1", sql)
         self.assertIn("blackLockedAt = NOW()", sql)
-        self.assertIn("blackLockedBy = %s", sql)
+        self.assertIn("blackLockedBy = VALUES(blackLockedBy)", sql)
         self.assertIn(7, params)
         self.assertNotIn("applicationStatus", sql)
         self.assertTrue(result["registryUpdated"])
@@ -271,10 +293,10 @@ class BlackLockWriteTests(LadderVerifyHarness):
         self.assertIsNone(error)
         events = self._events(cursor)
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0][1][1], "black_locked")
-        self.assertEqual(events[0][1][2], 9)
-        self.assertEqual(events[0][1][6], 0)   # previousBlack
-        self.assertEqual(events[0][1][7], 1)   # newBlack
+        self.assertEqual(events[0][1][2], "black_locked")
+        self.assertEqual(events[0][1][3], 9)
+        self.assertEqual(events[0][1][7], 0)   # previousBlack
+        self.assertEqual(events[0][1][8], 1)   # newBlack
 
 
 # ── the plain statuses ───────────────────────────────────────────────────────
@@ -288,9 +310,10 @@ class StatusWriteTests(LadderVerifyHarness):
             with self.subTest(result=result):
                 (out, error), cursor = self._run(result=result)
                 self.assertIsNone(error)
-                sql, params = self._registry_update(cursor)
-                self.assertIn("applicationStatus = %s", sql)
-                self.assertIn(expected, params)
+                updates = self._statements(cursor, "UPDATE official_registry")
+                self.assertTrue(updates)
+                self.assertIn("applicationStatus = %s", updates[0][0])
+                self.assertIn(expected, updates[0][1])
                 self.assertTrue(out["registryUpdated"])
 
     def test_purple_still_closes(self):
@@ -305,7 +328,8 @@ class StatusWriteTests(LadderVerifyHarness):
         (result, error), cursor = self._run(
             result="Green", pin_business_id=None, registry_business_id=None)
         self.assertIsNone(error)
-        self.assertEqual(self._statements(cursor, "UPDATE official_registry"), [])
+        self.assertEqual(self._statements(
+            cursor, "UPDATE official_registry"), [])
         self.assertEqual(self._events(cursor), [])
         self.assertEqual(self._pin_update(cursor)[1], ("Green", 0, 22))
 
@@ -316,7 +340,8 @@ class StatusWriteTests(LadderVerifyHarness):
             pin_business_id=None, registry_business_id=None)
         self.assertIsNone(error)
         self.assertEqual(result["newFlagColor"], "Orange")
-        self.assertEqual(self._statements(cursor, "UPDATE official_registry"), [])
+        self.assertEqual(self._statements(
+            cursor, "UPDATE official_registry"), [])
 
     def test_a_row_that_cannot_be_updated_warns_but_does_not_fail(self):
         """The warn-don't-fail contract, same as the Purple fix."""
@@ -345,8 +370,10 @@ class UnmigratedDatabaseTests(LadderVerifyHarness):
         (_, error), cursor = self._run(
             result="Orange", notice_level=1, ladder=False)
         self.assertIsInstance(error, InspectionVerificationConflict)
-        self.assertEqual(self._statements(cursor, "UPDATE inspection_reports"), [])
-        self.assertEqual(self._statements(cursor, "UPDATE geospatial_logs"), [])
+        self.assertEqual(self._statements(
+            cursor, "UPDATE inspection_reports"), [])
+        self.assertEqual(self._statements(
+            cursor, "UPDATE geospatial_logs"), [])
 
     def test_the_other_results_still_verify(self):
         for result in ("Red", "Yellow", "Green", "Purple"):
@@ -374,7 +401,8 @@ class VerificationConflictSurfacingTests(unittest.TestCase):
         with (
             patch.object(inspections_routes, "verify_inspection",
                          return_value=outcome),
-            patch.object(inspections_routes, "get_jwt_identity", return_value=2),
+            patch.object(inspections_routes,
+                         "get_jwt_identity", return_value=2),
         ):
             app = Flask(__name__)
             with app.test_request_context(

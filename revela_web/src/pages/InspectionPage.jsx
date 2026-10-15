@@ -539,7 +539,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
         report, role, reason: value || null, token, request: clearWarningRequest,
         refresh: onWarningCleared,
         onChanged: () => window.dispatchEvent(new CustomEvent("revela:registry-update", {
-          detail: { businessID: report.businessID },
+          detail: { businessID: report.businessID, logID: report.logID },
         })),
       });
     } catch (err) {

@@ -374,7 +374,8 @@ def yellow_flag_route():
 @admin_required()
 def black_flag_route(log_id):
     """Admin: escalate a Red, Yellow or Orange flag and record the real lock."""
-    success, error = escalate_to_black(log_id, actor_user_id=get_jwt_identity())
+    success, error = escalate_to_black(
+        log_id, actor_user_id=get_jwt_identity())
     if not success:
         if isinstance(error, FlagEscalationForbidden):
             return jsonify({"error": str(error), "code": "black_escalation_forbidden"}), 403
@@ -384,6 +385,26 @@ def black_flag_route(log_id):
             return jsonify({"error": str(error), "code": "black_escalation_conflict"}), 409
         return jsonify({"error": str(error)}), 500
     return jsonify({"message": f"Flag #{log_id} escalated to Black"}), 200
+
+
+@flags_bp.route("/<int:log_id>/clear-warning", methods=["POST"])
+@admin_required()
+def clear_pin_warning_route(log_id):
+    """Admin: clear a warning on an unregistered geospatial pin."""
+    data = request.get_json(silent=True) or {}
+    result, error = registry_service.clear_pin_warning(
+        log_id, get_jwt_identity(), data.get("reason"))
+    if error:
+        if isinstance(error, registry_service.RegistryNotFoundError):
+            return jsonify({"error": str(error)}), 404
+        if isinstance(error, (registry_service.RegistryLadderConflict,
+                              registry_service.RegistryLadderUnavailable)):
+            return jsonify({
+                "error": str(error),
+                "code": "warning_clear_refused",
+            }), 409
+        return jsonify({"error": str(error)}), 500
+    return jsonify(result), 200
 
 
 # ── PUT /api/flags/:id/location ───────────────────────────────────────────────

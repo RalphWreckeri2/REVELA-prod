@@ -15,8 +15,6 @@
  *            sent back. See registryLadderPolicy.js.
  */
 
-import { isBlackDispatchUnlocked } from "./registryLadderPolicy.js";
-
 export const INSPECTABLE_FLAG_COLORS = Object.freeze([
   "Red",
   "Yellow",
@@ -29,24 +27,17 @@ export const NON_DISPATCHABLE_FLAG_COLORS = Object.freeze(["Green", "Black"]);
 
 export function canDispatchFlag(flag, { isAdmin } = {}) {
   if (!isAdmin) return false;
-  // Black is the only colour with an exception, and only while a SUPER_ADMIN
-  // grant is open. Green has none, so it stays blocked even on a re-dispatch.
-  const blackUnlocked = flag?.color === "Black"
-    && isBlackDispatchUnlocked(flag);
-  if (NON_DISPATCHABLE_FLAG_COLORS.includes(flag?.color) && !blackUnlocked) {
+  if (NON_DISPATCHABLE_FLAG_COLORS.includes(flag?.color)) {
     return false;
   }
   // Already-inspected or in-flight work may be re-dispatched.
   if (flag?.hasActiveInspection) return true;
   if (flag?.verificationStatus === "Verified") return true;
-  if (flag?.color === "Black") return blackUnlocked;
   return INSPECTABLE_FLAG_COLORS.includes(flag?.color);
 }
 
 export function dispatchButtonLabel(flag) {
-  if (flag?.color === "Black" && isBlackDispatchUnlocked(flag)) {
-    return "Dispatch inspector (unlocked)";
-  }
+  if (flag?.color === "Black") return "Black businesses cannot be dispatched";
   if (flag?.hasActiveInspection) return "Undergoing Inspection";
   if (flag?.verificationStatus === "Verified") return "Re-dispatch inspector";
   return "Dispatch inspector";
@@ -55,10 +46,11 @@ export function dispatchButtonLabel(flag) {
 /** Inspection details use API flagColor, not Map's normalized color key. */
 export function canFollowUpInspection(report, { isAdmin } = {}) {
   if (!isAdmin || report?.verificationStatus !== "Verified") return false;
-  const black = report.flagColor === "Black"
-    || Number(report.blackLocked) === 1
-    || ["Revoked", "Blacklisted"].includes(report.applicationStatus);
-  if (black) return Number(report.blackDispatchUnlocked) === 1;
+  const black =
+    report.flagColor === "Black" ||
+    Number(report.blackLocked) === 1 ||
+    ["Revoked", "Blacklisted"].includes(report.applicationStatus);
+  if (black) return false;
   // Warning/notice stage is not a dispatch restriction. Green stays blocked.
   return INSPECTABLE_FLAG_COLORS.includes(report.flagColor);
 }

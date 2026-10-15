@@ -8,6 +8,7 @@ migrations/20261015_01_enforcement_ladder_schema.sql has not been applied,
 official_registry.blackLocked does not exist, and the guard must report "not
 locked" rather than freezing every write path on every unmigrated database.
 """
+from api.registry import locks
 import os
 import sys
 import unittest
@@ -16,24 +17,16 @@ from unittest.mock import MagicMock
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from api.registry import locks
-
 
 # ── 4. The Black guard ────────────────────────────────────────────────────────
 
 
 def _locked_cursor(*, column_present, rows):
-    """A fake cursor answering the probe then the row read."""
+    """A fake cursor returning the joined enforcement state and permit."""
     cursor = MagicMock()
-    state = {"probed": False}
 
     def execute(sql, params=()):
-        if "information_schema" in sql:
-            state["probed"] = True
-            cursor.fetchone.return_value = ("blackLocked",) if column_present \
-                else None
-        else:
-            cursor.fetchone.return_value = rows.get(params[0])
+        cursor.fetchone.return_value = rows.get(params[0])
         return cursor
 
     cursor.execute.side_effect = execute
@@ -47,14 +40,16 @@ class BlackLockGuardTests(unittest.TestCase):
         self.addCleanup(locks.reset_lock_column_cache)
 
     def test_unmigrated_database_is_treated_as_not_locked(self):
-        """Fail-safe: a missing column must not freeze every write path."""
-        cursor = _locked_cursor(column_present=False, rows={})
+        """A registered business with no enforcement-state row is not locked."""
+        cursor = _locked_cursor(column_present=False,
+                                rows={"BIZ-1": (None, "Active")})
         self.assertFalse(locks.is_black_locked(cursor, "BIZ-1"))
         self.assertTrue(locks.assert_not_black_locked(
             cursor, "BIZ-1", action="verify"))
 
     def test_a_locked_row_raises(self):
-        cursor = _locked_cursor(column_present=True, rows={"BIZ-1": (1,)})
+        cursor = _locked_cursor(column_present=True,
+                                rows={"BIZ-1": (1, "Active")})
         self.assertTrue(locks.is_black_locked(cursor, "BIZ-1"))
         with self.assertRaises(locks.BlackLockedError):
             locks.assert_not_black_locked(cursor, "BIZ-1",
@@ -63,24 +58,28 @@ class BlackLockGuardTests(unittest.TestCase):
     def test_revoked_is_locked_with_or_without_the_lock_column(self):
         for migrated in (True, False):
             locks.reset_lock_column_cache()
-            row = (0, "Revoked") if migrated else ("Revoked",)
-            cursor = _locked_cursor(column_present=migrated, rows={"BIZ-1": row})
+            row = (0 if migrated else None, "Revoked")
+            cursor = _locked_cursor(
+                column_present=migrated, rows={"BIZ-1": row})
             with self.subTest(migrated=migrated):
                 self.assertTrue(locks.is_black_locked(cursor, "BIZ-1"))
                 with self.assertRaises(locks.BlackLockedError):
-                    locks.assert_not_black_locked(cursor, "BIZ-1", action="sync")
+                    locks.assert_not_black_locked(
+                        cursor, "BIZ-1", action="sync")
 
     def test_the_error_carries_the_action_and_the_business_id(self):
-        cursor = _locked_cursor(column_present=True, rows={"BIZ-1": (1,)})
+        cursor = _locked_cursor(column_present=True,
+                                rows={"BIZ-1": (1, "Active")})
         with self.assertRaises(locks.BlackLockedError) as caught:
             locks.assert_not_black_locked(cursor, "BIZ-1", action="sync")
         self.assertEqual(caught.exception.action, "sync")
         self.assertEqual(caught.exception.business_id, "BIZ-1")
         self.assertIn("BIZ-1", str(caught.exception))
-        self.assertIn("SUPER_ADMIN", str(caught.exception))
+        self.assertIn("cannot be edited or deleted", str(caught.exception))
 
     def test_an_unlocked_row_passes(self):
-        cursor = _locked_cursor(column_present=True, rows={"BIZ-1": (0,)})
+        cursor = _locked_cursor(column_present=True,
+                                rows={"BIZ-1": (0, "Active")})
         self.assertFalse(locks.is_black_locked(cursor, "BIZ-1"))
         self.assertTrue(locks.assert_not_black_locked(
             cursor, "BIZ-1", action="sync"))
@@ -90,7 +89,8 @@ class BlackLockGuardTests(unittest.TestCase):
         self.assertFalse(locks.is_black_locked(cursor, "BIZ-1"))
 
     def test_a_null_column_is_not_locked(self):
-        cursor = _locked_cursor(column_present=True, rows={"BIZ-1": (None,)})
+        cursor = _locked_cursor(column_present=True,
+                                rows={"BIZ-1": (None, "Active")})
         self.assertFalse(locks.is_black_locked(cursor, "BIZ-1"))
 
     def test_a_missing_business_id_never_queries(self):
@@ -102,7 +102,8 @@ class BlackLockGuardTests(unittest.TestCase):
 
     def test_reads_a_dict_row(self):
         cursor = _locked_cursor(column_present=True,
-                                rows={"BIZ-1": {"blackLocked": 1}})
+                                rows={"BIZ-1": {"blackLocked": 1,
+                                                "applicationStatus": "Active"}})
         self.assertTrue(locks.is_black_locked(cursor, "BIZ-1"))
 
     def test_tolerates_a_string_valued_column(self):
@@ -110,21 +111,18 @@ class BlackLockGuardTests(unittest.TestCase):
                             ("true", True), ("NULL", False)):
             with self.subTest(raw=raw):
                 cursor = _locked_cursor(column_present=True,
-                                        rows={"BIZ-1": (raw,)})
+                                        rows={"BIZ-1": (raw, "Active")})
                 self.assertEqual(locks.is_black_locked(cursor, "BIZ-1"),
                                  locked)
 
-    def test_the_probe_is_cached(self):
-        first = _locked_cursor(column_present=True, rows={"BIZ-1": (1,)})
+    def test_reads_the_current_state_on_each_check(self):
+        first = _locked_cursor(column_present=True,
+                               rows={"BIZ-1": (1, "Active")})
         self.assertTrue(locks.is_black_locked(first, "BIZ-1"))
-        calls_after_probe = first.execute.call_count
-
-        # The lock has since been cleared, but the cached probe means we still
-        # read the row; the point is that the information_schema query is not
-        # repeated on every call.
-        second = _locked_cursor(column_present=True, rows={"BIZ-1": (0,)})
+        second = _locked_cursor(column_present=True,
+                                rows={"BIZ-1": (0, "Active")})
         self.assertFalse(locks.is_black_locked(second, "BIZ-1"))
-        self.assertEqual(second.execute.call_count, calls_after_probe - 1)
+        second.execute.assert_called_once()
         locks.reset_lock_column_cache()
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backfill geospatial_logs.source, official_registry.warningLevel and blackLocked.
+"""Backfill geospatial_logs.source and enforcement_state warning/Black state.
 
 DRY RUN BY DEFAULT. Nothing is written unless you pass --apply, and even then
 only after you have read the dry-run output.
@@ -51,9 +51,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 REQUIRED_COLUMNS = {
-    "official_registry": (
-        "warningLevel", "blackLocked", "blackDispatchUnlocked",
+    "enforcement_state": (
+        "subjectType", "subjectID", "warningLevel", "warningBaseColor",
+        "blackLocked", "blackLockedAt", "blackLockedBy", "blackLockReason",
     ),
+    "enforcement_events": ("subjectType", "subjectID", "eventType"),
     "geospatial_logs": ("source",),
 }
 
@@ -129,17 +131,21 @@ SOURCE_VALUE_FOR_LABEL = {
 
 
 def plan_warning_level(cursor):
-    """Registered rows whose warningLevel does not match their Orange history.
+    """Registered business state rows whose warningLevel differs from history.
 
     The level is the count of Verified Orange inspections on the row's pins,
     capped at 3. An Orange pin with no verified history behind it is left
     alone and reported separately: there is no defensible value to write.
     """
-    return """SELECT r.businessID, r.businessName, r.warningLevel AS current_level,
+    return """SELECT r.businessID, r.businessName,
+                  COALESCE(es.warningLevel, 0) AS current_level,
                   COALESCE(MAX(v.cnt), 0) AS orange_count
            FROM official_registry r
            JOIN geospatial_logs g
              ON g.businessID = r.businessID
+                     LEFT JOIN enforcement_state es
+                         ON es.subjectType = 'business'
+                        AND es.subjectID = CAST(r.businessID AS CHAR)
            LEFT JOIN (
                SELECT g2.businessID AS bid, COUNT(*) AS cnt
                FROM geospatial_logs g2
@@ -151,7 +157,7 @@ def plan_warning_level(cursor):
                GROUP BY g2.businessID
            ) v ON v.bid = r.businessID
            WHERE r.applicationStatus IS NOT NULL
-           GROUP BY r.businessID, r.businessName, r.warningLevel
+           GROUP BY r.businessID, r.businessName, es.warningLevel
            HAVING current_level <> LEAST(orange_count, %s)
               AND orange_count > 0"""
 
@@ -177,11 +183,15 @@ def plan_unguessable_orange(cursor):
 
 
 def plan_black_lock(cursor):
-    """Rows with a Black pin and a linked registry row, not yet locked."""
+    """Business state rows with a linked Black pin, not yet locked."""
     return """SELECT DISTINCT r.businessID, r.businessName
            FROM official_registry r
            JOIN geospatial_logs g ON g.businessID = r.businessID
-           WHERE g.flagColor = 'Black' AND r.blackLocked = 0"""
+                     LEFT JOIN enforcement_state es
+                         ON es.subjectType = 'business'
+                        AND es.subjectID = CAST(r.businessID AS CHAR)
+                     WHERE g.flagColor = 'Black'
+                         AND COALESCE(es.blackLocked, 0) = 0"""
 
 
 def plan_unlinked_black(cursor):
@@ -196,7 +206,12 @@ def plan_revoked_without_black(cursor):
     return """SELECT r.businessID, r.businessName
            FROM official_registry r
            WHERE r.applicationStatus IN ('Revoked', 'Blacklisted')
-             AND r.blackLocked = 0
+                         AND COALESCE((
+                                 SELECT es.blackLocked FROM enforcement_state es
+                                 WHERE es.subjectType = 'business'
+                                     AND es.subjectID = CAST(r.businessID AS CHAR)
+                                 LIMIT 1
+                         ), 0) = 0
              AND NOT EXISTS (
                  SELECT 1 FROM geospatial_logs g
                  WHERE g.businessID = r.businessID AND g.flagColor = 'Black'
@@ -235,7 +250,7 @@ def report(conn, cursor, apply_changes, summary):
     out("")
     out("=" * 72)
     out("  ENFORCEMENT LADDER BACKFILL" + ("  --  APPLYING" if apply_changes
-                                          else "  --  DRY RUN, nothing written"))
+                                           else "  --  DRY RUN, nothing written"))
     out("=" * 72)
 
     # ── source ─────────────────────────────────────────────────────────────
@@ -264,7 +279,7 @@ def report(conn, cursor, apply_changes, summary):
 
     # ── warningLevel ───────────────────────────────────────────────────────
     out("")
-    out("-- official_registry.warningLevel " + "-" * 38)
+    out("-- enforcement_state.warningLevel " + "-" * 38)
     out(f"   Level = verified Orange inspections on the row's pins, capped at "
         f"{MAX_WARNING_LEVEL}.")
     cursor.execute(plan_warning_level(cursor), (MAX_WARNING_LEVEL,))
@@ -274,10 +289,12 @@ def report(conn, cursor, apply_changes, summary):
             f" level {row['current_level']} -> {min(row['orange_count'], MAX_WARNING_LEVEL)}")
         if apply_changes:
             cursor.execute(
-                "UPDATE official_registry SET warningLevel = %s "
-                "WHERE businessID = %s",
-                (min(row["orange_count"], MAX_WARNING_LEVEL),
-                 row["businessID"]))
+                """INSERT INTO enforcement_state
+                       (subjectType, subjectID, warningLevel)
+                   VALUES ('business', %s, %s)
+                   ON DUPLICATE KEY UPDATE warningLevel = VALUES(warningLevel)""",
+                (str(row["businessID"]),
+                 min(row["orange_count"], MAX_WARNING_LEVEL)))
     summary["warningLevel"] = len(levels)
     if not levels:
         out("       nothing to change")
@@ -286,7 +303,7 @@ def report(conn, cursor, apply_changes, summary):
     unguessed = _rows(cursor)
     out("")
     out(f"   !! NOT GUESSED -- {len(unguessed)} Orange pin(s) with no verified")
-    out("      Orange inspection behind them. Their warningLevel is left at 0.")
+    out("      Orange inspection behind them. Their warningLevel is not guessed.")
     out("      Review these by hand:")
     for row in unguessed[:20]:
         out(f"       #{row['logID']:<8} {row['detectedName']}")
@@ -298,15 +315,23 @@ def report(conn, cursor, apply_changes, summary):
 
     # ── blackLocked ────────────────────────────────────────────────────────
     out("")
-    out("-- official_registry.blackLocked " + "-" * 39)
+    out("-- enforcement_state.blackLocked " + "-" * 39)
     cursor.execute(plan_black_lock(cursor))
     locks = _rows(cursor)
     for row in locks:
         out(f"       {row['businessID']:<16} {row['businessName'][:34]}")
         if apply_changes:
             cursor.execute(
-                "UPDATE official_registry SET blackLocked = 1 "
-                "WHERE businessID = %s", (row["businessID"],))
+                """INSERT INTO enforcement_state
+                       (subjectType, subjectID, blackLocked, blackLockedAt,
+                        blackLockedBy, blackLockReason)
+                   VALUES ('business', %s, 1, NOW(), NULL,
+                           'Backfilled from Black pin')
+                   ON DUPLICATE KEY UPDATE blackLocked = 1,
+                       blackLockedAt = COALESCE(blackLockedAt, NOW()),
+                       blackLockReason = COALESCE(
+                           blackLockReason, 'Backfilled from Black pin')""",
+                (str(row["businessID"]),))
     summary["blackLocked"] = len(locks)
     if not locks:
         out("       nothing to lock")
@@ -342,8 +367,10 @@ def report(conn, cursor, apply_changes, summary):
     out(f"   warningLevel rows set ............ {summary['warningLevel']}")
     out(f"   Orange pins NOT guessed (listed) . {summary['unguessed_orange']}")
     out(f"   blackLocked rows set ............. {summary['blackLocked']}")
-    out(f"   Black pins with no registry row .. {summary['unlinked_black']}  (listed)")
-    out(f"   Revoked permits with no Black pin . {summary['revoked_without_black']}  (listed)")
+    out(
+        f"   Black pins with no registry row .. {summary['unlinked_black']}  (listed)")
+    out(
+        f"   Revoked permits with no Black pin . {summary['revoked_without_black']}  (listed)")
     out("")
     if not apply_changes:
         out("   This was a DRY RUN. Nothing was written.")

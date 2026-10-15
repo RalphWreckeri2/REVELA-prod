@@ -17,7 +17,7 @@ import requests as http
 import json
 from geopy.distance import geodesic
 from app import mysql
-from api.registry.service import _flag_source_sql, _has_columns
+from api.registry.service import _flag_source_sql, _has_enforcement_columns
 from api.models.geospatial import (
     SOURCE_DETECTION,
     geospatial_source_column_exists,
@@ -33,7 +33,7 @@ from api.registry.colors import (
 from api.registry.locks import (
     BLACK_LOCKED, BlackLockedError, assert_not_black_locked,
     record_enforcement_event,
-    assert_business_deletable, BlackBusinessDeletionForbidden,
+    assert_business_deletable, BlackBusinessDeletionForbidden, is_black_locked,
 )
 from shapely import prepare
 from shapely.affinity import scale
@@ -2992,9 +2992,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         ladder = ladder_columns_available(cursor)
         effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
         registry_flag_color = _registry_row_flag_color_sql("r", ladder=ladder)
-        has_unlock = _has_columns(cursor, ("blackLocked", "blackDispatchUnlocked"))
-        unlock = "COALESCE(r.blackDispatchUnlocked, 0)" if has_unlock else "0"
-        unlock_projection = ", blackDispatchUnlocked" if has_unlock else ""
+        unlock = "0"
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
         # Filters that apply to the geospatial_logs branch
@@ -3106,7 +3104,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 LEFT JOIN barangays b ON g.barangayID = b.barangayID
                 LEFT JOIN LATERAL (
                     SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus,
-                           matchStatus, coordSource, matchScore{unlock_projection}
+                           matchStatus, coordSource, matchScore
                     FROM official_registry
                     WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
                        OR (g.placeID IS NOT NULL AND placeID = g.placeID
@@ -3196,7 +3194,8 @@ def _validate_yellow_flag_barangay(cursor, lat, lng, barangay_id):
     )
     row = cursor.fetchone()
     if not row:
-        raise YellowFlagValidationError("The selected barangay does not exist.")
+        raise YellowFlagValidationError(
+            "The selected barangay does not exist.")
 
     def key(name):
         name = str(name or "").lower().replace("(pob.)", "").strip()
@@ -3218,7 +3217,8 @@ def _validate_yellow_flag_barangay(cursor, lat, lng, barangay_id):
     try:
         scope = validate_barangay_scope(barangay_id, polygons[0])
     except ValueError as error:
-        raise RuntimeError("Official barangay boundary data is invalid.") from error
+        raise RuntimeError(
+            "Official barangay boundary data is invalid.") from error
     if not scope.contains_coordinate(lat, lng):
         raise YellowFlagValidationError(
             "Coordinates do not fall within the selected barangay boundary."
@@ -3396,6 +3396,10 @@ def update_flag_color(log_id, color):
     try:
         cursor = mysql.connection.cursor()
 
+        if color == "Black":
+            cursor.close()
+            return False, "Use the audited Black escalation action to set a flag to Black."
+
         if log_id < 0:
             biz_id = -log_id
             if color == "Orange":
@@ -3447,15 +3451,11 @@ def update_flag_color(log_id, color):
             cursor.close()
             return False, "Flag not found"
 
-        # A Black locked business keeps its colour. Only a SUPER_ADMIN unlock
-        # may change it, and that route does not exist yet.
-        if row.get("businessID"):
-            try:
-                assert_not_black_locked(
-                    cursor, row["businessID"], action="recolour this flag")
-            except BlackLockedError as exc:
-                cursor.close()
-                return False, exc
+        if (row.get("flagColor") == "Black"
+                or (row.get("businessID")
+                    and is_black_locked(cursor, row["businessID"]))):
+            cursor.close()
+            return False, "Black flags cannot be edited."
 
         cursor.execute("""
             UPDATE geospatial_logs
@@ -3521,6 +3521,12 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
             if not row:
                 cursor.close()
                 return False, "Business not found"
+            try:
+                assert_not_black_locked(
+                    cursor, biz_id, action="edit Black flag details")
+            except BlackLockedError as exc:
+                cursor.close()
+                return False, exc
             old_lat, old_lng = row.get("latitude"), row.get("longitude")
             final_barangay_id = new_barangay_id or row.get("barangayID")
             from api.registry.places_resolver import compute_resolve_key
@@ -3577,11 +3583,19 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
 
         # Real flag in geospatial_logs
         cursor.execute(
-            "SELECT detectedName, barangayID, placeID, latitude, longitude FROM geospatial_logs WHERE logID = %s", (log_id,))
+            "SELECT detectedName, barangayID, placeID, latitude, longitude, "
+            "businessID, flagColor FROM geospatial_logs WHERE logID = %s",
+            (log_id,))
         row = cursor.fetchone()
         if not row:
             cursor.close()
             return False, "Flag not found"
+
+        if (row.get("flagColor") == "Black"
+                or (row.get("businessID")
+                    and is_black_locked(cursor, row["businessID"]))):
+            cursor.close()
+            return False, "Black flags cannot be edited."
 
         detected_name = row["detectedName"]
         old_place_id = row.get("placeID")
@@ -3725,9 +3739,10 @@ def escalate_to_black(log_id, actor_user_id):
         if not actor or actor.get("userRole") not in ("Admin", "SUPER_ADMIN", "System Administrator"):
             return False, FlagEscalationForbidden("Only an admin may escalate to Black.")
 
-        if not _has_columns(cursor, ("warningLevel", "blackLocked", "blackLockedAt", "blackLockedBy")):
+        if not _has_enforcement_columns(
+                cursor, ("warningLevel", "blackLocked", "blackLockedAt", "blackLockedBy")):
             return False, FlagEscalationConflict(
-                "Cannot escalate to Black: the enforcement ladder columns are missing.")
+                "Cannot escalate to Black: enforcement_state is unavailable.")
 
         registry_id = -log_id if log_id < 0 else None
         pin = None
@@ -3744,34 +3759,131 @@ def escalate_to_black(log_id, actor_user_id):
             registry_id = pin.get("registryBusinessID")
 
         registry = None
+        registry_state = None
         if registry_id is not None:
-            cursor.execute("""SELECT businessID, applicationStatus, warningLevel, blackLocked
+            cursor.execute("""SELECT businessID, businessName, barangayID,
+                       applicationStatus
                 FROM official_registry WHERE businessID = %s FOR UPDATE""", (registry_id,))
             registry = cursor.fetchone()
+            if registry is not None:
+                cursor.execute(
+                    """SELECT warningLevel, blackLocked
+                       FROM enforcement_state
+                       WHERE subjectType = 'business' AND subjectID = %s
+                       FOR UPDATE""",
+                    (str(registry_id),),
+                )
+                registry_state = cursor.fetchone() or {
+                    "warningLevel": 0, "blackLocked": 0}
         if log_id < 0 and registry is None:
             return False, FlagEscalationNotFound("Business not found")
 
-        current_color = (status_to_color(
-            registry["applicationStatus"], warning_level=registry["warningLevel"],
-            black_locked=registry["blackLocked"]) if registry else pin["effectiveFlagColor"])
+        current_color = (
+            status_to_color(
+                registry["applicationStatus"],
+                warning_level=registry_state["warningLevel"],
+                black_locked=registry_state["blackLocked"],
+            )
+            if registry else pin["effectiveFlagColor"]
+        )
         if current_color not in ("Red", "Yellow", "Orange"):
             return False, FlagEscalationConflict(
                 "This business is already Black." if current_color == "Black" else
                 f"Cannot escalate from '{current_color}' to Black.")
 
+        if registry is not None:
+            cursor.execute(
+                """SELECT ir.reportID, ir.verificationStatus
+                   FROM inspection_reports ir
+                   JOIN geospatial_logs g ON g.logID = ir.targetID
+                   WHERE ir.targetType = 'geospatial_log'
+                     AND (ir.verificationStatus IS NULL
+                          OR ir.verificationStatus <> 'Verified')
+                     AND (g.businessID = %s
+                          OR (g.businessID IS NULL
+                              AND g.detectedName = %s
+                              AND g.barangayID = %s))
+                   ORDER BY ir.irTimestamp DESC
+                   LIMIT 1""",
+                (registry_id, registry["businessName"],
+                 registry["barangayID"]),
+            )
+        else:
+            cursor.execute(
+                """SELECT ir.reportID, ir.verificationStatus
+                   FROM inspection_reports ir
+                   WHERE ir.targetType = 'geospatial_log'
+                     AND ir.targetID = %s
+                     AND (ir.verificationStatus IS NULL
+                          OR ir.verificationStatus <> 'Verified')
+                   ORDER BY ir.irTimestamp DESC
+                   LIMIT 1""",
+                (log_id,),
+            )
+        pending_inspection = cursor.fetchone()
+        if pending_inspection:
+            report_id = pending_inspection.get("reportID")
+            status = pending_inspection.get("verificationStatus") or "Assigned"
+            return False, FlagEscalationConflict(
+                "Cannot escalate to Black while an inspection is still open "
+                f"(report #{report_id}, status {status}). Verify it or send it "
+                "back first.")
+
         if registry:
+            previous_level = registry_state["warningLevel"]
+            previous_black = registry_state["blackLocked"]
             cursor.execute("""UPDATE official_registry
-                SET applicationStatus = 'Revoked', blackLocked = 1,
-                    blackLockedAt = NOW(), blackLockedBy = %s
-                WHERE businessID = %s""", (actor_user_id, registry_id))
+                SET applicationStatus = 'Revoked'
+                WHERE businessID = %s""", (registry_id,))
+            cursor.execute(
+                """INSERT INTO enforcement_state (
+                       subjectType, subjectID, warningLevel, blackLocked,
+                       blackLockedAt, blackLockedBy
+                   ) VALUES ('business', %s, %s, 1, NOW(), %s)
+                   ON DUPLICATE KEY UPDATE blackLocked = 1,
+                       blackLockedAt = NOW(),
+                       blackLockedBy = VALUES(blackLockedBy)""",
+                (str(registry_id), previous_level, actor_user_id),
+            )
             record_enforcement_event(
                 cursor, business_id=registry_id, event_type=BLACK_LOCKED,
                 actor_user_id=actor_user_id, reason="Admin escalation from Map",
-                previous_level=registry["warningLevel"], new_level=registry["warningLevel"],
-                previous_black=registry["blackLocked"], new_black=True)
-            cursor.execute("UPDATE geospatial_logs SET flagColor = 'Black' WHERE businessID = %s", (registry_id,))
-        if pin:
-            cursor.execute("UPDATE geospatial_logs SET flagColor = 'Black' WHERE logID = %s", (log_id,))
+                previous_level=previous_level, new_level=previous_level,
+                previous_black=previous_black, new_black=True)
+            cursor.execute(
+                "UPDATE geospatial_logs SET flagColor = 'Black' WHERE businessID = %s", (registry_id,))
+
+        if pin is not None:
+            if registry is None:
+                cursor.execute(
+                    """SELECT warningLevel, blackLocked
+                       FROM enforcement_state
+                       WHERE subjectType = 'geospatial_log' AND subjectID = %s
+                       FOR UPDATE""",
+                    (str(log_id),),
+                )
+                pin_state = cursor.fetchone() or {
+                    "warningLevel": 0, "blackLocked": 0}
+                cursor.execute(
+                    """INSERT INTO enforcement_state (
+                           subjectType, subjectID, warningLevel, blackLocked,
+                           blackLockedAt, blackLockedBy
+                       ) VALUES ('geospatial_log', %s, %s, 1, NOW(), %s)
+                       ON DUPLICATE KEY UPDATE blackLocked = 1,
+                           blackLockedAt = NOW(),
+                           blackLockedBy = VALUES(blackLockedBy)""",
+                    (str(log_id), pin_state["warningLevel"], actor_user_id),
+                )
+                record_enforcement_event(
+                    cursor, subject_type="geospatial_log", subject_id=log_id,
+                    event_type=BLACK_LOCKED, actor_user_id=actor_user_id,
+                    reason="Admin escalation from Map",
+                    previous_level=pin_state["warningLevel"],
+                    new_level=pin_state["warningLevel"],
+                    previous_black=pin_state["blackLocked"], new_black=True,
+                )
+            cursor.execute(
+                "UPDATE geospatial_logs SET flagColor = 'Black' WHERE logID = %s", (log_id,))
 
         mysql.connection.commit()
         committed = True
@@ -3832,7 +3944,8 @@ def delete_flag(log_id, actor_role=None):
 
         # Find the specific flag
         cursor.execute(
-            """SELECT logID, businessID, reportID, detectedName, barangayID, placeID, latitude, longitude
+            """SELECT logID, businessID, reportID, detectedName, barangayID,
+                      placeID, latitude, longitude, flagColor
                FROM geospatial_logs WHERE logID = %s""",
             (log_id,)
         )
@@ -3841,6 +3954,12 @@ def delete_flag(log_id, actor_role=None):
         if not flag:
             cursor.close()
             return False, "Flag not found"
+
+        if (flag.get("flagColor") == "Black"
+            or (flag.get("businessID")
+                and is_black_locked(cursor, flag["businessID"]))):
+            raise BlackBusinessDeletionForbidden(
+                "Black flags cannot be deleted, including by SUPER_ADMIN.")
 
         # Check if there is an explicit surviving duplicate log for this establishment
         surviving_log = None

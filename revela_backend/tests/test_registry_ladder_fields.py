@@ -9,6 +9,8 @@ Safe on an un-migrated database: a column that does not exist is selected as a
 literal 0, never named, because MySQL raises "Unknown column" at execution
 time for a column that is not there.
 """
+from api.registry.locks import reset_lock_column_cache
+from api.registry.colors import reset_ladder_column_cache
 import os
 import sys
 import unittest
@@ -16,9 +18,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.registry.colors import reset_ladder_column_cache
-from api.registry.locks import reset_lock_column_cache
 
 
 class _ReaderCursor:
@@ -84,10 +83,10 @@ class LadderFieldTests(unittest.TestCase):
 
     # ── the shared builder ─────────────────────────────────────────────────
 
-    def test_names_the_columns_when_they_exist(self):
+    def test_reads_the_state_table_when_it_exists(self):
         sql = self._builder(MIGRATED)
-        for column in ("r.warningLevel", "r.blackLocked",
-                       "r.blackDispatchUnlocked"):
+        for column in ("es.warningLevel", "es.blackLocked",
+                       "es.blackDispatchUnlocked"):
             self.assertIn(column, sql)
         self.assertNotIn("0 AS", sql)
 
@@ -96,13 +95,13 @@ class LadderFieldTests(unittest.TestCase):
         self.assertIn("0 AS warningLevel", sql)
         self.assertIn("0 AS blackLocked", sql)
         self.assertIn("0 AS blackDispatchUnlocked", sql)
-        self.assertNotIn("r.warningLevel", sql)
+        self.assertNotIn("es.warningLevel", sql)
 
     def test_handles_a_partially_migrated_database(self):
         """warningLevel landed but blackDispatchUnlocked did not."""
         sql = self._builder(["warningLevel", "blackLocked"])
-        self.assertIn("r.warningLevel", sql)
-        self.assertIn("r.blackLocked", sql)
+        self.assertIn("es.warningLevel", sql)
+        self.assertIn("es.blackLocked", sql)
         self.assertIn("0 AS blackDispatchUnlocked", sql)
 
     # ── both readers ───────────────────────────────────────────────────────
@@ -127,25 +126,25 @@ class LadderFieldTests(unittest.TestCase):
 
     def test_the_list_selects_the_ladder_fields(self):
         sql = self._read(MIGRATED, "list").colour_sql()
-        for column in ("r.warningLevel", "r.blackLocked",
-                       "r.blackDispatchUnlocked"):
+        for column in ("es.warningLevel", "es.blackLocked",
+                       "es.blackDispatchUnlocked"):
             self.assertIn(column, sql)
 
     def test_the_detail_selects_the_ladder_fields(self):
         sql = self._read(MIGRATED, "detail").colour_sql()
-        for column in ("r.warningLevel", "r.blackLocked",
-                       "r.blackDispatchUnlocked"):
+        for column in ("es.warningLevel", "es.blackLocked",
+                       "es.blackDispatchUnlocked"):
             self.assertIn(column, sql)
 
     def test_the_list_returns_zeros_when_unmigrated(self):
         sql = self._read([], "list").colour_sql()
-        self.assertNotIn("r.warningLevel", sql)
+        self.assertNotIn("es.warningLevel", sql)
         self.assertIn("0 AS warningLevel", sql)
         self.assertIn("0 AS blackDispatchUnlocked", sql)
 
     def test_the_detail_returns_zeros_when_unmigrated(self):
         sql = self._read([], "detail").colour_sql()
-        self.assertNotIn("r.blackLocked", sql)
+        self.assertNotIn("es.blackLocked", sql)
         self.assertIn("0 AS blackLocked", sql)
 
     def test_both_readers_agree(self):
@@ -165,10 +164,10 @@ class LadderFieldTests(unittest.TestCase):
             self.skipTest("web sources not available next to the backend")
         source = policy.read_text(encoding="utf-8")
         migrated = self._builder(MIGRATED)
-        for key in ("warningLevel", "blackLocked", "blackDispatchUnlocked"):
+        for key in ("warningLevel", "blackLocked"):
             with self.subTest(key=key):
                 self.assertIn(key, source)
-                self.assertIn(f"r.{key}", migrated)
+            self.assertIn(f"es.{key}", migrated)
 
 
 if __name__ == "__main__":

@@ -19,9 +19,9 @@ _status_to_flag_color with the old status-only table).
 Precedence, highest first:
     Black lock / Revoked  >  Orange warning  >  registry status  >  stored pin colour
 
-The lock and warning come from official_registry.blackLocked and warningLevel.
-Callers probe column availability before passing ladder=True. Only databases
-without those columns use verified Orange history as a compatibility fallback.
+The lock and warning come from enforcement_state, keyed by businessID for
+registered businesses. Callers probe the new table before passing ladder=True.
+Only databases without that table use verified Orange history as a fallback.
 
 The stored geospatial_logs.flagColor is used only when the pin has no registry
 match, which is the only case where the registry cannot speak.
@@ -60,9 +60,9 @@ def status_to_color(status, *, warning_level=0, black_locked=False):
     """Resolve one registry row to its flag colour, Black > Orange > status.
 
     status           official_registry.applicationStatus, or None.
-    warning_level    official_registry.warningLevel, 0..3. None/''/'x' count
+    warning_level    enforcement_state.warningLevel, 0..3. None/''/'x' count
                      as 0 so an unreadable value never invents a warning.
-    black_locked     official_registry.blackLocked. Any truthy value locks.
+    black_locked     enforcement_state.blackLocked. Any truthy value locks.
 
     Unlike the SQL there is no stored pin colour to fall back to, so an
     unrecognised status resolves to Yellow, matching the long-standing
@@ -79,14 +79,13 @@ def status_to_color(status, *, warning_level=0, black_locked=False):
 
 # ── Column availability probe ─────────────────────────────────────────────────
 
-#: Columns the ladder arms read. Absent until
-#: migrations/20261015_01_enforcement_ladder_schema.sql has been applied.
+#: Columns the ladder arms read from enforcement_state.
 LADDER_COLUMNS = ("warningLevel", "blackLocked")
 
 _LADDER_PROBE_SQL = """SELECT COLUMN_NAME
 FROM information_schema.COLUMNS
 WHERE TABLE_SCHEMA = DATABASE()
-  AND TABLE_NAME = 'official_registry'
+    AND TABLE_NAME = 'enforcement_state'
   AND COLUMN_NAME IN (%s, %s)"""
 
 _ladder_columns_present = None
@@ -115,7 +114,7 @@ def _probe_column_name(row):
 
 
 def ladder_columns_available(cursor):
-    """True once both ladder columns exist. Probed once, then cached.
+    """True once both enforcement-state columns exist. Probed once, then cached.
 
     Cached because the answer cannot change without a migration, and this sits
     on the request path of every Map, Registry and Analytics query. A database
@@ -154,18 +153,46 @@ def _registry_match_sql(alias="g"):
 
 
 def _registry_column_sql(alias, column):
-    """One column from the single winning registry row for this pin.
+    """One column for the single winning Registry match.
 
     The ORDER BY and LIMIT pick exactly one row, the same way for every column,
-    so warningLevel and blackLocked are always read from the row the status
-    came from. A pin with no registry match yields NULL for all three.
+    so permit identity/status and enforcement state always come from the same
+    registered business. Enforcement values themselves come from the new state
+    table; descriptive Registry values stay on official_registry.
     """
+    enforcement_columns = {
+        "warningLevel", "warningBaseColor", "blackLocked", "blackLockedAt",
+        "blackLockedBy", "blackLockReason", "blackDispatchUnlocked",
+        "blackUnlockedAt", "blackUnlockedBy", "blackUnlockReason",
+        "warningClearedAt", "warningClearedBy", "warningClearReason",
+        "lastInspectionResult", "lastInspectedAt",
+    }
+    if column in enforcement_columns:
+        source = f"es.{column}"
+        state_join = """LEFT JOIN enforcement_state es
+          ON es.subjectType = 'business'
+         AND es.subjectID = CAST(r_chk.businessID AS CHAR)"""
+    else:
+        source = f"r_chk.{column}"
+        state_join = ""
     return f"""(
-        SELECT r_chk.{column}
+        SELECT {source}
         FROM official_registry r_chk
+        {state_join}
         WHERE {_registry_match_sql(alias)}
         ORDER BY (r_chk.businessID = {alias}.businessID) DESC,
                  (r_chk.placeID = {alias}.placeID) DESC
+        LIMIT 1
+    )"""
+
+
+def _pin_state_column_sql(alias, column):
+    """Enforcement state for a geospatial pin without a Registry match."""
+    return f"""(
+        SELECT es.{column}
+        FROM enforcement_state es
+        WHERE es.subjectType = 'geospatial_log'
+          AND es.subjectID = CAST({alias}.logID AS CHAR)
         LIMIT 1
     )"""
 
@@ -202,19 +229,21 @@ def _verified_orange_sql(alias="g"):
 def _effective_flag_color_sql(alias="g", *, ladder=False):
     """The derived colour every reader must use.
 
-    ladder=True reads the Black-lock / Orange-warning columns. It is opt-in and
-    off by default because official_registry.warningLevel and .blackLocked may
-    not exist yet: MySQL raises "Unknown column" at execution time for a column
-    that is not there, so a builder that always emitted the ladder arms would
-    break every Map, Registry and Analytics query on an unmigrated database.
+    ladder=True reads Black-lock / Orange-warning fields from enforcement_state.
+    It is opt-in so a database without that table can still use the legacy
+    verified-Orange fallback until the enforcement-state migration is applied.
 
     Revoked wins in both paths. Verified Orange history is used only with
     ladder=False; migrated readers get Orange only from the warning level.
     """
+    registry_lock = _registry_column_sql(alias, "blackLocked")
+    registry_warning = _registry_column_sql(alias, "warningLevel")
+    pin_lock = _pin_state_column_sql(alias, "blackLocked")
+    pin_warning = _pin_state_column_sql(alias, "warningLevel")
     return _color_case_sql(
         _registry_status_sql(alias),
-        lock=_registry_column_sql(alias, "blackLocked") if ladder else None,
-        orange=(f"COALESCE({_registry_column_sql(alias, 'warningLevel')}, 0) >= {FIRST_WARNING_LEVEL}"
+        lock=(f"COALESCE({registry_lock}, {pin_lock}, 0)" if ladder else None),
+        orange=(f"COALESCE({registry_warning}, {pin_warning}, 0) >= {FIRST_WARNING_LEVEL}"
                 if ladder else _verified_orange_sql(alias)),
         fallback=f"{alias}.flagColor",
     )
@@ -222,10 +251,24 @@ def _effective_flag_color_sql(alias="g", *, ladder=False):
 
 def registry_row_color_sql(alias="r", *, ladder=False):
     """The same rule for a registry row with no physical pin to join."""
+    state_lock = f"""(
+        SELECT es.blackLocked
+        FROM enforcement_state es
+        WHERE es.subjectType = 'business'
+          AND es.subjectID = CAST({alias}.businessID AS CHAR)
+        LIMIT 1
+    )"""
+    state_warning = f"""(
+        SELECT es.warningLevel
+        FROM enforcement_state es
+        WHERE es.subjectType = 'business'
+          AND es.subjectID = CAST({alias}.businessID AS CHAR)
+        LIMIT 1
+    )"""
     return _color_case_sql(
         f"{alias}.applicationStatus",
-        lock=f"{alias}.blackLocked" if ladder else None,
-        orange=f"COALESCE({alias}.warningLevel, 0) >= {FIRST_WARNING_LEVEL}" if ladder else None,
+        lock=state_lock if ladder else None,
+        orange=f"COALESCE({state_warning}, 0) >= {FIRST_WARNING_LEVEL}" if ladder else None,
         fallback="'Yellow'",
     )
 

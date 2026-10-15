@@ -795,15 +795,6 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
               <Icon.ExternalLink size={16} /> Open in maps
             </a>
           )}
-          {isAdmin && flag.color === "Black" && (
-            <button
-              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 44, borderRadius: 10, border: "none", background: "rgba(239, 68, 68, 0.1)", color: "#ef4444", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}
-              disabled={actionLoading}
-              onClick={() => onDelete(flag.id)}
-            >
-              <Icon.Trash size={16} /> Delete Flag
-            </button>
-          )}
         </div>
 
         {/* More Actions Toggle */}
