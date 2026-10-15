@@ -17,12 +17,11 @@ caller growing its own copy (api/registry/service.py still carries a private
 _status_to_flag_color with the old status-only table).
 
 Precedence, highest first:
-    Black lock  >  Orange warning  >  registry status  >  stored pin colour
+    Black lock / Revoked  >  Orange warning  >  registry status  >  stored pin colour
 
-The Black lock and the Orange warning come from official_registry.warningLevel
-and official_registry.blackLocked. Neither is written by anything yet, so the
-SQL builders only emit those two arms when the caller opts in with
-ladder=True AND the columns are actually present. See _effective_flag_color_sql.
+The lock and warning come from official_registry.blackLocked and warningLevel.
+Callers probe column availability before passing ladder=True. Only databases
+without those columns use verified Orange history as a compatibility fallback.
 
 The stored geospatial_logs.flagColor is used only when the pin has no registry
 match, which is the only case where the registry cannot speak.
@@ -71,7 +70,7 @@ def status_to_color(status, *, warning_level=0, black_locked=False):
     two implementations legitimately disagree: the SQL's ELSE arm returns the
     pin colour because only the SQL has the pin in scope.
     """
-    if black_locked:
+    if black_locked or status in ("Revoked", "Blacklisted"):
         return "Black"
     if _coerce_level(warning_level) >= FIRST_WARNING_LEVEL:
         return "Orange"
@@ -185,16 +184,9 @@ def _registry_status_sql(alias="g"):
 def _verified_orange_sql(alias="g"):
     """True when this pin has a verified Orange inspection behind it.
 
-    TEMPORARY FALLBACK - REMOVE IN PHASE 2.
-
-    warningLevel is not written by anything yet, so this stands in for the
-    ladder until Phase 2 makes verify_inspection write the real level. Until
-    then it is the only thing that can produce Orange on a registered row.
-
-    The old form of this predicate additionally required the matched registry
-    row to be Expired. That restriction is gone: a verified Orange inspection
-    now makes the pin Orange whatever the status. The registration is
-    unsigned here, so this is the intended user-visible change of Phase 1.
+    Compatibility fallback only for databases without the ladder columns.
+    On a migrated database warningLevel is authoritative, including after a
+    Clear Warning; old inspection history must not recreate a cleared warning.
     """
     return f"""(
         EXISTS (
@@ -210,33 +202,31 @@ def _verified_orange_sql(alias="g"):
 def _effective_flag_color_sql(alias="g", *, ladder=False):
     """The derived colour every reader must use.
 
-    ladder=True adds the two Black-lock / Orange-warning arms. It is opt-in and
+    ladder=True reads the Black-lock / Orange-warning columns. It is opt-in and
     off by default because official_registry.warningLevel and .blackLocked may
     not exist yet: MySQL raises "Unknown column" at execution time for a column
     that is not there, so a builder that always emitted the ladder arms would
     break every Map, Registry and Analytics query on an unmigrated database.
 
-    With ladder=False the emitted SQL is byte-for-byte what it has always been,
-    apart from the dropped Expired restriction in _verified_orange_sql. Phase 2
-    passes ladder=ladder_columns_available(cursor) at the call sites once the
-    migration has run and something writes the columns.
+    Revoked wins in both paths. Verified Orange history is used only with
+    ladder=False; migrated readers get Orange only from the warning level.
     """
     registry_status = _registry_status_sql(alias)
 
-    ladder_arms = ""
+    lock_arm = ""
     if ladder:
         # COALESCE so a pin with no registry row, or a row whose columns are
         # still NULL, resolves to "no lock, no warning" instead of falling
         # through the CASE.
-        ladder_arms = f"""        WHEN COALESCE({_registry_column_sql(alias, "blackLocked")}, 0) <> 0 THEN 'Black'
-        WHEN COALESCE({_registry_column_sql(alias, "warningLevel")}, 0) >= {FIRST_WARNING_LEVEL} THEN 'Orange'
-"""
+        lock_arm = f"        WHEN COALESCE({_registry_column_sql(alias, 'blackLocked')}, 0) <> 0 THEN 'Black'\n"
+    orange = (f"COALESCE({_registry_column_sql(alias, 'warningLevel')}, 0) >= {FIRST_WARNING_LEVEL}"
+              if ladder else _verified_orange_sql(alias))
 
     return f"""CASE
-{ladder_arms}        WHEN {_verified_orange_sql(alias)} THEN 'Orange'
+{lock_arm}        WHEN {registry_status} IN ('Revoked', 'Blacklisted') THEN 'Black'
+        WHEN {orange} THEN 'Orange'
         WHEN {registry_status} = 'Active' THEN 'Green'
         WHEN {registry_status} = 'Expired' THEN 'Red'
-        WHEN {registry_status} IN ('Revoked', 'Blacklisted') THEN 'Black'
         WHEN {registry_status} = 'Closed' THEN 'Purple'
         WHEN {registry_status} = 'Pending' THEN 'Yellow'
         ELSE {alias}.flagColor

@@ -48,8 +48,10 @@ class YellowFlagIdempotencyTests(unittest.TestCase):
         self.assertEqual(result["logID"], 41)
         self.assertTrue(result["alreadyAccepted"])
         self.connection.commit.assert_called_once()
-        self.assertEqual(self.cursor.execute.call_count, 2)
-        self.assertIn("ON DUPLICATE KEY UPDATE", self.cursor.execute.call_args_list[0].args[0])
+        # Per-test cache resets add the source probe before INSERT + retry read.
+        self.assertEqual(self.cursor.execute.call_count, 3)
+        self.assertIn("information_schema.COLUMNS", self.cursor.execute.call_args_list[0].args[0])
+        self.assertIn("ON DUPLICATE KEY UPDATE", self.cursor.execute.call_args_list[1].args[0])
         self.notify.assert_not_called()
 
     def test_different_data_cannot_overwrite_an_existing_key(self):
@@ -74,7 +76,9 @@ class YellowFlagIdempotencyTests(unittest.TestCase):
         result, error = self.submit(client_submission_id=None)
         self.assertIsNone(error)
         self.assertFalse(result["alreadyAccepted"])
-        self.assertEqual(self.cursor.execute.call_count, 1)
+        # One source probe, then the same single legacy INSERT.
+        self.assertEqual(self.cursor.execute.call_count, 2)
+        self.assertIn("information_schema.COLUMNS", self.cursor.execute.call_args_list[0].args[0])
         self.assertNotIn("clientSubmissionID", self.cursor.execute.call_args.args[0])
         self.notify.assert_called_once()
 

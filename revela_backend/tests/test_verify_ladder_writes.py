@@ -52,7 +52,7 @@ class LadderVerifyHarness(unittest.TestCase):
                 return "probe"
             if "FROM inspection_reports ir" in flat:
                 return "report"
-            if "SELECT blackLocked FROM official_registry" in flat:
+            if "SELECT blackLocked, applicationStatus FROM official_registry" in flat:
                 return "lock_read"
             if flat.startswith("SELECT applicationStatus"):
                 return "registry_read"
@@ -100,7 +100,8 @@ class LadderVerifyHarness(unittest.TestCase):
             if kind == "pin_colour":
                 return {"flagColor": "Red"}
             if kind == "lock_read":
-                return {"blackLocked": black_locked} if has_row else None
+                return {"blackLocked": black_locked,
+                        "applicationStatus": application_status} if has_row else None
             if kind == "registry_read":
                 if not has_row:
                     return None

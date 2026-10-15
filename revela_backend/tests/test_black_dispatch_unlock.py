@@ -379,17 +379,14 @@ class VerifyOnUnlockedBlackTests(Harness):
                           if c.args[0].lstrip().upper().startswith(
                               ("UPDATE", "INSERT"))], [])
 
-    def test_missing_columns_leave_the_guard_inert(self):
-        """The documented fail-safe, stated as a test.
-
-        On a database without the ladder columns nothing can have written a
-        Black lock, so is_black_locked reports "not locked" and cannot freeze
-        every write path. The verify proceeds exactly as it did before 3A.
-        """
-        (result, error), _ = self._verify(unlocked=1, migrated=False)
-        self.assertIsNone(error)
-        self.assertEqual(result["status"], "Verified")
-        self.assertFalse(result["blackDispatchUnlockSpent"])
+    def test_revoked_stays_guarded_without_ladder_columns(self):
+        """Revoked is Black even when a lock or dispatch grant cannot be read."""
+        (result, error), cursor = self._verify(unlocked=1, migrated=False)
+        self.assertIsNone(result)
+        self.assertIsInstance(error, inspection_service.InspectionVerificationConflict)
+        self.assertEqual([c for c in cursor.execute.call_args_list
+                          if c.args[0].lstrip().upper().startswith(
+                              ("UPDATE", "INSERT", "DELETE"))], [])
 
 
 # ── the grant is single use ──────────────────────────────────────────────────

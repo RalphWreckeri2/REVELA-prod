@@ -4,6 +4,7 @@ import os
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
+from registry_sqlite import RegistryDB
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
@@ -37,24 +38,26 @@ class RegistrySnapTests(unittest.TestCase):
         }
         cached_candidate = {
             **candidate,
-            "businessID": "BIZ-GEOCODE-CACHED",
+            "businessID": "BIZ-CACHED-GEOCODE",
             "resolveKey": compute_places_refresh_key(
                 "Silva Pharmacy", "Poblacion", 1
             ),
         }
-        select_cursor = MagicMock()
-        select_cursor.fetchall.return_value = [
-            cached_unresolved, cached_candidate, candidate]
-        update_cursor = MagicMock()
-        update_cursor.rowcount = 1
-        mock_mysql = MagicMock()
-        mock_mysql.connection.cursor.side_effect = [
-            select_cursor, update_cursor]
+        db = RegistryDB()
+        self.addCleanup(db.close)
+        for row in (cached_unresolved, cached_candidate, candidate):
+            columns = ", ".join(row)
+            placeholders = ", ".join("?" for _ in row)
+            db.db.execute(f"INSERT INTO official_registry ({columns}) VALUES ({placeholders})", tuple(row.values()))
+        db.db.execute("""INSERT INTO geospatial_logs
+            (businessID, barangayID, detectedName, latitude, longitude, flagColor)
+            VALUES (?, 1, 'Silva Pharmacy', 13.9620, 121.1120, 'Red')""", (candidate["businessID"],))
+        db.commit()
 
         with (
             patch("api.registry.audit.ensure_registry_workflow_events"),
             patch("api.registry.audit.record_registry_workflow_event"),
-            patch.object(service, "mysql", mock_mysql),
+            patch.object(service, "mysql", db),
             patch.object(service, "GOOGLE_MAPS_API_KEY", "dummy_test_key"),
             patch.object(service.places_resolver,
                          "enabled", return_value=True),
@@ -72,10 +75,7 @@ class RegistrySnapTests(unittest.TestCase):
                     ),
                 },
             )) as resolve_location,
-            patch.object(service, "_load_barangay_lookup",
-                         return_value={"Barangay I": 1}),
-            patch.object(service.places_resolver, "_update_pin") as update_pin,
-            patch.object(service, "_sync_flag_color") as sync_flag,
+            patch.object(service, "_log_registry_places_summary"),
             patch.object(service, "_geocode") as geocode,
             patch("api.notifications.hub.publish_to_admins"),
         ):
@@ -87,20 +87,22 @@ class RegistrySnapTests(unittest.TestCase):
         resolve_location.assert_called_once()
         self.assertTrue(resolve_location.call_args.kwargs["refresh_geocode"])
         geocode.assert_not_called()
-        sync_flag.assert_called_once()
-        update_pin.assert_called_once_with(
-            update_cursor, 1, "Silva Pharmacy", 13.9620, 121.1120,
-            13.9667, 121.1167, business_id="BIZ-GEOCODE-01",
-        )
+        self.assertEqual(summary["skipped_black_lock"], 0)
+        self.assertEqual(db.rows("SELECT latitude, longitude, flagColor FROM geospatial_logs"),
+                         [{"latitude": 13.9667, "longitude": 121.1167, "flagColor": "Green"}])
+        color_writes = [sql for sql, _ in db.calls
+                        if "UPDATE geospatial_logs" in sql and "SET flagColor" in sql]
+        self.assertEqual(len(color_writes), 1)
 
-        select_sql = select_cursor.execute.call_args.args[0]
+        select_sql = next(sql for sql, _ in db.calls if "ORDER BY businessID" in sql)
         self.assertIn("coordSource = 'geocode'", select_sql)
         self.assertNotIn("SHA1(", select_sql)
         self.assertIn("matchStatus IS NULL", select_sql)
-        update_sql = update_cursor.execute.call_args.args[0]
+        update_sql, update_params = next((sql, params) for sql, params in db.calls
+                                         if "UPDATE official_registry SET" in sql)
         self.assertIn("coordSource = 'geocode'", update_sql)
         self.assertIn("matchStatus IS NULL", update_sql)
-        self.assertEqual(update_cursor.execute.call_args.args[1][-1], 1)
+        self.assertEqual(update_params[-1], 1)
 
     def test_snap_api_error_leaves_pin_and_flags_unchanged_for_resume(self):
         candidate = {
@@ -140,7 +142,6 @@ class RegistrySnapTests(unittest.TestCase):
             patch.object(service, "_places_usage_snapshot", return_value=usage),
             patch.object(service, "_load_barangay_lookup", return_value={"Barangay I": 1}),
             patch.object(service.places_resolver, "_update_pin") as update_pin,
-            patch.object(service, "_sync_flag_color") as sync_flag,
             patch("api.notifications.hub.publish_to_admins"),
         ):
             summary, error = service.snap_unresolved_pins(limit=1)
@@ -150,8 +151,9 @@ class RegistrySnapTests(unittest.TestCase):
         self.assertEqual(summary["snapped"], 0)
         self.assertEqual(summary["skipped_quota"], 0)
         update_pin.assert_not_called()
-        sync_flag.assert_not_called()
+        mock_mysql.connection.commit.assert_not_called()
         select_cursor.execute.assert_called_once()
+        self.assertTrue(select_cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
         select_cursor.close.assert_called_once()
 
 

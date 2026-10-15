@@ -3396,6 +3396,12 @@ def update_flag_color(log_id, color):
 
         if log_id < 0:
             biz_id = -log_id
+            if color == "Orange":
+                cursor.close()
+                return False, (
+                    "Orange requires an explicit verified inspection warning "
+                    "and cannot be assigned to a registry-only flag."
+                )
             # Registry-only flag: a Black locked business keeps its colour.
             # A Closed one does not - reopening is a normal admin correction.
             try:
@@ -3404,12 +3410,6 @@ def update_flag_color(log_id, color):
             except BlackLockedError as exc:
                 cursor.close()
                 return False, exc
-            if color == "Orange":
-                cursor.close()
-                return False, (
-                    "Orange requires an explicit verified inspection warning "
-                    "and cannot be assigned to a registry-only flag."
-                )
             status_map = {
                 "Green": "Active",
                 "Purple": "Closed",

@@ -60,6 +60,16 @@ class BlackLockGuardTests(unittest.TestCase):
             locks.assert_not_black_locked(cursor, "BIZ-1",
                                           action="verify this inspection")
 
+    def test_revoked_is_locked_with_or_without_the_lock_column(self):
+        for migrated in (True, False):
+            locks.reset_lock_column_cache()
+            row = (0, "Revoked") if migrated else ("Revoked",)
+            cursor = _locked_cursor(column_present=migrated, rows={"BIZ-1": row})
+            with self.subTest(migrated=migrated):
+                self.assertTrue(locks.is_black_locked(cursor, "BIZ-1"))
+                with self.assertRaises(locks.BlackLockedError):
+                    locks.assert_not_black_locked(cursor, "BIZ-1", action="sync")
+
     def test_the_error_carries_the_action_and_the_business_id(self):
         cursor = _locked_cursor(column_present=True, rows={"BIZ-1": (1,)})
         with self.assertRaises(locks.BlackLockedError) as caught:

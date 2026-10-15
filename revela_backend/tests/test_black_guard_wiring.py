@@ -56,7 +56,7 @@ class FakeCursor:
         flat = " ".join(sql.split())
         if "information_schema.COLUMNS" in flat:
             return "probe"
-        if "SELECT blackLocked FROM official_registry" in flat:
+        if "SELECT blackLocked, applicationStatus FROM official_registry" in flat:
             return "lock_read"
         return "sql"
 

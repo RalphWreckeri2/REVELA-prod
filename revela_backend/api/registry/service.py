@@ -976,18 +976,19 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     """
     flag_color = _status_to_flag_color(status)
     name_clean = str(business_name).strip()
+    ladder = ladder_columns_available(cursor)
+    history_sql = "0" if ladder else """EXISTS (
+        SELECT 1 FROM inspection_reports ir
+        WHERE ir.targetType = 'geospatial_log' AND ir.targetID = g.logID
+          AND ir.verificationStatus = 'Verified' AND ir.inspectionResult = 'Orange'
+    )"""
+    color_sql = _effective_flag_color_sql("g", ladder=True) if ladder else "NULL"
 
     cursor.execute(
-        """
+        f"""
         SELECT g.logID, g.flagColor, g.latitude, g.longitude,
-               EXISTS (
-                   SELECT 1
-                   FROM inspection_reports ir
-                   WHERE ir.targetType = 'geospatial_log'
-                     AND ir.targetID = g.logID
-                     AND ir.verificationStatus = 'Verified'
-                     AND ir.inspectionResult = 'Orange'
-               ) AS has_verified_orange
+               {history_sql} AS has_verified_orange,
+               {color_sql} AS effectiveFlagColor
         FROM geospatial_logs g
         WHERE (g.businessID IS NOT NULL AND g.businessID = %s)
            OR (g.businessID IS NULL AND g.barangayID = %s AND g.detectedName = %s)
@@ -999,12 +1000,15 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     existing_pin = cursor.fetchone()
     if (
         existing_pin
+        and not ladder
         and status == "Expired"
         and existing_pin.get("has_verified_orange")
     ):
         flag_color = "Orange"
 
     if existing_pin:
+        if ladder:
+            flag_color = existing_pin.get("effectiveFlagColor") or flag_color
         cursor.execute(
             """
             UPDATE geospatial_logs
@@ -1901,9 +1905,8 @@ def _load_sync_protection_keys(cursor):
     admin edit can still reopen one; this guard is about a CSV import silently
     resurrecting a closed business.
 
-    The Black preload needs the ladder columns. On a database without them
-    there is nothing to protect against, so the set is empty and the Closed
-    skip still applies.
+    Revoked permits are protected even without the ladder columns. A newly
+    imported Revoked row is accepted once and frozen by later syncs.
 
     Fails closed. A caller that cannot answer this question must abort rather
     than guess.
@@ -1911,13 +1914,15 @@ def _load_sync_protection_keys(cursor):
     black_locked_ids = set()
     closed_ids = set()
 
+    black_condition = "applicationStatus IN ('Revoked', 'Blacklisted')"
     if ladder_columns_available(cursor):
-        cursor.execute("""
-            SELECT businessID FROM official_registry
-            WHERE blackLocked = 1 AND businessID IS NOT NULL
-        """)
-        for row in cursor.fetchall() or ():
-            black_locked_ids.add(row.get("businessID"))
+        black_condition = f"(blackLocked = 1 OR {black_condition})"
+    cursor.execute(f"""
+        SELECT businessID FROM official_registry
+        WHERE {black_condition} AND businessID IS NOT NULL
+    """)
+    for row in cursor.fetchall() or ():
+        black_locked_ids.add(row.get("businessID"))
 
     cursor.execute("""
         SELECT businessID FROM official_registry
@@ -3502,8 +3507,8 @@ def get_business_by_id(business_id):
 def check_and_expire_old_permits():
     """
     Check if there are any active business permits from a previous calendar year.
-    If so, mark them as 'Expired' and set their map pin flagColor to 'Red',
-    preserving map pins with an admin-verified Orange monitoring warning.
+    If so, mark them as 'Expired' and refresh their map pin colour, preserving
+    current warning levels (or verified history on an unmigrated database).
     Also insert an in-app notification for all admin users and publish SSE.
     """
     try:
@@ -3514,7 +3519,8 @@ def check_and_expire_old_permits():
         # without this a habitual offender would silently be re-registered as
         # merely Expired.
         lock_guard = ""
-        if ladder_columns_available(cursor):
+        ladder = ladder_columns_available(cursor)
+        if ladder:
             lock_guard = " AND COALESCE(blackLocked, 0) = 0"
         else:
             # Column absent. The permit status below still needs expiring; only
@@ -3537,19 +3543,17 @@ def check_and_expire_old_permits():
             # 2. Update map flag colors in geospatial_logs to Red (Expired)
             # utf8mb4_unicode_ci handles case-insensitive matching — LOWER(TRIM())
             # wrapping on column sides prevents the new indexes from being used.
+            warning_sql = ("COALESCE(r.warningLevel, 0) >= 1" if ladder else """EXISTS (
+                SELECT 1 FROM inspection_reports ir
+                WHERE ir.targetType = 'geospatial_log' AND ir.targetID = g.logID
+                  AND ir.verificationStatus = 'Verified' AND ir.inspectionResult = 'Orange'
+            )""")
             cursor.execute(
-                """
+                f"""
                 UPDATE geospatial_logs g
                 JOIN official_registry r ON g.detectedName = r.businessName AND g.barangayID = r.barangayID
                 SET g.flagColor = CASE
-                    WHEN EXISTS (
-                        SELECT 1
-                        FROM inspection_reports ir
-                        WHERE ir.targetType = 'geospatial_log'
-                          AND ir.targetID = g.logID
-                          AND ir.verificationStatus = 'Verified'
-                          AND ir.inspectionResult = 'Orange'
-                    ) THEN 'Orange'
+                    WHEN {warning_sql} THEN 'Orange'
                     ELSE 'Red'
                 END
                 WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'

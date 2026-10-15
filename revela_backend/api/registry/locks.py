@@ -1,24 +1,8 @@
 """Black-lock guard for official_registry.
 
-Phase 1 deliverable only: nothing calls this yet. Phase 2 wires it into the
-verify write path, the sync path and the manual-edit path so that a Black
-locked business cannot be moved by any of them.
-
-What "Black locked" means: official_registry.blackLocked is the permanent
-habitable-offender lock. It is independent of applicationStatus, so a row can
-be blackLocked while its applicationStatus still reads Active. That is the
-whole reason this guard exists and why applicationStatus cannot answer it.
-
-Only a SUPER_ADMIN unlock may clear it, and that route does not exist yet.
-
-Fail-safe rule: if official_registry.blackLocked does not exist - because
-migrations/20261015_01_enforcement_ladder_schema.sql has not been applied - the
-guard reports "not locked" and lets the caller proceed. That is deliberate.
-The alternative, treating an unreadable lock as locked, would freeze every
-write path on every database that has not been migrated yet. The cost is that
-the guard is inert until the migration runs, so it must not be the only thing
-standing between a locked row and an edit; Phase 2 is expected to add a
-database-level check alongside it.
+Black means the permanent blackLocked bit OR a Revoked permit. Revoked must
+remain protected even on databases without the optional ladder columns.
+The legacy Blacklisted status is the compatibility spelling of Revoked.
 
 This module imports nothing, like its sibling api/registry/colors.py, so it
 stays cheap to import and trivial to unit test with a fake cursor.
@@ -33,7 +17,7 @@ WHERE TABLE_SCHEMA = DATABASE()
   AND TABLE_NAME = 'official_registry'
   AND COLUMN_NAME = %s"""
 
-_LOCK_READ_SQL = f"""SELECT {LOCK_COLUMN}
+_LOCK_READ_SQL = f"""SELECT {LOCK_COLUMN}, applicationStatus
 FROM official_registry
 WHERE businessID = %s
 LIMIT 1"""
@@ -98,23 +82,22 @@ def _truthy_lock_value(raw):
 
 
 def is_black_locked(cursor, business_id):
-    """True only when the row exists and its blackLocked column is set.
-
-    False for a missing businessID, a missing row, an unmigrated database and
-    a NULL column alike - see the module docstring for why unmigrated means
-    "not locked" rather than "locked".
-    """
+    """True for a lock bit or Revoked status, even without ladder columns."""
     if not business_id:
         return False
-    if not lock_column_available(cursor):
-        return False
-    cursor.execute(_LOCK_READ_SQL, (business_id,))
+    has_lock = lock_column_available(cursor)
+    sql = (_LOCK_READ_SQL if has_lock else
+           "SELECT applicationStatus FROM official_registry WHERE businessID = %s LIMIT 1")
+    cursor.execute(sql, (business_id,))
     row = cursor.fetchone()
     if row is None:
         return False
     if isinstance(row, dict):
-        return _truthy_lock_value(row)
-    return _truthy_lock_value(row[0])
+        return (has_lock and _truthy_lock_value(row)) or row.get(
+            "applicationStatus") in ("Revoked", "Blacklisted")
+    status = (row[1] if len(row) > 1 else None) if has_lock else row[0]
+    return (has_lock and _truthy_lock_value(row[0])) or status in (
+        "Revoked", "Blacklisted")
 
 
 def assert_not_black_locked(cursor, business_id, *, action):

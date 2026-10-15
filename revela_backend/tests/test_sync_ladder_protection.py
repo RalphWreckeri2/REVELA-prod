@@ -36,10 +36,11 @@ class SyncHarness(unittest.TestCase):
     class _PreloadCursor:
         """Answers the information_schema probe and the two preloads."""
 
-        def __init__(self, *, migrated=True, black=None, closed=None,
+        def __init__(self, *, migrated=True, black=None, revoked=None, closed=None,
                      fail_on=None):
             self.migrated = migrated
             self.black = black or []
+            self.revoked = revoked or []
             self.closed = closed or []
             self.fail_on = fail_on
             self.calls = []
@@ -57,7 +58,9 @@ class SyncHarness(unittest.TestCase):
         def fetchall(self):
             flat = self.calls[-1] if self.calls else ""
             if "blackLocked = 1" in flat:
-                return [{"businessID": b} for b in self.black]
+                return [{"businessID": b} for b in self.black + self.revoked]
+            if "applicationStatus IN ('Revoked', 'Blacklisted')" in flat:
+                return [{"businessID": b} for b in self.revoked]
             if "applicationStatus = 'Closed'" in flat:
                 return [{"businessID": b} for b in self.closed]
             if "information_schema.COLUMNS" in flat:
@@ -91,6 +94,14 @@ class PreloadTests(SyncHarness):
         cursor = self._PreloadCursor(migrated=False)
         self._preload(cursor)
         self.assertFalse(any("blackLocked = 1" in c for c in cursor.calls))
+
+    def test_revoked_is_preloaded_even_without_ladder_columns(self):
+        for migrated in (True, False):
+            reset_ladder_column_cache()
+            cursor = self._PreloadCursor(migrated=migrated, revoked=["R-1"])
+            with self.subTest(migrated=migrated):
+                black, _ = self._preload(cursor)
+                self.assertEqual(black, {"R-1"})
 
     def test_a_failed_black_lookup_raises(self):
         cursor = self._PreloadCursor(fail_on="blackLocked = 1")

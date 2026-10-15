@@ -147,7 +147,7 @@ ALL_WARNING_LEVELS = (0, 1, 2, 3)
 
 def expected_color(status, warning_level=0, black_locked=False):
     """Black > Orange > status, written out independently of the code."""
-    if black_locked:
+    if black_locked or status in ("Revoked", "Blacklisted"):
         return "Black"
     if int(warning_level) >= 1:
         return "Orange"
@@ -180,11 +180,11 @@ class StatusToColorTests(unittest.TestCase):
             status_to_color("Closed", warning_level=0, black_locked=True),
             "Black")
 
-    def test_orange_beats_every_status_at_level_one(self):
+    def test_orange_beats_non_black_statuses_at_level_one(self):
         for status in ALL_STATUSES:
             with self.subTest(status=status):
                 self.assertEqual(status_to_color(status, warning_level=1),
-                                 "Orange")
+                                 "Black" if status in ("Revoked", "Blacklisted") else "Orange")
 
     def test_unknown_status_falls_back_to_yellow(self):
         self.assertEqual(status_to_color("Something New"), "Yellow")
@@ -414,7 +414,7 @@ class BehaviourIsUnchangedTests(unittest.TestCase):
         for status in ALL_STATUSES:
             for verified in (False, True):
                 diverges = verified and status is not None \
-                    and status != "Expired"
+                    and status not in ("Expired", "Revoked", "Blacklisted")
                 with self.subTest(status=status, verified_orange=verified):
                     now = self._current_default(status=status,
                                                 verified_orange=verified)
@@ -445,14 +445,32 @@ class LadderExpressionTests(unittest.TestCase):
                            ladder=True),
             "Black")
 
-    def test_warning_level_one_or_more_beats_the_status(self):
+    def test_warning_level_one_or_more_beats_non_black_status(self):
         for status in ALL_STATUSES:
             for level in (1, 2, 3):
                 with self.subTest(status=status, warning_level=level):
                     self.assertEqual(
                         _shipped_color(status=status, warning_level=level,
                                        ladder=True),
-                        "Orange")
+                        "Black" if status in ("Revoked", "Blacklisted") else "Orange")
+
+    def test_pending_warning_and_clear_ignore_old_verified_orange_history(self):
+        self.assertEqual(
+            _shipped_color(status="Pending", warning_level=1, ladder=True),
+            "Orange")
+        self.assertEqual(
+            _shipped_color(status="Pending", warning_level=0, ladder=True,
+                           verified_orange=True, stored_colour="Orange"),
+            "Yellow")
+        self.assertNotIn("inspection_reports", _effective_flag_color_sql("g", ladder=True))
+
+    def test_revoked_beats_a_warning_in_both_database_versions(self):
+        for ladder in (False, True):
+            with self.subTest(ladder=ladder):
+                self.assertEqual(
+                    _shipped_color(status="Revoked", warning_level=1,
+                                   verified_orange=True, ladder=ladder),
+                    "Black")
 
     def test_no_warning_means_the_status_still_rules(self):
         for status, colour in EXPECTED_STATUS_COLOR.items():

@@ -71,7 +71,9 @@ class YellowFlagValidationTests(unittest.TestCase):
         )
         self.assertIsNone(error)
         self.assertEqual(result["logID"], 41)
-        self.assertEqual(cursor.execute.call_count, 2)
+        # Barangay lookup, uncached source-column probe, then one INSERT.
+        self.assertEqual(cursor.execute.call_count, 3)
+        self.assertIn("information_schema.COLUMNS", cursor.execute.call_args_list[1].args[0])
         mysql.connection.commit.assert_called_once()
         notify.assert_called_once()
 
