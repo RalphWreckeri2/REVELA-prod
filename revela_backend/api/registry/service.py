@@ -10,7 +10,11 @@ from app import mysql
 from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.registry import places_resolver
-from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
+from api.registry.colors import (
+    _effective_flag_color_sql,
+    ladder_columns_available,
+    status_to_color,
+)
 from api.utils.places_quota import read_usage, reserve_usage_slot
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
@@ -806,15 +810,14 @@ def _status_for_compare(raw) -> str | None:
 
 
 def _status_to_flag_color(status: str) -> str:
-    mapping = {
-        "Active": "Green",
-        "Pending": "Yellow",
-        "Expired": "Red",
-        "Revoked": "Black",
-        "Blacklisted": "Black",
-        "Closed": "Purple"
-    }
-    return mapping.get(status, "Yellow")
+    """Deprecated shim. Use api.registry.colors.status_to_color.
+
+    This was a private copy of the status-only mapping. It now delegates, so
+    the registry write paths and the SQL the Map renders cannot drift. It is
+    called from four write paths (import, sync, snap and manual status edit);
+    those must keep treating a status they do not recognise as Yellow.
+    """
+    return status_to_color(status)
 
 
 def _parse_renewal_date(raw) -> str | None:

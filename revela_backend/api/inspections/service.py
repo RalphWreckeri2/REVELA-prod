@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from app import mysql
-from api.registry.colors import _effective_flag_color_sql
+from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
 from api.models.inspection_lifecycle_events import (
     get_latest_inspection_cycle_id,
     log_inspection_event,
@@ -356,11 +356,11 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # Map and Registry screens render, so eligibility and display cannot
         # disagree. For a pin with no registry match it falls back to the
         # pin's own colour, which is the only case where the registry cannot
-        # speak.
+        # speak. The ladder columns are only read once they exist.
         cursor.execute(
             f"""
             SELECT g.logID, g.flagColor,
-                   {_effective_flag_color_sql("g")} AS effectiveFlagColor
+                   {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor
             FROM geospatial_logs g
             WHERE g.logID = %s
             """,
