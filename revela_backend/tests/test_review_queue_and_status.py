@@ -189,9 +189,26 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
     ):
         mock_cursor = MagicMock()
         mock_mysql.connection.cursor.return_value = mock_cursor
+        # Mirrors tests/test_inspection_submission_idempotency.py:139-145.
+        # submit_inspection reads verificationStatus to decide whether the
+        # assignment is open (inspections/service.py:605), and re-reads
+        # submittedAt/submissionReceivedAt before reading the pin colour
+        # (:658), so the first row needs the assignment fields and the
+        # side_effect needs one more entry than it used to.
         mock_cursor.fetchone.side_effect = [
-            {"reportID": 7, "irTimestamp": "2026-10-11 12:00:00"},
+            {
+                "reportID": 7, "targetID": 22, "userID": 9,
+                "irTimestamp": "2026-10-11 12:00:00",
+                "verificationStatus": "Assigned", "wasReassigned": 0,
+                "submittedAt": None, "submissionReceivedAt": None,
+                "inspectionResult": None, "noticeLevel": 0,
+                "remarks": None, "photoPath": None,
+                "verifiedLatitude": None, "verifiedLongitude": None,
+                "verifiedAccuracy": None,
+            },
             {"mins": 5},
+            {"submittedAt": "2026-10-11 12:05:00",
+             "submissionReceivedAt": "2026-10-11 12:05:01"},
             {"flagColor": "Red"},
         ]
 
