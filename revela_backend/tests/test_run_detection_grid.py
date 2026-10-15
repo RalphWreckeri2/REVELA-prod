@@ -164,7 +164,7 @@ class RunDetectionGridTests(unittest.TestCase):
             unary_union(search_circles)
         )
 
-        self.assertEqual(len(points), 70)
+        self.assertEqual(len(points), 38)
         self.assertTrue(uncovered_area.is_empty)
 
     def test_quick_discovery_points_are_limited_and_cover_barangay_centres(self):

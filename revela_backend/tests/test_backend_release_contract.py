@@ -7,6 +7,8 @@ import re
 import unittest
 from unittest.mock import MagicMock, patch
 
+from shapely.ops import unary_union
+
 from flask import Flask
 from flask_jwt_extended import JWTManager, create_access_token
 
@@ -194,23 +196,51 @@ class ReleaseInfrastructureContractTests(unittest.TestCase):
             modules = [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
             self.assertFalse(any("qa_safety" in name or "nearby_barangay" in name for name in modules), path)
 
-    def test_six_barangay_mismatch_remains_explicit_and_fails_closed(self):
-        expected = {"Barangay II-A (Pob.)", "Calingatan", "District I (Pob.)",
-                    "District IV (Pob.)", "Loob", "Manggahan"}
-        actual = set()
+    def test_all_barangays_are_contained_by_the_derived_municipal_boundary(self):
+        """All 16 barangays must sit inside the municipal boundary.
+
+        The municipal polygon is now the union of these same barangay
+        geometries, so containment is structural rather than a tuned
+        coincidence. This replaces the earlier test, which pinned a hardcoded
+        six-barangay mismatch set that was caused by an unrelated hand-entered
+        outline disagreeing with the GADM barangay data.
+        """
+        polygons = flag_service._BARANGAY_POLYGONS
+        self.assertEqual(len(polygons), 16, "All 16 barangays must load.")
+
+        boundary = flag_service._MUNICIPALITY_WITH_TOLERANCE
+        outside = {
+            name
+            for name, polygon in polygons.items()
+            if not polygon.difference(boundary).is_empty
+        }
+        self.assertEqual(
+            outside, set(),
+            "No barangay may extend outside the municipal boundary; "
+            f"offenders: {sorted(outside)}",
+        )
+
+        # The municipality must be derived from the barangays, not a literal
+        # that can silently drift away from them again.
+        self.assertEqual(
+            boundary.geom_type, flag_service._MUNICIPALITY_BOUNDARY.geom_type
+        )
+        union = unary_union(list(polygons.values()))
+        self.assertTrue(
+            flag_service._MUNICIPALITY_BOUNDARY.equals(union.buffer(0)),
+            "Municipal boundary must equal the union of the barangay polygons.",
+        )
+
+    def test_barangay_submission_is_accepted_inside_the_derived_boundary(self):
+        """A coordinate inside any barangay must now pass fail-closed validation."""
         for name, polygon in flag_service._BARANGAY_POLYGONS.items():
-            outside = polygon.difference(flag_service._MUNICIPALITY_WITH_TOLERANCE)
-            if outside.is_empty:
-                continue
-            actual.add(name)
-            point = outside.representative_point()
-            registry_name = flag_service._GEOJSON_BARANGAY_ALIASES.get(name, name)
-            cursor = MagicMock()
-            cursor.fetchone.return_value = {"barangayName": registry_name}
-            flag_service._validate_yellow_flag_barangay(cursor, point.y, point.x, 1)
-            with patch.object(flag_service, "mysql") as mysql:
-                result, error = flag_service.insert_yellow_flag("Boundary test", point.y, point.x, 1)
-                self.assertIsNone(result)
-                self.assertIsInstance(error, flag_service.YellowFlagValidationError)
-                mysql.connection.cursor.assert_not_called()
-        self.assertEqual(actual, expected)
+            with self.subTest(barangay=name):
+                point = polygon.representative_point()
+                registry_name = flag_service._GEOJSON_BARANGAY_ALIASES.get(
+                    name, name)
+                cursor = MagicMock()
+                cursor.fetchone.return_value = {"barangayName": registry_name}
+                flag_service._validate_yellow_flag_barangay(
+                    cursor, point.y, point.x, 1)
+                self.assertTrue(flag_service._within_municipality(
+                    point.y, point.x))
