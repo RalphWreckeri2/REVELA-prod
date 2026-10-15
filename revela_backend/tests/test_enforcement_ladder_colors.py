@@ -555,6 +555,27 @@ class LadderColumnProbeTests(unittest.TestCase):
         self.assertTrue(
             ladder_columns_available(self._cursor(["warningLevel", "blackLocked"])))
 
+    def test_reads_the_row_shape_the_running_app_actually_produces(self):
+        """config.py sets MYSQL_CURSORCLASS = "DictCursor".
+
+        Every reader passes mysql.connection.cursor(), so the rows that reach
+        this probe in production are mappings, not tuples, and row[0] raises
+        KeyError: 0 - which took the whole Analytics page down with a 500 on
+        every request. These cursor mocks answer the mapping shape, because the
+        tuple shape is the one no production connection ever produces.
+        """
+        for rows, expected in (
+            ([], False),
+            ([{"COLUMN_NAME": "warningLevel"}], False),
+            ([{"COLUMN_NAME": n} for n in
+              ("warningLevel", "blackLocked")], True),
+        ):
+            with self.subTest(rows=rows):
+                reset_ladder_column_cache()
+                cursor = MagicMock()
+                cursor.fetchall.return_value = rows
+                self.assertEqual(ladder_columns_available(cursor), expected)
+
     def test_the_probe_is_cached(self):
         first = self._cursor([])
         self.assertFalse(ladder_columns_available(first))

@@ -92,6 +92,28 @@ WHERE TABLE_SCHEMA = DATABASE()
 
 _ladder_columns_present = None
 
+#: The single column _LADDER_PROBE_SQL selects, and the key a DictCursor row
+#: carries it under.
+_PROBE_COLUMN = "COLUMN_NAME"
+
+
+def _probe_column_name(row):
+    """Read COLUMN_NAME out of a probe row, for either cursor shape.
+
+    config.py sets MYSQL_CURSORCLASS = "DictCursor", so in the running app every
+    row is a mapping and row[0] raises KeyError: 0. Scripts and tests connect
+    with the default tuple cursor, so both shapes reach this function. The
+    probe is the one place here that must not assume either - a dict row is
+    truthy, so it would otherwise be swallowed by a bare except and read as
+    "column absent", quietly disabling the ladder on a migrated database.
+    """
+    if isinstance(row, dict):
+        return row.get(_PROBE_COLUMN)
+    try:
+        return row[0]
+    except (TypeError, KeyError, IndexError):
+        return None
+
 
 def ladder_columns_available(cursor):
     """True once both ladder columns exist. Probed once, then cached.
@@ -105,7 +127,7 @@ def ladder_columns_available(cursor):
     if _ladder_columns_present is not None:
         return _ladder_columns_present
     cursor.execute(_LADDER_PROBE_SQL, LADDER_COLUMNS)
-    found = {row[0] for row in cursor.fetchall()}
+    found = {_probe_column_name(row) for row in cursor.fetchall()}
     _ladder_columns_present = all(col in found for col in LADDER_COLUMNS)
     return _ladder_columns_present
 
