@@ -10,6 +10,7 @@ from app import mysql
 from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.registry import places_resolver
+from api.registry.colors import _effective_flag_color_sql
 from api.utils.places_quota import read_usage, reserve_usage_slot
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
@@ -2598,6 +2599,10 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         # LOWER() is dropped from the JOIN condition: utf8mb4_unicode_ci handles
         # case-insensitive equality without a function wrapper.
         offset = (page - 1) * per_page
+        # Report the colour the Map reports: _effective_flag_color_sql is the
+        # exact expression the map/analytics readers use, so the Registry page
+        # and the Map cannot drift apart. api.registry.colors is dependency-free.
+        effective_flag_color = _effective_flag_color_sql("g")
         cursor.execute(
             f"""
             SELECT
@@ -2623,7 +2628,7 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                     WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
                     ELSE 'registry_only'
                 END AS flagSource,
-                g.flagColor
+                {effective_flag_color} AS flagColor
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
             LEFT JOIN LATERAL (
@@ -2678,8 +2683,11 @@ def get_business_by_id(business_id):
 
         # Main record + latest flagColor via LATERAL join (replaces two
         # correlated scalar subqueries that previously ran one-per-row).
+        # See get_all_businesses: report the colour the Map reports, not the raw pin column.
+        effective_flag_color = _effective_flag_color_sql("g")
+
         cursor.execute(
-            """
+            f"""
             SELECT
                 r.businessID,
                 r.businessName,
@@ -2703,7 +2711,7 @@ def get_business_by_id(business_id):
                     WHEN g.placeID IS NOT NULL THEN 'registry_and_maps'
                     ELSE 'registry_only'
                 END AS flagSource,
-                g.flagColor
+                {effective_flag_color} AS flagColor
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
             LEFT JOIN LATERAL (

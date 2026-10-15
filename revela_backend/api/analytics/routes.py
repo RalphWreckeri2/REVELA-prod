@@ -100,64 +100,12 @@ def _registry_has_registration_type(cursor):
     return bool(row and row["column_count"])
 
 
-def _verified_orange_sql(alias="g"):
-    registry_match = f"""(
-        (r_chk.businessID IS NOT NULL AND {alias}.businessID IS NOT NULL
-            AND r_chk.businessID = {alias}.businessID)
-        OR ({alias}.placeID IS NOT NULL AND r_chk.placeID = {alias}.placeID
-            AND ({alias}.businessID IS NULL OR r_chk.businessID = {alias}.businessID))
-        OR ({alias}.businessID IS NULL
-            AND r_chk.barangayID = {alias}.barangayID
-            AND r_chk.businessName = {alias}.detectedName)
-    )"""
-    return f"""(
-        EXISTS (
-            SELECT 1 FROM inspection_reports ir
-            WHERE ir.targetType = 'geospatial_log'
-              AND ir.targetID = {alias}.logID
-              AND ir.verificationStatus = 'Verified'
-              AND ir.inspectionResult = 'Orange'
-        )
-        AND (
-            NOT EXISTS (
-                SELECT 1 FROM official_registry r_chk
-                WHERE {registry_match}
-            )
-            OR EXISTS (
-                SELECT 1 FROM official_registry r_chk
-                WHERE {registry_match}
-                  AND r_chk.applicationStatus = 'Expired'
-            )
-        )
-    )"""
-
-
-def _effective_flag_color_sql(alias="g"):
-    registry_status = f"""(
-        SELECT r_chk.applicationStatus
-        FROM official_registry r_chk
-        WHERE (
-            (r_chk.businessID IS NOT NULL AND {alias}.businessID IS NOT NULL
-                AND r_chk.businessID = {alias}.businessID)
-            OR ({alias}.placeID IS NOT NULL AND r_chk.placeID = {alias}.placeID
-                AND ({alias}.businessID IS NULL OR r_chk.businessID = {alias}.businessID))
-            OR ({alias}.businessID IS NULL
-                AND r_chk.barangayID = {alias}.barangayID
-                AND r_chk.businessName = {alias}.detectedName)
-        )
-        ORDER BY (r_chk.businessID = {alias}.businessID) DESC,
-                 (r_chk.placeID = {alias}.placeID) DESC
-        LIMIT 1
-    )"""
-    return f"""CASE
-        WHEN { _verified_orange_sql(alias) } THEN 'Orange'
-        WHEN {registry_status} = 'Active' THEN 'Green'
-        WHEN {registry_status} = 'Expired' THEN 'Red'
-        WHEN {registry_status} IN ('Revoked', 'Blacklisted') THEN 'Black'
-        WHEN {registry_status} = 'Closed' THEN 'Purple'
-        WHEN {registry_status} = 'Pending' THEN 'Yellow'
-        ELSE {alias}.flagColor
-    END"""
+# The derived-colour SQL builders now live in api/registry/colors.py so that
+# api/registry/service.py can reuse the exact expression the Map reports
+# without importing this blueprint (google-genai / scikit-learn). They are
+# re-exported here under their original names, so every existing caller below
+# and tests/test_analytics_registry_compat.py are unaffected.
+from api.registry.colors import _effective_flag_color_sql, _verified_orange_sql  # noqa: E402,F401
 
 
 analytics_bp = Blueprint("analytics", __name__)
