@@ -2846,8 +2846,10 @@ def get_business_by_id(business_id):
 
         # Main record + latest flagColor via LATERAL join (replaces two
         # correlated scalar subqueries that previously ran one-per-row).
-        # See get_all_businesses: report the colour the Map reports, not the raw pin column.
-        effective_flag_color = _effective_flag_color_sql("g")
+        # See get_all_businesses: report the colour the Map reports, not the raw
+        # pin column, and read the ladder columns only when they exist.
+        effective_flag_color = _effective_flag_color_sql(
+            "g", ladder=ladder_columns_available(cursor))
 
         cursor.execute(
             f"""
