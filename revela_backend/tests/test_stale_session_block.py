@@ -379,13 +379,17 @@ class LogoutEndpointTests(unittest.TestCase):
 
 class ConflictMessageTests(unittest.TestCase):
 
-    def test_message_explains_that_waiting_clears_it(self):
-        app = Flask(__name__)
-        app.config["SESSION_IDLE_TIMEOUT"] = timedelta(minutes=IDLE_LIMIT_MINUTES)
-        with app.app_context():
-            message = str(sessions.ActiveSessionConflict("web"))
-        self.assertIn(f"{IDLE_LIMIT_MINUTES} minutes", message)
+    def test_message_does_not_promise_a_timeout_for_an_active_session(self):
+        with Flask(__name__).app_context():
+            message = str(sessions.ActiveSessionConflict("web")).lower()
         self.assertIn("a web browser", message)
+        self.assertNotIn("wait", message)
+
+    def test_mobile_conflict_message_does_not_promise_an_idle_window(self):
+        with Flask(__name__).app_context():
+            message = str(sessions.ActiveSessionConflict("mobile")).lower()
+        self.assertIn("a mobile device", message)
+        self.assertNotIn("minute", message)
 
     def test_message_never_reads_like_an_admin_revocation(self):
         app = Flask(__name__)

@@ -7,7 +7,7 @@ import 'main_layout.dart';
 import '../component/inspection_modal.dart';
 import '../widgets/floating_mascot.dart';
 import '../service/inspection_service.dart';
-import '../service/auth_service.dart';
+import '../service/offline_inspection_storage.dart';
 import '../theme/app_theme.dart';
 import '../widgets/task_card.dart';
 import '../widgets/modern_segmented_filter.dart';
@@ -140,13 +140,21 @@ class _InspectionPageState extends State<InspectionPage>
       }
     }).toList();
 
-    if (!isHistory) {
+    if (isHistory) {
+      filtered.sort((a, b) {
+        final submittedA = AppDateUtils.parseTimestampAsUtc(a.submittedAt);
+        final submittedB = AppDateUtils.parseTimestampAsUtc(b.submittedAt);
+        if (submittedA == null) return submittedB == null ? 0 : 1;
+        if (submittedB == null) return -1;
+        return submittedB.compareTo(submittedA);
+      });
+    } else {
       filtered.sort((a, b) {
         final dateA =
-            AppDateUtils.parseToLocal(a.irTimestamp) ??
+            AppDateUtils.parseTimestampAsUtc(a.dispatchedAt ?? a.irTimestamp) ??
             DateTime.fromMillisecondsSinceEpoch(0);
         final dateB =
-            AppDateUtils.parseToLocal(b.irTimestamp) ??
+            AppDateUtils.parseTimestampAsUtc(b.dispatchedAt ?? b.irTimestamp) ??
             DateTime.fromMillisecondsSinceEpoch(0);
         return _selectedSort == 'Oldest'
             ? dateA.compareTo(dateB)
@@ -231,14 +239,22 @@ class _InspectionPageState extends State<InspectionPage>
     if (!mounted) return;
     final event = _inspectionService.syncNotification.value;
     if (event == null) return;
+    if (!event.started) {
+      unawaited(_fetchCurrent(silent: true));
+      unawaited(_fetchHistory(silent: true));
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           event.started
               ? 'Connection restored. Syncing offline reports...'
+              : event.retryScheduled
+              ? 'Some offline reports could not sync yet. They remain saved and will retry.'
               : '${event.syncedCount} Offline report${event.syncedCount == 1 ? '' : 's'} successfully submitted to Admin.',
         ),
-        backgroundColor: Colors.green.shade700,
+        backgroundColor: event.retryScheduled
+            ? Colors.orange.shade800
+            : Colors.green.shade700,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -253,19 +269,7 @@ class _InspectionPageState extends State<InspectionPage>
       });
     }
     try {
-      var tasks = await _inspectionService.getMyTasks();
-
-      // Dashboard keeps its last known assignments while a resumed request is
-      // settling. Use the same account-scoped cache here so the Current tab
-      // never becomes empty merely because one API response is delayed/empty.
-      if (tasks.isEmpty) {
-        final userId = await AuthService().getAuthenticatedUserId();
-        final cached = await _inspectionService.getLocalTasksForUser(
-          userId,
-          activeOnly: true,
-        );
-        if (cached.isNotEmpty) tasks = cached;
-      }
+      final tasks = await _inspectionService.getMyTasks();
 
       final activeTasks = tasks
           .where(
@@ -299,10 +303,8 @@ class _InspectionPageState extends State<InspectionPage>
 
       if (mounted) {
         setState(() {
-          if (currentList.isNotEmpty || !hasCachedTasks) {
-            _currentTasks = currentList;
-            _missingTasks = missingList;
-          }
+          _currentTasks = currentList;
+          _missingTasks = missingList;
           if (_currentFilterIndex == 0 || _currentFilterIndex == 1) {
             _validateFilters();
           }
@@ -332,7 +334,11 @@ class _InspectionPageState extends State<InspectionPage>
     try {
       final all = await InspectionService().getMyReportHistory();
       final historyTasks = all
-          .where((t) => !_activeStatuses.contains(t.verificationStatus))
+          .where(
+            (t) => !_activeStatuses.contains(
+              t.verificationStatus.trim().toLowerCase(),
+            ),
+          )
           .toList();
       if (mounted) {
         setState(() {
@@ -358,6 +364,21 @@ class _InspectionPageState extends State<InspectionPage>
   // Tapping a CURRENT item opens the interactive InspectionModal to conduct report
   void _onCurrentTaskTap(InspectionTask task) async {
     if (_isDrawerOpen) return;
+    final savedDraft = await _inspectionService.getDraftStatusForAssignment(
+      task.reportID,
+      task.assignmentCycleID,
+    );
+    if (savedDraft != null) {
+      if (!mounted) return;
+      final message = savedDraft == DraftStatus.failed
+          ? 'This assignment has a saved report that needs attention.'
+          : 'This assignment already has a saved offline report.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return;
+    }
+    if (!mounted || _isDrawerOpen) return;
     setState(() => _isDrawerOpen = true);
     widget.onDrawerToggled?.call(true);
 

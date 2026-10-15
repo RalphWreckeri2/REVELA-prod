@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:label="@string/app_name"
+        android:usesCleartextTraffic="true">
+        <meta-data
+            android:name="revela.qa_mode"
+            android:value="true" />
+        <meta-data
+            android:name="revela.qa_api_base"
+            android:value="${QA_API_BASE}" />
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            tools:node="remove" />
+    </application>
+</manifest>

@@ -154,39 +154,79 @@ class TaskCard extends StatelessWidget {
                                 : context.adaptiveTextLight,
                           ),
                           const SizedBox(width: 4),
-                          Text(
-                            (task.deadline != null && task.deadline!.isNotEmpty)
-                                ? 'Due ${AppDateUtils.formatDeadline(task.deadline)}'
-                                : AppDateUtils.formatTimestamp(
-                                    task.irTimestamp,
+                          Expanded(
+                            child: isCurrent
+                                ? Text(
+                                    (task.deadline != null &&
+                                            task.deadline!.isNotEmpty)
+                                        ? 'Due ${AppDateUtils.formatDeadline(task.deadline)}'
+                                        : AppDateUtils.formatTimestamp(
+                                            task.irTimestamp,
+                                          ),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: isNearing
+                                          ? const Color(0xFFF59E0B)
+                                          : context.adaptiveTextLight,
+                                    ),
+                                  )
+                                : Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Dispatched: ${AppDateUtils.formatTimestampInManila(task.dispatchedAt ?? task.irTimestamp, unavailableLabel: 'Dispatch time unavailable')}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: context.adaptiveTextLight,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 3),
+                                      Text(
+                                        'Submitted: ${AppDateUtils.formatTimestampInManila(task.submittedAt, unavailableLabel: 'Submission time unavailable')}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: context.adaptiveTextLight,
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: isNearing
-                                  ? const Color(0xFFF59E0B)
-                                  : context.adaptiveTextLight,
-                            ),
                           ),
                         ],
                       ),
-                      ValueListenableBuilder<Map<int, DraftStatus>>(
+                      ValueListenableBuilder<Map<String, DraftStatus>>(
                         valueListenable:
                             InspectionService().pendingDraftStatuses,
                         builder: (context, statuses, _) {
-                          final status = statuses[task.logID];
+                          final status =
+                              statuses[task.assignmentKey] ??
+                              task.localDraftStatus;
                           if (status == null) return const SizedBox.shrink();
-                          final syncing = status == DraftStatus.syncing;
+                          final label = switch (status) {
+                            DraftStatus.draft => 'PENDING SYNC',
+                            DraftStatus.syncing => 'SYNCING...',
+                            DraftStatus.failed => 'NEEDS ATTENTION',
+                            DraftStatus.synced => 'SYNCED',
+                          };
+                          final color = switch (status) {
+                            DraftStatus.draft => Colors.orange.shade700,
+                            DraftStatus.syncing => Colors.blue,
+                            DraftStatus.failed => Colors.red.shade700,
+                            DraftStatus.synced => Colors.green.shade700,
+                          };
                           return Padding(
                             padding: const EdgeInsets.only(top: 6),
                             child: _StatusBadge(
-                              label: syncing ? 'SYNCING...' : 'PENDING SYNC',
-                              color: syncing
-                                  ? Colors.blue
-                                  : Colors.orange.shade700,
-                              icon: syncing
+                              label: label,
+                              color: color,
+                              icon: status == DraftStatus.syncing
                                   ? Icons.sync
+                                  : status == DraftStatus.failed
+                                  ? Icons.error_outline
+                                  : status == DraftStatus.synced
+                                  ? Icons.cloud_done
                                   : Icons.cloud_queue_rounded,
-                              spinning: syncing,
+                              spinning: status == DraftStatus.syncing,
                             ),
                           );
                         },

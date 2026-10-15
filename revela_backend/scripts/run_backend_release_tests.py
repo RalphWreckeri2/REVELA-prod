@@ -21,6 +21,7 @@ TEST_MODULES = (
     "tests.test_backend_release_contract",
     "tests.test_auth_inactivity",
     "tests.test_auth_sessions",
+    "tests.test_stale_session_block",
 )
 
 

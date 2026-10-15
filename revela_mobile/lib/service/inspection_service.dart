@@ -12,6 +12,7 @@ import '../utils/image_compressor.dart';
 
 class InspectionTask {
   final int reportID;
+  final int? assignmentCycleID;
   final int logID;
   final String detectedName;
   final String barangayName;
@@ -23,14 +24,21 @@ class InspectionTask {
   final double? latitude;
   final double? longitude;
   final String irTimestamp;
+  final String? dispatchedAt;
+  final String? submittedAt;
+  final String? submissionReceivedAt;
 
   /// Field result after inspector submits (null while still open).
   final String? inspectionResult;
   final String? deadline;
   final int currentNoticeLevel;
+  final DraftStatus? localDraftStatus;
+
+  String get assignmentKey => assignmentStatusKey(reportID, assignmentCycleID);
 
   InspectionTask({
     required this.reportID,
+    this.assignmentCycleID,
     required this.logID,
     required this.detectedName,
     required this.barangayName,
@@ -42,14 +50,21 @@ class InspectionTask {
     this.latitude,
     this.longitude,
     required this.irTimestamp,
+    this.dispatchedAt,
+    this.submittedAt,
+    this.submissionReceivedAt,
     this.inspectionResult,
     this.deadline,
     this.currentNoticeLevel = 0,
+    this.localDraftStatus,
   });
 
   factory InspectionTask.fromJson(Map<String, dynamic> json) {
     return InspectionTask(
       reportID: _asInt(json['reportID']),
+      assignmentCycleID: json['assignmentCycleID'] == null
+          ? null
+          : _asInt(json['assignmentCycleID']),
       logID: _asInt(json['logID']),
       detectedName: json['detectedName']?.toString() ?? 'Unknown',
       barangayName: json['barangayName']?.toString() ?? 'Unknown Barangay',
@@ -65,9 +80,16 @@ class InspectionTask {
           ? double.tryParse(json['longitude'].toString())
           : null,
       irTimestamp: json['irTimestamp']?.toString() ?? '',
+      dispatchedAt: json['dispatchedAt']?.toString(),
+      submittedAt: json['submittedAt']?.toString(),
+      submissionReceivedAt: json['submissionReceivedAt']?.toString(),
       inspectionResult: json['inspectionResult']?.toString(),
       deadline: json['deadline']?.toString(),
       currentNoticeLevel: _asInt(json['currentNoticeLevel']),
+      localDraftStatus: DraftStatus.values.cast<DraftStatus?>().firstWhere(
+        (status) => status?.name == json['localDraftStatus'],
+        orElse: () => null,
+      ),
     );
   }
 
@@ -94,6 +116,7 @@ class InspectionTask {
   Map<String, dynamic> toJson() {
     return {
       'reportID': reportID,
+      'assignmentCycleID': assignmentCycleID,
       'logID': logID,
       'detectedName': detectedName,
       'barangayName': barangayName,
@@ -105,30 +128,111 @@ class InspectionTask {
       'latitude': latitude,
       'longitude': longitude,
       'irTimestamp': irTimestamp,
+      'dispatchedAt': dispatchedAt,
+      'submittedAt': submittedAt,
+      'submissionReceivedAt': submissionReceivedAt,
       'inspectionResult': inspectionResult,
       'deadline': deadline,
       'currentNoticeLevel': currentNoticeLevel,
+      if (localDraftStatus != null) 'localDraftStatus': localDraftStatus!.name,
     };
   }
+
+  InspectionTask withLocalDraftStatus(
+    DraftStatus status, {
+    String? submittedAt,
+  }) => InspectionTask(
+    reportID: reportID,
+    assignmentCycleID: assignmentCycleID,
+    logID: logID,
+    detectedName: detectedName,
+    barangayName: barangayName,
+    flagColor: flagColor,
+    verificationStatus: switch (status) {
+      DraftStatus.draft => 'Pending Sync',
+      DraftStatus.syncing => 'Syncing',
+      DraftStatus.failed => 'Needs Attention',
+      DraftStatus.synced => 'Submitted',
+    },
+    remarks: remarks,
+    photoPath: photoPath,
+    nearestLandmark: nearestLandmark,
+    latitude: latitude,
+    longitude: longitude,
+    irTimestamp: irTimestamp,
+    dispatchedAt: dispatchedAt,
+    submittedAt: submittedAt ?? this.submittedAt,
+    submissionReceivedAt: submissionReceivedAt,
+    inspectionResult: inspectionResult,
+    deadline: deadline,
+    currentNoticeLevel: currentNoticeLevel,
+    localDraftStatus: status,
+  );
+}
+
+enum InspectionSubmissionResult {
+  submitted,
+  savedOffline,
+  needsAttention,
+  alreadySaved,
 }
 
 class InspectionService {
   static final InspectionService _instance = InspectionService._internal();
   factory InspectionService() => _instance;
 
-  final AuthService _auth = AuthService();
-  final OfflineInspectionStorage _offlineStorage = OfflineInspectionStorage();
-  final ValueNotifier<Map<int, DraftStatus>> pendingDraftStatuses =
-      ValueNotifier<Map<int, DraftStatus>>({});
+  InspectionService._internal({
+    AuthService? auth,
+    OfflineInspectionStorage? offlineStorage,
+    bool startReconnectMonitor = true,
+    Future<bool> Function()? reachabilityCheck,
+    DateTime Function()? now,
+  }) : _auth = auth ?? AuthService(),
+       _offlineStorage = offlineStorage ?? OfflineInspectionStorage(),
+       _reachabilityCheck = reachabilityCheck ?? _defaultReachabilityCheck,
+       _now = now ?? DateTime.now {
+    if (startReconnectMonitor) _startReconnectMonitor();
+  }
+
+  @visibleForTesting
+  InspectionService.forTesting({
+    required AuthService auth,
+    required OfflineInspectionStorage offlineStorage,
+    Future<bool> Function()? reachabilityCheck,
+    DateTime Function()? now,
+  }) : this._internal(
+         auth: auth,
+         offlineStorage: offlineStorage,
+         startReconnectMonitor: false,
+         reachabilityCheck: reachabilityCheck,
+         now: now,
+       );
+
+  final AuthService _auth;
+  final OfflineInspectionStorage _offlineStorage;
+  final Future<bool> Function() _reachabilityCheck;
+  final DateTime Function() _now;
+  final ValueNotifier<Map<String, DraftStatus>> pendingDraftStatuses =
+      ValueNotifier<Map<String, DraftStatus>>({});
   final ValueNotifier<SyncNotification?> syncNotification =
       ValueNotifier<SyncNotification?>(null);
   Timer? _reconnectTimer;
   bool _wasReachable = false;
   bool _isSyncing = false;
+  DateTime? _lastSyncAttemptAt;
 
-  InspectionService._internal() {
-    _startReconnectMonitor();
+  @visibleForTesting
+  Future<void> disposeForTesting() async {
+    _reconnectTimer?.cancel();
+    pendingDraftStatuses.dispose();
+    syncNotification.dispose();
   }
+
+  static Future<bool> _defaultReachabilityCheck() async =>
+      await ApiConfig.ensureReachable() != null;
+
+  @visibleForTesting
+  Future<void> checkReconnectForTesting() => _checkReconnect();
 
   void _startReconnectMonitor() {
     _reconnectTimer ??= Timer.periodic(const Duration(seconds: 10), (_) {
@@ -146,24 +250,45 @@ class InspectionService {
       _wasReachable = false;
       return;
     }
-    final reachable = await ApiConfig.ensureReachable() != null;
+    final reachable = await _reachabilityCheck();
     final restored = reachable && !_wasReachable;
     _wasReachable = reachable;
-    if (restored && await getPendingDraftCount() > 0) {
+    final hasPending = await getPendingDraftCount() > 0;
+    final retryDue =
+        _lastSyncAttemptAt == null ||
+        _now().difference(_lastSyncAttemptAt!) >= const Duration(seconds: 30);
+    if (reachable && hasPending && (restored || retryDue)) {
+      _lastSyncAttemptAt = _now();
       syncNotification.value = const SyncNotification.started();
-      final synced = await syncPendingReports();
-      if (synced > 0) {
-        syncNotification.value = SyncNotification.completed(synced);
-      }
+      await syncPendingReports();
     }
   }
 
   Future<void> refreshPendingDraftStatuses() async {
-    final drafts = await _offlineStorage.getDrafts();
-    pendingDraftStatuses.value = {
-      for (final draft in drafts) draft.logId: draft.status,
-    };
+    final ownerUserId = await _auth.getAuthenticatedUserId();
+    if (ownerUserId == null || ownerUserId.isEmpty) {
+      pendingDraftStatuses.value = {};
+      return;
+    }
+    await _offlineStorage.recoverInterruptedSyncs(ownerUserId: ownerUserId);
+    final drafts = await _offlineStorage.getDrafts(ownerUserId: ownerUserId);
+    final statuses = <String, DraftStatus>{};
+    for (final draft in drafts) {
+      final current = statuses[draft.assignmentKey];
+      if (current == null ||
+          _draftStatusPriority(draft.status) > _draftStatusPriority(current)) {
+        statuses[draft.assignmentKey] = draft.status;
+      }
+    }
+    pendingDraftStatuses.value = statuses;
   }
+
+  static int _draftStatusPriority(DraftStatus status) => switch (status) {
+    DraftStatus.syncing => 3,
+    DraftStatus.failed => 2,
+    DraftStatus.draft => 1,
+    DraftStatus.synced => 0,
+  };
 
   /// Active assignments from the server (Assigned + Reassigned).
   /// The task cache lives in the single consolidated offline database owned
@@ -248,16 +373,29 @@ class InspectionService {
   }
 
   Future<List<InspectionTask>> getMyTasks() async {
+    String? requestUserId;
     try {
+      requestUserId = await _auth.getAuthenticatedUserId();
       final response = await _auth.dio.get('/api/inspections/tasks');
+      if (requestUserId != await _auth.getAuthenticatedUserId()) return [];
       final List<dynamic> data = response.data['data'] ?? [];
-      final tasks = data
+      final serverTasks = data
           .map((e) => InspectionTask.fromJson(e as Map<String, dynamic>))
           .toList();
-      final userId = await _auth.getAuthenticatedUserId();
-      if (userId != null && userId.isNotEmpty) {
-        await _saveLocalTasks(userId, tasks);
+      final pendingDrafts = requestUserId == null || requestUserId.isEmpty
+          ? <InspectionDraft>[]
+          : await _offlineStorage.getDrafts(ownerUserId: requestUserId);
+      if (requestUserId != await _auth.getAuthenticatedUserId()) return [];
+      final pendingAssignmentKeys = pendingDrafts
+          .map((draft) => draft.assignmentKey)
+          .toSet();
+      final tasks = serverTasks
+          .where((task) => !pendingAssignmentKeys.contains(task.assignmentKey))
+          .toList();
+      if (requestUserId != null && requestUserId.isNotEmpty) {
+        await _saveLocalTasks(requestUserId, tasks);
       }
+      if (requestUserId != await _auth.getAuthenticatedUserId()) return [];
       return tasks;
     } on DioException catch (e) {
       debugPrint(
@@ -266,6 +404,7 @@ class InspectionService {
       // Fallback to local DB filtered by authenticated_user_id
       try {
         final userId = await _auth.getAuthenticatedUserId();
+        if (requestUserId != userId) return [];
         if (userId == null) return [];
         return await _queryLocalTasks(userId, activeOnly: true);
       } catch (ex) {
@@ -286,8 +425,7 @@ class InspectionService {
       var uid = userId;
       if (uid == null || uid.isEmpty) {
         // Attempt to fall back to authenticated_user_id from secure storage
-        final auth = AuthService();
-        uid = await auth.getAuthenticatedUserId();
+        uid = await _auth.getAuthenticatedUserId();
         if (uid == null || uid.isEmpty) {
           debugPrint(
             'getLocalTasksForUser: no userId provided and no authenticated_user_id found',
@@ -295,6 +433,7 @@ class InspectionService {
           return [];
         }
       }
+      if (uid != await _auth.getAuthenticatedUserId()) return [];
       // Ensure we pass a string representation to the SQL query
       return await _queryLocalTasks(uid.toString(), activeOnly: activeOnly);
     } catch (e) {
@@ -305,16 +444,20 @@ class InspectionService {
 
   /// Full history for the logged-in inspector (all statuses).
   Future<List<InspectionTask>> getMyReportHistory() async {
+    String? requestUserId;
     try {
+      requestUserId = await _auth.getAuthenticatedUserId();
       final response = await _auth.dio.get('/api/inspections/my-reports');
+      if (requestUserId != await _auth.getAuthenticatedUserId()) return [];
       final List<dynamic> data = response.data['data'] ?? [];
-      final tasks = data
+      var tasks = data
           .map((e) => InspectionTask.fromJson(e as Map<String, dynamic>))
           .toList();
-      final userId = await _auth.getAuthenticatedUserId();
-      if (userId != null && userId.isNotEmpty) {
-        await _saveLocalTasks(userId, tasks);
+      if (requestUserId != null && requestUserId.isNotEmpty) {
+        await _saveLocalTasks(requestUserId, tasks);
       }
+      tasks = await _mergePendingDrafts(tasks, requestUserId);
+      if (requestUserId != await _auth.getAuthenticatedUserId()) return [];
       return tasks;
     } on DioException catch (e) {
       debugPrint(
@@ -322,13 +465,87 @@ class InspectionService {
       );
       try {
         final userId = await _auth.getAuthenticatedUserId();
+        if (requestUserId != userId) return [];
         if (userId == null) return [];
-        return await _queryLocalTasks(userId, activeOnly: false);
+        final tasks = await _queryLocalTasks(userId, activeOnly: false);
+        return _mergePendingDrafts(tasks, userId);
       } catch (ex) {
         debugPrint('InspectionService.local history fallback failed: $ex');
         return [];
       }
     }
+  }
+
+  Future<List<InspectionTask>> _mergePendingDrafts(
+    List<InspectionTask> history,
+    String? userId,
+  ) async {
+    await refreshPendingDraftStatuses();
+    final drafts = userId == null || userId.isEmpty
+        ? <InspectionDraft>[]
+        : await _offlineStorage.getDrafts(ownerUserId: userId);
+    if (drafts.isEmpty) return history;
+    final merged = [...history];
+    List<InspectionTask>? cachedTasks;
+    for (final draft in drafts) {
+      final existingIndex = merged.indexWhere(
+        (task) => task.assignmentKey == draft.assignmentKey,
+      );
+      if (existingIndex >= 0) {
+        final task = merged[existingIndex];
+        merged[existingIndex] = task.withLocalDraftStatus(
+          draft.status,
+          submittedAt:
+              const {'Submitted', 'Verified'}.contains(task.verificationStatus)
+              ? task.submittedAt
+              : draft.submittedAt,
+        );
+        continue;
+      }
+      cachedTasks ??= await getLocalTasksForUser(userId, activeOnly: false);
+      final cached = cachedTasks.where(
+        (task) => task.assignmentKey == draft.assignmentKey,
+      );
+      final task = cached.isEmpty
+          ? InspectionTask(
+              reportID: draft.reportId,
+              assignmentCycleID: draft.assignmentCycleID,
+              logID: draft.logId,
+              detectedName: 'Inspection report',
+              barangayName: 'Unknown Barangay',
+              flagColor: 'Grey',
+              verificationStatus: 'Pending Sync',
+              irTimestamp: '',
+              submittedAt: draft.submittedAt,
+              inspectionResult: draft.inspectionResult,
+              remarks: draft.notes,
+              photoPath: draft.photoUrlPayload,
+            )
+          : cached.first;
+      merged.add(
+        task.withLocalDraftStatus(
+          draft.status,
+          submittedAt:
+              const {'Submitted', 'Verified'}.contains(task.verificationStatus)
+              ? task.submittedAt
+              : draft.submittedAt,
+        ),
+      );
+    }
+    return merged;
+  }
+
+  Future<DraftStatus?> getDraftStatusForAssignment(
+    int reportId,
+    int? assignmentCycleID,
+  ) async {
+    final ownerUserId = await _auth.getAuthenticatedUserId();
+    if (ownerUserId == null || ownerUserId.isEmpty) return null;
+    return (await _offlineStorage.getDraftForAssignment(
+      reportId,
+      assignmentCycleID,
+      ownerUserId: ownerUserId,
+    ))?.status;
   }
 
   /// Returns a relative `photoURL` for [submitInspection], or null on failure.
@@ -363,35 +580,29 @@ class InspectionService {
     return response.data['photoURL'] as String?;
   }
 
-  /// Synchronize offline draft reports to backend.
-  ///
-  /// For each queued draft, any evidence photos captured while offline
-  /// (stored as local file paths in [InspectionDraft.evidencePaths]) are
-  /// uploaded first via [uploadEvidence]; the resulting server URLs are
-  /// merged with any URLs that had already uploaded before the original
-  /// failure. The report is only submitted once its evidence is fully on
-  /// the server — if an upload fails mid-sync (e.g., signal drops again),
-  /// the draft is marked [DraftStatus.failed] and will be retried on the
-  /// next reconnect cycle instead of being submitted without proof.
+  /// Synchronize persisted drafts. An in-progress upload is checkpointed
+  /// before submitting so a lost response does not upload evidence again.
   Future<int> syncPendingReports() async {
     if (_isSyncing) return 0;
-    // No point syncing without a session — the backend would 401 every
-    // draft (offline-restored sessions have no JWT until re-login).
     if (!_auth.isAuthenticated) return 0;
+    final ownerUserId = await _auth.getAuthenticatedUserId();
+    if (ownerUserId == null || ownerUserId.isEmpty) return 0;
     _isSyncing = true;
     try {
-      final drafts = await _offlineStorage.getDrafts();
+      await _offlineStorage.recoverInterruptedSyncs(ownerUserId: ownerUserId);
+      final drafts = await _offlineStorage.getDrafts(ownerUserId: ownerUserId);
       var synced = 0;
       for (final draft in drafts) {
         if (draft.id == null) continue;
-        // 'failed' drafts are terminal (the server permanently rejected
-        // them, e.g. assignment revoked while offline). They are kept for
-        // manual review and are NOT retried here.
         if (draft.status == DraftStatus.failed) continue;
-        await _offlineStorage.updateDraftStatus(draft.id!, DraftStatus.syncing);
+        if (!await _isCurrentDraftOwner(ownerUserId)) break;
+        await _offlineStorage.updateDraftStatus(
+          draft.id!,
+          DraftStatus.syncing,
+          ownerUserId: ownerUserId,
+        );
         await refreshPendingDraftStatuses();
         try {
-          // ── Re-upload offline-captured evidence photos ──────────────────
           final urls = <String>[];
           final existingPayload = draft.photoUrlPayload;
           if (existingPayload != null && existingPayload.isNotEmpty) {
@@ -401,47 +612,99 @@ class InspectionService {
                 urls.addAll(decoded.map((e) => e.toString()));
               }
             } catch (_) {
-              // Unparseable payload — treat as no pre-uploaded URLs.
+              await _offlineStorage.updateDraftStatus(
+                draft.id!,
+                DraftStatus.failed,
+                ownerUserId: ownerUserId,
+              );
+              await refreshPendingDraftStatuses();
+              continue;
             }
           }
 
           var evidenceReady = true;
+          var missingEvidence = false;
+          final remainingPaths = <String>[];
           for (final localPath in draft.evidencePaths) {
             try {
+              if (!await _isCurrentDraftOwner(ownerUserId)) {
+                evidenceReady = false;
+                remainingPaths.add(localPath);
+                break;
+              }
               final file = File(localPath);
               if (!await file.exists()) {
-                // File vanished from the device; nothing to upload.
+                missingEvidence = true;
+                remainingPaths.add(localPath);
                 continue;
               }
               final uploadedUrl = await uploadEvidence(localPath);
               if (uploadedUrl == null || uploadedUrl.isEmpty) {
                 evidenceReady = false;
-                break;
+                remainingPaths.add(localPath);
+                continue;
               }
               urls.add(uploadedUrl);
             } catch (_) {
-              // Network dropped again mid-sync — retry on next cycle.
               evidenceReady = false;
-              break;
+              remainingPaths.add(localPath);
             }
           }
 
-          if (!evidenceReady) {
-            // Retryable (network dropped mid-upload) — back to 'draft' so
-            // the next reconnect cycle picks it up again.
-            await _offlineStorage.updateDraftStatus(
-              draft.id!,
-              DraftStatus.draft,
-            );
+          final preparedDraft = InspectionDraft(
+            id: draft.id,
+            logId: draft.logId,
+            reportId: draft.reportId,
+            assignmentCycleID: draft.assignmentCycleID,
+            inspectionResult: draft.inspectionResult,
+            notes: draft.notes,
+            noticeLevel: draft.noticeLevel,
+            verifiedLat: draft.verifiedLat,
+            verifiedLng: draft.verifiedLng,
+            verifiedAccuracy: draft.verifiedAccuracy,
+            evidencePaths: remainingPaths,
+            photoUrlPayload: urls.isEmpty ? null : jsonEncode(urls),
+            submittedAt: draft.submittedAt,
+            createdAt: draft.createdAt,
+            updatedAt: DateTime.now().toUtc().toIso8601String(),
+            status: missingEvidence ? DraftStatus.failed : DraftStatus.syncing,
+            ownerUserId: ownerUserId,
+          );
+          await _offlineStorage.saveDraft(preparedDraft);
+
+          if (missingEvidence) {
             await refreshPendingDraftStatuses();
             continue;
           }
+          if (!evidenceReady) {
+            await _offlineStorage.updateDraftStatus(
+              draft.id!,
+              DraftStatus.draft,
+              ownerUserId: ownerUserId,
+            );
+            await refreshPendingDraftStatuses();
+            if (!await _isCurrentDraftOwner(ownerUserId)) break;
+            continue;
+          }
+          if (!await _isCurrentDraftOwner(ownerUserId)) {
+            await _offlineStorage.updateDraftStatus(
+              draft.id!,
+              DraftStatus.draft,
+              ownerUserId: ownerUserId,
+            );
+            await refreshPendingDraftStatuses();
+            break;
+          }
 
-          await _auth.dio.post(
+          final response = await _auth.dio.post(
             '/api/inspections/submit',
             data: {
+              'reportID': draft.reportId,
+              if (draft.assignmentCycleID != null)
+                'assignmentCycleID': draft.assignmentCycleID,
               'logID': draft.logId,
               'inspectionResult': draft.inspectionResult,
+              if (draft.submittedAt != null) 'submittedAt': draft.submittedAt,
               'noticeLevel': draft.noticeLevel,
               'verifiedLat': draft.verifiedLat,
               'verifiedLng': draft.verifiedLng,
@@ -450,31 +713,61 @@ class InspectionService {
               'photoURL': urls.isEmpty ? null : jsonEncode(urls),
             },
           );
-          await _offlineStorage.deleteDraft(draft.id!);
+          if (!_isAcceptedSubmission(response.data, draft.reportId)) {
+            throw const FormatException(
+              'Submission response did not confirm the report identity.',
+            );
+          }
+          await _offlineStorage.updateCachedTaskStatus(
+            draft.reportId,
+            verificationStatus: 'Submitted',
+            inspectionResult: draft.inspectionResult,
+            submittedAt: response.data is Map
+                ? response.data['submittedAt']?.toString()
+                : null,
+            submissionReceivedAt: response.data is Map
+                ? response.data['submissionReceivedAt']?.toString()
+                : null,
+            replaceSubmittedAt:
+                response.data is Map &&
+                response.data.containsKey('submittedAt'),
+            replaceSubmissionReceivedAt:
+                response.data is Map &&
+                response.data.containsKey('submissionReceivedAt'),
+            assignmentCycleID: draft.assignmentCycleID,
+            userId: ownerUserId,
+          );
+          await _offlineStorage.deleteDraft(
+            draft.id!,
+            ownerUserId: ownerUserId,
+          );
           synced++;
         } on DioException catch (e) {
           final code = e.response?.statusCode ?? 0;
-          // 401/403 = auth problem (expired 12h token, or an offline-restored
-          // session that has no JWT yet) — recoverable by re-logging in, so
-          // the draft stays retryable. Other 4xx mean permanent rejection
-          // (e.g. the assignment was revoked while offline) — mark terminal
-          // so we stop hammering the API on every reconnect tick. Anything
-          // network-level or 5xx also stays retryable.
           final terminal =
               code >= 400 &&
               code < 500 &&
               code != 401 &&
-              code != 403 &&
               code != 408 &&
               code != 429;
           await _offlineStorage.updateDraftStatus(
             draft.id!,
             terminal ? DraftStatus.failed : DraftStatus.draft,
+            ownerUserId: ownerUserId,
           );
         } catch (_) {
-          await _offlineStorage.updateDraftStatus(draft.id!, DraftStatus.draft);
+          await _offlineStorage.updateDraftStatus(
+            draft.id!,
+            DraftStatus.draft,
+            ownerUserId: ownerUserId,
+          );
         }
         await refreshPendingDraftStatuses();
+      }
+      if (synced > 0) {
+        syncNotification.value = SyncNotification.completed(synced);
+      } else if (await getPendingDraftCount() > 0) {
+        syncNotification.value = const SyncNotification.retryScheduled();
       }
       return synced;
     } catch (e) {
@@ -490,7 +783,9 @@ class InspectionService {
   /// in the auto-sync cycle.
   Future<int> getPendingDraftCount() async {
     try {
-      final drafts = await _offlineStorage.getDrafts();
+      final ownerUserId = await _auth.getAuthenticatedUserId();
+      if (ownerUserId == null || ownerUserId.isEmpty) return 0;
+      final drafts = await _offlineStorage.getDrafts(ownerUserId: ownerUserId);
       return drafts.where((d) => d.status != DraftStatus.failed).length;
     } catch (e) {
       debugPrint('InspectionService.getPendingDraftCount error: $e');
@@ -498,9 +793,74 @@ class InspectionService {
     }
   }
 
-  /// Submits the inspection report. Returns `true` if online submission succeeds,
-  /// or `false` if an error occurs (or if processed offline).
-  Future<bool> submitInspection({
+  Future<bool> _isCurrentDraftOwner(String ownerUserId) async =>
+      _auth.isAuthenticated &&
+      await _auth.getAuthenticatedUserId() == ownerUserId;
+
+  static bool _isAcceptedSubmission(dynamic data, int reportId) {
+    if (data is! Map) return false;
+    final responseId = int.tryParse(data['reportID']?.toString() ?? '');
+    final status = data['status']?.toString().toLowerCase();
+    return responseId == reportId &&
+        (data['alreadyAccepted'] == true ||
+            status == 'submitted' ||
+            status == 'verified');
+  }
+
+  Future<void> _persistDraft({
+    required String ownerUserId,
+    required InspectionTask task,
+    required String submittedAt,
+    required String inspectionResult,
+    required int noticeLevel,
+    required String? notes,
+    required double? verifiedLat,
+    required double? verifiedLng,
+    required double? verifiedAccuracy,
+    required List<String> evidencePaths,
+    required List<String> photoUrls,
+    required DraftStatus status,
+  }) async {
+    final now = _now().toUtc().toIso8601String();
+    if (ownerUserId.isEmpty) {
+      throw StateError(
+        'An authenticated inspector is required to save an inspection draft.',
+      );
+    }
+    await _offlineStorage.saveDraft(
+      InspectionDraft(
+        logId: task.logID,
+        reportId: task.reportID,
+        assignmentCycleID: task.assignmentCycleID,
+        inspectionResult: inspectionResult,
+        notes: notes,
+        noticeLevel: noticeLevel,
+        verifiedLat: verifiedLat,
+        verifiedLng: verifiedLng,
+        verifiedAccuracy: verifiedAccuracy,
+        evidencePaths: evidencePaths,
+        photoUrlPayload: photoUrls.isEmpty ? null : jsonEncode(photoUrls),
+        submittedAt: submittedAt,
+        createdAt: now,
+        updatedAt: now,
+        status: status,
+        ownerUserId: ownerUserId,
+      ),
+    );
+    await _offlineStorage.updateCachedTaskStatus(
+      task.reportID,
+      verificationStatus: status == DraftStatus.failed
+          ? 'Needs Attention'
+          : 'Pending Sync',
+      inspectionResult: inspectionResult,
+      submittedAt: submittedAt,
+      assignmentCycleID: task.assignmentCycleID,
+      userId: ownerUserId,
+    );
+    await refreshPendingDraftStatuses();
+  }
+
+  Future<InspectionSubmissionResult> submitInspection({
     required InspectionTask task,
     required String inspectionResult,
     int noticeLevel = 0,
@@ -512,53 +872,101 @@ class InspectionService {
     List<XFile>? evidenceFiles,
     List<String>? photoURLs,
   }) async {
-    // Bookkeeping that must survive into the offline-draft catch block below:
-    // finalUrls    = every photo URL confirmed on the server
-    // pendingPaths = local files that still need uploading
-    final List<String> finalUrls = [...(photoURLs ?? [])];
+    final ownerUserId = await _auth.getAuthenticatedUserId();
+    if (ownerUserId == null || ownerUserId.isEmpty) {
+      throw StateError(
+        'An authenticated inspector is required to submit an inspection.',
+      );
+    }
+    final submittedAt = _now().toUtc().toIso8601String();
+    final assignmentKey = '$ownerUserId:${task.assignmentKey}';
+    if (!_submittingAssignmentKeys.add(assignmentKey)) {
+      return InspectionSubmissionResult.alreadySaved;
+    }
+    try {
+      if (await _offlineStorage.getDraftForAssignment(
+            task.reportID,
+            task.assignmentCycleID,
+            ownerUserId: ownerUserId,
+          ) !=
+          null) {
+        await refreshPendingDraftStatuses();
+        _submittingAssignmentKeys.remove(assignmentKey);
+        return InspectionSubmissionResult.alreadySaved;
+      }
+    } catch (error) {
+      _submittingAssignmentKeys.remove(assignmentKey);
+      rethrow;
+    }
+    final List<String> finalUrls = [...(photoURLs ?? <String>[])];
     final pendingPaths = <String>[];
+    var missingEvidence = false;
 
     try {
-      // Combine paths from strings or XFiles
       final List<dynamic> filesToUpload = [
         ...?evidenceLocalPaths,
         ...?evidenceFiles,
       ];
 
-      if (filesToUpload.isNotEmpty) {
-        // Upload concurrently, but track each result so a partially
-        // successful upload batch is never lost.
-        final uploaded = await Future.wait(
-          filesToUpload.map((item) async {
-            try {
-              return await uploadEvidence(item);
-            } catch (_) {
-              return null;
-            }
-          }),
-        );
-        for (var i = 0; i < filesToUpload.length; i++) {
-          final item = filesToUpload[i];
-          final localPath = item is XFile ? item.path : item.toString();
-          final url = uploaded[i];
-          if (url != null && url.isNotEmpty) {
-            finalUrls.add(url);
-          } else {
+      for (final item in filesToUpload) {
+        final localPath = item is XFile ? item.path : item.toString();
+        if (!await _isCurrentDraftOwner(ownerUserId)) {
+          pendingPaths.add(localPath);
+          continue;
+        }
+        if (!await File(localPath).exists()) {
+          missingEvidence = true;
+          pendingPaths.add(localPath);
+          continue;
+        }
+        try {
+          final url = await uploadEvidence(item);
+          if (url == null || url.isEmpty) {
             pendingPaths.add(localPath);
+          } else {
+            finalUrls.add(url);
           }
+        } catch (_) {
+          pendingPaths.add(localPath);
         }
       }
 
-      String? photoUrlPayload;
-      if (finalUrls.isNotEmpty) {
-        photoUrlPayload = jsonEncode(finalUrls);
+      if (pendingPaths.isNotEmpty) {
+        final status = missingEvidence ? DraftStatus.failed : DraftStatus.draft;
+        await _persistDraft(
+          ownerUserId: ownerUserId,
+          task: task,
+          submittedAt: submittedAt,
+          inspectionResult: inspectionResult,
+          noticeLevel: noticeLevel,
+          notes: notes,
+          verifiedLat: verifiedLat,
+          verifiedLng: verifiedLng,
+          verifiedAccuracy: verifiedAccuracy,
+          evidencePaths: pendingPaths,
+          photoUrls: finalUrls,
+          status: status,
+        );
+        return missingEvidence
+            ? InspectionSubmissionResult.needsAttention
+            : InspectionSubmissionResult.savedOffline;
       }
 
-      await _auth.dio.post(
+      if (!await _isCurrentDraftOwner(ownerUserId)) {
+        throw StateError(
+          'Inspector session changed during inspection submission.',
+        );
+      }
+      final photoUrlPayload = finalUrls.isEmpty ? null : jsonEncode(finalUrls);
+      final response = await _auth.dio.post(
         '/api/inspections/submit',
         data: {
+          'reportID': task.reportID,
+          if (task.assignmentCycleID != null)
+            'assignmentCycleID': task.assignmentCycleID,
           'logID': task.logID,
           'inspectionResult': inspectionResult,
+          'submittedAt': submittedAt,
           'noticeLevel': noticeLevel,
           'verifiedLat': verifiedLat,
           'verifiedLng': verifiedLng,
@@ -567,34 +975,65 @@ class InspectionService {
           'photoURL': photoUrlPayload,
         },
       );
-
-      return true;
-    } catch (e) {
-      debugPrint('InspectionService.submitInspection error: $e');
-      final now = DateTime.now().toUtc().toIso8601String();
-      await _offlineStorage.saveDraft(
-        InspectionDraft(
-          logId: task.logID,
-          reportId: task.reportID,
-          inspectionResult: inspectionResult,
-          notes: notes,
-          noticeLevel: noticeLevel,
-          verifiedLat: verifiedLat,
-          verifiedLng: verifiedLng,
-          verifiedAccuracy: verifiedAccuracy,
-          // Only files that never made it to the server are queued;
-          // URLs that uploaded successfully are preserved as-is.
-          evidencePaths: pendingPaths,
-          photoUrlPayload: finalUrls.isEmpty ? null : jsonEncode(finalUrls),
-          createdAt: now,
-          updatedAt: now,
-          status: DraftStatus.draft,
-        ),
+      if (!_isAcceptedSubmission(response.data, task.reportID)) {
+        throw const FormatException(
+          'Submission response did not confirm the report identity.',
+        );
+      }
+      await _offlineStorage.updateCachedTaskStatus(
+        task.reportID,
+        verificationStatus: 'Submitted',
+        inspectionResult: inspectionResult,
+        submittedAt: response.data is Map
+            ? response.data['submittedAt']?.toString()
+            : null,
+        submissionReceivedAt: response.data is Map
+            ? response.data['submissionReceivedAt']?.toString()
+            : null,
+        replaceSubmittedAt:
+            response.data is Map && response.data.containsKey('submittedAt'),
+        replaceSubmissionReceivedAt:
+            response.data is Map &&
+            response.data.containsKey('submissionReceivedAt'),
+        assignmentCycleID: task.assignmentCycleID,
+        userId: ownerUserId,
       );
-      await refreshPendingDraftStatuses();
-      return false;
+      return InspectionSubmissionResult.submitted;
+    } catch (error) {
+      debugPrint('InspectionService.submitInspection failed: $error');
+      final responseCode = error is DioException
+          ? error.response?.statusCode ?? 0
+          : 0;
+      final terminal =
+          missingEvidence ||
+          (responseCode >= 400 &&
+              responseCode < 500 &&
+              responseCode != 401 &&
+              responseCode != 408 &&
+              responseCode != 429);
+      await _persistDraft(
+        ownerUserId: ownerUserId,
+        task: task,
+        submittedAt: submittedAt,
+        inspectionResult: inspectionResult,
+        noticeLevel: noticeLevel,
+        notes: notes,
+        verifiedLat: verifiedLat,
+        verifiedLng: verifiedLng,
+        verifiedAccuracy: verifiedAccuracy,
+        evidencePaths: pendingPaths,
+        photoUrls: finalUrls,
+        status: terminal ? DraftStatus.failed : DraftStatus.draft,
+      );
+      return terminal
+          ? InspectionSubmissionResult.needsAttention
+          : InspectionSubmissionResult.savedOffline;
+    } finally {
+      _submittingAssignmentKeys.remove(assignmentKey);
     }
   }
+
+  final Set<String> _submittingAssignmentKeys = {};
 
   /// Build absolute URL for evidence thumbnails (relative paths from API).
   static String? mediaAbsoluteUrl(String? path) {
@@ -609,6 +1048,16 @@ class InspectionService {
 class SyncNotification {
   final bool started;
   final int syncedCount;
-  const SyncNotification.started() : started = true, syncedCount = 0;
-  const SyncNotification.completed(this.syncedCount) : started = false;
+  final bool retryScheduled;
+  const SyncNotification.started()
+    : started = true,
+      syncedCount = 0,
+      retryScheduled = false;
+  const SyncNotification.completed(this.syncedCount)
+    : started = false,
+      retryScheduled = false;
+  const SyncNotification.retryScheduled()
+    : started = false,
+      syncedCount = 0,
+      retryScheduled = true;
 }

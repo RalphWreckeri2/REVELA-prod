@@ -25,6 +25,7 @@ from tests.test_auth_sessions import (
 )
 
 IDLE_LIMIT_SECONDS = IDLE_LIMIT_MINUTES * 60
+MOBILE_IDLE_LIMIT_SECONDS = 60
 
 
 def _make_app(include_auth_routes=False, idle_timeout_minutes=IDLE_LIMIT_MINUTES):
@@ -33,6 +34,7 @@ def _make_app(include_auth_routes=False, idle_timeout_minutes=IDLE_LIMIT_MINUTES
         JWT_SECRET_KEY="test-secret",
         JWT_ACCESS_TOKEN_EXPIRES=timedelta(hours=12),
         SESSION_IDLE_TIMEOUT=timedelta(minutes=idle_timeout_minutes),
+        MOBILE_SESSION_IDLE_TIMEOUT=timedelta(seconds=MOBILE_IDLE_LIMIT_SECONDS),
         JWT_TOKEN_LOCATION=["headers"],
     )
     JWTManager(app)
@@ -104,6 +106,89 @@ class InactivityTests(unittest.TestCase):
 
         self.assertFalse(active)
         self.assertEqual(code, "session_idle")
+
+    def test_mobile_login_reclaims_after_one_minute_without_shortening_api_idle(self):
+        _, mobile_session_id = self._login(client_type="mobile")
+        with patch.object(sessions, "mysql", self.mysql):
+            with self.app.app_context():
+                self._age_activity(mobile_session_id, MOBILE_IDLE_LIMIT_SECONDS - 1)
+                self.assertFalse(sessions.session_is_idle(
+                    12, mobile_session_id, client_type="mobile", for_login=True,
+                ))
+                self._age_activity(mobile_session_id, MOBILE_IDLE_LIMIT_SECONDS + 1)
+                self.assertTrue(sessions.session_is_idle(
+                    12, mobile_session_id, client_type="mobile", for_login=True,
+                ))
+                self.assertFalse(sessions.session_is_idle(12, mobile_session_id))
+                self.assertEqual(sessions.idle_timeout_seconds(), 600)
+                self.assertEqual(sessions.session_reclaim_timeout_seconds("mobile"), 60)
+
+    def test_mobile_slot_is_reclaimed_after_one_minute(self):
+        _, old_session_id = self._login(client_type="mobile")
+        with patch.object(sessions, "mysql", self.mysql):
+            with self.app.app_context():
+                self._age_activity(old_session_id, MOBILE_IDLE_LIMIT_SECONDS + 1)
+                claimed = sessions.claim_active_session(
+                    12, "replacement-mobile-session", "mobile",
+                )
+        self.assertEqual(claimed, "replacement-mobile-session")
+        self.assertEqual(self.store.rows[12][0], "replacement-mobile-session")
+
+    def test_mobile_protected_route_keeps_standard_api_idle_window(self):
+        token, session_id = self._login(client_type="mobile")
+        with patch.object(sessions, "mysql", self.mysql), patch.object(
+            decorators, "find_user_by_id", return_value={"isActive": True}
+        ):
+            client = self.app.test_client()
+            headers = {"Authorization": f"Bearer {token}"}
+            self.assertEqual(client.get("/private", headers=headers).status_code, 200)
+            with self.app.app_context():
+                self._age_activity(session_id, IDLE_LIMIT_SECONDS - 1)
+            self.assertEqual(client.get("/private", headers=headers).status_code, 200)
+            with self.app.app_context():
+                self._age_activity(session_id, IDLE_LIMIT_SECONDS + 1)
+            response = client.get("/private", headers=headers)
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json()["code"], "session_idle")
+        self.assertNotIn(12, self.store.rows)
+
+    def test_mobile_heartbeat_prevents_competing_login_reclaim(self):
+        token, session_id = self._login(client_type="mobile")
+        self._age_activity(session_id, MOBILE_IDLE_LIMIT_SECONDS + 1)
+        with patch.object(sessions, "mysql", self.mysql), patch.object(
+            decorators, "find_user_by_id", return_value={"isActive": True}
+        ):
+            response = self.app.test_client().post(
+                "/api/auth/heartbeat",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(response.status_code, 200)
+            with self.app.app_context():
+                with self.assertRaises(sessions.ActiveSessionConflict):
+                    sessions.claim_active_session(12, "competing-session", "mobile")
+                self.assertTrue(sessions.is_active_session(12, session_id))
+        self.assertEqual(self.store.rows[12][0], session_id)
+
+    def test_mobile_reclaim_after_restart_uses_database_issue_time(self):
+        _, session_id = self._login(client_type="mobile")
+        self.store.age_session(12, 2)
+        self._reset_activity()
+        with patch.object(sessions, "mysql", self.mysql), self.app.app_context():
+            self.assertEqual(
+                sessions.claim_active_session(12, "recovered-session", "mobile"),
+                "recovered-session",
+            )
+            self.assertEqual(
+                sessions.check_active_session(12, session_id), (False, "session_ended")
+            )
+
+    def test_mobile_login_cannot_shorten_an_existing_web_session_window(self):
+        _, session_id = self._login(client_type="web")
+        self._age_activity(session_id, MOBILE_IDLE_LIMIT_SECONDS + 1)
+        with patch.object(sessions, "mysql", self.mysql), self.app.app_context():
+            with self.assertRaises(sessions.ActiveSessionConflict):
+                sessions.claim_active_session(12, "competing-mobile-session", "mobile")
+        self.assertEqual(self.store.rows[12][0], session_id)
 
     def test_background_polling_does_not_count_as_activity(self):
         """Repeated liveness checks must never extend the idle window."""

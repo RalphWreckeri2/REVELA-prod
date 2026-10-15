@@ -6,6 +6,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'runtime_build_config.dart';
 
 import '../pages/notifications_page.dart';
 import 'auth_service.dart';
@@ -63,6 +64,7 @@ class PushNotifications {
   static final Set<int> _warnedDeadlineTaskIds = {};
 
   static Future<void> initialize() async {
+    if (RuntimeBuildConfig.isQa) return;
     if (_initialized) return;
 
     try {
@@ -158,6 +160,7 @@ class PushNotifications {
   /// Fetch the FCM token from Firebase and save it to the backend.
   /// This allows the backend to send push notifications to this device.
   static Future<bool> _saveFcmTokenToBackend() async {
+    if (RuntimeBuildConfig.isQa) return false;
     try {
       final token = await _messaging.getToken();
       if (token == null || token.isEmpty) {
@@ -212,6 +215,7 @@ class PushNotifications {
   /// Public method to manually refresh and save the FCM token.
   /// Call this after login to ensure the backend has a valid token.
   static Future<bool> refreshFcmToken() async {
+    if (RuntimeBuildConfig.isQa) return false;
     debugPrint('[FCM] Manually refreshing and registering FCM token');
     return await _saveFcmTokenToBackend();
   }

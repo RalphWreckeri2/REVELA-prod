@@ -24,6 +24,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _initializeApp() async {
     bool seenWelcome = false;
+    var sessionRestoreResult = SessionRestoreResult.noSavedSession;
 
     // 1. Read SharedPreferences first
     try {
@@ -46,8 +47,10 @@ class _SplashScreenState extends State<SplashScreen> {
     try {
       await ApiConfig.initialize();
       AuthService().syncBaseUrl();
+      sessionRestoreResult = await AuthService().restoreSavedSession();
     } catch (e) {
-      debugPrint("ApiConfig initialization error: $e");
+      debugPrint("API/session initialization error: $e");
+      sessionRestoreResult = SessionRestoreResult.temporarilyUnavailable;
     }
 
     // 3. Initialize notifications (safe)
@@ -62,9 +65,24 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
 
+    // AuthService notifies MyApp when a valid session is restored. Do not let
+    // the splash route race that authenticated navigation.
+    if (sessionRestoreResult == SessionRestoreResult.restored) return;
+
     // 4. Navigate based on app state
-    final Widget nextRoute =
-        seenWelcome ? const LoginPage() : const WelcomePage();
+    final Widget nextRoute;
+    if (seenWelcome ||
+        sessionRestoreResult != SessionRestoreResult.noSavedSession) {
+      nextRoute = LoginPage(
+        accountRevokedNotice: AuthService().isAccountRevoked,
+        sessionValidationUnavailable:
+            sessionRestoreResult == SessionRestoreResult.temporarilyUnavailable,
+        passwordChangeRequired:
+            sessionRestoreResult == SessionRestoreResult.passwordChangeRequired,
+      );
+    } else {
+      nextRoute = const WelcomePage();
+    }
 
     Navigator.pushReplacement(
       context,

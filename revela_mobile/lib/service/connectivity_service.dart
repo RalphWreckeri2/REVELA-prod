@@ -5,13 +5,15 @@ import 'package:flutter/foundation.dart';
 
 import 'auth_service.dart';
 import 'push_notifications.dart';
+import 'runtime_build_config.dart';
 
 /// App-wide connectivity monitor.
 ///
 /// Exposes [isOffline] as a [ValueNotifier] any widget can listen to, and
 /// invokes registered listeners exactly once per online → offline transition
-/// (debounced) so the app can force-stop the active session and notify the
-/// user. Start this once from `main()` — it lives for the app's lifetime.
+/// (debounced). Connectivity changes are informational and do not invalidate
+/// authentication. Start this once from `main()` — it lives for the app’s
+/// lifetime.
 class ConnectivityService extends ChangeNotifier {
   ConnectivityService._internal();
   static final ConnectivityService instance = ConnectivityService._internal();
@@ -73,8 +75,7 @@ class ConnectivityService extends ChangeNotifier {
 
   void _apply(List<ConnectivityResult> results) {
     final bool none =
-        results.isEmpty ||
-        !results.any((r) => r != ConnectivityResult.none);
+        results.isEmpty || !results.any((r) => r != ConnectivityResult.none);
 
     final wasOffline = isOffline.value;
     isOffline.value = none;
@@ -91,7 +92,7 @@ class ConnectivityService extends ChangeNotifier {
     } else if (!none && wasOffline) {
       debugPrint('ConnectivityService: device back ONLINE');
       // Sync FCM token upon reconnection if user is authenticated
-      if (AuthService().isAuthenticated) {
+      if (!RuntimeBuildConfig.isQa && AuthService().isAuthenticated) {
         unawaited(PushNotifications.refreshFcmToken());
       }
     }

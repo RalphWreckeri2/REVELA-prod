@@ -1,6 +1,7 @@
 import 'package:revela_mobile/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import '../service/inspection_service.dart';
+import '../service/offline_inspection_storage.dart';
 import '../utils/date_utils.dart';
 import '../widgets/scale_tap.dart';
 
@@ -78,12 +79,30 @@ class InspectionCard extends StatelessWidget {
     }
   }
 
-  String _formatDate(String timestamp) {
-    return AppDateUtils.formatTimestamp(timestamp);
-  }
-
   @override
   Widget build(BuildContext context) {
+    final isCurrentAssignment = const {
+      'Assigned',
+      'Reassigned',
+    }.contains(task.verificationStatus);
+    final isPendingSync =
+        task.localDraftStatus == DraftStatus.draft ||
+        task.localDraftStatus == DraftStatus.syncing ||
+        task.localDraftStatus == DraftStatus.failed;
+    final timestamp = isCurrentAssignment
+        ? task.dispatchedAt ?? task.irTimestamp
+        : task.submittedAt;
+    final timestampLabel = isCurrentAssignment
+        ? 'Dispatched'
+        : isPendingSync
+        ? 'Submitted · Pending sync'
+        : 'Submitted';
+    final timestampValue = AppDateUtils.formatTimestampInManila(
+      timestamp,
+      unavailableLabel: isCurrentAssignment
+          ? 'Dispatch time unavailable'
+          : 'Submission time unavailable',
+    );
     return ScaleTap(
       onTap: onTap,
       child: Container(
@@ -92,15 +111,21 @@ class InspectionCard extends StatelessWidget {
         decoration: BoxDecoration(
           color: context.adaptiveSurface,
           borderRadius: BorderRadius.circular(18),
-          border: context.isDarkMode ? Border.all(color: Colors.grey, width: 1) : null,
+          border: context.isDarkMode
+              ? Border.all(color: Colors.grey, width: 1)
+              : null,
           boxShadow: [
             BoxShadow(
-              color: context.isDarkMode ? Colors.transparent : Colors.black.withValues(alpha: 0.06),
+              color: context.isDarkMode
+                  ? Colors.transparent
+                  : Colors.black.withValues(alpha: 0.06),
               blurRadius: 16,
               offset: const Offset(0, 4),
             ),
             BoxShadow(
-              color: context.isDarkMode ? Colors.transparent : Colors.black.withValues(alpha: 0.03),
+              color: context.isDarkMode
+                  ? Colors.transparent
+                  : Colors.black.withValues(alpha: 0.03),
               blurRadius: 4,
               offset: const Offset(0, 1),
             ),
@@ -221,7 +246,7 @@ class InspectionCard extends StatelessWidget {
 
             // ── Right: ID + time ────────────────────────────────────────────
             Container(
-              constraints: const BoxConstraints(maxWidth: 90),
+              constraints: const BoxConstraints(maxWidth: 112),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -239,14 +264,25 @@ class InspectionCard extends StatelessWidget {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    _formatDate(task.irTimestamp),
+                    timestampLabel,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: context.adaptiveTextMid,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    textAlign: TextAlign.right,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    timestampValue,
                     style: TextStyle(
                       fontSize: 10,
                       color: context.adaptiveTextMid,
                       fontWeight: FontWeight.w400,
                     ),
                     textAlign: TextAlign.right,
-                    maxLines: 1,
+                    maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                   SizedBox(height: 8),

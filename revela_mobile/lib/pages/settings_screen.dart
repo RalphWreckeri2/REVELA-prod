@@ -7,6 +7,7 @@ import '../main.dart';
 import '../widgets/custom_app_bar.dart';
 import 'profile_page.dart';
 import 'main_layout.dart';
+import 'legal_policy_screen.dart';
 import 'package:showcaseview/showcaseview.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -82,24 +83,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } catch (e) {
       _showSnackBar('Could not open your email app.', isError: true);
-    }
-  }
-
-  Future<void> _openLegalUrl(String url) async {
-    final Uri uri = Uri.parse(url);
-    try {
-      if (await canLaunchUrl(uri)) {
-        // Consistent with login screen, open in an in-app web view
-        await launchUrl(uri, mode: LaunchMode.inAppWebView);
-      } else {
-        _showSnackBar('Could not open the link.', isError: true);
-      }
-    } catch (e) {
-      // In case of an error, show a generic message
-      _showSnackBar(
-        'An error occurred while trying to open the link.',
-        isError: true,
-      );
     }
   }
 
@@ -496,8 +479,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       Icons.chevron_right,
                                       color: context.adaptiveTextLight,
                                     ),
-                                    onTap: () => _openLegalUrl(
-                                      'https://ralphwreckeri2.github.io/revela_tc/',
+                                    onTap: () => showLegalPolicy(
+                                      context,
+                                      LegalPolicyDocument.terms,
                                     ),
                                   ),
                                   Divider(
@@ -520,8 +504,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       Icons.chevron_right,
                                       color: context.adaptiveTextLight,
                                     ),
-                                    onTap: () => _openLegalUrl(
-                                      'https://ralphwreckeri2.github.io/revela_pn/',
+                                    onTap: () => showLegalPolicy(
+                                      context,
+                                      LegalPolicyDocument.privacy,
                                     ),
                                   ),
                                   Divider(
@@ -544,8 +529,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                       Icons.chevron_right,
                                       color: context.adaptiveTextLight,
                                     ),
-                                    onTap: () => _openLegalUrl(
-                                      'https://revelasys.site/cookies',
+                                    onTap: () => showLegalPolicy(
+                                      context,
+                                      LegalPolicyDocument.cookies,
                                     ),
                                   ),
                                 ],

@@ -1,20 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:io';
 import '../service/inspection_service.dart';
+import '../service/inspection_location_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/image_compressor.dart';
 
 class InspectionModal extends StatefulWidget {
   final InspectionTask task;
   final VoidCallback onSubmitted;
+  final InspectionLocationService? locationService;
+  final ValueChanged<LatLng>? onViewStreetView;
 
   const InspectionModal({
     super.key,
     required this.task,
     required this.onSubmitted,
+    this.locationService,
+    this.onViewStreetView,
   });
 
   @override
@@ -35,8 +40,10 @@ class _InspectionModalState extends State<InspectionModal> {
   int _currentStep = 0;
   bool _showResultError = false;
 
-  /// Pre-warmed GPS position (fetched when entering the Review step)
-  Future<Position>? _locationFuture;
+  /// One native GPS request, started when the review step opens.
+  Future<InspectionLocationResult>? _locationFuture;
+  InspectionLocationService get _locationService =>
+      widget.locationService ?? InspectionLocationService();
 
   @override
   void dispose() {
@@ -44,12 +51,126 @@ class _InspectionModalState extends State<InspectionModal> {
     super.dispose();
   }
 
-  /// Pre-warm GPS so it's ready when the user taps Submit.
+  /// Start one native GPS request. GPS acquisition does not use the network.
   void _preWarmLocation() {
-    _locationFuture ??= Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        timeLimit: Duration(seconds: 10),
-      ),
+    _locationFuture ??= _locationService.getCurrentLocation();
+  }
+
+  void _retryLocation() {
+    setState(() {
+      _locationFuture = _locationService.getCurrentLocation();
+    });
+  }
+
+  Future<void> _openLocationSettings(InspectionLocationIssue issue) async {
+    try {
+      final opened = await _locationService.openSettings(issue);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open location settings.')),
+        );
+      }
+    } catch (error) {
+      debugPrint('Could not open location settings: $error');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open location settings.')),
+        );
+      }
+    }
+  }
+
+  Widget _buildLocationStatus() {
+    _preWarmLocation();
+    return FutureBuilder<InspectionLocationResult>(
+      future: _locationFuture,
+      builder: (context, snapshot) {
+        final result =
+            snapshot.data ??
+            const InspectionLocationResult.failure(
+              InspectionLocationIssue.unavailable,
+            );
+        final isLoading =
+            snapshot.connectionState != ConnectionState.done ||
+            snapshot.data == null;
+        final hasFix = result.hasFix;
+        final color = isLoading || hasFix
+            ? context.adaptivePrimary
+            : Colors.orange.shade800;
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 20),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (isLoading)
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: color,
+                      ),
+                    )
+                  else
+                    Icon(
+                      hasFix ? Icons.my_location : Icons.location_off_outlined,
+                      color: color,
+                      size: 19,
+                    ),
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      isLoading
+                          ? 'Getting a GPS fix. Internet is not required.'
+                          : hasFix
+                          ? 'GPS ready (±${result.fix!.accuracy.round()} m). Internet is not required.'
+                          : result.message,
+                      style: TextStyle(
+                        color: context.adaptiveTextDark,
+                        fontSize: 13,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (!isLoading &&
+                  (!hasFix || result.canRetry || result.canOpenSettings))
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: result.canOpenSettings
+                        ? () => _openLocationSettings(result.issue)
+                        : result.canRetry
+                        ? _retryLocation
+                        : null,
+                    icon: Icon(
+                      result.canOpenSettings
+                          ? Icons.settings_outlined
+                          : Icons.refresh,
+                      size: 18,
+                    ),
+                    label: Text(
+                      result.canOpenSettings
+                          ? 'Open settings'
+                          : 'Retry location',
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -63,25 +184,18 @@ class _InspectionModalState extends State<InspectionModal> {
 
     setState(() => _submitting = true);
     try {
-      double? vLat;
-      double? vLng;
-      double? vAccuracy;
-      try {
-        // Use pre-warmed location if available, otherwise fetch now
-        _preWarmLocation();
-        final p = await _locationFuture!;
-        vLat = p.latitude;
-        vLng = p.longitude;
-        vAccuracy = p.accuracy;
-      } catch (e) {
-        // Reset so next attempt gets a fresh fix
-        _locationFuture = null;
-        debugPrint('Could not retrieve GPS location: $e');
+      _preWarmLocation();
+      final location = await _locationFuture!;
+      final vLat = location.fix?.latitude;
+      final vLng = location.fix?.longitude;
+      final vAccuracy = location.fix?.accuracy;
+      if (!location.hasFix) {
+        debugPrint('GPS unavailable for inspection: ${location.issue}');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                'Could not get GPS location. Submitting without verified coordinates.',
+                'A verified GPS fix is unavailable. ${location.message} Submitting without verified coordinates.',
               ),
             ),
           );
@@ -107,7 +221,7 @@ class _InspectionModalState extends State<InspectionModal> {
             : '[Escalated to Black] $remarks';
       }
 
-      final bool savedOffline = await InspectionService().submitInspection(
+      final result = await InspectionService().submitInspection(
         task: widget.task,
         inspectionResult: _inspectionResult,
         noticeLevel: _noticeLevel,
@@ -123,15 +237,23 @@ class _InspectionModalState extends State<InspectionModal> {
       final messenger = ScaffoldMessenger.of(context);
       widget.onSubmitted();
       Navigator.of(context).pop(true);
+      final message = switch (result) {
+        InspectionSubmissionResult.submitted =>
+          'Submitted successfully. Admin can verify it on the web dashboard.',
+        InspectionSubmissionResult.savedOffline =>
+          'Saved offline and will sync automatically when a connection is available.',
+        InspectionSubmissionResult.needsAttention =>
+          'Saved on this device, but needs attention before it can be submitted.',
+        InspectionSubmissionResult.alreadySaved =>
+          'This assignment already has a saved offline report. It was not duplicated.',
+      };
       messenger.showSnackBar(
         SnackBar(
-          content: Text(
-            savedOffline
-                ? 'Submitted successfully. Admin can verify it on the web dashboard.'
-                : 'Saved offline and will sync automatically when a connection is available.',
-          ),
-          backgroundColor: savedOffline
+          content: Text(message),
+          backgroundColor: result == InspectionSubmissionResult.submitted
               ? AppColors.darkGreen
+              : result == InspectionSubmissionResult.needsAttention
+              ? Colors.red.shade700
               : Colors.orange.shade700,
         ),
       );
@@ -306,12 +428,15 @@ class _InspectionModalState extends State<InspectionModal> {
 
   void _prevStep() {
     setState(() {
+      if (_currentStep == 2) _locationFuture = null;
       if (_currentStep > 0) _currentStep--;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final latitude = widget.task.latitude;
+    final longitude = widget.task.longitude;
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
       minChildSize: 0.5,
@@ -502,6 +627,28 @@ class _InspectionModalState extends State<InspectionModal> {
             ),
 
             const Divider(height: 32),
+            if (widget.onViewStreetView != null &&
+                latitude != null &&
+                latitude.isFinite &&
+                longitude != null &&
+                longitude.isFinite)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      final position = LatLng(latitude, longitude);
+                      Navigator.of(context).pop();
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        widget.onViewStreetView?.call(position);
+                      });
+                    },
+                    icon: const Icon(Icons.streetview_rounded),
+                    label: const Text('View Street View'),
+                  ),
+                ),
+              ),
 
             // STEP 1: Compliance Result & Notice
             if (_currentStep == 0)
@@ -964,6 +1111,7 @@ class _InspectionModalState extends State<InspectionModal> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    _buildLocationStatus(),
                     const _SectionLabel(
                       label: 'Remarks',
                       icon: Icons.comment_outlined,
