@@ -323,6 +323,16 @@ class InspectionAssignmentConflict(Exception):
     """
 
 
+class InspectionTargetNotFound(LookupError):
+    """The map pin being assigned does not exist. Surfaces as HTTP 404."""
+
+
+class InspectionTargetInvalid(ValueError):
+    """The assignment itself is malformed, e.g. no such inspector.
+    Surfaces as HTTP 400.
+    """
+
+
 # Effective colours a business may still be inspected in. Green means the
 # business is registered and compliant; Black is a permanent offender. Both
 # are decided on the effective colour - the same value the Map renders - not
@@ -359,7 +369,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         flag = cursor.fetchone()
         if not flag:
             cursor.close()
-            return None, f"Flag #{log_id} not found"
+            return None, InspectionTargetNotFound(f"Flag #{log_id} not found")
 
         # Guard: eligibility, decided on the effective colour.
         effective_color = (flag.get("effectiveFlagColor")
@@ -383,7 +393,8 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         inspector = cursor.fetchone()
         if not inspector:
             cursor.close()
-            return None, f"Inspector userID {inspector_user_id} not found"
+            return None, InspectionTargetInvalid(
+                f"Inspector userID {inspector_user_id} not found")
 
         # Check if ANY report already exists for this flag (any status).
         # Re-dispatching reuses the existing row so the count stays correct.

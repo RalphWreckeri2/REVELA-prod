@@ -15,6 +15,8 @@ from api.inspections.service import (
     submit_inspection,
     InspectionSubmissionConflict,
     InspectionAssignmentConflict,
+    InspectionTargetNotFound,
+    InspectionTargetInvalid,
     reassign_submitted_report,
     verify_inspection,
     get_all_inspections,
@@ -152,11 +154,24 @@ def assign():
         assigned_by=assigned_by,
     )
     if error:
+        # Typed errors, not message text, so the status cannot drift from the
+        # wording: 409 ineligible/double-booked, 404 no such pin, 400 bad
+        # inspector, 500 for genuine failures.
         if isinstance(error, InspectionAssignmentConflict):
             return jsonify({
                 "error": str(error),
                 "code": "inspection_assignment_conflict",
             }), 409
+        if isinstance(error, InspectionTargetNotFound):
+            return jsonify({
+                "error": str(error),
+                "code": "inspection_target_not_found",
+            }), 404
+        if isinstance(error, InspectionTargetInvalid):
+            return jsonify({
+                "error": str(error),
+                "code": "inspection_target_invalid",
+            }), 400
         return jsonify({"error": error}), 500
     try:
         notify_inspection_assigned(
