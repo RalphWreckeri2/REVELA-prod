@@ -98,17 +98,34 @@ class RelationalJoinsTests(unittest.TestCase):
         res, err = get_flags(color="Green")
         self.assertIsNone(err)
 
-        count_sql = mock_cursor.execute.call_args_list[0][0][0]
+        # get_flags issues an information_schema probe for
+        # ladder_columns_available() before its own queries, so pick them by
+        # content rather than by position in the call list.
+        calls = mock_cursor.execute.call_args_list
+        count_sql = next(c[0][0] for c in calls if "AS total" in c[0][0])
+        fetch_sql = next(c[0][0] for c in calls if "AS combined" in c[0][0]
+                         and "ORDER BY detectedDate" in c[0][0])
+
+        # Registry-only dedup must still match on businessID first.
         self.assertIn(
             "g2.businessID IS NOT NULL AND g2.businessID = r.businessID", count_sql)
         self.assertIn(
             "g2.placeID IS NOT NULL AND g2.placeID = r.placeID", count_sql)
-        self.assertIn(
-            "g.businessID IS NOT NULL AND r_chk.businessID = g.businessID", count_sql)
-        self.assertIn(
-            "g.placeID IS NOT NULL AND r_chk.placeID = g.placeID", count_sql)
 
-        fetch_sql = mock_cursor.execute.call_args_list[1][0][0]
+        # The pin's colour comes from the shared builder, whose registry match
+        # tries businessID, then placeID, then name - and the name fallback
+        # only applies when the pin has no businessID at all.
+        self.assertIn("r_chk.businessID = g.businessID", count_sql)
+        self.assertIn("g.placeID IS NOT NULL AND r_chk.placeID = g.placeID",
+                      count_sql)
+        self.assertIn(
+            "g.businessID IS NULL", count_sql)
+        self.assertIn("r_chk.barangayID = g.barangayID", count_sql)
+        self.assertIn("r_chk.businessName = g.detectedName", count_sql)
+        # ...and the businessID match outranks the others when picking a row.
+        self.assertIn(
+            "ORDER BY (r_chk.businessID = g.businessID) DESC", count_sql)
+
         self.assertIn(
             "g.placeID IS NOT NULL AND placeID = g.placeID", fetch_sql)
         self.assertIn("r.matchStatus", fetch_sql)

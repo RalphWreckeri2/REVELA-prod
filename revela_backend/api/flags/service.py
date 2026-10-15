@@ -17,6 +17,7 @@ import requests as http
 import json
 from geopy.distance import geodesic
 from app import mysql
+from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
 from shapely import prepare
 from shapely.affinity import scale
 from shapely.geometry import mapping, shape, Point
@@ -2901,6 +2902,32 @@ def _run_detection_cycle(user_id=None, mode="quick"):
 
 # ── Get all flags ─────────────────────────────────────────────────────────────
 
+def _registry_row_flag_color_sql(alias="r", *, ladder=False):
+    """Flag colour for an official_registry row that has no geospatial_log pin.
+
+    get_flags UNIONs two sources. The geospatial_logs branch can use
+    _effective_flag_color_sql, which is pin-centric. A registry-only business
+    has no pin, so it needs its own expression - but it must agree with the
+    shared rule, including the Black-lock and Orange-warning arms, or the same
+    business would render one colour from the pin branch and another from the
+    registry branch.
+
+    ELSE 'Yellow' matches status_to_color()'s unknown-status fallback.
+    """
+    ladder_arms = ""
+    if ladder:
+        ladder_arms = (f"        WHEN COALESCE({alias}.blackLocked, 0) <> 0 THEN 'Black'\n"
+                       f"        WHEN COALESCE({alias}.warningLevel, 0) >= 1 THEN 'Orange'\n")
+    return f"""CASE
+{ladder_arms}        WHEN {alias}.applicationStatus = 'Active' THEN 'Green'
+        WHEN {alias}.applicationStatus = 'Expired' THEN 'Red'
+        WHEN {alias}.applicationStatus IN ('Revoked', 'Blacklisted') THEN 'Black'
+        WHEN {alias}.applicationStatus = 'Closed' THEN 'Purple'
+        WHEN {alias}.applicationStatus = 'Pending' THEN 'Yellow'
+        ELSE 'Yellow'
+    END"""
+
+
 def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_user_id=None):
     """
     Return paginated flag entries with optional filters.
@@ -2919,6 +2946,14 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
     """
     try:
         cursor = mysql.connection.cursor()
+
+        # One shared colour expression per branch, used for both the filter and
+        # the rendered value. ladder_columns_available() is False until the
+        # ladder migration has run, which leaves this query byte-identical to
+        # before on a database without warningLevel / blackLocked.
+        ladder = ladder_columns_available(cursor)
+        effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
+        registry_flag_color = _registry_row_flag_color_sql("r", ladder=ladder)
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
         # Filters that apply to the geospatial_logs branch
@@ -2948,128 +2983,17 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             reg_conditions.append("FALSE")
 
         if color:
-            # Map the color filter back to the applicationStatus for the registry branch
-            _status_for_color = {
-                "Green":  "Active",
-                "Red":    "Expired",
-                "Black":  "Revoked",
-                "Purple": "Closed",
-                "Yellow": "Pending",
-            }
-            mapped_status = _status_for_color.get(color)
-            if color == "Orange":
-                geo_conditions.append("""
-                    (
-                        (
-                            EXISTS (
-                                SELECT 1 FROM inspection_reports ir
-                                WHERE ir.targetType = 'geospatial_log'
-                                  AND ir.targetID = g.logID
-                                  AND ir.verificationStatus = 'Verified'
-                                  AND ir.inspectionResult = 'Orange'
-                            )
-                            AND (
-                                NOT EXISTS (
-                                    SELECT 1 FROM official_registry r_chk
-                                    WHERE (g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
-                                       OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
-                                           AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
-                                       OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
-                                           AND r_chk.businessName = g.detectedName)
-                                )
-                                OR EXISTS (
-                                    SELECT 1 FROM official_registry r_chk
-                                    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
-                                           OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
-                                               AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
-                                           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
-                                               AND r_chk.businessName = g.detectedName))
-                                      AND r_chk.applicationStatus = 'Expired'
-                                )
-                            )
-                        )
-                        OR (
-                            g.flagColor = 'Orange'
-                            AND NOT EXISTS (
-                                SELECT 1 FROM official_registry r_chk
-                                WHERE (g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
-                                   OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
-                                       AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
-                                   OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
-                                       AND r_chk.businessName = g.detectedName)
-                            )
-                        )
-                    )
-                """)
-                reg_conditions.append("FALSE")
-            elif color == "Red":
-                geo_conditions.append("""
-                    (
-                        (g.flagColor = %s OR EXISTS (
-                            SELECT 1 FROM official_registry r_chk
-                            WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
-                                   OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
-                                       AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
-                                   OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
-                                       AND r_chk.businessName = g.detectedName))
-                              AND r_chk.applicationStatus = %s
-                        ))
-                        AND NOT EXISTS (
-                            SELECT 1 FROM inspection_reports ir
-                            WHERE ir.targetType = 'geospatial_log'
-                              AND ir.targetID = g.logID
-                              AND ir.verificationStatus = 'Verified'
-                              AND ir.inspectionResult = 'Orange'
-                        )
-                    )
-                """)
-                geo_params.extend([color, mapped_status])
-                reg_conditions.append("r.applicationStatus = %s")
-                reg_params.append(mapped_status)
-            elif color == "Black":
-                geo_conditions.append("""
-                    (g.flagColor = %s OR EXISTS (
-                        SELECT 1 FROM official_registry r_chk
-                        WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)
-                               OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID
-                                   AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))
-                               OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID
-                                   AND r_chk.businessName = g.detectedName))
-                          AND r_chk.applicationStatus IN ('Revoked', 'Blacklisted')
-                    ))
-                """)
-                geo_params.append(color)
-                reg_conditions.append(
-                    "r.applicationStatus IN ('Revoked', 'Blacklisted')"
-                )
-            elif mapped_status:
-                geo_conditions.append(
-                    "(g.flagColor = %s OR EXISTS ("
-                    "    SELECT 1 FROM official_registry r_chk"
-                    "    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)"
-                    "           OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID"
-                    "               AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))"
-                    "           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID AND r_chk.businessName = g.detectedName))"
-                    "      AND r_chk.applicationStatus = %s"
-                    "))"
-                )
-                geo_params.extend([color, mapped_status])
-                reg_conditions.append("r.applicationStatus = %s")
-                reg_params.append(mapped_status)
-            else:
-                # Color has no registry equivalent (e.g. Red for detected unregistered POIs)
-                geo_conditions.append(
-                    "(g.flagColor = %s AND NOT EXISTS ("
-                    "    SELECT 1 FROM official_registry r_chk"
-                    "    WHERE ((g.businessID IS NOT NULL AND r_chk.businessID = g.businessID)"
-                    "           OR (g.placeID IS NOT NULL AND r_chk.placeID = g.placeID"
-                    "               AND (g.businessID IS NULL OR r_chk.businessID = g.businessID))"
-                    "           OR (g.businessID IS NULL AND r_chk.barangayID = g.barangayID AND r_chk.businessName = g.detectedName))"
-                    "      AND r_chk.applicationStatus IN ('Active', 'Expired', 'Revoked', 'Closed', 'Pending')"
-                    "))"
-                )
-                geo_params.append(color)
-                reg_conditions.append("FALSE")
+            # Filter on the same derived colour the rows below are rendered
+            # with. The per-colour branching this replaces compared
+            # g.flagColor and applicationStatus directly, so filtering by a
+            # colour could return rows rendered in a different colour, and it
+            # hard-coded the retired "Orange only when Expired" rule. Both
+            # branches now go through the shared builder, so the Map filter
+            # and the Map pin cannot disagree.
+            geo_conditions.append(f"({effective_flag_color}) = %s")
+            geo_params.append(color)
+            reg_conditions.append(f"({registry_flag_color}) = %s")
+            reg_params.append(color)
 
         if barangay_id:
             geo_conditions.append("g.barangayID = %s")
@@ -3112,29 +3036,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     g.detectedName,
                     COALESCE(g.latitude, r.latitude) AS latitude,
                     COALESCE(g.longitude, r.longitude) AS longitude,
-                    CASE
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired'
-                         AND EXISTS (
-                            SELECT 1 FROM inspection_reports ir
-                            WHERE ir.targetType = 'geospatial_log'
-                              AND ir.targetID = g.logID
-                              AND ir.verificationStatus = 'Verified'
-                              AND ir.inspectionResult = 'Orange'
-                         ) THEN 'Orange'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Active'  THEN 'Green'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Red'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus IN ('Revoked', 'Blacklisted') THEN 'Black'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Closed'  THEN 'Purple'
-                        WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Pending' THEN 'Yellow'
-                        WHEN r.businessID IS NULL AND EXISTS (
-                            SELECT 1 FROM inspection_reports ir
-                            WHERE ir.targetType = 'geospatial_log'
-                              AND ir.targetID = g.logID
-                              AND ir.verificationStatus = 'Verified'
-                              AND ir.inspectionResult = 'Orange'
-                        ) THEN 'Orange'
-                        ELSE g.flagColor
-                    END AS flagColor,
+                    {effective_flag_color} AS flagColor,
                     g.detectedDate,
                     g.nearestLandmark,
                     g.notes,
@@ -3187,14 +3089,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     r.businessName             AS detectedName,
                     r.latitude                 AS latitude,
                     r.longitude                AS longitude,
-                    CASE r.applicationStatus
-                        WHEN 'Active'  THEN 'Green'
-                        WHEN 'Expired' THEN 'Red'
-                        WHEN 'Revoked' THEN 'Black'
-                        WHEN 'Blacklisted' THEN 'Black'
-                        WHEN 'Closed'  THEN 'Purple'
-                        ELSE 'Yellow'
-                    END                        AS flagColor,
+                    {registry_flag_color}            AS flagColor,
                     COALESCE(r.lastRenewalDate, NOW()) AS detectedDate,
                     r.businessAddress          AS nearestLandmark,
                     NULL                       AS notes,

@@ -7,6 +7,20 @@ import unittest
 from flask import Flask
 from unittest.mock import MagicMock, patch
 from api.registry import routes as registry_routes
+from api.registry.colors import _effective_flag_color_sql
+
+
+def _count_query(cursor):
+    """get_flags now issues an information_schema probe before its own queries.
+
+    Pick the count query by content so the tests do not depend on how many
+    queries ran before it.
+    """
+    for call in cursor.execute.call_args_list:
+        sql = call[0][0]
+        if "AS total" in sql:
+            return sql, call[0][1] if len(call[0]) > 1 else []
+    raise AssertionError("get_flags never ran its count query")
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
@@ -98,13 +112,12 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(result["data"], [])
-        count_sql, count_params = mock_cursor.execute.call_args_list[0].args
-        self.assertEqual(count_params, ["Red", "Expired", "Expired"])
-        fetch_sql = mock_cursor.execute.call_args_list[1].args[0]
-        self.assertIn("r_chk.applicationStatus = %s", count_sql)
+        count_sql, count_params = _count_query(mock_cursor)
+        # One bind per branch: the pin branch and the registry-only branch.
+        self.assertEqual(count_params, ["Red", "Red"])
         self.assertIn("ir.verificationStatus = 'Verified'", count_sql)
         self.assertNotIn(
-            "applicationStatus = 'Expired' THEN 'Orange'", fetch_sql)
+            "applicationStatus = 'Expired' THEN 'Orange'", count_sql)
 
     @patch("api.flags.service.mysql")
     def test_orange_filter_selects_explicit_geospatial_flags(self, mock_mysql):
@@ -117,12 +130,19 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(result["data"], [])
-        count_sql, count_params = mock_cursor.execute.call_args_list[0].args
-        self.assertEqual(count_params, [])
+        count_sql, count_params = _count_query(mock_cursor)
+        self.assertEqual(count_params, ["Orange", "Orange"])
+
+        # The filter is now the shared expression, so the retired "Orange only
+        # when the registry row is Expired" restriction cannot come back.
         self.assertIn("ir.verificationStatus = 'Verified'", count_sql)
         self.assertIn("ir.inspectionResult = 'Orange'", count_sql)
-        self.assertIn("r_chk.applicationStatus = 'Expired'", count_sql)
-        self.assertIn("g.flagColor = 'Orange'", count_sql)
+        self.assertNotIn("r_chk.applicationStatus = 'Expired'", count_sql)
+        # The same expression renders the rows, so filter and pin cannot drift.
+        self.assertIn(_effective_flag_color_sql("g"), count_sql)
+        fetch_sql = next(c[0][0] for c in mock_cursor.execute.call_args_list
+                         if "ORDER BY detectedDate" in c[0][0])
+        self.assertIn(_effective_flag_color_sql("g"), fetch_sql)
 
     @patch("api.inspections.service.log_inspection_event")
     @patch("api.inspections.service._ensure_gps_columns")
@@ -164,8 +184,8 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
 
         self.assertIsNone(error)
         self.assertEqual(result["data"], [])
-        count_sql, count_params = mock_cursor.execute.call_args_list[0].args
-        self.assertEqual(count_params, ["Red", "Expired", "Expired"])
+        count_sql, count_params = _count_query(mock_cursor)
+        self.assertEqual(count_params, ["Red", "Red"])
         self.assertIn("ir.verificationStatus = 'Verified'", count_sql)
         self.assertIn("ir.inspectionResult = 'Orange'", count_sql)
 
