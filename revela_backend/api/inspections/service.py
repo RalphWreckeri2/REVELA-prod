@@ -10,7 +10,9 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from app import mysql
-from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
+from api.registry.colors import (
+    _effective_flag_color_sql, _registry_column_sql, ladder_columns_available,
+)
 from api.registry.locks import (
     BlackLockedError,
     assert_not_black_locked,
@@ -337,6 +339,10 @@ class InspectionTargetNotFound(LookupError):
     """The map pin being assigned does not exist. Surfaces as HTTP 404."""
 
 
+class BlackInspectionAssignmentConflict(InspectionAssignmentConflict):
+    """Black dispatch/Follow-up needs an open SUPER_ADMIN grant. HTTP 409."""
+
+
 class InspectionTargetInvalid(ValueError):
     """The assignment itself is malformed, e.g. no such inspector.
     Surfaces as HTTP 400.
@@ -376,6 +382,13 @@ def _coerce_notice_level(value):
 INSPECTABLE_FLAG_COLORS = frozenset({"Red", "Yellow", "Orange", "Purple"})
 
 
+def _black_dispatch_unlock_sql(cursor):
+    """Read the grant from the same registry match as the color builder."""
+    if not _has_columns(cursor, BLACK_UNLOCK_COLUMNS):
+        return "0"
+    return f"COALESCE({_registry_column_sql('g', 'blackDispatchUnlocked')}, 0)"
+
+
 def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
     """
     Create an INSPECTION_REPORTS row linking a geospatial log to an inspector.
@@ -396,12 +409,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # precedence: an unlocked business is still Black on every screen. It
         # only opens this gate, and only once. A missing column reads as 0, so
         # an un-migrated database keeps Black blocked.
-        unlock_available = _has_columns(cursor, BLACK_UNLOCK_COLUMNS)
-        unlock_expr = (
-            "COALESCE((SELECT r2.blackDispatchUnlocked"
-            "         FROM official_registry r2"
-            "         WHERE r2.businessID = g.businessID LIMIT 1), 0)"
-            if unlock_available else "0")
+        unlock_expr = _black_dispatch_unlock_sql(cursor)
 
         cursor.execute(
             f"""
@@ -423,13 +431,15 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
                            or flag.get("flagColor"))
         dispatch_unlocked = bool(_coerce_notice_level(
             flag.get("blackDispatchUnlocked")))
+        if effective_color == "Black" and not dispatch_unlocked:
+            cursor.close()
+            return None, BlackInspectionAssignmentConflict(
+                "Black businesses only accept an inspection while a "
+                "SUPER_ADMIN has unlocked one")
         black_passed = effective_color == "Black" and dispatch_unlocked
         if effective_color not in INSPECTABLE_FLAG_COLORS and not black_passed:
             if effective_color == "Green":
                 reason = ("Green (registered) businesses cannot be inspected")
-            elif effective_color == "Black":
-                reason = ("Black businesses only accept an inspection while a "
-                          "SUPER_ADMIN has unlocked one")
             else:
                 reason = (f"{effective_color or 'Uncoloured'} businesses "
                           f"cannot be inspected")
@@ -1382,6 +1392,12 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
         total = counts.get("collapsed", 0)
         total_rows = counts.get("all_rows", 0)
 
+        ladder = ladder_columns_available(cursor)
+        effective_color = _effective_flag_color_sql("g", ladder=ladder)
+        unlock = _black_dispatch_unlock_sql(cursor)
+        warning = f"COALESCE({_registry_column_sql('g', 'warningLevel')}, 0)" if ladder else "0"
+        locked = f"COALESCE({_registry_column_sql('g', 'blackLocked')}, 0)" if ladder else "0"
+
         cursor.execute(
             f"""
             SELECT
@@ -1401,7 +1417,12 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
                 ir.verifiedLongitude,
                 ir.verifiedAccuracy,
                 g.detectedName,
-                g.flagColor,
+                {effective_color} AS flagColor,
+                COALESCE({_registry_column_sql('g', 'businessID')}, g.businessID) AS businessID,
+                {_registry_column_sql('g', 'applicationStatus')} AS applicationStatus,
+                {warning} AS warningLevel,
+                {locked} AS blackLocked,
+                {unlock} AS blackDispatchUnlocked,
                 g.latitude,
                 g.longitude,
                 b.barangayName,

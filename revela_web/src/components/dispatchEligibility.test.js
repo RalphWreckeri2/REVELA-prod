@@ -5,6 +5,7 @@ import {
   dispatchButtonLabel,
   INSPECTABLE_FLAG_COLORS,
   NON_DISPATCHABLE_FLAG_COLORS,
+  canFollowUpInspection,
 } from "./dispatchEligibility.js";
 
 const flag = (color, extra = {}) => ({ color, ...extra });
@@ -85,4 +86,30 @@ test("the colour list is frozen so callers cannot mutate the rule", () => {
   assert.equal(Object.isFrozen(INSPECTABLE_FLAG_COLORS), true);
   assert.deepEqual([...INSPECTABLE_FLAG_COLORS].sort(),
     ["Orange", "Purple", "Red", "Yellow"]);
+});
+
+test("Follow-up uses current color, not Orange result or notice stage", () => {
+  for (const flagColor of ["Red", "Yellow", "Orange", "Purple"]) {
+    for (const noticeLevel of [0, 1, 2, 3, 4]) {
+      assert.equal(canFollowUpInspection({ flagColor, noticeLevel,
+        inspectionResult: "Black", verificationStatus: "Verified" }, { isAdmin: true }), true);
+    }
+  }
+});
+
+test("Follow-up hides Black unless its grant is exactly open", () => {
+  const report = { flagColor: "Black", verificationStatus: "Verified", inspectionResult: "Orange", noticeLevel: 1 };
+  for (const blackDispatchUnlocked of [undefined, 0, "0", false]) {
+    assert.equal(canFollowUpInspection({ ...report, blackDispatchUnlocked }, { isAdmin: true }), false);
+  }
+  assert.equal(canFollowUpInspection({ ...report, blackDispatchUnlocked: 1 }, { isAdmin: true }), true);
+  assert.equal(canFollowUpInspection({ ...report, flagColor: "Orange", applicationStatus: "Revoked" }, { isAdmin: true }), false);
+});
+
+test("Follow-up preserves the Green, non-admin and non-Verified blocks", () => {
+  assert.equal(canFollowUpInspection({ flagColor: "Green", verificationStatus: "Verified", blackDispatchUnlocked: 1 }, { isAdmin: true }), false);
+  assert.equal(canFollowUpInspection({ flagColor: "Orange", verificationStatus: "Verified" }, { isAdmin: false }), false);
+  for (const verificationStatus of ["Assigned", "Reassigned", "Submitted"]) {
+    assert.equal(canFollowUpInspection({ flagColor: "Orange", verificationStatus }, { isAdmin: true }), false);
+  }
 });

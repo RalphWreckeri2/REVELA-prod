@@ -102,3 +102,21 @@ test assertion was changed in this part.
 Full backend: **888 passed, 4 accepted failures, 28 skipped; 554 passing
 subtests**. Frontend `npm run verify` passed. The CORS verification gap remains
 the same local MySQL 1045 error.
+
+## Part 3 verification
+
+Follow-up now reads a small tested UI policy using the current flag color,
+registry status/lock and dispatch grant. It is not restricted by warning stage
+or an old Orange result. The existing Green assignment block remains. Verified
+Black reports hide both Follow-up and the equivalent reassign action without
+a grant. The server returns a typed Black assignment conflict as HTTP 409.
+
+The Inspection payload now carries the shared effective color and ladder state.
+The grant lookup uses the same registry match as the color builder, including
+legacy pins without businessID. New backend tests cover linked/legacy grants,
+payload shape, unchanged report data on refusal, other inspectable colors and
+typed HTTP mapping. The three frontend Follow-up tests were appended to
+`src/components/dispatchEligibility.test.js`; no old assertion was changed.
+
+Full backend: **900 passed, 4 accepted failures, 28 skipped; 554 passing
+subtests**. Frontend `npm run verify` passed with 146 policy tests.

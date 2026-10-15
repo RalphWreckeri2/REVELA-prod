@@ -51,3 +51,14 @@ export function dispatchButtonLabel(flag) {
   if (flag?.verificationStatus === "Verified") return "Re-dispatch inspector";
   return "Dispatch inspector";
 }
+
+/** Inspection details use API flagColor, not Map's normalized color key. */
+export function canFollowUpInspection(report, { isAdmin } = {}) {
+  if (!isAdmin || report?.verificationStatus !== "Verified") return false;
+  const black = report.flagColor === "Black"
+    || Number(report.blackLocked) === 1
+    || ["Revoked", "Blacklisted"].includes(report.applicationStatus);
+  if (black) return Number(report.blackDispatchUnlocked) === 1;
+  // Warning/notice stage is not a dispatch restriction. Green stays blocked.
+  return INSPECTABLE_FLAG_COLORS.includes(report.flagColor);
+}

@@ -15,6 +15,7 @@ from api.inspections.service import (
     submit_inspection,
     InspectionSubmissionConflict,
     InspectionAssignmentConflict,
+    BlackInspectionAssignmentConflict,
     InspectionTargetNotFound,
     InspectionTargetInvalid,
     InspectionVerificationConflict,
@@ -158,6 +159,8 @@ def assign():
         # Typed errors, not message text, so the status cannot drift from the
         # wording: 409 ineligible/double-booked, 404 no such pin, 400 bad
         # inspector, 500 for genuine failures.
+        if isinstance(error, BlackInspectionAssignmentConflict):
+            return jsonify({"error": str(error), "code": "black_dispatch_locked"}), 409
         if isinstance(error, InspectionAssignmentConflict):
             return jsonify({
                 "error": str(error),

@@ -22,6 +22,7 @@ import {
 import Swal from "sweetalert2";
 import AnimatePresence from "../components/AnimatePresence";
 import InspectionDialog from "../components/InspectionDialog";
+import { canFollowUpInspection } from "../components/dispatchEligibility";
 import { inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, matchesDispatchSearch, matchesGridSearch } from "./inspectionPresentation";
 import "../styles/InspectionPage.css";
 
@@ -672,7 +673,7 @@ function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onC
           <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
             {(report.verificationStatus === "Assigned" ||
               report.verificationStatus === "Reassigned" ||
-              (report.verificationStatus === "Verified" && report.inspectionResult !== "Black")) && (
+              canFollowUpInspection(report, { isAdmin })) && (
               <button className="ghost-btn" style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1, border: "1px solid var(--color-border-soft)", background: "transparent", color: "var(--color-ink)" }}
                 onClick={(e) => { e.stopPropagation(); onAssign(report); }}>
                 Reassign
@@ -696,7 +697,7 @@ function InspectionDetailModal({ report, token, isAdmin, onAssign, onVerify, onC
                 </button>
               </>
             )}
-            {report.verificationStatus === "Verified" && report.noticeLevel > 0 && report.noticeLevel < 4 && (
+            {canFollowUpInspection(report, { isAdmin }) && (
               <button
                 className="primary-btn"
                 style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1, background: "#e65100", borderColor: "#e65100" }}
