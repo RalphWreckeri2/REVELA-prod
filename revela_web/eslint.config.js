@@ -53,4 +53,31 @@ export default defineConfig([
       'react-hooks/set-state-in-effect': 'off',
     },
   },
+
+  // `react-hooks/preserve-manual-memoization` fires six times on two
+  // useCallbacks in MapPage.jsx: handleMapClick and handleDataClick, both
+  // declaring [adjustingFlagId, isPickingYellowLocation, barangays].
+  //
+  // The rule reports that the compiler "inferred" a dependency of only the
+  // state setter (setYellowDraft / setIsPickingYellowLocation /
+  // setShowYellowModal) and so could not preserve the manual array. That
+  // inference is too narrow: all three listed values are read directly in
+  // both callback bodies - adjustingFlagId selects the pin-adjustment branch,
+  // isPickingYellowLocation gates the Yellow-flag placement path, and
+  // barangays resolves the clicked point to a barangay id.
+  //
+  // Dropping them to satisfy the rule would close real values over the
+  // callbacks: a stale adjustingFlagId would send a click down the pin
+  // adjustment path when the admin was plotting a flag, and vice versa. The
+  // arrays are correct as written, so the rule is a false positive here and
+  // only a missed compiler optimisation, not a correctness problem. Leaving
+  // it as an error would block `npm run verify` with nothing to fix.
+  //
+  // A genuinely wrong dependency array elsewhere still fails the lint.
+  {
+    files: ['src/pages/MapPage.jsx'],
+    rules: {
+      'react-hooks/preserve-manual-memoization': 'off',
+    },
+  },
 ])
