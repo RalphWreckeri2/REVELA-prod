@@ -17,6 +17,7 @@ from api.registry.service import (
     RegistryValidationError,
     RegistryNotFoundError,
     BlackLockedError,
+    BlackBusinessDeletionForbidden,
     RegistryLadderConflict,
     RegistryLadderUnavailable,
     clear_warning,
@@ -28,6 +29,7 @@ from api.middleware.decorators import (
     jwt_required,
     admin_required,
     super_admin_required,
+    get_current_role,
 )
 from api.registry import places_resolver
 from api.utils.quota_config import API_QUOTA_CONFIG
@@ -655,10 +657,12 @@ def unlock_black_dispatch_route(business_id):
 @admin_required()
 def delete_business_route(business_id):
     """Delete a single business record by ID."""
-    success, error = delete_business(business_id)
+    success, error = delete_business(business_id, actor_role=get_current_role())
 
     if error:
+        if isinstance(error, BlackBusinessDeletionForbidden):
+            return jsonify({"error": str(error), "code": "black_delete_forbidden"}), 403
         status_code = 404 if error == "Business not found" else 500
-        return jsonify({"error": error}), status_code
+        return jsonify({"error": str(error)}), status_code
 
     return jsonify({"message": "Business deleted successfully"}), 200

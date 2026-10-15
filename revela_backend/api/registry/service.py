@@ -27,6 +27,8 @@ from api.registry.locks import (
     BLACK_UNLOCKED,
     WARNING_CLEARED,
     BlackLockedError,
+    BlackBusinessDeletionForbidden,
+    assert_business_deletable,
     assert_not_black_locked,
     is_black_locked,
     record_enforcement_event,
@@ -3216,20 +3218,22 @@ def update_business(business_id, data: dict):
         return False, str(e)
 
 
-def delete_business(business_id):
+def delete_business(business_id, actor_role=None):
     """Delete a business from the registry."""
     try:
         cursor = mysql.connection.cursor()
 
         cursor.execute(
             """SELECT businessID, businessName, barangayID, latitude, longitude, placeID
-               FROM official_registry WHERE businessID = %s""",
+               FROM official_registry WHERE businessID = %s FOR UPDATE""",
             (business_id,)
         )
         row = cursor.fetchone()
         if not row:
             cursor.close()
             return False, "Business not found"
+
+        assert_business_deletable(cursor, business_id, actor_role)
 
         # Identify logs strictly tied to THIS business (avoid broad delete across same-named branches)
         target_log_ids = set()
@@ -3274,7 +3278,12 @@ def delete_business(business_id):
             pass
 
         return True, None
+    except BlackBusinessDeletionForbidden as exc:
+        mysql.connection.rollback()
+        cursor.close()
+        return False, exc
     except Exception as e:
+        mysql.connection.rollback()
         return False, str(e)
 
 

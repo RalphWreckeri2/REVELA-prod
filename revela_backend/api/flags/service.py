@@ -32,6 +32,7 @@ from api.registry.colors import (
 from api.registry.locks import (
     BLACK_LOCKED, BlackLockedError, assert_not_black_locked,
     record_enforcement_event,
+    assert_business_deletable, BlackBusinessDeletionForbidden,
 )
 from shapely import prepare
 from shapely.affinity import scale
@@ -2990,6 +2991,9 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         ladder = ladder_columns_available(cursor)
         effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
         registry_flag_color = _registry_row_flag_color_sql("r", ladder=ladder)
+        has_unlock = _has_columns(cursor, ("blackLocked", "blackDispatchUnlocked"))
+        unlock = "COALESCE(r.blackDispatchUnlocked, 0)" if has_unlock else "0"
+        unlock_projection = ", blackDispatchUnlocked" if has_unlock else ""
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
         # Filters that apply to the geospatial_logs branch
@@ -3079,6 +3083,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     g.placeID,
                     g.reportedByUserID,
                     g.noticeLevel,
+                    {unlock} AS blackDispatchUnlocked,
                     b.barangayID,
                     b.barangayName,
                     r.businessSize,
@@ -3100,7 +3105,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 LEFT JOIN barangays b ON g.barangayID = b.barangayID
                 LEFT JOIN LATERAL (
                     SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus,
-                           matchStatus, coordSource, matchScore
+                           matchStatus, coordSource, matchScore{unlock_projection}
                     FROM official_registry
                     WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
                        OR (g.placeID IS NOT NULL AND placeID = g.placeID
@@ -3128,6 +3133,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     NULL                       AS placeID,
                     NULL                       AS reportedByUserID,
                     0                          AS noticeLevel,
+                    {unlock}                   AS blackDispatchUnlocked,
                     b.barangayID               AS barangayID,
                     b.barangayName             AS barangayName,
                     r.businessSize             AS businessSize,
@@ -3793,7 +3799,7 @@ def escalate_to_black(log_id, actor_user_id):
 
 # ── Delete Flag ───────────────────────────────────────────────────────────────
 
-def delete_flag(log_id):
+def delete_flag(log_id, actor_role=None):
     """
     Delete a single flag.
     - If log_id < 0: virtual registry entry (businessID = -log_id). Removes official_registry entry.
@@ -3807,6 +3813,7 @@ def delete_flag(log_id):
 
         if log_id < 0:
             biz_id = -log_id
+            assert_business_deletable(cursor, biz_id, actor_role)
             cursor.execute(
                 "DELETE FROM official_registry WHERE businessID = %s", (biz_id,))
             mysql.connection.commit()
@@ -3900,6 +3907,10 @@ def delete_flag(log_id):
 
         return True, None
 
+    except BlackBusinessDeletionForbidden as exc:
+        mysql.connection.rollback()
+        cursor.close()
+        return False, exc
     except Exception as e:
         return False, str(e)
 

@@ -111,6 +111,17 @@ def assert_not_black_locked(cursor, business_id, *, action):
     return True
 
 
+class BlackBusinessDeletionForbidden(PermissionError):
+    """Deleting a Black business requires the exact SUPER_ADMIN role. HTTP 403."""
+
+
+def assert_business_deletable(cursor, business_id, actor_role):
+    if actor_role != "SUPER_ADMIN" and is_black_locked(cursor, business_id):
+        raise BlackBusinessDeletionForbidden(
+            "Only SUPER_ADMIN may delete a Black business (locked or Revoked).")
+    return True
+
+
 # ── Append-only enforcement history ──────────────────────────────────────────
 
 #: The event types registry_enforcement_events accepts.

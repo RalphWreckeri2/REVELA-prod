@@ -113,3 +113,15 @@ test("Follow-up preserves the Green, non-admin and non-Verified blocks", () => {
     assert.equal(canFollowUpInspection({ flagColor: "Orange", verificationStatus }, { isAdmin: true }), false);
   }
 });
+
+test("Map API payload retains the Black grant through Map's flag normalization", () => {
+  const payload = { data: [{ logID: 41, businessID: "B-1", flagColor: "Black",
+    flagSource: "registry", verificationStatus: "Verified", blackDispatchUnlocked: 1 }] };
+  const apiFlag = payload.data[0];
+  // normalizeFlag spreads the API record and adds its canonical color key.
+  const normalized = { ...apiFlag, id: apiFlag.logID, color: apiFlag.flagColor };
+  assert.equal(canDispatchFlag(normalized, { isAdmin: true }), true);
+  assert.equal(dispatchButtonLabel(normalized), "Dispatch inspector (unlocked)");
+  assert.equal(canDispatchFlag({ ...normalized, blackDispatchUnlocked: 0 }, { isAdmin: true }), false);
+  assert.equal(canDispatchFlag(normalized, { isAdmin: false }), false);
+});

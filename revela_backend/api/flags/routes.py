@@ -22,7 +22,8 @@ from api.flags.service import (
     YellowFlagSubmissionConflict,
     YellowFlagValidationError,
 )
-from api.middleware.decorators import jwt_required, admin_required
+from api.middleware.decorators import jwt_required, admin_required, get_current_role
+from api.registry.locks import BlackBusinessDeletionForbidden
 from api.registry import service as registry_service
 from app import mysql
 flags_bp = Blueprint("flags", __name__)
@@ -444,8 +445,10 @@ def change_flag_color_route(log_id):
 @admin_required()
 def delete_flag_route(log_id):
     """Delete a specific flag. Also deletes associated registry records if they exist."""
-    success, error = delete_flag(log_id)
+    success, error = delete_flag(log_id, actor_role=get_current_role())
     if error:
+        if isinstance(error, BlackBusinessDeletionForbidden):
+            return jsonify({"error": str(error), "code": "black_delete_forbidden"}), 403
         status_code = 404 if error == "Flag not found" else 500
-        return jsonify({"error": error}), status_code
+        return jsonify({"error": str(error)}), status_code
     return jsonify({"message": f"Flag #{log_id} deleted successfully"}), 200

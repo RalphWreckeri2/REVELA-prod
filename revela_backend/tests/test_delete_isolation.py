@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from api.registry.service import delete_business
 from api.flags.service import delete_flag
+from registry_sqlite import RegistryDB
 
 
 class DeleteIsolationTests(unittest.TestCase):
@@ -222,20 +223,21 @@ class DeleteIsolationTests(unittest.TestCase):
         self.assertEqual(len(report_deletes), 1)
         self.assertEqual(report_deletes[0][1], (101,))
 
-    @patch("api.flags.service.mysql")
-    def test_delete_flag_virtual_flag_removes_from_registry(self, mock_mysql):
+    def test_delete_flag_virtual_flag_removes_from_registry(self):
         """Deleting a virtual flag (log_id < 0) deletes from official_registry."""
-        mock_cursor = MagicMock()
-        mock_mysql.connection.cursor.return_value = mock_cursor
-
-        success, err = delete_flag(-88)
+        db = RegistryDB()
+        self.addCleanup(db.close)
+        db.db.execute("INSERT INTO official_registry (businessID, applicationStatus) VALUES ('88', 'Pending')")
+        db.commit()
+        with patch("api.flags.service.mysql", db), patch("api.notifications.hub.publish_to_admins"):
+            success, err = delete_flag(-88)
         self.assertTrue(success)
         self.assertIsNone(err)
 
-        executed_calls = [call[0] for call in mock_cursor.execute.call_args_list]
-        reg_deletes = [call for call in executed_calls if "DELETE FROM official_registry" in call[0]]
+        reg_deletes = [call for call in db.calls if "DELETE FROM official_registry" in call[0]]
         self.assertEqual(len(reg_deletes), 1)
         self.assertEqual(reg_deletes[0][1][0], 88)
+        self.assertEqual(db.rows("SELECT * FROM official_registry"), [])
 
 
 if __name__ == "__main__":

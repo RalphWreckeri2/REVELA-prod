@@ -120,3 +120,22 @@ typed HTTP mapping. The three frontend Follow-up tests were appended to
 
 Full backend: **900 passed, 4 accepted failures, 28 skipped; 554 passing
 subtests**. Frontend `npm run verify` passed with 146 policy tests.
+
+## Part 4 verification
+
+A shared deletion guard refuses locked or Revoked businesses unless the role
+is exactly `SUPER_ADMIN`. Registry deletion and the Map virtual-business delete
+both map its typed error to 403. Ordinary pin deletion remains isolated from
+business deletion. Map payloads now expose blackDispatchUnlocked in both UNION
+branches, or 0 when the column is absent. The existing Map normalizer already
+preserves the field via its API-record spread.
+
+New `tests/test_black_delete_and_map_payload.py` covers exact roles, both HTTP
+routes, unmigrated Revoked protection, and actual JSON-shaped Map payloads.
+The existing virtual deletion test in `tests/test_delete_isolation.py` now
+uses real in-memory data and additionally checks that the row disappeared;
+its original exact-delete assertions are retained. A payload/dispatch test
+was appended to `src/components/dispatchEligibility.test.js`.
+
+Full backend: **924 passed, 4 accepted failures, 28 skipped; 554 passing
+subtests**. Frontend `npm run verify` passed with 147 policy tests.
