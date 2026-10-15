@@ -260,8 +260,8 @@ class LockShieldTests(unittest.TestCase):
         ]
 
         csv_content = (
-            "Business ID,Business Name,Barangay,Latitude,Longitude\n"
-            "BIZ-LOCK,Silva Pharmacy,Barangay I,14.50000000,122.50000000\n"
+            "Business ID,Business Name,Barangay,Latitude,Longitude,Status\n"
+            "BIZ-LOCK,Silva Pharmacy,Barangay I,14.50000000,122.50000000,Active\n"
         )
         file_obj = io.BytesIO(csv_content.encode("utf-8"))
 

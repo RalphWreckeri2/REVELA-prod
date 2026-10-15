@@ -121,6 +121,22 @@ COLUMN_MAP = {
 }
 
 VALID_STATUSES = {"Active", "Expired", "Revoked", "Pending", "Closed"}
+
+# Raw permit status (case-insensitive) -> canonical status. This is the only
+# place a raw status is accepted. Anything not listed here is rejected.
+_STATUS_ALIASES = {
+    "active":         "Active",
+    "expired":        "Expired",
+    "revoked":        "Revoked",
+    "blacklisted":    "Revoked",
+    "pending":        "Pending",
+    "for issuance":   "Pending",
+    "cancelled":      "Revoked",
+    "lapsed":         "Expired",
+    "license issued": "Active",
+    "issued":         "Active",
+    "closed":         "Closed",
+}
 _geocode_state = threading.local()
 _RETRYABLE_RESOLUTION_FAILURES = {
     "api_error",
@@ -751,21 +767,42 @@ def _normalise_registration_type(raw) -> str | None:
     return val.upper()
 
 
-def _normalise_status(raw: str) -> str:
-    mapping = {
-        "active":         "Active",
-        "expired":        "Expired",
-        "revoked":        "Revoked",
-        "blacklisted":    "Revoked",
-        "pending":        "Pending",
-        "for issuance":   "Pending",
-        "cancelled":      "Revoked",
-        "lapsed":         "Expired",
-        "license issued": "Active",
-        "issued":         "Active",
-        "closed":         "Closed",
-    }
-    return mapping.get(str(raw).strip().lower(), "Pending")
+def _normalise_status(raw: str) -> tuple[str | None, str | None]:
+    """Map a raw permit status onto a canonical status.
+
+    Returns (status, error). status is None and error is set when the value
+    is blank or not a status this system recognises. Callers must reject the
+    row: previously unrecognised values silently became "Pending", which
+    turned typos, and statuses such as "Orange" or "Black", into Yellow.
+
+    Only the aliases below are accepted. Flag colours (Red/Green/Yellow/
+    Purple/Black/Orange) are not statuses and are rejected like any other
+    unrecognised value.
+    """
+    cleaned = _clean_str(raw)
+    if not cleaned:
+        return None, ("missing permit status (expected one of "
+                      f"{', '.join(sorted(VALID_STATUSES))})")
+    status = _STATUS_ALIASES.get(cleaned.casefold())
+    if status is None:
+        return None, (
+            f"unrecognised permit status {cleaned!r} (expected one of "
+            f"{', '.join(sorted(VALID_STATUSES))})")
+    return status, None
+
+
+def _status_for_compare(raw) -> str | None:
+    """Lenient status used only for change detection, never for storage.
+
+    Legacy rows may hold values this build does not recognise. Comparing them
+    by their own cleaned text keeps change detection correct instead of
+    folding every unknown value into one bucket.
+    """
+    status, _ = _normalise_status(raw)
+    if status is not None:
+        return status
+    cleaned = _clean_str(raw)
+    return cleaned.casefold() if cleaned else None
 
 
 def _status_to_flag_color(status: str) -> str:
@@ -897,7 +934,7 @@ def _registry_sync_business_fields_changed(existing, incoming):
         ("lineOfBusiness", _sync_upper_value, _sync_upper_value),
         ("businessAddress", _sync_text_value, _sync_text_value),
         ("barangayID", _sync_barangay_value, _sync_barangay_value),
-        ("applicationStatus", _normalise_status, _normalise_status),
+        ("applicationStatus", _status_for_compare, _status_for_compare),
         ("lastRenewalDate", _parse_renewal_date, _parse_renewal_date),
         ("businessSize", _sync_upper_value, _sync_upper_value),
         ("registrationType", _normalise_registration_type,
@@ -1086,6 +1123,8 @@ def upload_registry(file, ext: str):
         skipped_quota = 0
         api_error_count = 0
         skipped = 0
+        invalid_status_rows = 0
+        invalid_status_values = {}
         errors = []
         inserted_ids = []
 
@@ -1120,6 +1159,19 @@ def upload_registry(file, ext: str):
             if not biz_id:
                 skipped += 1
                 errors.append(f"Row {idx + 2}: missing Business ID — skipped")
+                continue
+
+            # Status of Application (license/permit standing).
+            # Rejected here, before geocoding, so a bad row costs no quota.
+            status_raw = row.get("applicationStatus")
+            status, status_error = _normalise_status(status_raw)
+            if status is None:
+                skipped += 1
+                invalid_status_rows += 1
+                invalid_key = _clean_str(status_raw) or ""
+                invalid_status_values[invalid_key] = (
+                    invalid_status_values.get(invalid_key, 0) + 1)
+                errors.append(f"Row {idx + 2}: {status_error} — skipped")
                 continue
 
             # businessName is required
@@ -1200,14 +1252,6 @@ def upload_registry(file, ext: str):
             elif lat is None:
                 geocoded_failed += 1
                 no_match_count += 1
-
-            # Status of Application (license/permit standing)
-            # Missing/blank status → Pending (Yellow), never Active. See sync_registry.
-            status_raw = (
-                row.get("applicationStatus")
-                or "Pending"
-            )
-            status = _normalise_status(status_raw)
 
             # Registration Type (New vs Renewal)
             reg_type = _normalise_registration_type(
@@ -1313,6 +1357,9 @@ def upload_registry(file, ext: str):
             "cache_hits":       0,
             "skipped":          skipped,
             # cap at 20 so response stays small
+            "invalid_status_rows": invalid_status_rows,
+            "invalid_status_values": invalid_status_values,
+            # errors is truncated below; the two counters above are not.
             "errors":           errors[:20],
         }, None
 
@@ -1408,6 +1455,8 @@ def sync_registry(file, ext: str):
         unchanged = 0
         skipped = 0
         skipped_open_inspection = 0
+        invalid_status_rows = 0
+        invalid_status_values = {}
         geocoded_ok = 0
         geocoded_failed = 0
         coordinates_out_of_bounds = 0
@@ -1521,6 +1570,19 @@ def sync_registry(file, ext: str):
                 skipped_open_inspection += 1
                 errors.append(
                     f"Row {idx + 2}: open inspection in progress — skipped")
+                continue
+
+            # Status of Application (license/permit standing).
+            # Rejected before any geocoding, so a bad row costs no quota.
+            status_raw = row.get("applicationStatus")
+            status, status_error = _normalise_status(status_raw)
+            if status is None:
+                skipped += 1
+                invalid_status_rows += 1
+                invalid_key = _clean_str(status_raw) or ""
+                invalid_status_values[invalid_key] = (
+                    invalid_status_values.get(invalid_key, 0) + 1)
+                errors.append(f"Row {idx + 2}: {status_error} — skipped")
                 continue
 
             is_locked = False
@@ -1647,15 +1709,10 @@ def sync_registry(file, ext: str):
                 geocoded_failed += 1
                 no_match_count += 1
 
-            status_raw = (
-                row.get("applicationStatus")
-                or "Pending"
-            )
             if geo_meta is None and lat is not None and not reused_existing:
                 # coordinates came from the uploaded file
                 geo_meta = {"coord_source": "csv",
                             "resolve_key": curr_resolve_key}
-            status = _normalise_status(status_raw)
 
             reg_type = _normalise_registration_type(
                 row.get("registrationType"))
@@ -2004,6 +2061,9 @@ def sync_registry(file, ext: str):
             "cache_hits":       cache_hits,
             "skipped":          skipped,
             "skipped_open_inspection": skipped_open_inspection,
+            "invalid_status_rows": invalid_status_rows,
+            "invalid_status_values": invalid_status_values,
+            # errors is truncated below; the two counters above are not.
             "errors":           errors[:20],
         }, None
 
@@ -2486,6 +2546,16 @@ def update_business(business_id, data: dict):
         old_name = row["businessName"]
         barangay_id = row["barangayID"]
 
+        # Validate the permit status before building any UPDATE, so a rejected
+        # value changes nothing at all - not the registry row, not the pin.
+        new_status = None
+        if "applicationStatus" in data:
+            new_status, status_error = _normalise_status(
+                data["applicationStatus"])
+            if new_status is None:
+                cursor.close()
+                return False, status_error
+
         # Build dynamic query to only update provided fields
         update_fields = []
         params = []
@@ -2505,7 +2575,7 @@ def update_business(business_id, data: dict):
                 data["businessAddress"]) if data["businessAddress"] else None)
         if "applicationStatus" in data:
             update_fields.append("applicationStatus = %s")
-            params.append(_normalise_status(data["applicationStatus"]))
+            params.append(new_status)
         if "businessSize" in data:
             update_fields.append("businessSize = %s")
             params.append(_clean_upper(data["businessSize"]))
@@ -2541,7 +2611,7 @@ def update_business(business_id, data: dict):
                     cursor,
                     barangay_id,
                     current_name,
-                    _normalise_status(data["applicationStatus"]),
+                    new_status,
                     business_id=business_id,
                 )
 

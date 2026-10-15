@@ -28,7 +28,8 @@ class RegistryFlagColorTests(unittest.TestCase):
                 self.assertEqual(service._status_to_flag_color(status), color)
 
     def test_blacklisted_import_status_normalizes_to_revoked(self):
-        self.assertEqual(service._normalise_status("Blacklisted"), "Revoked")
+        self.assertEqual(
+            service._normalise_status("Blacklisted"), ("Revoked", None))
 
     def test_expired_registry_sync_seeds_red_flag(self):
         cursor = MagicMock()
@@ -893,7 +894,7 @@ class RegistryImportHardeningTests(unittest.TestCase):
             "barangay": "Barangay I",
             "latitude": "13.9667",
             "longitude": "121.2",
-            "applicationStatus": None,
+            "applicationStatus": "Active",
         }])
         usage = {
             "text_search": {"day": 0, "month": 0},
@@ -942,9 +943,12 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertEqual(values[2], "CAFÉ DE ÁNGEL")
         self.assertIsNone(values[6])
         self.assertIsNone(values[7])
-        self.assertEqual(values[8], "Pending")
+        self.assertEqual(values[8], "Active")
 
-    def test_sync_defaults_missing_status_to_pending_and_preserves_caps(self):
+    def test_sync_preserves_caps_for_a_valid_status(self):
+        # Was: test_sync_defaults_missing_status_to_pending_and_preserves_caps.
+        # A missing permit status is now rejected rather than defaulted, so the
+        # cap accounting is exercised with an explicit valid status instead.
         cursor = MagicMock()
         cursor.fetchone.return_value = None
         cursor.rowcount = 1
@@ -957,7 +961,7 @@ class RegistryImportHardeningTests(unittest.TestCase):
             "barangay": "Barangay I",
             "latitude": "13.9667",
             "longitude": "121.1167",
-            "applicationStatus": None,
+            "applicationStatus": "Pending",
         }])
         usage = {
             "text_search": {"day": 0, "month": 0},
