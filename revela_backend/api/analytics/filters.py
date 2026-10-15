@@ -112,8 +112,12 @@ def registry_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
     return " AND " + " AND ".join(parts), params
 
 
-def geo_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
-    """Fragment for AND ... (geospatial_logs alias)."""
+def geo_sql(alias: str, F: Dict[str, Any], *, ladder: bool = False) -> Tuple[str, List[Any]]:
+    """Fragment for AND ... (geospatial_logs alias).
+
+    ladder must be ladder_columns_available(cursor) from the caller. This
+    module builds SQL strings and has no cursor of its own.
+    """
     parts: List[str] = []
     params: List[Any] = []
 
@@ -130,7 +134,7 @@ def geo_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
         # _effective_flag_color_sql falls back to the stored colour only for
         # pins with no registry match, which is the only case where the
         # registry cannot speak.
-        parts.append(f"({_effective_flag_color_sql(alias)}) = %s")
+        parts.append(f"({_effective_flag_color_sql(alias, ladder=ladder)}) = %s")
         params.append(F["flag_color"])
 
     if F.get("detected_from"):
@@ -150,9 +154,9 @@ def geo_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
     return " AND " + " AND ".join(parts), params
 
 
-def geo_on_extra(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
+def geo_on_extra(alias: str, F: Dict[str, Any], *, ladder: bool = False) -> Tuple[str, List[Any]]:
     """Same as geo_sql but starts with AND for appending to JOIN ... ON ..."""
-    frag, params = geo_sql(alias, F)
+    frag, params = geo_sql(alias, F, ladder=ladder)
     return frag, params
 
 

@@ -105,7 +105,11 @@ def _registry_has_registration_type(cursor):
 # without importing this blueprint (google-genai / scikit-learn). They are
 # re-exported here under their original names, so every existing caller below
 # and tests/test_analytics_registry_compat.py are unaffected.
-from api.registry.colors import _effective_flag_color_sql, _verified_orange_sql  # noqa: E402,F401
+from api.registry.colors import (  # noqa: E402,F401
+    _effective_flag_color_sql,
+    _verified_orange_sql,
+    ladder_columns_available,
+)
 
 
 analytics_bp = Blueprint("analytics", __name__)
@@ -190,12 +194,16 @@ def _get_all_analytics_inner(F=None):
         "official_registry", filters_without(Fx, "application_status"))
     reg_o, reg_o_p = registry_sql("o", Fx)
     reg_r, reg_r_p = registry_sql("r", Fx)
-    geo_g, geo_g_p = geo_sql("g", Fx)
-    geo_g2, geo_g2_p = geo_sql("g2", Fx)
-    geo_on_g, geo_on_g_p = geo_on_extra("g", Fx)
+    # One colour rule for every query below, including the colour filters.
+    # ladder_columns_available() is False until the ladder migration has run,
+    # which leaves the SQL as it was before.
+    ladder = ladder_columns_available(cur)
+    effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
+    geo_g, geo_g_p = geo_sql("g", Fx, ladder=ladder)
+    geo_g2, geo_g2_p = geo_sql("g2", Fx, ladder=ladder)
+    geo_on_g, geo_on_g_p = geo_on_extra("g", Fx, ladder=ladder)
     brgy_b, brgy_b_p = barangay_b_sql(Fx)
     insp_ir, insp_ir_p = inspection_sql("ir", Fx)
-    effective_flag_color = _effective_flag_color_sql("g")
 
     # ── WLC config ────────────────────────────────────────────────────────────
     config = get_wlc_config()
@@ -308,23 +316,7 @@ def _get_all_analytics_inner(F=None):
             SELECT
                 g.logID AS id,
                 g.barangayID,
-                CASE
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired'
-                     AND EXISTS (
-                        SELECT 1 FROM inspection_reports ir
-                        WHERE ir.targetType = 'geospatial_log'
-                          AND ir.targetID = g.logID
-                          AND ir.verificationStatus = 'Verified'
-                          AND ir.inspectionResult = 'Orange'
-                     ) THEN 'Orange'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Active'  THEN 'Green'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Expired' THEN 'Red'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus IN ('Revoked', 'Blacklisted') THEN 'Black'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Closed'  THEN 'Purple'
-                    WHEN r.businessID IS NOT NULL AND r.applicationStatus = 'Pending' THEN 'Yellow'
-                    WHEN {_verified_orange_sql("g")} THEN 'Orange'
-                    ELSE g.flagColor
-                END AS flagColor
+                {effective_flag_color} AS flagColor
             FROM geospatial_logs g
             LEFT JOIN LATERAL (
                 SELECT businessID, applicationStatus
@@ -1366,7 +1358,8 @@ def get_ops_rankings_only():
     try:
         from app import mysql
         cur = mysql.connection.cursor()
-        effective_flag_color = _effective_flag_color_sql("g")
+        effective_flag_color = _effective_flag_color_sql(
+            "g", ladder=ladder_columns_available(cur))
 
         config = get_wlc_config()
         w1 = config.get("w1_risk", 68) / 100
