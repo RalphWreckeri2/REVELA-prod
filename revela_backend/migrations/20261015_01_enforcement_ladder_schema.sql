@@ -5,9 +5,16 @@
 -- This file is additive only. It adds columns and one new table; it changes
 -- no existing column, no existing index and no existing row. Every new column
 -- is either NOT NULL with a constant default or nullable, so it is safe to
--- apply while the application is running and safe to re-apply partially: if
--- the ALTER fails midway, re-running will report the columns that already
--- exist in the pre-check below rather than silently duplicating them.
+-- apply while the application is running.
+--
+-- It is NOT safe to re-run. MySQL has no ADD COLUMN IF NOT EXISTS and no
+-- ADD KEY IF NOT EXISTS (those are MariaDB), so the pre-check below is for a
+-- human to read, not a guard: re-running this file fails with
+-- ERROR 1060 Duplicate column name or ERROR 1061 Duplicate key name. A
+-- multi-column ADD COLUMN is applied as one atomic rebuild, so if any single
+-- column already exists the whole ALTER is rejected and nothing is added.
+-- A half-applied run cannot be resumed by re-running; drop the columns that
+-- did land first. Only the CREATE TABLE IF NOT EXISTS is re-runnable.
 --
 -- No application code reads or writes these columns yet. Behaviour ships
 -- separately (see the ladder design).

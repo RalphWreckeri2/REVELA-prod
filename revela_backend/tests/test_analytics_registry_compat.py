@@ -11,7 +11,10 @@ class AnalyticsRegistryCompatibilityTests(unittest.TestCase):
 
         self.assertIn("ir.verificationStatus = 'Verified'", expression)
         self.assertIn("ir.inspectionResult = 'Orange'", expression)
-        self.assertIn("r_chk.applicationStatus = 'Expired'", expression)
+        # The verified-Orange predicate used to require the matched registry
+        # row to be Expired. A verified Orange report now makes the pin Orange
+        # whatever the status, so the restriction must be gone.
+        self.assertNotIn("r_chk.applicationStatus = 'Expired'", expression)
         self.assertIn("THEN 'Orange'", expression)
         self.assertIn("WHEN (", expression)
         self.assertIn("THEN 'Red'", expression)
