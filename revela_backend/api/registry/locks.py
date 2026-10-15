@@ -126,3 +126,54 @@ def assert_not_black_locked(cursor, business_id, *, action):
     if is_black_locked(cursor, business_id):
         raise BlackLockedError(action, business_id)
     return True
+
+
+# ── Append-only enforcement history ──────────────────────────────────────────
+
+#: The four event types registry_enforcement_events accepts.
+WARNING_ISSUED = "warning_issued"
+WARNING_CLEARED = "warning_cleared"
+BLACK_LOCKED = "black_locked"
+BLACK_UNLOCKED = "black_unlocked"
+
+ENFORCEMENT_EVENT_TYPES = (
+    WARNING_ISSUED, WARNING_CLEARED, BLACK_LOCKED, BLACK_UNLOCKED,
+)
+
+_INSERT_ENFORCEMENT_EVENT_SQL = """INSERT INTO registry_enforcement_events (
+    businessID, eventType, actorUserID, reason,
+    previousLevel, newLevel, previousBlack, newBlack
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
+
+
+def record_enforcement_event(cursor, *, business_id, event_type,
+                             actor_user_id=None, reason=None,
+                             previous_level=None, new_level=None,
+                             previous_black=None, new_black=None):
+    """Append one row to registry_enforcement_events on the caller's cursor.
+
+    Deliberately takes a cursor rather than opening its own connection, so the
+    event lands in the same transaction as the change it records. If the
+    transaction rolls back, so does the history.
+
+    The caller is responsible for ensuring the table exists; see the migration
+    preflight in migrations/20261015_01_enforcement_ladder_schema.sql.
+    """
+    if event_type not in ENFORCEMENT_EVENT_TYPES:
+        raise ValueError("unknown enforcement event type: %r" % (event_type,))
+    cursor.execute(_INSERT_ENFORCEMENT_EVENT_SQL, (
+        business_id, event_type, actor_user_id, reason,
+        _as_int(previous_level), _as_int(new_level),
+        None if previous_black is None else int(bool(previous_black)),
+        None if new_black is None else int(bool(new_black)),
+    ))
+
+
+def _as_int(value):
+    """None stays None; anything else becomes an int, or None if unreadable."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
 from api.inspections import service as inspection_service
+from api.registry.colors import reset_ladder_column_cache
+from api.registry.locks import reset_lock_column_cache
 
 SUBMITTED = "Submitted"
 
@@ -23,16 +25,34 @@ SUBMITTED = "Submitted"
 class PurpleRegistryWriteTests(unittest.TestCase):
     """Drives verify_inspection with a fake cursor that understands SQL."""
 
+    def setUp(self):
+        # ladder_columns_available and lock_column_available cache for the
+        # life of the process. Whichever test touches them first would
+        # otherwise decide the answer for every test after it.
+        reset_ladder_column_cache()
+        reset_lock_column_cache()
+        self.addCleanup(reset_ladder_column_cache)
+        self.addCleanup(reset_lock_column_cache)
+
     def _verify(self, *, pin_business_id, registry_match_business_id=None,
                 result="Purple", pin_name="ACME STORE", pin_barangay=7,
-                geospatial_exists=True):
-        """rowcount of the registry UPDATE is decided by registry_match_business_id."""
+                geospatial_exists=True, ladder=True, warning_level=0,
+                black_locked=0, notice_level=1):
+        """rowcount of the registry UPDATE is decided by registry_match_business_id.
+
+        ladder=False makes the cursor answer the information_schema probe the
+        way an unmigrated database would.
+        """
         cursor = MagicMock()
         cursor.lastrowid = 1
         state = {"closed_rowcount": 0}
 
         def execute(sql, params=()):
             normalised = " ".join(sql.split())
+            if "information_schema.COLUMNS" in normalised:
+                cursor.fetchall.return_value = (
+                    [("warningLevel",), ("blackLocked",)] if ladder else [])
+                return
             if "UPDATE official_registry" in normalised and "'Closed'" in normalised:
                 if "WHERE businessID = %s" in normalised:
                     state["closed_rowcount"] = (
@@ -50,7 +70,7 @@ class PurpleRegistryWriteTests(unittest.TestCase):
             if "FROM inspection_reports ir" in sql:
                 return {
                     "reportID": 4, "targetID": 22, "userID": 9,
-                    "inspectionResult": result, "noticeLevel": 1,
+                    "inspectionResult": result, "noticeLevel": notice_level,
                     "verificationStatus": SUBMITTED,
                     "verifiedLatitude": None, "verifiedLongitude": None,
                     "verifiedAccuracy": None, "nearestLandmark": None,
@@ -59,6 +79,16 @@ class PurpleRegistryWriteTests(unittest.TestCase):
                 }
             if "SELECT flagColor FROM geospatial_logs" in sql:
                 return {"flagColor": "Red"}
+            if "FROM official_registry" in sql and sql.startswith("SELECT"):
+                if not registry_match_business_id:
+                    return None
+                if registry_match_business_id != pin_business_id:
+                    return None
+                row = {"applicationStatus": "Active"}
+                if ladder:
+                    row["warningLevel"] = warning_level
+                    row["blackLocked"] = black_locked
+                return row
             if "SELECT detectedName, barangayID FROM geospatial_logs" in sql:
                 if geospatial_exists:
                     return {"detectedName": pin_name, "barangayID": pin_barangay}
@@ -140,16 +170,39 @@ class PurpleRegistryWriteTests(unittest.TestCase):
 
     # -- other colours are untouched ----------------------------------------
 
-    def test_other_results_never_write_the_registry(self):
-        for colour in ("Green", "Red", "Yellow", "Orange", "Black"):
+    def test_other_results_never_close_the_registry(self):
+        """Purple is the only result that sets applicationStatus = 'Closed'.
+
+        Red, Yellow and Green now move applicationStatus, but to their own
+        status - never to Closed. Orange and Black leave applicationStatus
+        alone entirely and touch only the ladder columns.
+        """
+        for colour in ("Green", "Red", "Yellow"):
             with self.subTest(result=colour):
                 result, cursor = self._verify(pin_business_id="BIZ-7",
                                               registry_match_business_id="BIZ-7",
                                               result=colour)
-                sql, _ = self._closed_update(cursor)
-                self.assertIsNone(sql, f"{colour} must not touch the registry")
+                sql, params = self._closed_update(cursor)
+                self.assertNotIn(
+                    "'Closed'", sql or "",
+                    f"{colour} must not set applicationStatus to Closed")
+                self.assertNotIn("Closed", params or (),
+                                 f"{colour} must not bind Closed")
                 self.assertFalse(result["registryClosed"])
                 self.assertIsNone(result["registryWarning"])
+
+        for colour in ("Orange", "Black"):
+            with self.subTest(result=colour):
+                result, cursor = self._verify(
+                    pin_business_id="BIZ-7",
+                    registry_match_business_id="BIZ-7",
+                    result=colour,
+                    notice_level=1 if colour == "Orange" else 4)
+                sql, params = self._closed_update(cursor)
+                self.assertNotIn(
+                    "applicationStatus", sql or "",
+                    f"{colour} must not touch applicationStatus at all")
+                self.assertFalse(result["registryClosed"])
 
     def test_pin_colour_is_still_updated_for_purple(self):
         result, cursor = self._verify(pin_business_id="BIZ-7",

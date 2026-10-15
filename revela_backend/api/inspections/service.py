@@ -11,6 +11,11 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from app import mysql
 from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
+from api.registry.locks import (
+    BlackLockedError,
+    assert_not_black_locked,
+    record_enforcement_event,
+)
 from api.models.inspection_lifecycle_events import (
     get_latest_inspection_cycle_id,
     log_inspection_event,
@@ -331,6 +336,31 @@ class InspectionTargetInvalid(ValueError):
     """The assignment itself is malformed, e.g. no such inspector.
     Surfaces as HTTP 400.
     """
+
+
+class InspectionVerificationConflict(Exception):
+    """The verify was refused because of the business's ladder state.
+
+    Raised before anything is written: a Black locked business cannot be
+    re-verified to a different result, an Orange must carry the next warning
+    level and no other, and a ladder result cannot be recorded at all on a
+    database that has not had the migration applied. Surfaces as HTTP 409.
+    """
+
+
+def _coerce_notice_level(value):
+    """Read a notice level as an int.
+
+    A report row can hold None or a string depending on how the inspector's
+    device sent it. Anything unreadable counts as 0, "no warning", so a
+    malformed value can never invent a warning level.
+    """
+    if value is None or value is False:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 # Effective colours a business may still be inspected in. Green means the
@@ -915,6 +945,69 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             "SELECT flagColor FROM geospatial_logs WHERE logID = %s", (report["targetID"],))
         geo_flag = cursor.fetchone()
 
+        # ── Decide everything before writing anything ───────────────────────────
+        # Every refusal below returns before the first UPDATE, so a rejected
+        # verify never leaves a half-applied state behind.
+        result_color = report["inspectionResult"]
+        notice_level = _coerce_notice_level(report.get("noticeLevel"))
+        pin_business_id = report.get("businessID")
+        uses_ladder = result_color in ("Orange", "Black")
+
+        ladder_available = ladder_columns_available(cursor)
+
+        if uses_ladder and not ladder_available:
+            # Fail closed. Recording a warning or a Black lock on a database
+            # that cannot store them would silently lose the enforcement state,
+            # which is worse than refusing the verification.
+            cursor.close()
+            return None, InspectionVerificationConflict(
+                f"{result_color} cannot be verified: this database has not had "
+                "the enforcement ladder migration applied, so official_registry "
+                "has no warningLevel or blackLocked column to record it in."
+            )
+
+        registry_row = None
+        if pin_business_id:
+            wanted = ("applicationStatus, warningLevel, blackLocked"
+                      if ladder_available else "applicationStatus")
+            cursor.execute(
+                f"SELECT {wanted} FROM official_registry "
+                "WHERE businessID = %s LIMIT 1",
+                (pin_business_id,),
+            )
+            registry_row = cursor.fetchone()
+
+        previous_level = (_coerce_notice_level(registry_row.get("warningLevel"))
+                          if registry_row else 0)
+
+        # The ladder only advances one step at a time, and only for a business
+        # the registry knows. An unregistered pin has no ladder to advance, so
+        # its notice level is just recorded on the pin as before.
+        if result_color == "Orange" and registry_row is not None:
+            expected_level = previous_level + 1
+            if not 1 <= notice_level <= 3:
+                cursor.close()
+                return None, InspectionVerificationConflict(
+                    f"This report carries notice level {notice_level}, but "
+                    f"an Orange verification must carry 1, 2 or 3."
+                )
+            if notice_level != expected_level:
+                cursor.close()
+                return None, InspectionVerificationConflict(
+                    f"This business is at warning level {previous_level}, so "
+                    f"the next Orange must be level {expected_level}. This "
+                    f"report carries level {notice_level}."
+                )
+
+        if pin_business_id:
+            try:
+                assert_not_black_locked(
+                    cursor, pin_business_id,
+                    action="verify this inspection")
+            except BlackLockedError as exc:
+                cursor.close()
+                return None, InspectionVerificationConflict(str(exc))
+
         location_updated = False
         if update_location:
             latitude, longitude, _ = _inspection_report_gps(report)
@@ -967,21 +1060,24 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             SET flagColor = %s,
                 noticeLevel = %s
             WHERE logID = %s
-        """, (report["inspectionResult"], report["noticeLevel"], report["targetID"]))
+        """, (result_color, notice_level, report["targetID"]))
 
-        # If verified result is Purple (Closed / Abandoned), also mark the
-        # official_registry entry as 'Closed'.
-        #
-        # Matching by name alone is not safe: two businesses can share a name
-        # in one barangay, and closing the wrong one is worse than not closing
-        # either. Prefer the pin's businessID; fall back to name + barangay
-        # only for legacy pins that carry none. Either way the affected row
-        # count is checked - previously a zero-row update still returned
-        # "Verified" and the admin believed the permit had been closed.
         registry_closed = False
         registry_warning = None
-        if report["inspectionResult"] == "Purple":
-            pin_business_id = report.get("businessID")
+        registry_updated = False
+        ladder_events = []
+
+        if result_color == "Purple":
+            # Verified Purple (Closed / Abandoned) marks the registry entry
+            # 'Closed'.
+            #
+            # Matching by name alone is not safe: two businesses can share a
+            # name in one barangay, and closing the wrong one is worse than not
+            # closing either. Prefer the pin's businessID; fall back to name +
+            # barangay only for legacy pins that carry none. Either way the
+            # affected row count is checked - previously a zero-row update
+            # still returned "Verified" and the admin believed the permit had
+            # been closed.
             if pin_business_id:
                 cursor.execute("""
                     UPDATE official_registry
@@ -989,6 +1085,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     WHERE businessID = %s
                 """, (pin_business_id,))
                 registry_closed = cursor.rowcount > 0
+                registry_updated = registry_closed
                 if not registry_closed:
                     registry_warning = (
                         f"Pin is linked to business {pin_business_id}, but no "
@@ -1011,12 +1108,74 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                         WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s
                     """, (geo_row["detectedName"], geo_row["barangayID"]))
                     registry_closed = cursor.rowcount > 0
+                    registry_updated = registry_closed
                     if not registry_closed:
                         registry_warning = (
                             "Pin has no business ID and no registry row matched "
                             "its name and barangay; the permit status may not "
                             "show as Closed."
                         )
+
+        if registry_row is not None:
+            # A registered target always records what was verified and when.
+            # Orange and Black deliberately leave applicationStatus alone: a
+            # warning is a warning level, not a permit status.
+            new_status = {
+                "Red": "Expired", "Yellow": "Pending", "Green": "Active",
+            }.get(result_color)
+
+            assignments = ["lastInspectionResult = %s", "lastInspectedAt = NOW()"]
+            params = [result_color]
+            if new_status:
+                assignments.insert(0, "applicationStatus = %s")
+                params.insert(0, new_status)
+            if result_color == "Orange":
+                assignments.append("warningLevel = %s")
+                params.append(notice_level)
+            if result_color == "Black":
+                assignments.append("blackLocked = 1")
+                assignments.append("blackLockedAt = NOW()")
+                assignments.append("blackLockedBy = %s")
+                params.append(verified_by_user_id)
+
+            cursor.execute(
+                f"UPDATE official_registry SET {', '.join(assignments)} "
+                "WHERE businessID = %s",
+                params + [pin_business_id],
+            )
+            registry_updated = cursor.rowcount > 0
+            if not registry_updated:
+                registry_warning = (
+                    f"The registry row for {pin_business_id} could not be "
+                    f"updated; the ladder state may not have been recorded."
+                )
+
+            # The audit trail shares this cursor, so it commits or rolls back
+            # with the change it describes.
+            if result_color == "Orange":
+                ladder_events.append(dict(
+                    event_type="warning_issued",
+                    previous_level=previous_level, new_level=notice_level,
+                    previous_black=None, new_black=None, reason=None))
+            if result_color == "Black":
+                ladder_events.append(dict(
+                    event_type="black_locked",
+                    previous_level=previous_level, new_level=previous_level,
+                    previous_black=registry_row.get("blackLocked"),
+                    new_black=True, reason=None))
+
+            for event in ladder_events:
+                record_enforcement_event(
+                    cursor,
+                    business_id=pin_business_id,
+                    event_type=event["event_type"],
+                    actor_user_id=verified_by_user_id,
+                    previous_level=event["previous_level"],
+                    new_level=event["new_level"],
+                    previous_black=event["previous_black"],
+                    new_black=event["new_black"],
+                    reason=event["reason"],
+                )
 
         log_inspection_event(
             cursor,
@@ -1046,6 +1205,11 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 "locationUpdated": location_updated,
                 "registryClosed": registry_closed,
                 "registryWarning": registry_warning,
+                "registryUpdated": registry_updated,
+                "warningLevel": previous_level if result_color == "Orange"
+                                else notice_level if result_color == "Black"
+                                else None,
+                "blackLocked": result_color == "Black",
             })
         except Exception:
             pass
@@ -1061,6 +1225,11 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             # registry row could not be reached, so the admin is not misled.
             "registryClosed":   registry_closed,
             "registryWarning":  registry_warning,
+            # registryUpdated covers every verified result, not just Purple:
+            # Red, Yellow and Green move applicationStatus, Orange and Black
+            # move the ladder columns, and all of them stamp
+            # lastInspectionResult / lastInspectedAt.
+            "registryUpdated":  registry_updated,
         }, None
 
     except Exception as e:

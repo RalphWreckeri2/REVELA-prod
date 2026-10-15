@@ -118,23 +118,24 @@ class BlackLockGuardTests(unittest.TestCase):
         locks.reset_lock_column_cache()
 
 
-class BlackGuardIsNotWiredInTests(unittest.TestCase):
-    """Phase 1 rule: nothing may call the guard yet."""
+class BlackGuardWiringTests(unittest.TestCase):
+    """Phase 2, Part 3 will assert which modules call the guard.
 
-    def test_no_production_module_imports_locks(self):
+    Placeholder kept so the file structure is stable; the assertions land with
+    the wiring they describe.
+    """
+
+    def test_only_verify_inspection_calls_the_guard_so_far(self):
         import pathlib
 
         api_root = pathlib.Path(__file__).resolve().parents[1] / "api"
-        offenders = []
-        for path in api_root.rglob("*.py"):
-            if path.name == "locks.py":
-                continue
-            if "registry import locks" in path.read_text(encoding="utf-8") \
-                    or "from .locks" in path.read_text(encoding="utf-8") \
-                    or "from api.registry.locks" in path.read_text(
-                        encoding="utf-8"):
-                offenders.append(path.relative_to(api_root))
-        self.assertEqual(offenders, [])
+        callers = {
+            path.relative_to(api_root).as_posix()
+            for path in api_root.rglob("*.py")
+            if path.name != "locks.py"
+            and "assert_not_black_locked" in path.read_text(encoding="utf-8")
+        }
+        self.assertEqual(callers, {"inspections/service.py"})
 
 
 if __name__ == "__main__":

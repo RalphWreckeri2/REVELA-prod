@@ -7,7 +7,8 @@ import unittest
 from flask import Flask
 from unittest.mock import MagicMock, patch
 from api.registry import routes as registry_routes
-from api.registry.colors import _effective_flag_color_sql
+from api.registry.colors import _effective_flag_color_sql, reset_ladder_column_cache
+from api.registry.locks import reset_lock_column_cache
 
 
 def _count_query(cursor):
@@ -293,8 +294,20 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
     def test_verified_warning_inspection_sets_explicit_orange_designation(
         self, mock_mysql, _ensure_gps_columns, _cycle_id, _log_event
     ):
+        """An unregistered Orange pin still records the warning on the pin.
+
+        The pin in this fixture carries no businessID, so there is no registry
+        row and no ladder to advance: the verify writes the pin only, exactly
+        as before Phase 2.
+        """
+        reset_ladder_column_cache()
+        self.addCleanup(reset_ladder_column_cache)
+        reset_lock_column_cache()
+        self.addCleanup(reset_lock_column_cache)
+
         mock_cursor = MagicMock()
         mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchall.return_value = [("warningLevel",), ("blackLocked",)]
         mock_cursor.fetchone.side_effect = [
             {
                 "reportID": 4,
@@ -324,6 +337,8 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
             if "UPDATE geospatial_logs" in call.args[0]
         )
         self.assertEqual(geospatial_update.args[1], ("Orange", 1, 22))
+        # No registry row was found, so nothing was written there.
+        self.assertFalse(result["registryUpdated"])
         self.assertFalse(any(
             "UPDATE official_registry" in call.args[0]
             for call in mock_cursor.execute.call_args_list

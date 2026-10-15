@@ -17,6 +17,7 @@ from api.inspections.service import (
     InspectionAssignmentConflict,
     InspectionTargetNotFound,
     InspectionTargetInvalid,
+    InspectionVerificationConflict,
     reassign_submitted_report,
     verify_inspection,
     get_all_inspections,
@@ -345,6 +346,11 @@ def verify(report_id):
         update_location=update_location,
     )
     if error:
+        if isinstance(error, InspectionVerificationConflict):
+            return jsonify({
+                "error": str(error),
+                "code": "inspection_verification_conflict",
+            }), 409
         return jsonify({"error": error}), 400
     return jsonify(result), 200
 
