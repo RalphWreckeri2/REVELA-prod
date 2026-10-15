@@ -17,10 +17,17 @@ from api.registry.service import (
     RegistryValidationError,
     RegistryNotFoundError,
     BlackLockedError,
+    RegistryLadderConflict,
+    RegistryLadderUnavailable,
+    clear_warning,
     SyncProtectionLookupError,
     OpenInspectionLookupError,
 )
-from api.middleware.decorators import jwt_required, admin_required
+from api.middleware.decorators import (
+    jwt_required,
+    admin_required,
+    super_admin_required,
+)
 from api.registry import places_resolver
 from api.utils.quota_config import API_QUOTA_CONFIG
 
@@ -584,6 +591,33 @@ def edit_business(business_id):
         return jsonify({"error": str(error)}), status_code
 
     return jsonify({"message": "Business updated successfully"}), 200
+
+
+# ── POST /api/registry/<id>/clear-warning ───────────────────────────────────────
+@registry_bp.route("/<path:business_id>/clear-warning", methods=["POST"])
+@admin_required()
+def clear_warning_route(business_id):
+    """Clear a business's Orange warning level. Admin or SUPER_ADMIN.
+
+    Refused with 409 when there is nothing to clear, the business is Black
+    locked, or an inspection is still in flight.
+    """
+    data = request.get_json(silent=True) or {}
+    reason = data.get("reason")
+
+    try:
+        summary, error = clear_warning(
+            business_id, get_jwt_identity(), reason)
+    except RegistryNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except (RegistryLadderConflict, RegistryLadderUnavailable) as exc:
+        return jsonify({
+            "error": str(exc),
+            "code": "warning_clear_refused",
+        }), 409
+    if error:
+        return jsonify({"error": str(error)}), 500
+    return jsonify(summary), 200
 
 
 # ── DELETE /api/registry/<id> ─────────────────────────────────────────────────

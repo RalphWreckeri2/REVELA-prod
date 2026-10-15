@@ -16,9 +16,11 @@ from api.registry.colors import (
     status_to_color,
 )
 from api.registry.locks import (
+    WARNING_CLEARED,
     BlackLockedError,
     assert_not_black_locked,
     is_black_locked,
+    record_enforcement_event,
 )
 from api.utils.places_quota import read_usage, reserve_usage_slot
 from api.utils.quota_config import API_QUOTA_CONFIG
@@ -1440,6 +1442,244 @@ def _load_open_inspection_keys(cursor):
                              row.get("barangayID")))
 
     return business_ids, name_brgy_pairs
+
+
+class RegistryLadderConflict(Exception):
+    """The ladder action was refused because of the row's current state.
+
+    Surfaces as HTTP 409. Distinct from RegistryValidationError (the request
+    was malformed) and from RegistryLadderUnavailable (the schema is missing).
+    """
+
+
+class RegistryLadderUnavailable(RuntimeError):
+    """The ladder schema this action needs is not present on this database.
+
+    Surfaces as HTTP 409. Every Phase 3A action refuses rather than
+    half-applying: a partial ladder state is worse than a refusal.
+    """
+
+
+#: Columns clear_warning needs on top of the Phase 1 ladder columns. Grouped
+#: because the action refuses outright when any of them is absent, rather than
+#: clearing the level and leaving no record of who did it.
+CLEAR_WARNING_COLUMNS = (
+    "warningLevel", "blackLocked", "warningClearedAt", "warningClearedBy",
+    "warningClearReason",
+)
+
+def _coerce_int(value):
+    """Read a ladder column as an int. None and rubbish both count as 0."""
+    if value is None or value is False:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _has_columns(cursor, names):
+    """True when every name in `names` exists on official_registry.
+
+    Asked in one round trip. Unlike the Phase 1 cached probe this is not
+    memoised: these actions are admin-scale, not on a request path, and a
+    migration applied while the app is running should take effect without a
+    restart.
+    """
+    placeholders = ", ".join(["%s"] * len(names))
+    cursor.execute(
+        "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() "
+        "  AND TABLE_NAME = 'official_registry' "
+        f"  AND COLUMN_NAME IN ({placeholders})",
+        tuple(names),
+    )
+    found = set()
+    for row in cursor.fetchall() or ():
+        found.add(row.get("COLUMN_NAME") if isinstance(row, dict)
+                 else row[0])
+    return all(name in found for name in names)
+
+
+def _load_ladder_state(cursor, business_id, columns):
+    """Read the ladder columns for one business, or None if it has no row.
+
+    Returns None rather than raising when there is no row, so callers can tell
+    "no such business" from "not migrated".
+    """
+    cursor.execute(
+        f"SELECT applicationStatus, {', '.join(columns)} "
+        "FROM official_registry WHERE businessID = %s LIMIT 1",
+        (business_id,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row
+    return dict(zip(["applicationStatus"] + list(columns), row))
+
+
+def _ladder_not_migrated(what):
+    return RegistryLadderUnavailable(
+        f"{what} is unavailable: this database has not had the enforcement "
+        "ladder migrations applied, so official_registry has no columns to "
+        "record it in. Nothing was changed."
+    )
+
+
+def _clear_pin_mirror(cursor, business_id):
+    """Put the business's pin back in step with its registry row.
+
+    The pin carries a mirrored copy of the warning (noticeLevel) and its own
+    stored colour. After a clear both have to follow the registry row, or the
+    Map keeps rendering Orange through the stored-pin fallback even though the
+    warning is gone.
+
+    The colour is the real shared rule rather than a copy of it:
+    _effective_flag_color_sql with the registry row already resolved is
+    exactly what every reader renders, so the pin cannot land on a different
+    answer than a screen would show.
+    """
+    registry = _effective_flag_color_sql(
+        "g", ladder=_has_columns(cursor, ("warningLevel", "blackLocked")))
+    cursor.execute(
+        f"""
+        UPDATE geospatial_logs g
+        JOIN official_registry r ON r.businessID = %s
+          AND (
+                (g.businessID IS NOT NULL AND g.businessID = r.businessID)
+             OR (g.businessID IS NULL AND g.barangayID = r.barangayID
+                 AND g.detectedName = r.businessName)
+          )
+        SET g.noticeLevel = 0,
+            g.flagColor = {registry}
+        """,
+        (business_id,),
+    )
+    return cursor.rowcount
+
+
+def clear_warning(business_id, cleared_by_user_id, reason=None):
+    """Clear a business's Orange warning level. Admin or SUPER_ADMIN.
+
+    Allowed only when there is a warning to clear, the business is not Black
+    locked, and no inspection is still in flight. Sets warningLevel to 0 and
+    records who, when and why.
+
+    Never touches applicationStatus, blackLocked or blackDispatchUnlocked.
+    Clearing the warning ladder is not a clearance of anything else: an Active
+    business that was warned goes back to Green, and a Pending or Expired one
+    goes back to its own permit colour.
+
+    Returns (summary, error). `error` is a RegistryLadderConflict (409),
+    RegistryLadderUnavailable (409) or RegistryNotFoundError (404).
+    """
+    try:
+        cursor = mysql.connection.cursor()
+
+        if not _has_columns(cursor, CLEAR_WARNING_COLUMNS):
+            cursor.close()
+            return None, _ladder_not_migrated("Clearing a warning")
+
+        state = _load_ladder_state(cursor, business_id, CLEAR_WARNING_COLUMNS)
+        if state is None:
+            cursor.close()
+            return None, RegistryNotFoundError("Business not found")
+
+        level = _coerce_int(state.get("warningLevel"))
+        if level <= 0:
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This business has no warning to clear: its warning level is "
+                f"{level}, not above 0."
+            )
+
+        if _coerce_int(state.get("blackLocked")):
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This business is Black locked, so its warning cannot be "
+                "cleared separately. Only a SUPER_ADMIN unlock applies."
+            )
+
+        # An inspection in flight is not Verified yet, so it may still move
+        # the level. Clearing underneath it would race.
+        cursor.execute(
+            """SELECT ir.reportID, ir.verificationStatus
+               FROM inspection_reports ir
+               JOIN geospatial_logs g ON g.logID = ir.targetID
+               WHERE ir.targetType = 'geospatial_log'
+                 AND (g.businessID = %s
+                      OR (g.businessID IS NULL AND g.detectedName = (
+                            SELECT r3.businessName
+                            FROM official_registry r3
+                            WHERE r3.businessID = %s)
+                          AND g.barangayID = (
+                            SELECT r2.barangayID
+                            FROM official_registry r2
+                            WHERE r2.businessID = %s)))
+                 AND (ir.verificationStatus IS NULL
+                      OR ir.verificationStatus <> 'Verified')
+               ORDER BY ir.irTimestamp DESC
+               LIMIT 1""",
+            (business_id, business_id, business_id),
+        )
+        pending = cursor.fetchone()
+        if pending:
+            report_id = (pending.get("reportID") if isinstance(pending, dict)
+                         else pending[0])
+            status = ((pending.get("verificationStatus")
+                       if isinstance(pending, dict) else pending[1])
+                      or "Assigned")
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "This business has an inspection that is not yet Verified "
+                f"(report #{report_id}, status {status}). Verify it or send it "
+                "back first."
+            )
+
+        cursor.execute(
+            """UPDATE official_registry
+               SET warningLevel = 0,
+                   warningClearedAt = NOW(),
+                   warningClearedBy = %s,
+                   warningClearReason = %s
+               WHERE businessID = %s""",
+            (cleared_by_user_id, reason, business_id),
+        )
+        if cursor.rowcount != 1:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                f"The registry row for {business_id} could not be updated, so "
+                "the warning was not cleared."
+            )
+
+        pins_updated = _clear_pin_mirror(cursor, business_id)
+
+        locked = _coerce_int(state.get("blackLocked"))
+        record_enforcement_event(
+            cursor, business_id=business_id, event_type=WARNING_CLEARED,
+            actor_user_id=cleared_by_user_id, reason=reason,
+            previous_level=level, new_level=0,
+            previous_black=locked, new_black=locked)
+
+        mysql.connection.commit()
+        cursor.close()
+        return {
+            "businessID": business_id,
+            "warningCleared": True,
+            "previousWarningLevel": level,
+            "warningLevel": 0,
+            "pinsUpdated": pins_updated,
+        }, None
+
+    except (RegistryLadderConflict, RegistryLadderUnavailable,
+            RegistryNotFoundError):
+        raise
+    except Exception as e:
+        mysql.connection.rollback()
+        return None, str(e)
 
 
 def _load_sync_protection_keys(cursor):

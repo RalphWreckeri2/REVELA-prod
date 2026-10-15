@@ -516,6 +516,38 @@ export async function getBusinessByIdRequest(id, token) {
   }
 }
 
+export async function clearWarningRequest(businessId, reason, token) {
+  const res = await fetch(
+    `${BASE_URL}/registry/${encodeURIComponent(businessId)}/clear-warning`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ reason }),
+    },
+  );
+  // handleResponse already throws the server's message for a 409, which is
+  // exactly what the detail modal shows back to the admin.
+  return await handleResponse(res);
+}
+
+export async function unlockBlackDispatchRequest(businessId, reason, token) {
+  const res = await fetch(
+    `${BASE_URL}/registry/${encodeURIComponent(businessId)}/unlock-black-dispatch`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ reason }),
+    },
+  );
+  return await handleResponse(res);
+}
+
 export async function updateBusinessRequest(businessId, payload, token) {
   try {
     const res = await fetch(

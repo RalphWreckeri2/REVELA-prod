@@ -17,7 +17,14 @@ import {
   getBarangaysRequest,
   updateBusinessRequest,
   deleteBusinessRequest,
+  clearWarningRequest,
+  unlockBlackDispatchRequest,
 } from "../services/api";
+import {
+  canClearWarning,
+  canUnlockBlackDispatch,
+  warningLevel as ladderWarningLevel,
+} from "../components/registryLadderPolicy";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const Icon = {
@@ -176,13 +183,14 @@ function EmptyState({ hasFilters, onUpload }) {
 
 
 // ── Business Detail Modal ─────────────────────────────────────────────────────
-function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, isClosing }) {
+function BusinessDetailModal({ businessId, onClose, token, isAdmin, userRole, onSuccess, isClosing }) {
   const [business, setBusiness] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formData, setFormData] = useState({});
+  const [ladderBusy, setLadderBusy] = useState(false);
 
   useEffect(() => {
     async function fetch() {
@@ -206,6 +214,73 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
     }
     fetch();
   }, [businessId, token]);
+
+  // The reason is optional on both actions. The server decides whether the
+  // action is allowed at all, so these are prompts, not gates: whatever comes
+  // back in err.message is what the admin is shown.
+  const handleClearWarning = async () => {
+    const { value } = await Swal.fire({
+      title: "Clear this warning?",
+      html: "The warning level goes back to 0 and the business shows its "
+          + "permit-status colour again. An admin who clears a warning is "
+          + "recorded in the audit trail.",
+      input: "text",
+      inputPlaceholder: "Reason (optional)",
+      inputAttributes: { "aria-label": "Reason (optional)" },
+      showCancelButton: true,
+      confirmButtonText: "Clear warning",
+    });
+    if (value === undefined) return;
+    setLadderBusy(true);
+    try {
+      const result = await clearWarningRequest(
+        business.businessID, value || null, token);
+      Swal.fire({
+        icon: "success",
+        title: "Warning cleared",
+        text: `Level ${result.previousWarningLevel} cleared.`,
+        timer: 1800,
+        showConfirmButton: false,
+      });
+      onSuccess?.();
+    } catch (err) {
+      Swal.fire({ icon: "error", title: "Not cleared", text: err.message });
+    } finally {
+      setLadderBusy(false);
+    }
+  };
+
+  const handleUnlockBlack = async () => {
+    const { value } = await Swal.fire({
+      title: "Unlock this Black business for one inspection?",
+      html: "This does not lift the Black flag. It allows exactly one "
+          + "inspection to be dispatched, and the grant is spent when that "
+          + "inspection is verified, cancelled or sent back.",
+      input: "text",
+      inputPlaceholder: "Reason (optional)",
+      inputAttributes: { "aria-label": "Reason (optional)" },
+      showCancelButton: true,
+      confirmButtonText: "Unlock for inspection",
+    });
+    if (value === undefined) return;
+    setLadderBusy(true);
+    try {
+      await unlockBlackDispatchRequest(
+        business.businessID, value || null, token);
+      Swal.fire({
+        icon: "success",
+        title: "Unlocked for one inspection",
+        text: "The business stays Black. Dispatch it once.",
+        timer: 2200,
+        showConfirmButton: false,
+      });
+      onSuccess?.();
+    } catch (err) {
+      Swal.fire({ icon: "error", title: "Not unlocked", text: err.message });
+    } finally {
+      setLadderBusy(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true);
@@ -385,6 +460,29 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                   disabled={saving || !business}
                 >
                   Delete
+                </button>
+              )}
+              {/* Ladder actions. Visible only when the server would accept
+                  them; the server still decides, so a stale "visible" costs a
+                  409 message rather than a silent no-op. */}
+              {canClearWarning(business, userRole) && (
+                <button
+                  className="ghost-btn"
+                  onClick={handleClearWarning}
+                  disabled={ladderBusy || !business}
+                  title={`Clear warning level ${ladderWarningLevel(business)}`}
+                >
+                  Clear Warning
+                </button>
+              )}
+              {canUnlockBlackDispatch(business, userRole) && (
+                <button
+                  className="ghost-btn"
+                  onClick={handleUnlockBlack}
+                  disabled={ladderBusy || !business}
+                  title="Allow exactly one inspection. The business stays Black."
+                >
+                  Unlock for Inspection
                 </button>
               )}
               <button className="ghost-btn" onClick={onClose}>Close</button>
@@ -953,6 +1051,7 @@ export default function RegistryPage() {
           businessId={detailId}
           token={token}
           isAdmin={isAdmin}
+          userRole={user?.role}
           onSuccess={fetchBusinesses}
           onClose={() => setDetailId(null)}
         />
