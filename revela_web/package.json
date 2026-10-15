@@ -11,8 +11,9 @@
     "test:inactivity": "node --test src/components/inactivityPolicy.test.js",
     "test:api-usage-view": "node --test src/components/apiUsageView.test.js",
     "test:location-review": "node --test src/components/locationReviewPolicy.test.js",
+    "test:dispatch-eligibility": "node --test src/components/dispatchEligibility.test.js",
     "verify:contexts": "node scripts/verify-contexts.mjs",
-    "verify": "npm run lint && npm run verify:contexts && npm run test:mobile-detection && npm run test:inactivity && npm run test:api-usage-view && npm run test:location-review && npm run build",
+    "verify": "npm run lint && npm run verify:contexts && npm run test:mobile-detection && npm run test:inactivity && npm run test:api-usage-view && npm run test:location-review && npm run test:dispatch-eligibility && npm run build",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -23,6 +23,7 @@ import {
   selectLocationChoice,
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
+import { canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
 import { AuthContext } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -630,27 +631,8 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
   const [showMoreActions, setShowMoreActions] = useState(false);
   const fc = getFlagColor(flag.color);
 
-  const canShowDispatchButton = (() => {
-    if (!isAdmin) return false;
-    if (flag.color === "Black") return false;
-    if (flag.hasActiveInspection) {
-      return true;
-    }
-    if (flag.verificationStatus === 'Verified') {
-      return true;
-    }
-    return flag.color === "Red" || flag.color === "Yellow" || flag.color === "Orange";
-  })();
-
-  const dispatchButtonLabel = (() => {
-    if (flag.hasActiveInspection) {
-      return "Undergoing Inspection";
-    }
-    if (flag.verificationStatus === 'Verified') {
-      return "Re-dispatch inspector";
-    }
-    return "Dispatch inspector";
-  })();
+  const canShowDispatchButton = canDispatchFlag(flag, { isAdmin });
+  const dispatchButtonText = dispatchButtonLabel(flag);
 
 
   // Source labels
@@ -779,7 +761,7 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             disabled={actionLoading || flag.hasActiveInspection}
             onClick={() => onDispatch(flag)}
           >
-            <Icon.Send size={18} /> {dispatchButtonLabel}
+            <Icon.Send size={18} /> {dispatchButtonText}
           </button>
         )}
 
