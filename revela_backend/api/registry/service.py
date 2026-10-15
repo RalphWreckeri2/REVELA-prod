@@ -10,7 +10,7 @@ from app import mysql
 from api.models.geospatial import insert_green_flag
 from api.utils.cancellation import is_cancelled, set_cancel
 from api.registry import places_resolver
-from api.registry.colors import _effective_flag_color_sql
+from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
 from api.utils.places_quota import read_usage, reserve_usage_slot
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
@@ -2761,7 +2761,11 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         # Report the colour the Map reports: _effective_flag_color_sql is the
         # exact expression the map/analytics readers use, so the Registry page
         # and the Map cannot drift apart. api.registry.colors is dependency-free.
-        effective_flag_color = _effective_flag_color_sql("g")
+        # ladder_columns_available() is False until the ladder migration has
+        # run, which keeps this query byte-identical to before on a database
+        # that does not have warningLevel / blackLocked yet.
+        effective_flag_color = _effective_flag_color_sql(
+            "g", ladder=ladder_columns_available(cursor))
         cursor.execute(
             f"""
             SELECT
