@@ -18,6 +18,7 @@ import json
 from geopy.distance import geodesic
 from app import mysql
 from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
+from api.registry.locks import BlackLockedError, assert_not_black_locked
 from shapely import prepare
 from shapely.affinity import scale
 from shapely.geometry import mapping, shape, Point
@@ -3347,6 +3348,14 @@ def update_flag_color(log_id, color):
 
         if log_id < 0:
             biz_id = -log_id
+            # Registry-only flag: a Black locked business keeps its colour.
+            # A Closed one does not - reopening is a normal admin correction.
+            try:
+                assert_not_black_locked(
+                    cursor, biz_id, action="recolour this flag")
+            except BlackLockedError as exc:
+                cursor.close()
+                return False, exc
             if color == "Orange":
                 cursor.close()
                 return False, (
@@ -3381,11 +3390,22 @@ def update_flag_color(log_id, color):
             return True, None
 
         cursor.execute(
-            "SELECT flagColor, detectedName, barangayID FROM geospatial_logs WHERE logID = %s", (log_id,))
+            "SELECT flagColor, detectedName, barangayID, businessID "
+            "FROM geospatial_logs WHERE logID = %s", (log_id,))
         row = cursor.fetchone()
         if not row:
             cursor.close()
             return False, "Flag not found"
+
+        # A Black locked business keeps its colour. Only a SUPER_ADMIN unlock
+        # may change it, and that route does not exist yet.
+        if row.get("businessID"):
+            try:
+                assert_not_black_locked(
+                    cursor, row["businessID"], action="recolour this flag")
+            except BlackLockedError as exc:
+                cursor.close()
+                return False, exc
 
         cursor.execute("""
             UPDATE geospatial_logs

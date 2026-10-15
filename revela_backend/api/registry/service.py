@@ -15,6 +15,11 @@ from api.registry.colors import (
     ladder_columns_available,
     status_to_color,
 )
+from api.registry.locks import (
+    BlackLockedError,
+    assert_not_black_locked,
+    is_black_locked,
+)
 from api.utils.places_quota import read_usage, reserve_usage_slot
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
@@ -2239,6 +2244,7 @@ def snap_unresolved_pins(limit: int = 200):
         api_error_count = 0
         skipped_quota = 0
         no_match = 0
+        skipped_black_lock = 0
         monthly_quota_exceeded = False
         budget_reason = None
 
@@ -2418,8 +2424,14 @@ def snap_unresolved_pins(limit: int = 200):
                         cur2, brgy_id, name, existing_lat, existing_lng,
                         lat, lng, business_id=bid,
                     )
-                    _sync_flag_color(cur2, brgy_id, name, app_status, lat, lng,
-                                     address, business_id=bid)
+                    # The coordinates above were still written: snapping a pin
+                    # is a location fix, not an enforcement action. Only the
+                    # colour write is refused for a Black locked business.
+                    if not is_black_locked(cur2, bid):
+                        _sync_flag_color(cur2, brgy_id, name, app_status, lat,
+                                         lng, address, business_id=bid)
+                    else:
+                        skipped_black_lock += 1
                     record_registry_workflow_event(
                         cur2,
                         bid,
@@ -2519,6 +2531,9 @@ def snap_unresolved_pins(limit: int = 200):
             "api_error": api_error,
             "skipped_quota": skipped_quota,
             "no_match": no_match,
+            # Pins whose coordinates were fixed but whose colour was left
+            # alone because the business is Black locked.
+            "skipped_black_lock": skipped_black_lock,
             "usage": _places_usage_snapshot("Snap Pins"),
             "message": msg
         }, None
@@ -2556,6 +2571,18 @@ def update_business(business_id, data: dict):
 
         old_name = row["businessName"]
         barangay_id = row["barangayID"]
+
+        # A Black locked business is closed to manual edits. Only a SUPER_ADMIN
+        # unlock may change it, and that route does not exist yet.
+        #
+        # A Closed business is NOT locked: reopening one by hand is a normal
+        # admin correction, and the status edit below is allowed to do it.
+        try:
+            assert_not_black_locked(
+                cursor, business_id, action="edit this business")
+        except BlackLockedError as exc:
+            cursor.close()
+            return False, exc
 
         # Validate the permit status before building any UPDATE, so a rejected
         # value changes nothing at all - not the registry row, not the pin.
@@ -2955,12 +2982,24 @@ def check_and_expire_old_permits():
     try:
         cursor = mysql.connection.cursor()
 
+        # Defensive: a Black locked business must not be expired by the
+        # rollover either. The lock is independent of applicationStatus, so
+        # without this a habitual offender would silently be re-registered as
+        # merely Expired.
+        lock_guard = ""
+        if ladder_columns_available(cursor):
+            lock_guard = " AND COALESCE(blackLocked, 0) = 0"
+        else:
+            # Column absent. The permit status below still needs expiring; only
+            # the pin colour is unknowable, so expire and leave the pin alone.
+            pass
+
         # 1. Count active businesses from previous years
         cursor.execute(
             """
             SELECT COUNT(*) AS cnt FROM official_registry
             WHERE YEAR(lastRenewalDate) < YEAR(CURDATE()) AND applicationStatus = 'Active'
-            """
+            """ + lock_guard
         )
         row = cursor.fetchone()
         cnt = row["cnt"] if row else 0
@@ -2987,7 +3026,7 @@ def check_and_expire_old_permits():
                     ELSE 'Red'
                 END
                 WHERE YEAR(r.lastRenewalDate) < YEAR(CURDATE()) AND r.applicationStatus = 'Active'
-                """
+                """ + lock_guard.replace("blackLocked", "r.blackLocked")
             )
 
             # 3. Update registry status to 'Expired'
@@ -2996,7 +3035,7 @@ def check_and_expire_old_permits():
                 UPDATE official_registry
                 SET applicationStatus = 'Expired'
                 WHERE YEAR(lastRenewalDate) < YEAR(CURDATE()) AND applicationStatus = 'Active'
-                """
+                """ + lock_guard
             )
 
             # 4. Fetch admin userIDs

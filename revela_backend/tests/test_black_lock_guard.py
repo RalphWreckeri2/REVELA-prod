@@ -119,24 +119,49 @@ class BlackLockGuardTests(unittest.TestCase):
 
 
 class BlackGuardWiringTests(unittest.TestCase):
-    """Phase 2, Part 3 will assert which modules call the guard.
+    """Every write path that must refuse a Black-locked business calls it."""
 
-    Placeholder kept so the file structure is stable; the assertions land with
-    the wiring they describe.
-    """
+    #: assert_not_black_locked refuses the whole operation.
+    GUARDED = {
+        "flags/service.py",
+        "inspections/service.py",
+        "registry/service.py",
+        "registry/reverify.py",
+    }
 
-    def test_only_verify_inspection_calls_the_guard_so_far(self):
+    def _api_root(self):
         import pathlib
 
-        api_root = pathlib.Path(__file__).resolve().parents[1] / "api"
-        callers = {
-            path.relative_to(api_root).as_posix()
-            for path in api_root.rglob("*.py")
+        return pathlib.Path(__file__).resolve().parents[1] / "api"
+
+    def _callers(self, needle):
+        root = self._api_root()
+        return {
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*.py")
             if path.name != "locks.py"
-            and "assert_not_black_locked" in path.read_text(encoding="utf-8")
+            and needle in path.read_text(encoding="utf-8")
         }
-        self.assertEqual(callers, {"inspections/service.py"})
 
+    def test_the_guard_is_called_from_every_write_path(self):
+        callers = self._callers("assert_not_black_locked")
+        self.assertTrue(
+            self.GUARDED.issubset(callers),
+            "not wired: %s" % sorted(self.GUARDED - callers))
+        self.assertFalse(
+            callers - self.GUARDED,
+            "unexpected caller: %s" % sorted(callers - self.GUARDED))
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_snap_checks_the_lock_without_aborting(self):
+        """snap_unresolved_pins skips the colour write; it must not abort."""
+        self.assertIn("registry/service.py", self._callers("is_black_locked"))
+
+    def test_no_caller_branches_on_the_message_text(self):
+        """BlackLockedError's message is for humans; nothing may test it."""
+        root = self._api_root()
+        for relative in sorted(self.GUARDED):
+            source = (root / relative).read_text(encoding="utf-8")
+            with self.subTest(module=relative):
+                self.assertIn("except BlackLockedError", source)
+                self.assertNotIn('"is Black locked."', source)
+                self.assertNotIn("'is Black locked.'", source)

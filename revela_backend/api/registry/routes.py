@@ -16,6 +16,7 @@ from api.registry.service import (
     snap_unresolved_pins,
     RegistryValidationError,
     RegistryNotFoundError,
+    BlackLockedError,
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.registry import places_resolver
@@ -564,7 +565,9 @@ def edit_business(business_id):
 
     if error:
         # Typed errors, not message text, so the code cannot drift from the copy.
-        if isinstance(error, RegistryNotFoundError):
+        if isinstance(error, BlackLockedError):
+            status_code = 409
+        elif isinstance(error, RegistryNotFoundError):
             status_code = 404
         elif isinstance(error, RegistryValidationError):
             status_code = 400

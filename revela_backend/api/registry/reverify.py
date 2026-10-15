@@ -416,6 +416,9 @@ def _name_is_unique(cur, barangay_id, name):
     return int(n) == 1
 
 
+from api.registry.locks import BlackLockedError, assert_not_black_locked
+
+
 def _move_pin(cur, service, biz, lat, lng):
     """Move the business's map pin (linked by businessID, or by name for unlinked legacy pins)."""
     cur.execute(
@@ -430,12 +433,24 @@ def _move_pin(cur, service, biz, lat, lng):
             (lat, lng, biz["businessID"], biz["barangayID"],
              str(biz["businessName"]).strip()),
         )
-    # Keeps colour in sync and seeds a pin if the business has none yet
+    # Keeps colour in sync and seeds a pin if the business has none yet.
+    #
+    # The two UPDATEs above have already moved the pin and that is deliberate:
+    # a re-verify is a location fix, not an enforcement action. Only the colour
+    # recompute is refused for a Black locked business, whose colour must stay
+    # whatever the lock made it.
+    try:
+        assert_not_black_locked(
+            cur, biz["businessID"],
+            action="recompute the flag colour during re-verify")
+    except BlackLockedError:
+        return False
     service._sync_flag_color(
         cur, biz["barangayID"], biz["businessName"], biz.get(
             "applicationStatus") or "Active",
         lat, lng, biz.get("businessAddress"), business_id=biz["businessID"],
     )
+    return True
 
 
 # ----------------------------------------------------------------------------

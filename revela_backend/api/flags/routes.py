@@ -10,6 +10,7 @@ from api.flags.service import (
     get_flags,
     insert_yellow_flag,
     update_flag_color,
+    BlackLockedError,
     escalate_to_black,
     delete_flag,
     reconcile_existing_flags,
@@ -418,6 +419,13 @@ def change_flag_color_route(log_id):
 
     success, error = update_flag_color(log_id, color)
     if not success:
+        # Typed error, not message text: a Black locked business is a conflict
+        # with the enforcement ladder, not a bad request.
+        if isinstance(error, BlackLockedError):
+            return jsonify({
+                "error": str(error),
+                "code": "black_locked",
+            }), 409
         return jsonify({"error": error}), 400
     return jsonify({"message": f"Flag #{log_id} color updated to {color}"}), 200
 
