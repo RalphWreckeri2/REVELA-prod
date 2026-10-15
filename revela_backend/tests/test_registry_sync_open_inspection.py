@@ -244,6 +244,7 @@ class SyncOpenInspectionTests(unittest.TestCase):
         lookups = self._sqls(cursor, "SELECT DISTINCT g.businessID")
         self.assertEqual(len(lookups), 1)
         sql = lookups[0]
+        self.assertIn("ir.verificationStatus IS NULL", sql)
         self.assertIn("ir.verificationStatus <> 'Verified'", sql)
         self.assertIn("ir.targetType = 'geospatial_log'", sql)
         self.assertIn("g.businessID IS NOT NULL", sql)
@@ -291,6 +292,70 @@ class SyncOpenInspectionTests(unittest.TestCase):
                 _csv(["BIZ-1,Acme Store,Barangay I,New Main St,Expired\n"]),
                 ".csv")
         resolve_location.assert_not_called()
+
+
+    def test_null_status_inspection_protects_its_row(self):
+        """A row with no verificationStatus is still 'not verified'."""
+        fixture = _Fixture(
+            pins=[_PIN],
+            inspections=[{"targetID": 42, "targetType": "geospatial_log",
+                          "verificationStatus": None}],
+            existing=dict(_EXISTING))
+        summary, cursor = self._run(
+            fixture, ["BIZ-1,Acme Store,Barangay I,New Main Street,Expired\n"])
+
+        self.assertEqual(summary["skipped_open_inspection"], 1)
+        self.assertEqual(summary["updated"], 0)
+        self.assertEqual(self._sqls(cursor, "UPDATE official_registry"), [])
+        self.assertEqual(self._sqls(cursor, "SET flagColor = %s"), [])
+
+    def test_lookup_failure_aborts_sync_without_writing_anything(self):
+        """Fail closed: an unusable guard must not fall back to syncing."""
+        fixture = _Fixture(pins=[_PIN], inspections=[], existing=dict(_EXISTING))
+        cursor = _cursor(fixture)
+        healthy_fetchall = cursor.fetchall.side_effect
+
+        def exploding_fetchall():
+            sql = cursor.execute.call_args.args[0] if cursor.execute.call_args else ""
+            if "SELECT DISTINCT g.businessID" in sql:
+                raise RuntimeError("connection lost")
+            return healthy_fetchall()
+
+        cursor.fetchall.side_effect = exploding_fetchall
+        mysql = MagicMock()
+        mysql.connection.cursor.return_value = cursor
+        usage = {"text_search": {"day": 0, "month": 0},
+                 "details": {"day": 0, "month": 0},
+                 "geocoding": {"day": 0, "month": 0}}
+        with (
+            patch.object(service, "mysql", mysql),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"barangay i": 1}),
+            patch.object(service, "_resolve_barangay_id", return_value=1),
+            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(service.places_resolver, "reset_run_state"),
+            patch.object(service.places_resolver, "compute_resolve_key",
+                         return_value="k"),
+            patch.object(service.places_resolver, "record_coord_meta"),
+            patch.object(service.places_resolver, "_update_pin"),
+            patch.object(service.places_resolver, "get_places_call_usage",
+                         return_value=usage),
+            patch.object(service, "_resolve_location"),
+            patch.object(service, "insert_green_flag"),
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.sync_registry(
+                _csv(["BIZ-1,Acme Store,Barangay I,New Main Street,Expired\n"]),
+                ".csv")
+
+        self.assertIsNone(summary)
+        self.assertIn("Could not check open inspections", error)
+        self.assertIn("nothing was changed", error)
+        # Nothing may be written, for any row, new or existing.
+        self.assertEqual(self._sqls(cursor, "UPDATE official_registry"), [])
+        self.assertEqual(self._sqls(cursor, "INSERT INTO official_registry"), [])
+        self.assertEqual(self._sqls(cursor, "SET flagColor = %s"), [])
+        mysql.connection.commit.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1320,49 +1320,53 @@ def upload_registry(file, ext: str):
         return None, str(e)
 
 
+class OpenInspectionLookupError(RuntimeError):
+    """Raised when the open-inspection guard cannot be evaluated."""
+
+
 def _load_open_inspection_keys(cursor):
     """Batch-load the businesses whose inspection is not yet verified.
 
-    "Open" deliberately means verificationStatus <> 'Verified' rather than an
-    explicit list, so a new assignment state cannot silently become syncable.
+    "Open" deliberately means "not verified" - either an explicit
+    verificationStatus, or no status at all - rather than an explicit list of
+    statuses, so a new assignment state cannot silently become syncable.
 
     Rows are matched through the map pin the way every other join in this
     module does: geospatial_logs.businessID where the pin carries one, and
     barangayID + detectedName for legacy pins with businessID IS NULL.
 
-    Returns (business_ids, name_brgy_pairs). Both are empty on failure so a
-    read problem degrades to "sync normally" rather than "skip everything".
+    Fails closed. If either query cannot run we cannot know which rows are
+    protected, and syncing anyway would overwrite exactly the rows this guard
+    exists to protect, so the caller must abort.
     """
     business_ids = set()
     name_brgy_pairs = set()
-    try:
-        cursor.execute("""
-            SELECT DISTINCT g.businessID
-            FROM geospatial_logs g
-            JOIN inspection_reports ir
-              ON ir.targetID = g.logID
-             AND ir.targetType = 'geospatial_log'
-            WHERE ir.verificationStatus <> 'Verified'
-              AND g.businessID IS NOT NULL
-        """)
-        for row in cursor.fetchall() or ():
-            business_ids.add(row.get("businessID"))
 
-        cursor.execute("""
-            SELECT DISTINCT g.detectedName, g.barangayID
-            FROM geospatial_logs g
-            JOIN inspection_reports ir
-              ON ir.targetID = g.logID
-             AND ir.targetType = 'geospatial_log'
-            WHERE ir.verificationStatus <> 'Verified'
-              AND g.businessID IS NULL
-        """)
-        for row in cursor.fetchall() or ():
-            name_brgy_pairs.add((row.get("detectedName"),
-                                 row.get("barangayID")))
-    except Exception as exc:
-        print(f"[registry sync] open-inspection lookup unavailable: {exc}")
-        return set(), set()
+    cursor.execute("""
+        SELECT DISTINCT g.businessID
+        FROM geospatial_logs g
+        JOIN inspection_reports ir
+          ON ir.targetID = g.logID
+         AND ir.targetType = 'geospatial_log'
+        WHERE (ir.verificationStatus IS NULL OR ir.verificationStatus <> 'Verified')
+          AND g.businessID IS NOT NULL
+    """)
+    for row in cursor.fetchall() or ():
+        business_ids.add(row.get("businessID"))
+
+    cursor.execute("""
+        SELECT DISTINCT g.detectedName, g.barangayID
+        FROM geospatial_logs g
+        JOIN inspection_reports ir
+          ON ir.targetID = g.logID
+         AND ir.targetType = 'geospatial_log'
+        WHERE (ir.verificationStatus IS NULL OR ir.verificationStatus <> 'Verified')
+          AND g.businessID IS NULL
+    """)
+    for row in cursor.fetchall() or ():
+        name_brgy_pairs.add((row.get("detectedName"),
+                             row.get("barangayID")))
+
     return business_ids, name_brgy_pairs
 
 
@@ -1422,9 +1426,18 @@ def sync_registry(file, ext: str):
         cursor = mysql.connection.cursor()
 
         # Rows under inspection are frozen for this run. Loaded once so the
-        # per-row cost stays zero.
-        open_inspection_ids, open_inspection_names = _load_open_inspection_keys(
-            cursor)
+        # per-row cost stays zero. Nothing has been written yet, so failing
+        # here leaves the registry exactly as it was.
+        try:
+            open_inspection_ids, open_inspection_names = (
+                _load_open_inspection_keys(cursor))
+        except OpenInspectionLookupError:
+            raise
+        except Exception as exc:
+            raise OpenInspectionLookupError(
+                "Could not check open inspections; sync aborted, "
+                f"nothing was changed. ({exc})"
+            ) from exc
 
         for idx, row in df.iterrows():
             if idx % 5 == 0:
