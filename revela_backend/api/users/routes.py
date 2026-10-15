@@ -10,6 +10,65 @@ import secrets
 
 users_bp = Blueprint("users", __name__)
 
+# The complete set of roles this application understands. Anything else is
+# rejected with 400 rather than written verbatim into users.userRole.
+VALID_ROLES = ("Inspector", "Admin", "SUPER_ADMIN", "System Administrator")
+SUPER_ADMIN_ROLE = "SUPER_ADMIN"
+
+
+def _validate_role(role):
+    """Return (ok, normalised_role_or_error)."""
+    if not isinstance(role, str):
+        return False, f"role must be one of {list(VALID_ROLES)}"
+    # Tolerate casing/whitespace differences from clients, but nothing else.
+    match = next((r for r in VALID_ROLES if r.casefold() == role.strip().casefold()),
+                 None)
+    if match is None:
+        return False, f"role must be one of {list(VALID_ROLES)}"
+    return True, match
+
+
+def _caller_is_super_admin():
+    """True when the authenticated caller holds the exact SUPER_ADMIN role.
+
+    Note System Administrator is NOT accepted: super_admin_required() matches
+    the exact string, and this guard must agree with it.
+    """
+    try:
+        actor = find_user_by_id(int(get_jwt_identity()))
+    except (TypeError, ValueError):
+        return False
+    return bool(actor) and actor.get("userRole") == SUPER_ADMIN_ROLE
+
+
+def _no_super_admin_exists():
+    """Bootstrap escape hatch.
+
+    There is no seed script for the first SUPER_ADMIN in this repository, so
+    a deployment whose SUPER_ADMIN rows were removed would otherwise have no
+    way to mint a replacement. Allow creating the very first one.
+    """
+    try:
+        return len(get_users_by_role(SUPER_ADMIN_ROLE)) == 0
+    except Exception:
+        # If the check itself fails, do not open the door.
+        return False
+
+
+def _guard_super_admin_write(actor_is_super_admin):
+    """Authorise a write that would create or assign SUPER_ADMIN.
+
+    Returns an error tuple to return from the view, or None if allowed.
+    """
+    if _no_super_admin_exists():
+        return None
+    if actor_is_super_admin:
+        return None
+    return (
+        {"error": "Only a SUPER_ADMIN can create or promote a SUPER_ADMIN."},
+        403,
+    )
+
 
 def _normalize_phone(phone):
     """
@@ -74,6 +133,15 @@ def create_user_route():
     if find_user_by_email(data["email"]):
         return jsonify({"error": "Email already in use"}), 409
 
+    role_ok, role_or_error = _validate_role(data["role"])
+    if not role_ok:
+        return jsonify({"error": role_or_error}), 400
+
+    if role_or_error == SUPER_ADMIN_ROLE:
+        blocked = _guard_super_admin_write(_caller_is_super_admin())
+        if blocked:
+            return jsonify(blocked[0]), blocked[1]
+
     # Phone validation — must happen before create_user call
     raw_phone = data.get("phone", "").strip()
     phone = _normalize_phone(raw_phone) if raw_phone else None
@@ -91,7 +159,7 @@ def create_user_route():
         full_name=data["fullName"],
         email=data["email"],
         hashed_password=hashed,
-        role=data["role"],
+        role=role_or_error,
         phone=phone,
         must_change_password=True,  # Force change on first login
     )
@@ -129,6 +197,17 @@ def update_user_route(user_id):
 
     if user["userRole"] == "SUPER_ADMIN":
         data.pop("role", None)
+    elif "role" in data:
+        # An existing SUPER_ADMIN cannot be re-roled, so this branch only
+        # covers promotions or a change to some other role.
+        role_ok, role_or_error = _validate_role(data["role"])
+        if not role_ok:
+            return jsonify({"error": role_or_error}), 400
+        if role_or_error == SUPER_ADMIN_ROLE:
+            blocked = _guard_super_admin_write(_caller_is_super_admin())
+            if blocked:
+                return jsonify(blocked[0]), blocked[1]
+        data["role"] = role_or_error
 
     # Phone validation — must happen before update_user call
     raw_phone = data.get("phone", "").strip()
