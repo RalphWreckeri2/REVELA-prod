@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from api.registry.colors import _effective_flag_color_sql
+
 
 def _split_ids(raw: Optional[str]) -> List[int]:
     if not raw or not str(raw).strip():
@@ -121,7 +123,14 @@ def geo_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
         params.extend(bids)
 
     if F.get("flag_color"):
-        parts.append(f"{alias}.flagColor = %s")
+        # Filter on the same derived colour the analytics screens display,
+        # not the raw stored geospatial_logs.flagColor. Otherwise filtering by
+        # Red can return rows that are rendered Green (and vice versa) when a
+        # pin is stale relative to official_registry.applicationStatus.
+        # _effective_flag_color_sql falls back to the stored colour only for
+        # pins with no registry match, which is the only case where the
+        # registry cannot speak.
+        parts.append(f"({_effective_flag_color_sql(alias)}) = %s")
         params.append(F["flag_color"])
 
     if F.get("detected_from"):
