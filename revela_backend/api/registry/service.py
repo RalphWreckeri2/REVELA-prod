@@ -227,6 +227,51 @@ def _preserve_import_coordinates(coord_source, match_status, has_csv_coords):
     )
 
 
+def _clear_warning_for_active_import(cursor, business_id):
+    """Clear a current warning when an authoritative import marks a business Active."""
+    if not ladder_columns_available(cursor):
+        return None
+
+    cursor.execute(
+        """SELECT warningLevel, blackLocked
+           FROM enforcement_state
+           WHERE subjectType = 'business' AND subjectID = %s
+           FOR UPDATE""",
+        (str(business_id),),
+    )
+    state = cursor.fetchone() or {}
+    previous_level = _coerce_int(state.get("warningLevel"))
+    if previous_level <= 0 or _coerce_int(state.get("blackLocked")):
+        return None
+
+    reason = "Cleared by Active permit status in registry import"
+    cursor.execute(
+        """UPDATE enforcement_state
+           SET warningLevel = 0,
+               warningBaseColor = NULL,
+               warningClearedAt = NOW(),
+               warningClearedBy = NULL,
+               warningClearReason = %s
+           WHERE subjectType = 'business' AND subjectID = %s
+             AND warningLevel > 0 AND COALESCE(blackLocked, 0) = 0""",
+        (reason, str(business_id)),
+    )
+    if cursor.rowcount != 1:
+        return None
+
+    record_enforcement_event(
+        cursor,
+        business_id=business_id,
+        event_type=WARNING_CLEARED,
+        reason=reason,
+        previous_level=previous_level,
+        new_level=0,
+        previous_black=False,
+        new_black=False,
+    )
+    return previous_level
+
+
 def _resolution_key_for_cache(resolve_key, meta):
     """Do not cache outcomes that may succeed when quotas/API availability recover."""
     if not resolve_key or not meta:
@@ -2156,6 +2201,7 @@ def sync_registry(file, ext: str):
         skipped_open_inspection = 0
         skipped_black_lock = 0
         skipped_closed = 0
+        cleared_warnings = 0
         invalid_status_rows = 0
         invalid_status_values = {}
         geocoded_ok = 0
@@ -2672,6 +2718,12 @@ def sync_registry(file, ext: str):
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 if business_fields_changed and not pending_location_reapproval:
                     updated += 1
+                warning_cleared = None
+                if status == "Active":
+                    warning_cleared = _clear_warning_for_active_import(
+                        cursor, biz_id)
+                    if warning_cleared is not None:
+                        cleared_warnings += 1
                 if not pending_location_reapproval and not _is_retryable_resolution_failure(geo_meta):
                     old_lat = existing.get("latitude")
                     old_lng = existing.get("longitude")
@@ -2684,6 +2736,9 @@ def sync_registry(file, ext: str):
                             cursor, barangay_id, name_key, old_lat, old_lng,
                             final_lat, final_lng, business_id=biz_id,
                         )
+                    _sync_flag_color(cursor, barangay_id, name_key,
+                                     status, final_lat, final_lng, addr, business_id=biz_id)
+                elif warning_cleared is not None:
                     _sync_flag_color(cursor, barangay_id, name_key,
                                      status, final_lat, final_lng, addr, business_id=biz_id)
             else:
@@ -2803,6 +2858,7 @@ def sync_registry(file, ext: str):
             "skipped_open_inspection": skipped_open_inspection,
             "skipped_black_lock": skipped_black_lock,
             "skipped_closed": skipped_closed,
+            "cleared_warnings": cleared_warnings,
             "invalid_status_rows": invalid_status_rows,
             "invalid_status_values": invalid_status_values,
             # errors is truncated below; the two counters above are not.

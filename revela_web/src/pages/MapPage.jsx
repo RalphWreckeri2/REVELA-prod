@@ -2387,6 +2387,7 @@ export default function MapPage() {
   const [adjustingFlagId, setAdjustingFlagId] = useState(null);
   const [adjustingLatLng, setAdjustingLatLng] = useState(null);
   const [saveAdjustLoading, setSaveAdjustLoading] = useState(false);
+  const [locatingAdjustLocation, setLocatingAdjustLocation] = useState(false);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -3501,6 +3502,46 @@ export default function MapPage() {
     }
   };
 
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      Swal.fire({
+        icon: "error",
+        title: "Location Unavailable",
+        text: "Your browser cannot access GPS. Open REVELA over HTTPS and allow location access.",
+      });
+      return;
+    }
+
+    setLocatingAdjustLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const position = { lat: coords.latitude, lng: coords.longitude };
+        setAdjustingLatLng(position);
+        if (mapRef.current) {
+          mapRef.current.panTo(position);
+          mapRef.current.setZoom(18);
+        }
+        setLocatingAdjustLocation(false);
+      },
+      (error) => {
+        const message = error.code === 1
+          ? "Allow location access in your browser or tablet settings, then try again."
+          : error.code === 2
+            ? "Your device could not determine its location. Check that GPS or location services are enabled."
+            : error.code === 3
+              ? "Getting your location took too long. Please try again."
+              : "Could not get your current location. Check your device's location settings and try again.";
+        setLocatingAdjustLocation(false);
+        Swal.fire({
+          icon: "error",
+          title: "Could Not Get Location",
+          text: message,
+        });
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
+    );
+  };
+
   const handleSaveAdjustedLocation = async () => {
     if (!adjustingFlagId || !adjustingLatLng) return;
     setSaveAdjustLoading(true);
@@ -4023,17 +4064,36 @@ export default function MapPage() {
 
       {/* Banner showing when picking location */}
       {isPickingYellowLocation && (
-        <div style={styles.pickingBanner}>
+        <div style={{ ...styles.pickingBanner, zIndex: 10002 }}>
           <Icon.Crosshair /> Click anywhere on the map to set the flag's coordinates.
-          <button style={{ marginLeft: 16, background: "none", border: "none", color: "#fff", textDecoration: "underline", cursor: "pointer" }} onClick={() => { setIsPickingYellowLocation(false); setShowYellowModal(true); }}>Cancel</button>
+          <button
+            type="button"
+            style={{ marginLeft: 16, background: "none", border: "none", color: "#fff", textDecoration: "underline", cursor: "pointer" }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsPickingYellowLocation(false);
+              setShowYellowModal(true);
+            }}
+          >
+            Cancel
+          </button>
         </div>
       )}
 
       {/* Banner showing when adjusting an existing flag */}
       {adjustingFlagId && (
-        <div style={{ ...styles.pickingBanner, background: "var(--color-ink)", zIndex: 101, top: 70 }}>
+        <div style={{ ...styles.pickingBanner, background: "var(--color-ink)", zIndex: 10002, top: 70, maxWidth: "calc(100vw - 24px)", flexWrap: "wrap", justifyContent: "center" }}>
           <Icon.MapPin /> Drag the pin or click on the map to adjust its location.
           <div style={{ display: "flex", gap: 8, marginLeft: 16 }}>
+            <button
+              type="button"
+              style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}
+              onClick={handleUseCurrentLocation}
+              disabled={saveAdjustLoading || locatingAdjustLocation}
+            >
+              {locatingAdjustLocation ? "Getting GPS…" : "Use Current Location"}
+            </button>
             <button style={{ background: "none", border: "none", color: "var(--color-muted)", cursor: "pointer", fontWeight: 600, fontSize: 13 }} onClick={() => { setAdjustingFlagId(null); setAdjustingLatLng(null); }} disabled={saveAdjustLoading}>
               Cancel
             </button>

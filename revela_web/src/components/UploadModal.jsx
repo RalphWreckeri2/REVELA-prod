@@ -330,6 +330,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
                       ["Existing records updated",   summary.updated ?? 0,     "var(--color-primary)"],
                       ["Existing records unchanged", summary.unchanged ?? 0,   "var(--color-muted)"],
                       ["New businesses added",       summary.inserted ?? 0,    "var(--color-primary)"],
+                      ["Orange warnings cleared",     summary.cleared_warnings ?? 0, "var(--color-primary)"],
                     ]
                   : [["Successfully inserted",       summary.inserted,         "var(--color-primary)"]]),
                 ["Geocoded successfully",          summary.geocoded_ok,       "var(--color-muted)"],

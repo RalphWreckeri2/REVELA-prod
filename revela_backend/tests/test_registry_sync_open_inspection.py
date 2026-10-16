@@ -9,6 +9,7 @@ The fake cursor evaluates the open-inspection predicate in Python from a
 (pin, inspection) fixture, so the tests exercise the SQL's own "<> 'Verified'"
 rule rather than a hardcoded set of statuses.
 """
+from api.registry import service
 import os
 import sys
 import unittest
@@ -18,7 +19,6 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from api.registry import service
 
 CSV_HEADER = ("Business ID,businessName,barangay,businessAddress,"
               "applicationStatus\n")
@@ -31,10 +31,12 @@ def _csv(rows):
 class _Fixture:
     """Pins and inspections backing the fake open-inspection query."""
 
-    def __init__(self, pins=None, inspections=None, existing=None):
+    def __init__(self, pins=None, inspections=None, existing=None,
+                 warning_state=None):
         self.pins = pins or []
         self.inspections = inspections or []
         self.existing = existing
+        self.warning_state = warning_state
 
     def _open_for(self, pin):
         return any(
@@ -72,6 +74,8 @@ def _cursor(fixture):
 
     def fetchone():
         sql = last()
+        if sql.lstrip().startswith("SELECT warningLevel, blackLocked"):
+            return fixture.warning_state
         if "FROM official_registry" in sql and "WHERE businessID = %s" in sql:
             calls["registry"] += 1
             return fixture.existing
@@ -200,6 +204,70 @@ class SyncOpenInspectionTests(unittest.TestCase):
         self.assertTrue(self._sqls(cursor, "UPDATE official_registry"))
         self.assertTrue(self._sqls(cursor, "SET flagColor = %s"))
 
+    def test_active_import_clears_warning_and_recolors_pin(self):
+        existing = dict(_EXISTING, applicationStatus="Expired")
+        fixture = _Fixture(
+            pins=[dict(_PIN, flagColor="Orange")],
+            inspections=[{"targetID": 42, "targetType": "geospatial_log",
+                          "verificationStatus": "Verified",
+                          "inspectionResult": "Orange"}],
+            existing=existing,
+            warning_state={"warningLevel": 2, "blackLocked": 0},
+        )
+        cursor = _cursor(fixture)
+        mysql = MagicMock()
+        mysql.connection.cursor.return_value = cursor
+        usage = {"text_search": {"day": 0, "month": 0},
+                 "details": {"day": 0, "month": 0},
+                 "geocoding": {"day": 0, "month": 0}}
+        with (
+            patch.object(service, "mysql", mysql),
+            patch.object(service, "_load_barangay_lookup",
+                         return_value={"barangay i": 1}),
+            patch.object(service, "_resolve_barangay_id", return_value=1),
+            patch.object(service, "is_cancelled", return_value=False),
+            patch.object(service, "ladder_columns_available",
+                         return_value=True),
+            patch.object(service.places_resolver, "reset_run_state"),
+            patch.object(service.places_resolver, "compute_resolve_key",
+                         return_value="new-key"),
+            patch.object(service.places_resolver, "record_coord_meta"),
+            patch.object(service.places_resolver, "_update_pin"),
+            patch.object(service.places_resolver,
+                         "get_places_call_usage", return_value=usage),
+            patch.object(service, "_resolve_location",
+                         return_value=(13.97, 121.12,
+                                       {"coord_source": "csv",
+                                        "resolve_key": "new-key"})),
+            patch.object(service, "insert_green_flag"),
+            patch("api.notifications.hub.publish_to_admins"),
+        ):
+            summary, error = service.sync_registry(
+                _csv(["BIZ-1,Acme Store,Barangay I,New Main Street,Active\n"]),
+                ".csv")
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["cleared_warnings"], 1)
+        warning_updates = [
+            call for call in cursor.execute.call_args_list
+            if "UPDATE enforcement_state" in call.args[0]
+        ]
+        self.assertEqual(len(warning_updates), 1)
+        self.assertIn("warningLevel = 0", warning_updates[0].args[0])
+        event_inserts = [
+            call for call in cursor.execute.call_args_list
+            if "INSERT INTO enforcement_events" in call.args[0]
+        ]
+        self.assertEqual(len(event_inserts), 1)
+        self.assertEqual(event_inserts[0].args[1][2], "warning_cleared")
+        pin_updates = [
+            call for call in cursor.execute.call_args_list
+            if "SET flagColor = %s" in call.args[0]
+        ]
+        self.assertEqual(len(pin_updates), 1)
+        self.assertEqual(pin_updates[0].args[1][0], "Green")
+        self.assertEqual(len(fixture.inspections), 1)
+
     def test_unlinked_pin_is_frozen_by_name_and_barangay(self):
         unlinked_pin = {
             "logID": 43, "businessID": None, "detectedName": "ACME STORE",
@@ -219,7 +287,8 @@ class SyncOpenInspectionTests(unittest.TestCase):
         self.assertEqual(self._sqls(cursor, "UPDATE official_registry"), [])
 
     def test_row_without_inspection_is_synced(self):
-        fixture = _Fixture(pins=[_PIN], inspections=[], existing=dict(_EXISTING))
+        fixture = _Fixture(pins=[_PIN], inspections=[],
+                           existing=dict(_EXISTING))
         summary, cursor = self._run(
             fixture, ["BIZ-1,Acme Store,Barangay I,New Main Street,Expired\n"])
 
@@ -240,7 +309,8 @@ class SyncOpenInspectionTests(unittest.TestCase):
 
     def test_lookup_uses_not_verified_not_a_status_list(self):
         fixture = _Fixture(pins=[], inspections=[], existing=None)
-        _, cursor = self._run(fixture, ["BIZ-NEW,New Shop,Barangay I,S,Active\n"])
+        _, cursor = self._run(
+            fixture, ["BIZ-NEW,New Shop,Barangay I,S,Active\n"])
         lookups = self._sqls(cursor, "SELECT DISTINCT g.businessID")
         self.assertEqual(len(lookups), 1)
         sql = lookups[0]
@@ -253,7 +323,8 @@ class SyncOpenInspectionTests(unittest.TestCase):
             self.assertNotIn(f"IN ({status}", sql)
 
     def test_lookups_are_batched_once_before_the_loop(self):
-        fixture = _Fixture(pins=[_PIN], inspections=[], existing=dict(_EXISTING))
+        fixture = _Fixture(pins=[_PIN], inspections=[],
+                           existing=dict(_EXISTING))
         _, cursor = self._run(
             fixture,
             ["BIZ-1,Acme Store,Barangay I,New Main Street,Expired\n",
@@ -293,7 +364,6 @@ class SyncOpenInspectionTests(unittest.TestCase):
                 ".csv")
         resolve_location.assert_not_called()
 
-
     def test_null_status_inspection_protects_its_row(self):
         """A row with no verificationStatus is still 'not verified'."""
         fixture = _Fixture(
@@ -311,7 +381,8 @@ class SyncOpenInspectionTests(unittest.TestCase):
 
     def test_lookup_failure_aborts_sync_without_writing_anything(self):
         """Fail closed: an unusable guard must not fall back to syncing."""
-        fixture = _Fixture(pins=[_PIN], inspections=[], existing=dict(_EXISTING))
+        fixture = _Fixture(pins=[_PIN], inspections=[],
+                           existing=dict(_EXISTING))
         cursor = _cursor(fixture)
         healthy_fetchall = cursor.fetchall.side_effect
 
@@ -358,7 +429,8 @@ class SyncOpenInspectionTests(unittest.TestCase):
         self.assertIn("nothing was changed", error)
         # Nothing may be written, for any row, new or existing.
         self.assertEqual(self._sqls(cursor, "UPDATE official_registry"), [])
-        self.assertEqual(self._sqls(cursor, "INSERT INTO official_registry"), [])
+        self.assertEqual(self._sqls(
+            cursor, "INSERT INTO official_registry"), [])
         self.assertEqual(self._sqls(cursor, "SET flagColor = %s"), [])
         mysql.connection.commit.assert_not_called()
 
