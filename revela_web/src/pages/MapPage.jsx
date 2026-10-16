@@ -2361,6 +2361,7 @@ export default function MapPage() {
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [dispatchTarget, setDispatchTarget] = useState(null);
   const [filterColor, setFilterColor] = useState("all");
+  const [filterBarangay, setFilterBarangay] = useState("all");
   const [search, setSearch] = useState("");
   const [satellite, setSatellite] = useState(false);
   const [filterSource, setFilterSource] = useState("all");
@@ -2509,7 +2510,7 @@ export default function MapPage() {
   }, [fetchFlags, fetchDetectionQuota, fetchPlacesUsage]);
 
   useEffect(() => {
-    if (!token || !isAdmin) return;
+    if (!token) return;
     getBarangaysRequest(token)
       .then(data => {
         // API may return a bare array or a {data: [...]} wrapper — handle
@@ -2522,7 +2523,7 @@ export default function MapPage() {
         setBarangays(list);
       })
       .catch(err => console.error("Failed to load barangays", err));
-  }, [token, isAdmin]);
+  }, [token]);
 
   // Pre-fetch GeoJSON once so handleMapClick can do real point-in-polygon checks
   useEffect(() => {
@@ -3737,13 +3738,21 @@ export default function MapPage() {
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const visibleFlags = flags.filter(flag => matchesMapFilters(flag, {
-    status: filterColor, source: filterSource, registryLink: filterRegistryLink, search,
+    status: filterColor, source: filterSource, registryLink: filterRegistryLink,
+    search, barangayID: filterBarangay,
   }));
   const locations = paginateRecords(visibleFlags, locationsPage, 8);
+  const barangayFilterOptions = [
+    { value: "all", label: "All Barangays" },
+    ...barangays.map(barangay => ({
+      value: String(barangay.barangayID),
+      label: barangay.barangayName,
+    })),
+  ];
   const filteredCounts = Object.fromEntries(["Green", "Orange", "Red", "Yellow", "Purple", "Black"]
     .map(color => [color, visibleFlags.filter(flag => flag.color === color).length]));
   const clearViewFilters = () => {
-    setFilterColor("all"); setFilterSource("all"); setFilterRegistryLink("all");
+    setFilterBarangay("all"); setFilterColor("all"); setFilterSource("all"); setFilterRegistryLink("all");
     setSearch(""); setLocationsPage(1);
   };
 
@@ -4065,21 +4074,35 @@ export default function MapPage() {
 
       {/* Banner showing when adjusting an existing flag */}
       {adjustingFlagId && (
-        <div style={{ ...styles.pickingBanner, background: "var(--color-ink)", zIndex: 10002, top: 70, maxWidth: "calc(100vw - 24px)", flexWrap: "wrap", justifyContent: "center" }}>
-          <Icon.MapPin /> Drag the pin or click on the map to adjust its location.
-          <div style={{ display: "flex", gap: 8, marginLeft: 16 }}>
+        <div className="map-adjust-location-banner" role="status">
+          <div className="map-adjust-location-message">
+            <Icon.MapPin aria-hidden="true" />
+            <span>Drag the pin or click on the map to adjust its location.</span>
+          </div>
+          <button
+            type="button"
+            className="map-adjust-location-current"
+            onClick={handleUseCurrentLocation}
+            disabled={saveAdjustLoading || locatingAdjustLocation}
+          >
+            <Icon.Crosshair size={16} aria-hidden="true" />
+            {locatingAdjustLocation ? "Getting GPS…" : "Use Current Location"}
+          </button>
+          <div className="map-adjust-location-actions">
             <button
               type="button"
-              style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}
-              onClick={handleUseCurrentLocation}
-              disabled={saveAdjustLoading || locatingAdjustLocation}
+              className="map-adjust-location-cancel"
+              onClick={() => { setAdjustingFlagId(null); setAdjustingLatLng(null); }}
+              disabled={saveAdjustLoading}
             >
-              {locatingAdjustLocation ? "Getting GPS…" : "Use Current Location"}
-            </button>
-            <button style={{ background: "none", border: "none", color: "var(--color-muted)", cursor: "pointer", fontWeight: 600, fontSize: 13 }} onClick={() => { setAdjustingFlagId(null); setAdjustingLatLng(null); }} disabled={saveAdjustLoading}>
               Cancel
             </button>
-            <button className="primary-btn" style={{ padding: "6px 14px", fontSize: 12 }} onClick={handleSaveAdjustedLocation} disabled={saveAdjustLoading}>
+            <button
+              type="button"
+              className="map-adjust-location-save"
+              onClick={handleSaveAdjustedLocation}
+              disabled={saveAdjustLoading}
+            >
               {saveAdjustLoading ? "Saving..." : "Save Location"}
             </button>
           </div>
@@ -4279,7 +4302,7 @@ export default function MapPage() {
               <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--color-ink)", flex: 1 }}>
                 Flagged Locations
               </h3>
-              {(filterColor !== "all" || search !== "" || filterSource !== "all" || filterRegistryLink !== "all") && (
+              {(filterBarangay !== "all" || filterColor !== "all" || search !== "" || filterSource !== "all" || filterRegistryLink !== "all") && (
                 <button
                   type="button"
                   style={{ background: "transparent", border: "none", color: "var(--color-primary)", fontSize: 11, fontWeight: 600, cursor: "pointer", padding: "0 8px" }}
@@ -4293,6 +4316,8 @@ export default function MapPage() {
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
 
             <div className="map-location-filters">
+              <FilterDropdown label="Barangay" value={filterBarangay} options={barangayFilterOptions}
+                onChange={value => { setFilterBarangay(value); setLocationsPage(1); }} />
               <FilterDropdown label="Status" value={filterColor} options={STATUS_OPTIONS}
                 onChange={value => { setFilterColor(value); setLocationsPage(1); }} />
               <FilterDropdown label="Source" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
@@ -4860,8 +4885,6 @@ const styles = {
   mapBtn: { width: 36, height: 36, background: "var(--color-modal-bg)", border: "1px solid var(--color-border)", borderRadius: "var(--radius-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--color-muted)", backdropFilter: "blur(8px)" },
   overlay: { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(15,23,42,0.5)", zIndex: 20 },
   overlayCard: { display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: "#fff", background: "rgba(15,23,42,0.8)", borderRadius: 16, padding: "16px 24px", fontSize: 14 },
-  pickingBanner: { position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", background: "var(--color-primary)", color: "#fff", padding: "12px 24px", borderRadius: 30, zIndex: 100, display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, boxShadow: "0 10px 25px rgba(0,0,0,0.2)" },
-
   statsStrip: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 },
   statCard: { display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "center", textAlign: "left", gap: 4, padding: "12px 10px", borderRadius: "var(--radius-lg)", minWidth: 0, overflow: "hidden" },
 

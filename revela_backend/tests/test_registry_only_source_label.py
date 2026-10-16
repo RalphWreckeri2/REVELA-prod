@@ -21,7 +21,8 @@ def test_registry_only_map_response_uses_registry_source(has_source):
             payload, error = flags.get_flags()
         assert error is None
         assert payload["total"] == 1
-        assert payload["data"][0]["logID"] == -5
+        assert payload["data"][0]["logID"] == - \
+            (flags.VIRTUAL_REGISTRY_LOG_ID_OFFSET + 1)
         assert payload["data"][0]["flagSource"] == "registry"
         assert payload["data"][0]["flagSource"] != "registry_only"
     finally:

@@ -59,11 +59,40 @@ from api.utils import quota_settings, test_mode
 from api.utils.barangay_scope import validate_barangay_scope
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+VIRTUAL_REGISTRY_LOG_ID_OFFSET = 2147483648
+
+
+def _registry_business_id_for_virtual_log_id(cursor, log_id):
+    """Resolve a virtual map ID to its registry business ID."""
+    numeric_id = -int(log_id)
+    if numeric_id <= VIRTUAL_REGISTRY_LOG_ID_OFFSET:
+        cursor.execute(
+            "SELECT businessID FROM official_registry WHERE businessID = %s",
+            (str(numeric_id),),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row.get("businessID")
+        return None
+
+    registry_ordinal = numeric_id - VIRTUAL_REGISTRY_LOG_ID_OFFSET
+    cursor.execute("""
+        SELECT businessID
+        FROM (
+            SELECT businessID,
+                   ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
+            FROM official_registry
+        ) registry_rows
+        WHERE registryOrdinal = %s
+    """, (registry_ordinal,))
+    row = cursor.fetchone()
+    return row.get("businessID") if row else None
 
 # ── Places API cost guard ─────────────────────────────────────────────────────
 # Hard daily ceilings, stored in MySQL so they survive restarts and multiple workers.
 # Tune via env vars on Railway without redeploying code.
 #
+
 
 PLACES_MONTHLY_CAP = API_QUOTA_CONFIG.legacy_nearby.monthly
 PLACES_DAILY_CAP = API_QUOTA_CONFIG.legacy_nearby.daily
@@ -3059,8 +3088,12 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
                 UNION ALL
 
-                SELECT r.businessID * -1 AS logID
-                FROM official_registry r
+                SELECT -2147483648 - r.registryOrdinal AS logID
+                FROM (
+                    SELECT official_registry.*,
+                           ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
+                    FROM official_registry
+                ) r
                 {reg_where}
             ) AS combined
         """
@@ -3126,7 +3159,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
                 -- Branch 2: registry-only businesses (have coordinates, no geospatial_log yet)
                 SELECT
-                    r.businessID * -1          AS logID,
+                    -2147483648 - r.registryOrdinal AS logID,
                     r.businessID               AS businessID,
                     r.businessName             AS detectedName,
                     r.latitude                 AS latitude,
@@ -3151,7 +3184,11 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     r.matchStatus              AS matchStatus,
                     r.coordSource              AS coordSource,
                     r.matchScore               AS matchScore
-                FROM official_registry r
+                FROM (
+                    SELECT official_registry.*,
+                           ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
+                    FROM official_registry
+                ) r
                 LEFT JOIN barangays b ON r.barangayID = b.barangayID
                 {reg_where}
 
@@ -3411,7 +3448,10 @@ def update_flag_color(log_id, color):
             return False, "Use the audited Black escalation action to set a flag to Black."
 
         if log_id < 0:
-            biz_id = -log_id
+            biz_id = _registry_business_id_for_virtual_log_id(cursor, log_id)
+            if biz_id is None:
+                cursor.close()
+                return False, "Business not found"
             if color == "Orange":
                 cursor.close()
                 return False, (
@@ -3510,7 +3550,7 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
     Update coordinates of a flag manually (e.g. via drag-and-drop on the map).
     Handles both:
       - log_id > 0: real geospatial_logs entry
-      - log_id < 0: virtual registry entry (businessID = -log_id)
+            - log_id < 0: virtual registry entry resolved through its registry ordinal
     Also updates barangayID based on new coordinates and backfills official_registry.
     """
     try:
@@ -3518,8 +3558,10 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
         new_barangay_id = _get_barangay_id_by_coords(lat, lng)
 
         if log_id < 0:
-            # Virtual flag from official_registry (businessID = -log_id)
-            biz_id = -log_id
+            biz_id = _registry_business_id_for_virtual_log_id(cursor, log_id)
+            if biz_id is None:
+                cursor.close()
+                return False, "Business not found"
             cursor.execute(
                 """SELECT businessID, businessName, businessAddress, barangayID,
                           latitude, longitude, coordSource, placeID, placeIDKind,
@@ -3735,7 +3777,7 @@ def escalate_to_black(log_id, actor_user_id):
     """Admin escalation from Red/Yellow/Orange, independent of warning level.
 
     The pin, registry lock and audit event commit together. Registry-only flags
-    use negative business IDs; unregistered physical pins only change the pin.
+    use unique negative virtual IDs; unregistered physical pins only change the pin.
     This action does not require an inspection or change Black verification.
     """
     cursor = None
@@ -3754,7 +3796,12 @@ def escalate_to_black(log_id, actor_user_id):
             return False, FlagEscalationConflict(
                 "Cannot escalate to Black: enforcement_state is unavailable.")
 
-        registry_id = -log_id if log_id < 0 else None
+        registry_id = (
+            _registry_business_id_for_virtual_log_id(cursor, log_id)
+            if log_id < 0 else None
+        )
+        if log_id < 0 and registry_id is None:
+            return False, FlagEscalationNotFound("Business not found")
         pin = None
         if log_id >= 0:
             cursor.execute(f"""
@@ -3925,7 +3972,7 @@ def escalate_to_black(log_id, actor_user_id):
 def delete_flag(log_id, actor_role=None):
     """
     Delete a single flag.
-    - If log_id < 0: virtual registry entry (businessID = -log_id). Removes official_registry entry.
+    - If log_id < 0: virtual registry entry. Removes its official_registry entry.
     - If log_id > 0: isolates deletion strictly to log_id.
       Does NOT perform broad delete across all same-named businesses or logs.
       Before deleting geospatial_logs, repoints any inspection_reports / lifecycle events
@@ -3935,7 +3982,10 @@ def delete_flag(log_id, actor_role=None):
         cursor = mysql.connection.cursor()
 
         if log_id < 0:
-            biz_id = -log_id
+            biz_id = _registry_business_id_for_virtual_log_id(cursor, log_id)
+            if biz_id is None:
+                cursor.close()
+                return False, "Business not found"
             assert_business_deletable(cursor, biz_id, actor_role)
             cursor.execute(
                 "DELETE FROM official_registry WHERE businessID = %s", (biz_id,))

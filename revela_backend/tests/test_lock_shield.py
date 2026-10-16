@@ -1,4 +1,9 @@
-from api.flags.service import _match_registry_to_google, update_flag_location
+from api.flags.service import (
+    VIRTUAL_REGISTRY_LOG_ID_OFFSET,
+    _match_registry_to_google,
+    _registry_business_id_for_virtual_log_id,
+    update_flag_location,
+)
 import os
 import sys
 import unittest
@@ -14,6 +19,22 @@ class LockShieldTests(unittest.TestCase):
         schema_check = patch("api.registry.reverify._ensure_history_table")
         schema_check.start()
         self.addCleanup(schema_check.stop)
+
+    @patch("api.flags.service.mysql")
+    def test_virtual_registry_map_id_resolves_string_business_id(self, mock_mysql):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = {
+            "businessID": "S-0401018-00101",
+        }
+
+        business_id = _registry_business_id_for_virtual_log_id(
+            mock_cursor, -(VIRTUAL_REGISTRY_LOG_ID_OFFSET + 1))
+
+        self.assertEqual(business_id, "S-0401018-00101")
+        sql, params = mock_cursor.execute.call_args[0]
+        self.assertIn("ROW_NUMBER() OVER (ORDER BY businessID)", sql)
+        self.assertEqual(params, (1,))
 
     @patch("api.flags.service.mysql")
     def test_match_registry_skips_coords_when_coord_source_manual(self, mock_mysql):
@@ -218,12 +239,33 @@ class LockShieldTests(unittest.TestCase):
     @patch("api.flags.service._get_barangay_id_by_coords", return_value=1)
     @patch("api.flags.service.mysql")
     def test_update_flag_location_virtual_flag(self, mock_mysql, mock_get_brgy):
-        """Dragging a virtual flag (log_id < 0) updates official_registry with manual/approved."""
+        """Dragging a virtual pin updates its prefixed registry business ID."""
         mock_cursor = MagicMock()
         mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.side_effect = [
+            {"businessID": "S-0401018-00101"},
+            {
+                "businessID": "S-0401018-00101",
+                "businessName": "LUCKY8 SARI-SARI STORE",
+                "businessAddress": "DISTRICT III MATAASNAKAHOY BATANGAS",
+                "barangayID": 4,
+                "latitude": None,
+                "longitude": None,
+                "coordSource": None,
+                "placeID": None,
+                "placeIDKind": None,
+                "matchScore": None,
+                "matchStatus": None,
+                "resolveKey": None,
+            },
+            None,
+        ]
 
         success, err = update_flag_location(
-            log_id=-99, lat=13.97000000, lng=121.12000000)
+            log_id=-(VIRTUAL_REGISTRY_LOG_ID_OFFSET + 1),
+            lat=13.97000000,
+            lng=121.12000000,
+        )
         self.assertTrue(success)
         self.assertIsNone(err)
 
@@ -234,7 +276,7 @@ class LockShieldTests(unittest.TestCase):
         self.assertIn("coordSource = 'manual'", sql)
         self.assertIn("matchStatus = 'approved'", sql)
         self.assertIn("WHERE businessID = %s", sql)
-        self.assertEqual(params[-1], 99)
+        self.assertEqual(params[-1], "S-0401018-00101")
 
     @patch("api.registry.service._sync_flag_color")
     @patch("api.registry.service._load_barangay_lookup", return_value={"barangay i": 1})

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { saveAs } from "file-saver";
+import Swal from "sweetalert2";
 import FilterDropdown from "./FilterDropdown";
 import InspectionDialog from "./InspectionDialog";
 import { getInspectionVerifiedCompliantRequest } from "../services/api";
@@ -52,7 +53,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
   const download = async format => {
     // Refresh eligibility and update the open list to this same export snapshot.
     const snapshot = await load();
-    if (!snapshot) return;
+    if (!snapshot) return false;
     const exportReport = buildComplianceReport(snapshot.data, filters, snapshot.generatedAt);
     try {
       if (format === "csv") {
@@ -61,13 +62,41 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
       } else {
         onPrint(compliancePrintReport(exportReport, user));
       }
+      return true;
     } catch (err) {
       setError(err.message || "Unable to export the current-compliance report.");
+      return false;
     }
   };
+  const chooseDownloadFormat = async () => {
+    const { value: format } = await Swal.fire({
+      title: `Export ${COMPLIANCE_REPORT_TITLE}`,
+      text: "Select your desired export file format:",
+      input: "radio",
+      inputOptions: {
+        pdf: "Official PDF Document",
+        csv: "CSV Spreadsheet (Raw Data)",
+      },
+      inputValidator: value => {
+        if (!value) return "Please choose an export format!";
+      },
+      showCancelButton: true,
+      confirmButtonText: "Generate Report",
+      confirmButtonColor: "var(--color-primary, #10b981)",
+    });
+
+    if (!format) return;
+    if (!await download(format)) return;
+    await Swal.fire({
+      icon: "success",
+      title: "Export Complete!",
+      text: `${COMPLIANCE_REPORT_TITLE} exported as ${format.toUpperCase()}`,
+      timer: 2000,
+      showConfirmButton: false,
+    });
+  };
   const actions = <>
-    <button type="button" className="ghost-btn compliance-report-download" onClick={() => void download("pdf")} disabled={loading}>Download PDF</button>
-    <button type="button" className="ghost-btn compliance-report-download" onClick={() => void download("csv")} disabled={loading}>Download CSV</button>
+    <button type="button" className="ghost-btn compliance-report-download" onClick={() => void chooseDownloadFormat()} disabled={loading}>Download</button>
   </>;
 
   return <>
