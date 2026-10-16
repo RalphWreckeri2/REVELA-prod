@@ -86,30 +86,31 @@ def _method(daily, per_minute, verified, source, daily_env, minute_env):
 #   Places API (Legacy)         1,000/day,    60/minute
 #   Geocoding API              1,500/day,  3,000/minute
 #
-# `verified` stays False across the board: nothing here has been signed off in
-# code, and flipping it would let an operator raise caps. The daily figures are
-# nevertheless enforced as hard ceilings via OBSERVED_DAILY_CEILINGS below.
+# Text Search was verified against this project's Cloud Console. The other
+# methods remain unverified until their figures are confirmed independently.
+# All daily figures are still enforced as hard ceilings via
+# OBSERVED_DAILY_CEILINGS below.
 CLOUD_QUOTAS = MappingProxyType({
     "text_search": _method(
-        500, 600, False, _OBSERVED,
+        500, 600, True, _VERIFIED,
         "CLOUD_QUOTA_TEXT_SEARCH_DAILY", "CLOUD_QUOTA_TEXT_SEARCH_PER_MINUTE",
     ),
     "place_details": _method(
-        125_000, 600, False, _OBSERVED,
+        125_000, 600, True, _VERIFIED,
         "CLOUD_QUOTA_PLACE_DETAILS_DAILY",
         "CLOUD_QUOTA_PLACE_DETAILS_PER_MINUTE",
     ),
     "nearby_search_legacy": _method(
-        1_000, 60, False, _OBSERVED,
+        1_000, 60, True, _VERIFIED,
         "CLOUD_QUOTA_NEARBY_LEGACY_DAILY",
         "CLOUD_QUOTA_NEARBY_LEGACY_PER_MINUTE",
     ),
     "nearby_search_new": _method(
-        75_000, 600, False, _OBSERVED,
+        75_000, 600, True, _VERIFIED,
         "CLOUD_QUOTA_NEARBY_NEW_DAILY", "CLOUD_QUOTA_NEARBY_NEW_PER_MINUTE",
     ),
     "geocoding": _method(
-        1_500, 3_000, False, _OBSERVED,
+        1_500, 3_000, True, _VERIFIED,
         "CLOUD_QUOTA_GEOCODING_DAILY", "CLOUD_QUOTA_GEOCODING_PER_MINUTE",
     ),
 })

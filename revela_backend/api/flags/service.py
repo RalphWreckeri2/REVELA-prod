@@ -2954,7 +2954,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         mysql.connection.rollback()
         elapsed = _detection_elapsed_metrics(request_started_at)
         print(
-            f"[Run Detection] run={run_id} failed ({type(e).__name__}) "
+            f"[Run Detection] run={run_id} mode={mode} "
+            f"failed ({type(e).__name__}) "
             f"error={e!r} "
             f"elapsed_seconds={elapsed['elapsed_seconds']} "
             f"scan_elapsed_seconds={elapsed['scan_elapsed_seconds']}"

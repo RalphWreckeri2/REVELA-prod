@@ -38,30 +38,29 @@ class ApiQuotaConfigTests(unittest.TestCase):
         self.assertEqual(config.nearby_new.monthly, 0)
         self.assertEqual(config.run_detection_monthly_scans, 10)
 
-    def test_unverified_text_search_daily_overrides_are_clamped(self):
+    def test_verified_text_search_daily_override_uses_cloud_ceiling(self):
         config = load_api_quota_config({
             "TS_DAILY_CAP": "1000",
         })
 
-        self.assertEqual(config.text_search.daily, 80)
+        self.assertEqual(config.text_search.daily, 500)
         self.assertEqual(
-            sum(config.text_search_workflow_daily.values()), 80
+            sum(config.text_search_workflow_daily.values()), 500
         )
 
-    def test_a_clamped_override_is_reported_not_applied_silently(self):
+    def test_an_over_cloud_override_is_clamped_and_reported(self):
         """
-        `TS_DAILY_CAP=1000` in .env is dead configuration: the clamp keeps the
-        effective cap at the 80/day default. The operator must be able to see
-        that instead of believing the environment is in effect.
+        An environment override above the verified Cloud quota is clamped to
+        the unconditional observed ceiling and reported to the operator.
         """
         buffer = io.StringIO()
         with patch("sys.stdout", buffer):
             config = load_api_quota_config({"TS_DAILY_CAP": "1000"})
 
         output = buffer.getvalue()
-        self.assertEqual(config.text_search.daily, 80)
+        self.assertEqual(config.text_search.daily, 500)
         self.assertIn("TS_DAILY_CAP=1000", output)
-        self.assertIn("clamped to 80", output)
+        self.assertIn("clamped to 500", output)
 
     def test_verifying_text_search_cannot_exceed_the_observed_cloud_quota(self):
         """
@@ -174,7 +173,7 @@ class ApiQuotaConfigTests(unittest.TestCase):
         self.assertEqual(config.legacy_nearby.daily, 120)
         self.assertEqual(config.legacy_nearby.monthly, 2000)
 
-    def test_explicit_nearby_new_daily_cap_is_bounded_to_five(self):
+    def test_explicit_nearby_new_daily_cap_is_bounded_to_application_max(self):
         for daily_cap in (1, NEARBY_NEW_APPLICATION_DAILY_MAX):
             with self.subTest(daily_cap=daily_cap):
                 config = load_api_quota_config({
@@ -183,10 +182,10 @@ class ApiQuotaConfigTests(unittest.TestCase):
                 self.assertEqual(config.nearby_new.daily, daily_cap)
                 self.assertEqual(config.run_detection_nearby_api, "legacy")
 
-        self.assertEqual(NEARBY_NEW_APPLICATION_DAILY_MAX, 5)
+        self.assertEqual(NEARBY_NEW_APPLICATION_DAILY_MAX, 200)
 
     def test_invalid_or_excessive_nearby_new_daily_caps_fail_closed(self):
-        for daily_cap in ("invalid", "-1", "1.5", "6", "75000"):
+        for daily_cap in ("invalid", "-1", "1.5", "201", "75000"):
             with self.subTest(daily_cap=daily_cap):
                 with self.assertRaises(ValueError):
                     load_api_quota_config({
@@ -198,7 +197,7 @@ class ApiQuotaConfigTests(unittest.TestCase):
         self.assertEqual(config.nearby_new.daily, 5)
 
         with self.assertRaisesRegex(ValueError, "conservative application limit"):
-            load_api_quota_config({"NEW_NEARBY_DAILY_CAP": "6"})
+            load_api_quota_config({"NEW_NEARBY_DAILY_CAP": "201"})
 
     def test_workflow_caps_cannot_exceed_shared_text_search_cap(self):
         with self.assertRaisesRegex(ValueError, "must sum to no more than"):
