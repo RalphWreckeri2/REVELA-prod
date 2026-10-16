@@ -135,7 +135,7 @@ OBSERVED_DAILY_CEILINGS = MappingProxyType({
 # Temporary source-level application guard for the initial Nearby Search (New)
 # rollout. This is intentionally independent of Google's much higher Cloud
 # quota and makes no statement about billing or SKU pricing.
-NEARBY_NEW_APPLICATION_DAILY_MAX = 5
+NEARBY_NEW_APPLICATION_DAILY_MAX = 200
 
 #: Billing SKUs and their monthly free-call allowance. Per-SKU only: free calls
 #: on one SKU never offset usage on another, and there is no USD credit to fall

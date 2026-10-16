@@ -13,6 +13,7 @@ import os
 import random
 import time
 import threading
+import traceback
 import requests as http
 import json
 from geopy.distance import geodesic
@@ -2954,9 +2955,11 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         elapsed = _detection_elapsed_metrics(request_started_at)
         print(
             f"[Run Detection] run={run_id} failed ({type(e).__name__}) "
+            f"error={e!r} "
             f"elapsed_seconds={elapsed['elapsed_seconds']} "
             f"scan_elapsed_seconds={elapsed['scan_elapsed_seconds']}"
         )
+        traceback.print_exc()
         update_detection_run_status(run_id, "failed")
         return None, str(e)
 
