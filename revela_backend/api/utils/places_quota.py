@@ -6,7 +6,11 @@ import threading
 
 _table_ready = False
 _table_lock = threading.Lock()
-_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
+MANILA_DATE_SQL = "DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR)"
+_MONTH_KEY = (
+    f"DATE_SUB({MANILA_DATE_SQL}, "
+    f"INTERVAL DAYOFMONTH({MANILA_DATE_SQL}) - 1 DAY)"
+)
 
 
 def _ensure_table(connection):
@@ -69,7 +73,8 @@ def reserve_usage_slot(
         for kind, _cap in daily_limits:
             cursor.execute(
                 "INSERT IGNORE INTO places_api_usage "
-                "(usageDate, kind, requestCount) VALUES (CURDATE(), %s, 0)",
+                f"(usageDate, kind, requestCount) "
+                f"VALUES ({MANILA_DATE_SQL}, %s, 0)",
                 (kind,),
             )
         cursor.execute(
@@ -85,7 +90,8 @@ def reserve_usage_slot(
         for kind, cap in daily_limits:
             cursor.execute(
                 "UPDATE places_api_usage SET requestCount = requestCount + 1 "
-                "WHERE usageDate = CURDATE() AND kind = %s AND requestCount < %s",
+                f"WHERE usageDate = {MANILA_DATE_SQL} "
+                "AND kind = %s AND requestCount < %s",
                 (kind, cap),
             )
             if cursor.rowcount != 1:
@@ -114,7 +120,7 @@ def read_usage(connection, monthly_kind, daily_kind):
         month_row = cursor.fetchone()
         cursor.execute(
             "SELECT requestCount FROM places_api_usage "
-            "WHERE usageDate = CURDATE() AND kind = %s",
+            f"WHERE usageDate = {MANILA_DATE_SQL} AND kind = %s",
             (daily_kind,),
         )
         day_row = cursor.fetchone()
@@ -132,7 +138,7 @@ def read_daily_usage(connection, daily_kind):
     try:
         cursor.execute(
             "SELECT requestCount FROM places_api_usage "
-            "WHERE usageDate = CURDATE() AND kind = %s",
+            f"WHERE usageDate = {MANILA_DATE_SQL} AND kind = %s",
             (daily_kind,),
         )
         return _row_count(cursor.fetchone())

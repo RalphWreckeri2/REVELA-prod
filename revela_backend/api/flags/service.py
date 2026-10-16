@@ -47,6 +47,7 @@ from api.utils.cancellation import is_cancelled, set_cancel
 from api.notifications import hub
 from api.utils.name_match import address_similarity, name_match, parse_name
 from api.utils.places_quota import (
+    MANILA_DATE_SQL,
     read_daily_usage,
     read_usage,
     reserve_usage_slot,
@@ -183,7 +184,10 @@ def _ensure_budget_tables():
 # First day of the current month. NOTE: no '%' characters on purpose. MySQLdb runs
 # `query % args` whenever args are passed, so a literal '%Y-%m' in a query would raise
 # "ValueError: unsupported format character".
-_MONTH_KEY = "DATE_SUB(CURDATE(), INTERVAL DAYOFMONTH(CURDATE()) - 1 DAY)"
+_MONTH_KEY = (
+    f"DATE_SUB({MANILA_DATE_SQL}, "
+    f"INTERVAL DAYOFMONTH({MANILA_DATE_SQL}) - 1 DAY)"
+)
 
 
 def _reserve_places_call(kind):
@@ -435,7 +439,8 @@ def get_places_usage_today():
 def _places_usage_count(cur, kind, today=False):
     if today:
         cur.execute(
-            "SELECT requestCount AS c FROM places_api_usage WHERE usageDate = CURDATE() AND kind = %s",
+            f"SELECT requestCount AS c FROM places_api_usage "
+            f"WHERE usageDate = {MANILA_DATE_SQL} AND kind = %s",
             (kind,),
         )
     else:

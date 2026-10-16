@@ -62,7 +62,10 @@ class PlacesQuotaLedgerTests(unittest.TestCase):
         cursor.rowcount = 1
 
         def execute(sql, _params=None):
-            if "WHERE usageDate = CURDATE()" in sql and "requestCount = requestCount + 1" in sql:
+            daily_update = (
+                f"WHERE usageDate = {places_quota.MANILA_DATE_SQL} "
+            )
+            if daily_update in sql and "requestCount = requestCount + 1" in sql:
                 cursor.rowcount = 0
             else:
                 cursor.rowcount = 1
@@ -148,8 +151,9 @@ class PlacesQuotaLedgerTests(unittest.TestCase):
 
         self.assertFalse(allowed)
         self.assertEqual(reason, "monthly_quota_exceeded")
+        daily_update = f"WHERE usageDate = {places_quota.MANILA_DATE_SQL} "
         self.assertFalse(any(
-            "WHERE usageDate = CURDATE()" in call.args[0]
+            daily_update in call.args[0]
             and "requestCount = requestCount + 1" in call.args[0]
             for call in cursor.execute.call_args_list
         ))
@@ -291,7 +295,8 @@ class PlacesQuotaLedgerTests(unittest.TestCase):
 
         self.assertEqual(report["text_search_day"]["cap"], 22)
         self.assertEqual(report["text_search_month"]["cap"], 220)
-        self.assertEqual(report["text_search_workflows"]["snap_pins"]["daily_cap"], 6)
+        self.assertEqual(report["text_search_workflows"]
+                         ["snap_pins"]["daily_cap"], 6)
         self.assertEqual(report["geocode"]["cap"], 21)
         self.assertEqual(report["place_details_day"]["cap"], 23)
         self.assertEqual(report["nearby_search_active"]["daily_cap"], 24)

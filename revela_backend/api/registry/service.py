@@ -36,7 +36,9 @@ from api.registry.locks import (
     is_black_locked,
     record_enforcement_event,
 )
-from api.utils.places_quota import read_usage, reserve_usage_slot
+from api.utils.places_quota import (
+    MANILA_DATE_SQL, read_usage, reserve_usage_slot,
+)
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
 
@@ -417,11 +419,12 @@ def _reserve_geocode_call():
 
 
 def reset_geocode_daily_quota() -> bool:
-    """Reset the daily geocoding usage counter for CURDATE() to allow re-testing."""
+    """Reset the daily Manila-date geocoding counter to allow re-testing."""
     cur = mysql.connection.cursor()
     try:
         cur.execute(
-            "DELETE FROM places_api_usage WHERE usageDate = CURDATE() AND kind = 'geo_day'")
+            f"DELETE FROM places_api_usage WHERE usageDate = {MANILA_DATE_SQL} "
+            "AND kind = 'geo_day'")
         mysql.connection.commit()
         return True
     except Exception as e:
