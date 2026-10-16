@@ -24,6 +24,7 @@ SOURCE_VALUES = (
 )
 
 SOURCE_COLUMN = "source"
+SOURCE_COLUMN_LENGTH = 24
 
 _source_column_present = None
 

@@ -2981,11 +2981,15 @@ export default function MapPage() {
       }
     } catch (err) {
       console.error("Detection scan error:", err);
-      if (err.message && !err.message.includes("REQUEST_DENIED") && (err.message.includes("429") || err.message.toLowerCase().includes("daily budget reached") || err.message.toLowerCase().includes("daily limit reached") || err.message.toLowerCase().includes("monthly limit reached"))) {
+      const errorMessage = err.message || "An error occurred during the geospatial scan.";
+      const isQuotaError = !errorMessage.includes("REQUEST_DENIED")
+        && /429|quota exceeded|daily budget reached|daily limit reached|monthly limit reached/i.test(errorMessage);
+      await fetchFlags(true);
+      if (isQuotaError) {
         Swal.fire({
           icon: "warning",
-          title: "Daily Limit Reached",
-          text: err.message,
+          title: "Detection Budget Reached",
+          text: errorMessage,
           confirmButtonColor: "#6366f1"
         });
         await fetchPlacesUsage();
@@ -2994,11 +2998,10 @@ export default function MapPage() {
         Swal.fire({
           icon: "error",
           title: "Detection Scan Failed",
-          text: err.message || "An error occurred during the geospatial scan.",
+          text: errorMessage,
           confirmButtonColor: "#ef4444"
         });
       }
-      setActionError(err.message || "Detection failed.");
     } finally {
       setRunDetectionLoading(false);
       setCancellingDetection(false);
@@ -3812,9 +3815,18 @@ export default function MapPage() {
               Geospatial view of flagged and unregistered establishments in Mataasnakahoy.
             </p>
             {(flagsError || actionError) && (
-              <p style={{ fontSize: 13, marginTop: 6, color: actionError && !flagsError ? "var(--color-primary)" : "var(--color-danger)" }}>
-                {flagsError || actionError}
-              </p>
+              <div className="map-page-inline-error" role="alert">
+                <p style={{ fontSize: 13, margin: 0, color: actionError && !flagsError ? "var(--color-primary)" : "var(--color-danger)" }}>
+                  {flagsError || actionError}
+                </p>
+                <button
+                  type="button"
+                  aria-label="Dismiss message"
+                  onClick={() => { setFlagsError(""); setActionError(""); }}
+                >
+                  <Icon.X size={16} />
+                </button>
+              </div>
             )}
           </div>
           <div className="map-page-utilities">

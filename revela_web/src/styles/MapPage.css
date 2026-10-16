@@ -40,6 +40,39 @@
   white-space: nowrap;
 }
 
+.map-page-inline-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.map-page-inline-error > button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -5px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-modal-bg);
+  color: var(--color-muted);
+  cursor: pointer;
+}
+
+.map-page-inline-error > button:hover {
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+
+.map-page-inline-error > button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .map-action-toolbar {
   justify-content: space-between;
   flex-wrap: wrap;

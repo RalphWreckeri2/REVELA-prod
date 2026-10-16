@@ -8,6 +8,18 @@ statement it would have run.
 The source-column cache is reset per test; it is process-global, so whichever
 test answered the probe first would decide it for every test after it.
 """
+from api.models.geospatial import (
+    SOURCE_DETECTION,
+    SOURCE_MANUAL,
+    SOURCE_REGISTRY,
+    SOURCE_REGISTRY_DETECTED,
+    SOURCE_UNKNOWN,
+    SOURCE_COLUMN_LENGTH,
+    SOURCE_VALUES,
+    reset_source_column_cache,
+    with_source,
+)
+from api.models import geospatial
 import os
 import sys
 import unittest
@@ -15,18 +27,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.models import geospatial
-from api.models.geospatial import (
-    SOURCE_DETECTION,
-    SOURCE_MANUAL,
-    SOURCE_REGISTRY,
-    SOURCE_REGISTRY_DETECTED,
-    SOURCE_UNKNOWN,
-    SOURCE_VALUES,
-    reset_source_column_cache,
-    with_source,
-)
 
 
 class _ProbeCursor:
@@ -115,7 +115,8 @@ class WithSourceTests(unittest.TestCase):
             cursor.execute, MagicMock) else None
         second = _ProbeCursor(has_column=False)
         with_source(second, "(a)", "(%s)", (1,), SOURCE_REGISTRY)
-        self.assertEqual(len(second.calls), 0, "the cache should short-circuit")
+        self.assertEqual(len(second.calls), 0,
+                         "the cache should short-circuit")
 
     def test_every_allowed_value_is_accepted(self):
         cursor = _ProbeCursor(has_column=True)
@@ -125,6 +126,10 @@ class WithSourceTests(unittest.TestCase):
                     cursor, "(a)", "(%s)", (1,), source)
                 self.assertIn("source", columns)
                 self.assertEqual(params[-1], source)
+
+    def test_every_allowed_value_fits_the_database_column(self):
+        self.assertLessEqual(max(map(len, SOURCE_VALUES)),
+                             SOURCE_COLUMN_LENGTH)
 
 
 class InsertPointTests(unittest.TestCase):
@@ -169,7 +174,8 @@ class InsertPointTests(unittest.TestCase):
         connection.cursor.return_value = cursor
         with patch.object(geospatial, "mysql") as mock_mysql:
             mock_mysql.connection = connection
-            geospatial.insert_green_flag(7, "ACME", 13.9, 121.1, business_id="B")
+            geospatial.insert_green_flag(
+                7, "ACME", 13.9, 121.1, business_id="B")
         sql, params = cursor.inserts()[0]
         self.assertIn("source", sql)
         self.assertEqual(params[-1], SOURCE_REGISTRY)
@@ -180,7 +186,8 @@ class InsertPointTests(unittest.TestCase):
         connection.cursor.return_value = cursor
         with patch.object(geospatial, "mysql") as mock_mysql:
             mock_mysql.connection = connection
-            geospatial.insert_green_flag(7, "ACME", 13.9, 121.1, business_id="B")
+            geospatial.insert_green_flag(
+                7, "ACME", 13.9, 121.1, business_id="B")
         sql, params = cursor.inserts()[0]
         self.assertNotIn("source", sql)
 
