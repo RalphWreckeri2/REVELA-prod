@@ -23,7 +23,10 @@ import {
 import Swal from "sweetalert2";
 import AnimatePresence from "../components/AnimatePresence";
 import InspectionDialog from "../components/InspectionDialog";
-import { canFollowUpInspection } from "../components/dispatchEligibility";
+import {
+  canFollowUpInspection,
+  canReassignInspection,
+} from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
 import { inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, matchesDispatchSearch, matchesGridSearch } from "./inspectionPresentation";
 import "../styles/InspectionPage.css";
@@ -165,6 +168,9 @@ const STATUS_COLOR = {
 // ── Assign Modal ───────────────────────────────────────────────────────────────
 function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocusRef, fallbackFocusRef }) {
   const isRedo = report.verificationStatus === "Submitted";
+  const isAssignedReassignment = report.verificationStatus === "Assigned";
+  const isReassignment = isRedo || isAssignedReassignment;
+  const isFollowUp = report.verificationStatus === "Verified";
   const [inspectors, setInspectors] = useState([]);
   const [selectedUID, setSelectedUID] = useState(
     () => (report.inspectorID != null ? String(report.inspectorID) : ""),
@@ -211,22 +217,26 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
     setError("");
     try {
       const userID = parseInt(selectedUID, 10);
-      if (isRedo) {
+      if (isReassignment) {
         await reassignSubmittedInspectionRequest(report.reportID, userID, deadline, token);
       } else {
         await assignInspectionRequest({ logID: report.logID, userID, deadline }, token);
       }
       Swal.fire({
         icon: 'success',
-        title: isRedo ? 'Task Reassigned' : 'Inspector Dispatched',
-        text: isRedo ? 'The task has been sent back for redo.' : 'The inspection task has been successfully assigned.',
+        title: isReassignment ? 'Task Reassigned' : 'Follow-up Assigned',
+        text: isRedo
+          ? 'The submitted task has been sent back for redo.'
+          : isAssignedReassignment
+            ? 'The assigned inspector has been changed.'
+            : 'The follow-up inspection has been assigned.',
         timer: 1500,
         showConfirmButton: false
       });
       onSuccess();
       onClose();
     } catch (err) {
-      setError(err.message || (isRedo ? "Reassign failed." : "Assignment failed."));
+      setError(err.message || (isReassignment ? "Reassign failed." : "Assignment failed."));
     } finally {
       setLoading(false);
     }
@@ -234,7 +244,13 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 
   return (
     <InspectionDialog
-      title={isRedo ? "Send Back for Redo" : "Assign Inspector"}
+      title={isRedo
+        ? "Send Back for Redo"
+        : isAssignedReassignment
+          ? "Reassign Inspector"
+          : isFollowUp
+            ? "Assign Follow-up Inspection"
+            : "Assign Inspector"}
       onClose={onClose} busy={loading} isClosing={isClosing} layer={10001}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
@@ -259,6 +275,11 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
           <p style={{ fontSize: 13, color: "var(--color-muted)", marginBottom: 16, lineHeight: 1.5 }}>
             Clears the previous submission and moves the report to{" "}
             <strong>Reassigned</strong>. The inspector must submit new evidence and remarks on mobile.
+          </p>
+        )}
+        {isAssignedReassignment && (
+          <p style={{ fontSize: 13, color: "var(--color-muted)", marginBottom: 16, lineHeight: 1.5 }}>
+            Changes the inspector assigned to this report.
           </p>
         )}
 
@@ -297,12 +318,14 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
           <button className="ghost-btn" onClick={onClose} disabled={loading}>Cancel</button>
           <button className="primary-btn" onClick={handleAssign} disabled={loading || fetching}>
             {loading
-              ? isRedo
-                ? "Reassigning…"
-                : "Assigning…"
+              ? isReassignment ? "Reassigning…" : "Assigning…"
               : isRedo
                 ? <><Icon.Send /> Reassign for redo</>
-                : <><Icon.Send /> Dispatch</>}
+                : isAssignedReassignment
+                  ? <><Icon.Send /> Reassign inspector</>
+                  : isFollowUp
+                    ? <><Icon.Send /> Assign follow-up</>
+                    : <><Icon.Send /> Dispatch</>}
           </button>
         </div>
     </InspectionDialog>
@@ -701,9 +724,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
         {clearError && <div style={s.errorBanner} role="alert">{clearError}</div>}
         {isAdmin && (
           <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
-            {(report.verificationStatus === "Assigned" ||
-              report.verificationStatus === "Reassigned" ||
-              canFollowUpInspection(report, { isAdmin })) && (
+            {canReassignInspection(report, { isAdmin }) && (
               <button className="ghost-btn" style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1, border: "1px solid var(--color-border-soft)", background: "transparent", color: "var(--color-ink)" }}
                 onClick={(e) => { e.stopPropagation(); onAssign(report); }}>
                 Reassign
@@ -711,13 +732,6 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
             )}
             {report.verificationStatus === "Submitted" && (
               <>
-                <button
-                  className="ghost-btn"
-                  style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1, border: "1px solid var(--color-border-soft)", background: "transparent", color: "var(--color-ink)" }}
-                  onClick={(e) => { e.stopPropagation(); onAssign(report); }}
-                >
-                  Send back
-                </button>
                 <button
                   className="primary-btn"
                   style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1 }}

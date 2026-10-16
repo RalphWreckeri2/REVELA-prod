@@ -898,7 +898,7 @@ export async function assignInspectionRequest(payload, token) {
 
 /**
  * POST /api/inspections/:reportId/reassign
- * Admin sends a submitted report back for inspector redo (→ Reassigned).
+ * Admin reassigns an Assigned report or sends a Submitted report back for redo.
  */
 export async function reassignSubmittedInspectionRequest(
   reportId,

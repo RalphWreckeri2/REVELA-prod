@@ -4,6 +4,7 @@ These deliberately drive the real _sync_flag_color instead of mocking it.
 The existing sync tests patch api.registry.service._sync_flag_color, which is
 precisely why the missing business_id argument went unnoticed.
 """
+from api.registry import service
 import os
 import sys
 import unittest
@@ -11,8 +12,6 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
-
-from api.registry import service
 
 
 class UpdateBusinessPinColourTests(unittest.TestCase):
@@ -90,6 +89,56 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
         self.assertEqual(len(pin_updates), 1,
                          "the linked pin should be recoloured exactly once")
         self.assertEqual(pin_updates[0].args[1][0], "Red")
+        self.assertEqual(pin_updates[0].args[1][4], "ACME STORE")
+
+    @patch("api.registry.service.mysql")
+    def test_registry_name_edit_updates_pin_by_business_id(self, mock_mysql):
+        cursor = self._cursor_with_registry_and_pin(mock_mysql)
+
+        ok, error = service.update_business(
+            "BIZ-1", {"businessName": "New Business Name"})
+
+        self.assertIsNone(error)
+        self.assertTrue(ok)
+        pin_updates = [
+            call for call in cursor.execute.call_args_list
+            if "UPDATE geospatial_logs" in call.args[0]
+        ]
+        self.assertEqual(len(pin_updates), 1)
+        sql, params = pin_updates[0].args
+        self.assertIn("WHERE businessID = %s", sql)
+        self.assertEqual(params, (
+            "NEW BUSINESS NAME", "BIZ-1", "ACME STORE", 7))
+
+    @patch("api.registry.service.mysql")
+    def test_open_inspection_blocks_manual_registry_edits(self, mock_mysql):
+        cursor = self._cursor_with_registry_and_pin(mock_mysql)
+        open_inspection = {
+            "reportID": 23,
+            "verificationStatus": "Submitted",
+        }
+        original_fetchone = cursor.fetchone.side_effect
+
+        def fetchone():
+            sql = cursor.execute.call_args.args[0]
+            if "FROM inspection_reports ir" in sql:
+                return open_inspection
+            return original_fetchone()
+
+        cursor.fetchone.side_effect = fetchone
+
+        ok, error = service.update_business(
+            "BIZ-1", {"businessName": "New Business Name"})
+
+        self.assertFalse(ok)
+        self.assertIsInstance(error, service.RegistryInspectionInProgress)
+        self.assertIn("report #23", str(error))
+        self.assertFalse(any(
+            "UPDATE official_registry" in call.args[0]
+            or "UPDATE geospatial_logs" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        mock_mysql.connection.commit.assert_not_called()
 
     @patch("api.registry.service.mysql")
     def test_revoked_recolours_linked_pin_black(self, mock_mysql):

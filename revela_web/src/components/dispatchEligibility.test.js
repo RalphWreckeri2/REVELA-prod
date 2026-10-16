@@ -5,6 +5,7 @@ import {
   dispatchButtonLabel,
   INSPECTABLE_FLAG_COLORS,
   NON_DISPATCHABLE_FLAG_COLORS,
+  canReassignInspection,
   canFollowUpInspection,
 } from "./dispatchEligibility.js";
 
@@ -99,22 +100,52 @@ test("the colour list is frozen so callers cannot mutate the rule", () => {
   ]);
 });
 
-test("Follow-up uses current color, not Orange result or notice stage", () => {
-  for (const flagColor of ["Red", "Yellow", "Orange", "Purple"]) {
-    for (const noticeLevel of [0, 1, 2, 3, 4]) {
-      assert.equal(
-        canFollowUpInspection(
-          {
-            flagColor,
-            noticeLevel,
-            inspectionResult: "Black",
-            verificationStatus: "Verified",
-          },
-          { isAdmin: true },
-        ),
-        true,
-      );
-    }
+test("Reassign is offered only for Assigned and Submitted reports to admins", () => {
+  for (const verificationStatus of ["Assigned", "Submitted"]) {
+    assert.equal(
+      canReassignInspection({ verificationStatus }, { isAdmin: true }),
+      true,
+    );
+  }
+  for (const verificationStatus of ["Reassigned", "Verified"]) {
+    assert.equal(
+      canReassignInspection({ verificationStatus }, { isAdmin: true }),
+      false,
+    );
+  }
+  assert.equal(
+    canReassignInspection(
+      { verificationStatus: "Assigned" },
+      { isAdmin: false },
+    ),
+    false,
+  );
+});
+
+test("Follow-up is offered only for Verified Orange reports", () => {
+  for (const noticeLevel of [0, 1, 2, 3, 4]) {
+    assert.equal(
+      canFollowUpInspection(
+        {
+          flagColor: "Orange",
+          noticeLevel,
+          inspectionResult: "Black",
+          verificationStatus: "Verified",
+        },
+        { isAdmin: true },
+      ),
+      true,
+    );
+  }
+  for (const flagColor of ["Red", "Yellow", "Green", "Purple", "Black"]) {
+    assert.equal(
+      canFollowUpInspection(
+        { flagColor, verificationStatus: "Verified" },
+        { isAdmin: true },
+      ),
+      false,
+      flagColor,
+    );
   }
 });
 

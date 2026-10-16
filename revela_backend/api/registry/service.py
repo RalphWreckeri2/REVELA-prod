@@ -1022,10 +1022,12 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
             SET flagColor = %s,
                 businessID = COALESCE(businessID, %s),
                 latitude = COALESCE(latitude, %s),
-                longitude = COALESCE(longitude, %s)
+                longitude = COALESCE(longitude, %s),
+                detectedName = %s
             WHERE logID = %s
             """,
-            (flag_color, business_id, lat, lng, existing_pin["logID"]),
+            (flag_color, business_id, lat, lng, name_clean,
+             existing_pin["logID"]),
         )
         return True
     elif lat is not None and lng is not None:
@@ -1415,6 +1417,10 @@ class RegistryNotFoundError(LookupError):
     """The requested registry record does not exist. HTTP 404."""
 
 
+class RegistryInspectionInProgress(RuntimeError):
+    """The Registry row cannot be edited while a linked inspection is open."""
+
+
 class SyncProtectionLookupError(RuntimeError):
     """The pre-run protection lookup failed, so sync must not start.
 
@@ -1426,6 +1432,29 @@ class SyncProtectionLookupError(RuntimeError):
 
 class OpenInspectionLookupError(RuntimeError):
     """Raised when the open-inspection guard cannot be evaluated."""
+
+
+def _find_open_inspection_for_business(cursor, business_id, business_name,
+                                       barangay_id):
+    """Find a not-yet-verified inspection linked to this Registry business."""
+    cursor.execute(
+        """SELECT ir.reportID, ir.verificationStatus
+           FROM inspection_reports ir
+           JOIN geospatial_logs g ON g.logID = ir.targetID
+           WHERE ir.targetType = 'geospatial_log'
+             AND (ir.verificationStatus IS NULL
+                  OR ir.verificationStatus <> 'Verified')
+             AND (
+                 g.businessID = %s
+                 OR (g.businessID IS NULL
+                     AND g.barangayID = %s
+                     AND g.detectedName = %s)
+             )
+           ORDER BY ir.irTimestamp DESC
+           LIMIT 1""",
+        (business_id, barangay_id, business_name),
+    )
+    return cursor.fetchone()
 
 
 def _load_open_inspection_keys(cursor):
@@ -3266,7 +3295,8 @@ def update_business(business_id, data: dict):
 
         # Check if business exists
         cursor.execute(
-            "SELECT businessID, businessName, barangayID FROM official_registry WHERE businessID = %s", (business_id,))
+            "SELECT businessID, businessName, barangayID, applicationStatus "
+            "FROM official_registry WHERE businessID = %s", (business_id,))
         row = cursor.fetchone()
         if not row:
             cursor.close()
@@ -3274,6 +3304,19 @@ def update_business(business_id, data: dict):
 
         old_name = row["businessName"]
         barangay_id = row["barangayID"]
+
+        open_inspection = _find_open_inspection_for_business(
+            cursor, business_id, old_name, barangay_id)
+        if open_inspection:
+            report_id = open_inspection.get("reportID")
+            status = open_inspection.get("verificationStatus") or "Assigned"
+            cursor.close()
+            return False, RegistryInspectionInProgress(
+                "This business has an inspection that is not yet Verified "
+                f"(report #{report_id}, status {status}). Update or resolve "
+                "the inspection from the Inspection page before editing "
+                "Registry data."
+            )
 
         # A Black locked business is closed to manual edits. Only a SUPER_ADMIN
         # unlock may change it, and that route does not exist yet.
@@ -3338,8 +3381,11 @@ def update_business(business_id, data: dict):
                     cursor.execute("""
                         UPDATE geospatial_logs
                         SET detectedName = %s
-                        WHERE LOWER(detectedName) = LOWER(%s) AND barangayID = %s
-                    """, (new_name, old_name, barangay_id))
+                        WHERE businessID = %s
+                           OR (businessID IS NULL
+                               AND LOWER(detectedName) = LOWER(%s)
+                               AND barangayID = %s)
+                    """, (new_name, business_id, old_name, barangay_id))
                 current_name = new_name
 
             # Keep the map pin in sync when the permit status changes

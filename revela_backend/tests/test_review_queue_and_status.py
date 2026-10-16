@@ -23,6 +23,7 @@ def _count_query(cursor):
             return sql, call[0][1] if len(call[0]) > 1 else []
     raise AssertionError("get_flags never ran its count query")
 
+
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
@@ -295,6 +296,53 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
     @patch("api.inspections.service.get_latest_inspection_cycle_id", return_value=None)
     @patch("api.inspections.service._ensure_gps_columns")
     @patch("api.inspections.service.mysql")
+    def test_assigned_report_can_be_reassigned(self, mock_mysql,
+                                               _ensure_gps_columns,
+                                               _cycle_id, _log_event):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.side_effect = [
+            {"reportID": 8, "targetID": 22,
+             "verificationStatus": "Assigned"},
+            {"userID": 9, "fullName": "Inspector", "userRole": "Inspector"},
+            {"flagColor": "Red"},
+        ]
+
+        result, error = inspection_service.reassign_submitted_report(
+            report_id=8, inspector_user_id=9, deadline=None, assigned_by=2,
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(result["status"], "Reassigned")
+        self.assertTrue(any(
+            "UPDATE inspection_reports" in call.args[0]
+            and "verificationStatus = 'Reassigned'" in call.args[0]
+            for call in mock_cursor.execute.call_args_list
+        ))
+
+    @patch("api.inspections.service._ensure_gps_columns")
+    @patch("api.inspections.service.mysql")
+    def test_verified_report_cannot_use_reassign_endpoint(self, mock_mysql,
+                                                          _ensure_gps_columns):
+        mock_cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = {
+            "reportID": 8, "targetID": 22,
+            "verificationStatus": "Verified",
+        }
+
+        result, error = inspection_service.reassign_submitted_report(
+            report_id=8, inspector_user_id=9, deadline=None, assigned_by=2,
+        )
+
+        self.assertIsNone(result)
+        self.assertIn("only Assigned or Submitted", error)
+        self.assertEqual(mock_cursor.execute.call_count, 1)
+
+    @patch("api.inspections.service.log_inspection_event")
+    @patch("api.inspections.service.get_latest_inspection_cycle_id", return_value=None)
+    @patch("api.inspections.service._ensure_gps_columns")
+    @patch("api.inspections.service.mysql")
     def test_verified_warning_inspection_sets_explicit_orange_designation(
         self, mock_mysql, _ensure_gps_columns, _cycle_id, _log_event
     ):
@@ -311,7 +359,8 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
 
         mock_cursor = MagicMock()
         mock_mysql.connection.cursor.return_value = mock_cursor
-        mock_cursor.fetchall.return_value = [("warningLevel",), ("blackLocked",)]
+        mock_cursor.fetchall.return_value = [
+            ("warningLevel",), ("blackLocked",)]
         mock_cursor.fetchone.side_effect = [
             {
                 "reportID": 4,

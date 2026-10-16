@@ -318,7 +318,11 @@ def reassign_submitted(report_id):
         assigned_by=get_jwt_identity(),
     )
     if error:
-        status = 400 if "only Submitted" in error or "not found" in error else 500
+        status = (
+            400
+            if "only Assigned or Submitted" in error or "not found" in error
+            else 500
+        )
         return jsonify({"error": error}), status
     try:
         notify_inspection_assigned(
@@ -379,7 +383,8 @@ def inspection_calendar():
 
     identity = get_jwt_identity()
     current_user = find_user_by_id(int(identity))
-    current_role = (current_user or {}).get("userRole") or (current_user or {}).get("role")
+    current_role = (current_user or {}).get(
+        "userRole") or (current_user or {}).get("role")
     user_id = (
         None
         if current_role in ("Admin", "SUPER_ADMIN", "System Administrator")
@@ -389,7 +394,8 @@ def inspection_calendar():
         month_start, month_end, selected_date, user_id=user_id
     )
     if error:
-        current_app.logger.exception("Inspection calendar query failed: %s", error)
+        current_app.logger.exception(
+            "Inspection calendar query failed: %s", error)
         return jsonify({"error": "Unable to load inspection calendar."}), 500
     return jsonify(result), 200
 

@@ -16,6 +16,7 @@ from api.registry.service import (
     snap_unresolved_pins,
     RegistryValidationError,
     RegistryNotFoundError,
+    RegistryInspectionInProgress,
     BlackLockedError,
     BlackBusinessDeletionForbidden,
     RegistryLadderConflict,
@@ -583,6 +584,8 @@ def edit_business(business_id):
     if error:
         # Typed errors, not message text, so the code cannot drift from the copy.
         if isinstance(error, BlackLockedError):
+            status_code = 409
+        elif isinstance(error, RegistryInspectionInProgress):
             status_code = 409
         elif isinstance(error, RegistryNotFoundError):
             status_code = 404

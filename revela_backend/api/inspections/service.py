@@ -828,8 +828,8 @@ def submit_inspection(log_id, user_id, inspection_result,
 
 def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_by):
     """
-    Admin sends a submitted report back to the field for redo.
-    Clears submission data and sets verificationStatus to Reassigned.
+    Admin reassigns an active assignment or sends a submitted report back for
+    redo. Clears submission data and sets verificationStatus to Reassigned.
     """
     try:
         cursor = mysql.connection.cursor()
@@ -848,11 +848,11 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
             cursor.close()
             return None, f"Report #{report_id} not found"
 
-        if report["verificationStatus"] not in ("Submitted", "Verified"):
+        if report["verificationStatus"] not in ("Assigned", "Submitted"):
             cursor.close()
             return None, (
                 f"Report is '{report['verificationStatus']}' — "
-                "only Submitted or Verified reports can be sent back for redo"
+                "only Assigned or Submitted reports can be reassigned"
             )
 
         cursor.execute(

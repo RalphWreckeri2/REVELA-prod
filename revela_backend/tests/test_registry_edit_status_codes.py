@@ -5,6 +5,9 @@ strings, so the route had to compare error text to pick a status code. Both
 are now typed (RegistryNotFoundError / RegistryValidationError) and the route
 uses isinstance, so the status cannot drift from the wording.
 """
+from api.registry import service as registry_service
+from api.registry import routes as registry_routes
+from flask import Flask
 import os
 import sys
 import unittest
@@ -13,10 +16,6 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from flask import Flask
-
-from api.registry import routes as registry_routes
-from api.registry import service as registry_service
 
 EXISTING = {"businessID": "BIZ-1", "businessName": "ACME STORE",
             "barangayID": 1}
@@ -57,6 +56,12 @@ class RegistryEditStatusCodeTests(unittest.TestCase):
             (False, registry_service.RegistryNotFoundError(
                 "Business not found")))
         self.assertEqual(status, 404)
+
+    def test_open_inspection_conflict_is_409(self):
+        _, status = self._call(
+            (False, registry_service.RegistryInspectionInProgress(
+                "Inspection is in progress")))
+        self.assertEqual(status, 409)
 
     def test_untyped_failure_stays_500(self):
         _, status = self._call((False, "database exploded"))
