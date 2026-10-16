@@ -26,6 +26,15 @@ class YellowFlagValidationTests(unittest.TestCase):
             self.assertIsInstance(error, service.YellowFlagValidationError)
         mysql.connection.cursor.assert_not_called()
 
+    @patch("api.flags.service.mysql")
+    def test_supplied_address_is_validated_without_geocoding(self, mysql):
+        for address in ("", "  ", True, 42, {}, "x" * 256):
+            _, error = service.insert_yellow_flag(
+                "Shop", 13.960630, 121.113447, 2, business_address=address,
+            )
+            self.assertIsInstance(error, service.YellowFlagValidationError)
+        mysql.connection.cursor.assert_not_called()
+
     def test_offsite_business_coordinate_matches_exact_registry_barangay(self):
         cursor = MagicMock()
         cursor.fetchone.return_value = {"barangayName": "Barangay II"}
@@ -68,14 +77,29 @@ class YellowFlagValidationTests(unittest.TestCase):
         cursor.lastrowid = 41
         result, error = service.insert_yellow_flag(
             "Offsite Shop", 13.960630, 121.113447, 2, reported_by_user_id=9,
+            business_address="Purok Makisig, behind the unnamed chapel",
         )
         self.assertIsNone(error)
         self.assertEqual(result["logID"], 41)
         # Barangay lookup, uncached source-column probe, then one INSERT.
         self.assertEqual(cursor.execute.call_count, 3)
         self.assertIn("information_schema.COLUMNS", cursor.execute.call_args_list[1].args[0])
+        insert_sql, params = cursor.execute.call_args.args
+        self.assertIn("nearestLandmark", insert_sql)
+        self.assertIn("Purok Makisig, behind the unnamed chapel", params)
+        self.assertEqual(params[2:4], (13.960630, 121.113447))
+        self.assertEqual(result["businessAddress"], "Purok Makisig, behind the unnamed chapel")
         mysql.connection.commit.assert_called_once()
         notify.assert_called_once()
+
+    @patch("api.flags.service.mysql")
+    def test_manual_address_does_not_bypass_municipal_boundary(self, mysql):
+        result, error = service.insert_yellow_flag(
+            "Shop", 14.6, 121.0, 2, business_address="Unsearchable landmark",
+        )
+        self.assertIsNone(result)
+        self.assertIsInstance(error, service.YellowFlagValidationError)
+        mysql.connection.cursor.assert_not_called()
 
     @patch("api.flags.service.mysql")
     def test_barangay_failure_rolls_back_before_insert(self, mysql):

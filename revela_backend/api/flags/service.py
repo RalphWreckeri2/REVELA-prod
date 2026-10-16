@@ -3284,6 +3284,7 @@ def insert_yellow_flag(
     flag_color='Yellow',
     reported_by_user_id=None,
     client_submission_id=None,
+    business_address=None,
 ):
     """Manually insert a Yellow Flag."""
     if flag_color != 'Yellow':
@@ -3325,6 +3326,15 @@ def insert_yellow_flag(
         return None, YellowFlagValidationError(
             "Business name is required (maximum 255 characters)."
         )
+    # Older clients/queued reports predate the description field. When supplied,
+    # retain it verbatim as the flag's address/landmark, independently of the pin.
+    if business_address is not None and (
+        not isinstance(business_address, str)
+        or not business_address.strip() or len(business_address) > 255
+    ):
+        return None, YellowFlagValidationError(
+            "Business address / Street / Purok / Landmark is required (maximum 255 characters)."
+        )
 
     cursor = None
     try:
@@ -3344,10 +3354,10 @@ def insert_yellow_flag(
             _columns, _values, _params = with_source(
                 cursor,
                 """(barangayID, reportID, detectedName, latitude, longitude,
-                     flagColor, notes, reportedByUserID, clientSubmissionID)""",
-                "(%s, NULL, %s, %s, %s, %s, %s, %s, %s)",
+                     flagColor, notes, reportedByUserID, clientSubmissionID, nearestLandmark)""",
+                "(%s, NULL, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (barangay_id, business_name, lat, lng, flag_color, notes,
-                 reported_by_user_id, client_submission_id),
+                 reported_by_user_id, client_submission_id, business_address),
                 SOURCE_MANUAL,
             )
             cursor.execute(
@@ -3358,7 +3368,7 @@ def insert_yellow_flag(
             log_id = cursor.lastrowid
             cursor.execute("""
                 SELECT barangayID, detectedName, latitude, longitude, notes,
-                       flagColor, reportedByUserID
+                       flagColor, reportedByUserID, nearestLandmark
                 FROM geospatial_logs
                 WHERE logID = %s
             """, (log_id,))
@@ -3372,7 +3382,8 @@ def insert_yellow_flag(
                     existing.get("notes"),
                     existing.get("flagColor"),
                     existing.get("reportedByUserID"),
-                ) if isinstance(existing, dict) else existing[:7]
+                    existing.get("nearestLandmark"),
+                ) if isinstance(existing, dict) else existing[:8]
                 same_report = (
                     int(values[0]) == int(barangay_id)
                     and values[1] == business_name
@@ -3381,6 +3392,7 @@ def insert_yellow_flag(
                     and values[4] == notes
                     and values[5] == flag_color
                     and int(values[6]) == int(reported_by_user_id)
+                    and values[7] == business_address
                 )
                 if not same_report:
                     mysql.connection.rollback()
@@ -3392,10 +3404,10 @@ def insert_yellow_flag(
             _columns, _values, _params = with_source(
                 cursor,
                 """(barangayID, reportID, detectedName, latitude, longitude,
-                     flagColor, notes, reportedByUserID)""",
-                "(%s, NULL, %s, %s, %s, %s, %s, %s)",
+                     flagColor, notes, reportedByUserID, nearestLandmark)""",
+                "(%s, NULL, %s, %s, %s, %s, %s, %s, %s)",
                 (barangay_id, business_name, lat, lng, flag_color, notes,
-                 reported_by_user_id),
+                 reported_by_user_id, business_address),
                 SOURCE_MANUAL,
             )
             cursor.execute(
@@ -3425,6 +3437,7 @@ def insert_yellow_flag(
             "lat": lat,
             "lng": lng,
             "alreadyAccepted": not created,
+            "businessAddress": business_address,
         }, None
     except YellowFlagValidationError as e:
         mysql.connection.rollback()

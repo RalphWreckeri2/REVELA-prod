@@ -63,6 +63,22 @@ class YellowFlagIdempotencyTests(unittest.TestCase):
         self.connection.commit.assert_not_called()
         self.notify.assert_not_called()
 
+    def test_retry_preserves_address_and_changed_address_conflicts(self):
+        address = "Purok Makisig, behind the unnamed chapel"
+        self.existing["nearestLandmark"] = address
+        self.cursor.rowcount = 0
+        result, error = self.submit(business_address=address)
+        self.assertIsNone(error)
+        self.assertEqual(result["businessAddress"], address)
+        self.assertTrue(result["alreadyAccepted"])
+        self.connection.commit.reset_mock()
+        result, error = self.submit(business_address="Another landmark")
+        self.assertIsNone(result)
+        self.assertIsInstance(error, service.YellowFlagSubmissionConflict)
+        self.connection.commit.assert_not_called()
+        self.connection.rollback.assert_called_once()
+        self.notify.assert_not_called()
+
     def test_first_submission_keeps_created_response_and_notification(self):
         self.cursor.rowcount = 1
         result, error = self.submit()

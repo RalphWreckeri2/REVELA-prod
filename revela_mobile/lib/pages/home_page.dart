@@ -10,6 +10,7 @@ import 'package:geolocator/geolocator.dart';
 import '../component/inspection_card.dart';
 import '../component/inspection_modal.dart';
 import '../component/yellow_flag_location_picker.dart';
+import '../component/yellow_flag_pin_picker.dart';
 
 import '../service/assignment_notifications.dart';
 import '../service/flag_service.dart';
@@ -920,7 +921,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _YellowFlagSheet(
+      builder: (_) => YellowFlagSheet(
         onSuccess: (MyFlag newFlag) {
           if (!mounted) return;
           // Optimistically add the new flag to the map before the next poll.
@@ -1927,33 +1928,38 @@ class _MapControlButton extends StatelessWidget {
 
 // ─── Yellow Flag Bottom Sheet ─────────────────────────────────────────────────
 
-class _YellowFlagSheet extends StatefulWidget {
+class YellowFlagSheet extends StatefulWidget {
   final void Function(MyFlag) onSuccess;
   final VoidCallback onPendingSync;
+  final FlagService? flagService;
+  final InspectionLocationService? locationService;
+  final YellowFlagAddressSearchService? addressSearchService;
 
-  const _YellowFlagSheet({
+  const YellowFlagSheet({
+    super.key,
     required this.onSuccess,
     required this.onPendingSync,
+    this.flagService,
+    this.locationService,
+    this.addressSearchService,
   });
 
   @override
-  State<_YellowFlagSheet> createState() => _YellowFlagSheetState();
+  State<YellowFlagSheet> createState() => _YellowFlagSheetState();
 }
 
-class _YellowFlagSheetState extends State<_YellowFlagSheet> {
+class _YellowFlagSheetState extends State<YellowFlagSheet> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _streetAddressCtrl = TextEditingController();
-  final _latCtrl = TextEditingController();
-  final _lngCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
 
-  final FlagService _flagService = FlagService();
+  late final FlagService _flagService = widget.flagService ?? FlagService();
   final BoundaryService _boundaryService = BoundaryService();
-  final InspectionLocationService _locationService =
-      InspectionLocationService();
-  final YellowFlagAddressSearchService _addressSearchService =
-      YellowFlagAddressSearchService();
+  late final InspectionLocationService _locationService =
+      widget.locationService ?? InspectionLocationService();
+  late final YellowFlagAddressSearchService _addressSearchService =
+      widget.addressSearchService ?? YellowFlagAddressSearchService();
 
   List<Barangay> _barangays = [];
   List<YellowFlagDraft> _savedDrafts = [];
@@ -1962,13 +1968,14 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
   ResolvedAdministrativeArea? _resolvedArea;
   bool _loadingBarangays = true;
   bool _fetchingLocation = false;
+  bool _choosingLocation = false;
   bool _submitting = false;
   bool _isOutsideBoundary = false;
   bool _isBarangayMismatch = false;
   bool _searchingAddress = false;
-  bool _locationConfirmed = false;
-  bool _isAddressLocation = false;
-  bool _addressLocationNeedsRefresh = false;
+  // Only a confirmed picker result (or an already saved report) sets this pin.
+  // The address description and optional search results never establish it.
+  LatLng? _confirmedBusinessPin;
   bool _addressSearchCompleted = false;
   String? _errorMsg;
   String? _locationMessage;
@@ -1976,28 +1983,24 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
   int _addressSearchGeneration = 0;
   Timer? _addressSearchDebounceTimer;
 
-  // True when the current GPS coordinates populated the barangay selection.
-  bool _isGpsLocked = false;
+  bool _isBarangayAutoDetected = false;
   bool _usingLocalBarangayList = false;
   String? _editingDraftId;
-
-  // True once the user has interacted with location in any way (pressed
-  // "Use Current Location" or changed barangay). Guards against the slow,
-  // silent GPS fetch kicked off in initState resolving *after* the user
-  // has already made their own choice and stomping it back.
-  bool _locationTouched = false;
 
   bool get _canSubmit =>
       !_submitting &&
       !_fetchingLocation &&
-      !_searchingAddress &&
+      !_choosingLocation &&
+      !_loadingBarangays &&
       !_isOutsideBoundary &&
       !_isBarangayMismatch &&
-      _locationConfirmed &&
-      !_addressLocationNeedsRefresh &&
+      _confirmedBusinessPin != null &&
+      _resolvedArea != null &&
       _selectedBarangay != null &&
-      _latCtrl.text.isNotEmpty &&
-      _lngCtrl.text.isNotEmpty;
+      _nameCtrl.text.trim().isNotEmpty &&
+      _nameCtrl.text.trim().length <= 255 &&
+      _streetAddressCtrl.text.trim().isNotEmpty &&
+      _streetAddressCtrl.text.trim().length <= 255;
 
   @override
   void initState() {
@@ -2007,43 +2010,30 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
     _loadSavedDrafts();
   }
 
-  Future<void> _applyCoordinates(
-    double lat,
-    double lng, {
-    bool silent = false,
+  Future<void> _applyConfirmedPin(
+    LatLng pin, {
     bool updateBarangay = true,
-    bool confirmed = true,
   }) async {
     await _boundaryService.loadBoundaries();
 
-    final area = _boundaryService.resolveAdministrativeArea(lat, lng);
+    final area = _boundaryService.resolveAdministrativeArea(
+      pin.latitude,
+      pin.longitude,
+    );
     if (area == null) {
       if (!mounted) return;
       setState(() {
-        _latCtrl.text = lat.toStringAsFixed(6);
-        _lngCtrl.text = lng.toStringAsFixed(6);
+        _confirmedBusinessPin = pin;
         if (updateBarangay) _selectedBarangay = null;
         _resolvedArea = null;
-        _isGpsLocked = false;
-        _locationTouched = true;
+        _isBarangayAutoDetected = false;
         _isOutsideBoundary = true;
         _isBarangayMismatch = false;
-        _locationConfirmed = confirmed;
         _errorMsg = _boundaryService.hasLoadedBoundaries
             ? 'Coordinates are outside the official Mataasnakahoy barangay boundaries.'
             : 'Official boundary data is unavailable. Location cannot be verified.';
       });
 
-      if (!silent && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_errorMsg!),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 4),
-          ),
-        );
-      }
       return;
     }
 
@@ -2058,12 +2048,10 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
 
     if (!mounted) return;
     setState(() {
-      _latCtrl.text = lat.toStringAsFixed(6);
-      _lngCtrl.text = lng.toStringAsFixed(6);
+      _confirmedBusinessPin = pin;
       _resolvedArea = area;
       if (updateBarangay) _selectedBarangay = matched;
-      _isGpsLocked = updateBarangay && matched != null;
-      _locationTouched = true;
+      _isBarangayAutoDetected = updateBarangay && matched != null;
       _isOutsideBoundary = false;
       final selectedMismatch =
           !updateBarangay &&
@@ -2071,37 +2059,16 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
           BoundaryService.canonicalBarangayKey(_selectedBarangay!.name) !=
               areaKey;
       _isBarangayMismatch = selectedMismatch;
-      _locationConfirmed = confirmed;
       _errorMsg = selectedMismatch
           ? 'Coordinates resolve to ${area.barangay}, not ${_selectedBarangay!.name}.'
           : (updateBarangay && matched == null)
           ? 'Location resolved to ${area.barangay}, but its registry entry is unavailable.'
           : null;
     });
-
-    if (!silent && mounted) {
-      final msg = matched != null
-          ? 'Location set to ${matched.name} · ${area.municipality}, ${area.province}'
-          : 'Detected ${area.barangay}, but its registry entry is unavailable.';
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(msg),
-          backgroundColor: AppColors.darkGreen,
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
   }
 
   void _onStreetAddressChanged(String _) {
     _addressSearchDebounceTimer?.cancel();
-    if (_isAddressLocation) {
-      setState(() {
-        _addressLocationNeedsRefresh = true;
-        _locationConfirmed = false;
-      });
-    }
     _addressSearchGeneration++;
     setState(() {
       _addressCandidates = [];
@@ -2115,7 +2082,8 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
 
   void _scheduleAddressSuggestions() {
     _addressSearchDebounceTimer?.cancel();
-    if (_streetAddressCtrl.text.trim().length < 5) {
+    final length = _streetAddressCtrl.text.trim().length;
+    if (length < 5 || length > 200 || _submitting) {
       return;
     }
     _addressSearchDebounceTimer = Timer(const Duration(milliseconds: 700), () {
@@ -2128,14 +2096,13 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
   Future<void> _searchAddress() async {
     _addressSearchDebounceTimer?.cancel();
     final streetAddress = _streetAddressCtrl.text.trim();
-    if (streetAddress.isEmpty || _searchingAddress) return;
+    if (streetAddress.isEmpty || _searchingAddress || _submitting) return;
     final generation = ++_addressSearchGeneration;
     setState(() {
       _searchingAddress = true;
       _addressCandidates = [];
       _addressSearchFailure = null;
       _addressSearchCompleted = false;
-      _errorMsg = null;
     });
     try {
       final candidates = await _addressSearchService.search(
@@ -2168,31 +2135,19 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
   Future<void> _selectAddressCandidate(
     YellowFlagAddressCandidate candidate,
   ) async {
-    _addressSearchDebounceTimer?.cancel();
-    _addressSearchGeneration++;
-    _isAddressLocation = true;
-    _addressLocationNeedsRefresh = false;
-    _streetAddressCtrl.text = candidate.formattedAddress;
-    setState(() {
-      _addressCandidates = [];
-      _addressSearchCompleted = false;
-      _locationMessage = null;
-    });
-    await _applyCoordinates(
-      candidate.latitude,
-      candidate.longitude,
-      silent: true,
-      updateBarangay: true,
-      confirmed: true,
+    // A suggestion proposes a pin, never replaces the inspector's description.
+    await _chooseLocationOnMap(
+      proposedPin: LatLng(candidate.latitude, candidate.longitude),
     );
   }
 
-  Future<void> _autoFillGps({bool silent = false}) async {
-    if (_fetchingLocation) return;
+  Future<LatLng?> _chooseLocationOnMap({LatLng? proposedPin}) async {
+    if (_submitting || _fetchingLocation || _choosingLocation) return null;
+    FocusScope.of(context).unfocus();
     _addressSearchGeneration++;
     _addressSearchDebounceTimer?.cancel();
     setState(() {
-      _fetchingLocation = true;
+      _choosingLocation = true;
       _locationMessage = null;
       _addressCandidates = [];
       _addressSearchFailure = null;
@@ -2200,101 +2155,86 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
       _searchingAddress = false;
     });
     try {
+      final pin = await Navigator.of(context).push<LatLng>(
+        MaterialPageRoute<LatLng>(
+          builder: (_) => YellowFlagPinPicker(
+            municipalMapView: _HomePageState._initialCamera,
+            initialPin: proposedPin ?? _confirmedBusinessPin,
+          ),
+        ),
+      );
+      if (!mounted || pin == null) return null;
+      await _applyConfirmedPin(pin);
+      return pin;
+    } finally {
+      if (mounted) setState(() => _choosingLocation = false);
+    }
+  }
+
+  Future<void> _autoFillGps() async {
+    if (_fetchingLocation || _choosingLocation || _submitting) return;
+    setState(() {
+      _fetchingLocation = true;
+      _locationMessage = null;
+    });
+    try {
       final result = await _locationService.getCurrentLocation();
       if (!mounted) return;
       if (!result.hasFix) {
         setState(() {
-          _fetchingLocation = false;
-          _errorMsg = result.message;
-        });
-        if (!silent) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(result.message),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
-        return;
-      }
-      if (silent && _locationTouched) {
-        setState(() => _fetchingLocation = false);
-        return;
-      }
-
-      if (_loadingBarangays) await _loadBarangays();
-      _isAddressLocation = false;
-      _addressLocationNeedsRefresh = false;
-      _addressSearchGeneration++;
-      _addressSearchDebounceTimer?.cancel();
-      setState(() {
-        _streetAddressCtrl.clear();
-        _addressCandidates = [];
-        _addressSearchFailure = null;
-        _addressSearchCompleted = false;
-      });
-      await _applyCoordinates(
-        result.fix!.latitude,
-        result.fix!.longitude,
-        silent: silent,
-        updateBarangay: true,
-      );
-      if (!mounted) return;
-      try {
-        final address = await _addressSearchService.reverseGeocode(
-          latitude: result.fix!.latitude,
-          longitude: result.fix!.longitude,
-        );
-        if (!mounted) return;
-        setState(() {
-          _streetAddressCtrl.text = address ?? '';
-          _addressCandidates = [];
-          _addressSearchFailure = null;
-          _addressSearchCompleted = false;
-          _locationMessage = address == null
-              ? 'GPS coordinates are set, but no street address was found. Enter the address if known.'
-              : null;
-        });
-      } on YellowFlagAddressSearchException catch (error) {
-        if (!mounted) return;
-        setState(() {
-          _streetAddressCtrl.clear();
-          _locationMessage = switch (error.failure) {
-            YellowFlagAddressSearchFailure.offline =>
-              'GPS coordinates are set. Address lookup needs an internet connection; enter the address if known.',
-            YellowFlagAddressSearchFailure.network =>
-              'GPS coordinates are set, but the address service could not be reached. Enter the address if known.',
-            YellowFlagAddressSearchFailure.unavailable =>
-              'GPS coordinates are set, but address lookup is unavailable. Enter the address if known.',
-          };
-        });
-      } on Exception catch (error) {
-        debugPrint('Yellow Flag reverse geocoding failed: $error');
-        if (!mounted) return;
-        setState(() {
-          _streetAddressCtrl.clear();
           _locationMessage =
-              'GPS coordinates are set, but address lookup failed. Enter the address if known.';
+              '${result.message} You can choose the business location on the map instead.';
         });
+        return;
       }
-      if (mounted) setState(() => _fetchingLocation = false);
+      setState(() => _fetchingLocation = false);
+      final pin = await _chooseLocationOnMap(
+        proposedPin: LatLng(result.fix!.latitude, result.fix!.longitude),
+      );
+      if (mounted && pin != null && _streetAddressCtrl.text.trim().isEmpty) {
+        unawaited(_fillEmptyAddressFromPin(pin));
+      }
     } catch (error) {
       debugPrint('Could not acquire Yellow Flag GPS location: $error');
       if (mounted) {
-        setState(() => _fetchingLocation = false);
-        if (!silent) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Could not fetch current location. Please check GPS settings.',
-              ),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
+        setState(
+          () => _locationMessage =
+              'Could not fetch current location. You can choose the business location on the map instead.',
+        );
       }
+    } finally {
+      // A failed/cancelled GPS attempt never clears an existing business pin.
+      if (mounted) setState(() => _fetchingLocation = false);
+    }
+  }
+
+  Future<void> _fillEmptyAddressFromPin(LatLng pin) async {
+    final generation = _addressSearchGeneration;
+    bool stillEmpty() =>
+        mounted &&
+        !_submitting &&
+        generation == _addressSearchGeneration &&
+        _confirmedBusinessPin == pin &&
+        _streetAddressCtrl.text.trim().isEmpty;
+    try {
+      final address = await _addressSearchService.reverseGeocode(
+        latitude: pin.latitude,
+        longitude: pin.longitude,
+      );
+      if (!stillEmpty()) return;
+      setState(() {
+        if (address != null) _streetAddressCtrl.text = address;
+        _locationMessage = address == null
+            ? 'Business location is confirmed. Enter the address description manually.'
+            : null;
+      });
+    } catch (error) {
+      debugPrint('Yellow Flag optional address lookup failed: $error');
+      if (!stillEmpty()) return;
+      setState(
+        () => _locationMessage =
+            'Business location is confirmed, but address lookup is unavailable. Enter the address description manually.',
+      );
     }
   }
 
@@ -2316,12 +2256,12 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
         await _boundaryService.loadBoundaries();
         Barangay? matched;
         ResolvedAdministrativeArea? resolvedArea;
-        if (_latCtrl.text.isNotEmpty && _lngCtrl.text.isNotEmpty) {
-          final lat = double.tryParse(_latCtrl.text);
-          final lng = double.tryParse(_lngCtrl.text);
-          if (lat != null && lng != null) {
-            resolvedArea = _boundaryService.resolveAdministrativeArea(lat, lng);
-          }
+        final pin = _confirmedBusinessPin;
+        if (pin != null) {
+          resolvedArea = _boundaryService.resolveAdministrativeArea(
+            pin.latitude,
+            pin.longitude,
+          );
           if (resolvedArea != null) {
             final areaKey = BoundaryService.canonicalBarangayKey(
               resolvedArea.barangay,
@@ -2342,7 +2282,9 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
           _resolvedArea = resolvedArea;
           if (_selectedBarangay == null && matched != null) {
             _selectedBarangay = matched;
+            _isBarangayAutoDetected = true;
             _isOutsideBoundary = false;
+            _errorMsg = null;
           }
         });
       }
@@ -2366,7 +2308,10 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
     }
   }
 
-  void _resumeDraft(YellowFlagDraft draft) {
+  Future<void> _resumeDraft(YellowFlagDraft draft) async {
+    if (_submitting || _fetchingLocation || _choosingLocation) return;
+    _addressSearchDebounceTimer?.cancel();
+    _addressSearchGeneration++;
     final key = BoundaryService.canonicalBarangayKey(draft.barangayName);
     Barangay? selected;
     for (final barangay in _barangays) {
@@ -2377,78 +2322,86 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
     }
     setState(() {
       _nameCtrl.text = draft.businessName;
-      _latCtrl.text = draft.lat.toStringAsFixed(6);
-      _lngCtrl.text = draft.lng.toStringAsFixed(6);
+      _streetAddressCtrl.text = draft.businessAddress ?? '';
       _notesCtrl.text = draft.notes ?? '';
       _selectedBarangay = selected;
       _editingDraftId = draft.clientSubmissionId;
-      _isGpsLocked = false;
-      _locationTouched = true;
-      _locationConfirmed = true;
-      _isAddressLocation = false;
-      _addressLocationNeedsRefresh = false;
+      _isBarangayAutoDetected = false;
+      _choosingLocation = true;
+      _addressCandidates = [];
+      _addressSearchCompleted = false;
+      _addressSearchFailure = null;
+      _searchingAddress = false;
       _locationMessage = null;
       _isBarangayMismatch = false;
       _isOutsideBoundary = false;
       _errorMsg = draft.lastError;
     });
-    unawaited(
-      _applyCoordinates(
-        draft.lat,
-        draft.lng,
-        silent: true,
+    try {
+      await _applyConfirmedPin(
+        LatLng(draft.lat, draft.lng),
         updateBarangay: false,
-        confirmed: true,
-      ),
-    );
+      );
+    } finally {
+      if (mounted) setState(() => _choosingLocation = false);
+    }
   }
 
   Future<void> _submit() async {
+    if (_confirmedBusinessPin == null) {
+      setState(
+        () => _locationMessage =
+            'Choose the business location on the map or use your current location.',
+      );
+      return;
+    }
     if (!_canSubmit) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    if (_selectedBarangay == null) {
-      setState(() => _errorMsg = 'Please select a barangay.');
-      return;
-    }
-
-    final lat = double.tryParse(_latCtrl.text.trim());
-    final lng = double.tryParse(_lngCtrl.text.trim());
-    if (lat == null || lng == null) {
-      setState(() => _errorMsg = 'Coordinates must be valid numbers.');
-      return;
-    }
-
-    await _boundaryService.loadBoundaries();
-    final area = _boundaryService.resolveAdministrativeArea(lat, lng);
-    if (area == null) {
-      setState(
-        () => _errorMsg =
-            'Coordinates do not fall within the official Mataasnakahoy barangay boundaries.',
-      );
-      return;
-    }
-    if (BoundaryService.canonicalBarangayKey(area.barangay) !=
-        BoundaryService.canonicalBarangayKey(_selectedBarangay!.name)) {
-      setState(
-        () => _errorMsg =
-            'Coordinates resolve to ${area.barangay}, not ${_selectedBarangay!.name}.',
-      );
-      return;
-    }
-
+    final pin = _confirmedBusinessPin!;
+    final barangay = _selectedBarangay!;
+    final businessName = _nameCtrl.text.trim();
+    final businessAddress = _streetAddressCtrl.text.trim();
+    final notes = _notesCtrl.text.trim();
+    // Lock before the first await so repeated taps cannot enqueue duplicates.
     setState(() {
       _submitting = true;
       _errorMsg = null;
     });
 
     try {
+      await _boundaryService.loadBoundaries();
+      if (!mounted) return;
+      final area = _boundaryService.resolveAdministrativeArea(
+        pin.latitude,
+        pin.longitude,
+      );
+      if (area == null) {
+        setState(() {
+          _submitting = false;
+          _isOutsideBoundary = true;
+          _errorMsg =
+              'Coordinates do not fall within the official Mataasnakahoy barangay boundaries.';
+        });
+        return;
+      }
+      if (BoundaryService.canonicalBarangayKey(area.barangay) !=
+          BoundaryService.canonicalBarangayKey(barangay.name)) {
+        setState(() {
+          _submitting = false;
+          _isBarangayMismatch = true;
+          _errorMsg =
+              'Coordinates resolve to ${area.barangay}, not ${barangay.name}.';
+        });
+        return;
+      }
       final result = await _flagService.submitYellowFlag(
-        businessName: _nameCtrl.text.trim(),
-        lat: lat,
-        lng: lng,
-        barangayID: _selectedBarangay!.id,
-        barangayName: _selectedBarangay!.name,
-        notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+        businessName: businessName,
+        businessAddress: businessAddress,
+        lat: pin.latitude,
+        lng: pin.longitude,
+        barangayID: barangay.id,
+        barangayName: barangay.name,
+        notes: notes.isEmpty ? null : notes,
         clientSubmissionId: _editingDraftId,
       );
 
@@ -2483,8 +2436,6 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
     _addressSearchDebounceTimer?.cancel();
     _nameCtrl.dispose();
     _streetAddressCtrl.dispose();
-    _latCtrl.dispose();
-    _lngCtrl.dispose();
     _notesCtrl.dispose();
     super.dispose();
   }
@@ -2599,7 +2550,10 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     trailing: TextButton(
-                      onPressed: () => _resumeDraft(draft),
+                      onPressed:
+                          _submitting || _fetchingLocation || _choosingLocation
+                          ? null
+                          : () => _resumeDraft(draft),
                       child: const Text('Review'),
                     ),
                   ),
@@ -2652,6 +2606,8 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                   // Business name
                   TextFormField(
                     controller: _nameCtrl,
+                    enabled: !_submitting,
+                    onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
                       labelText: 'Business Name *',
                       hintText: 'e.g. Aling Nena\'s Sari-Sari Store',
@@ -2672,22 +2628,28 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                     ),
                     style: TextStyle(color: context.adaptiveTextDark),
                     textCapitalization: TextCapitalization.words,
-                    validator: (v) =>
-                        (v == null || v.trim().isEmpty) ? 'Required' : null,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Required'
+                        : v.trim().length > 255
+                        ? 'Maximum 255 characters'
+                        : null,
                   ),
                   const SizedBox(height: 14),
 
                   // Barangay dropdown
                   DropdownButtonFormField<Barangay>(
+                    key: ValueKey(_selectedBarangay?.name),
                     decoration: InputDecoration(
-                      labelText: _isGpsLocked
+                      labelText: _isBarangayAutoDetected
                           ? 'Location / Barangay (Auto-detected) *'
                           : 'Location / Barangay *',
                       prefixIcon: Icon(
-                        _isGpsLocked
+                        _isBarangayAutoDetected
                             ? Icons.location_on_outlined
                             : Icons.location_city_outlined,
-                        color: _isGpsLocked ? AppColors.darkGreen : null,
+                        color: _isBarangayAutoDetected
+                            ? AppColors.darkGreen
+                            : null,
                       ),
                       filled: context.isDarkMode,
                       fillColor: context.isDarkMode ? Colors.black : null,
@@ -2697,7 +2659,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide(
-                          color: _isGpsLocked
+                          color: _isBarangayAutoDetected
                               ? AppColors.darkGreen
                               : (context.isDarkMode
                                     ? Colors.white
@@ -2718,51 +2680,46 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                         child: Text(b.name, overflow: TextOverflow.ellipsis),
                       );
                     }).toList(),
-                    onChanged: _loadingBarangays || _fetchingLocation
+                    onChanged:
+                        _loadingBarangays ||
+                            _fetchingLocation ||
+                            _choosingLocation ||
+                            _submitting
                         ? null
                         : (val) {
-                            final addressNeedsRefresh =
-                                _isAddressLocation &&
-                                _streetAddressCtrl.text.trim().isNotEmpty;
-                            _addressSearchGeneration++;
                             setState(() {
                               _selectedBarangay = val;
-                              _isGpsLocked = false;
-                              // Clear previously picked coordinates — they
-                              // belonged to the old barangay and are no
-                              // longer valid for the newly selected one.
-                              _latCtrl.clear();
-                              _lngCtrl.clear();
-                              _resolvedArea = null;
-                              _locationTouched = true;
-                              _locationConfirmed = false;
-                              _isAddressLocation = false;
-                              _addressLocationNeedsRefresh =
-                                  addressNeedsRefresh;
-                              _isBarangayMismatch = false;
-                              _isOutsideBoundary = false;
-                              _addressCandidates = [];
-                              _addressSearchFailure = null;
-                              _addressSearchCompleted = false;
-                              _searchingAddress = false;
-                              _locationMessage = null;
-                              _errorMsg = null;
+                              _isBarangayAutoDetected = false;
+                              _isBarangayMismatch =
+                                  val != null &&
+                                  _resolvedArea != null &&
+                                  BoundaryService.canonicalBarangayKey(
+                                        val.name,
+                                      ) !=
+                                      BoundaryService.canonicalBarangayKey(
+                                        _resolvedArea!.barangay,
+                                      );
+                              _errorMsg = _isBarangayMismatch
+                                  ? 'Coordinates resolve to ${_resolvedArea!.barangay}, not ${val!.name}.'
+                                  : _isOutsideBoundary
+                                  ? 'Coordinates are outside the official Mataasnakahoy barangay boundaries.'
+                                  : null;
                             });
-                            _scheduleAddressSuggestions();
                           },
                     validator: (v) => v == null ? 'Required' : null,
                   ),
                   const SizedBox(height: 14),
                   TextFormField(
                     controller: _streetAddressCtrl,
-                    enabled: !_fetchingLocation,
+                    enabled: !_submitting,
                     textCapitalization: TextCapitalization.words,
                     decoration: InputDecoration(
-                      labelText: 'Business address / Street / Purok / Landmark',
+                      labelText:
+                          'Business address / Street / Purok / Landmark *',
                       hintText: 'e.g. 115 Templo Avenue',
-                      helperText: _selectedBarangay == null
-                          ? null
-                          : 'Type at least 5 characters; suggestions appear as you type.',
+                      helperText:
+                          'Enter the address description. Suggestions are optional.',
+                      helperMaxLines: 2,
                       prefixIcon: const Icon(Icons.search_rounded),
                       suffixIcon: _searchingAddress
                           ? const Padding(
@@ -2783,15 +2740,33 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       ),
                     ),
                     onChanged: _onStreetAddressChanged,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Enter the business address / street / purok / landmark.'
+                        : v.trim().length > 255
+                        ? 'Maximum 255 characters'
+                        : null,
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed:
+                          _submitting || _fetchingLocation || _choosingLocation
+                          ? null
+                          : () => _chooseLocationOnMap(),
+                      icon: const Icon(Icons.pin_drop_outlined),
+                      label: const Text('Choose location on map'),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     height: 44,
                     child: OutlinedButton.icon(
-                      onPressed: _fetchingLocation
+                      onPressed:
+                          _fetchingLocation || _choosingLocation || _submitting
                           ? null
-                          : () => _autoFillGps(silent: false),
+                          : _autoFillGps,
                       icon: _fetchingLocation
                           ? const SizedBox(
                               width: 16,
@@ -2802,7 +2777,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       label: Text(
                         _fetchingLocation
                             ? 'Getting location...'
-                            : 'Use Current Location',
+                            : 'Use current location',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -2817,6 +2792,16 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _confirmedBusinessPin == null
+                        ? 'Choose the business location on the map or use your current location.'
+                        : 'Confirmed business pin: ${_confirmedBusinessPin!.latitude.toStringAsFixed(6)}, ${_confirmedBusinessPin!.longitude.toStringAsFixed(6)}. Address edits keep this pin; location changes require confirmation.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: context.adaptiveTextMid,
                     ),
                   ),
                   if (_locationMessage != null) ...[
@@ -2840,23 +2825,22 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                     ),
                   ],
                   const SizedBox(height: 14),
-                  if (_selectedBarangay == null) ...[
-                    const SizedBox(height: 5),
-                    const Text(
-                      'Address suggestions search across Mataasnakahoy. Choose a result to detect its barangay.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                  ],
                   if (_addressSearchFailure != null) ...[
                     const SizedBox(height: 8),
-                    Text(switch (_addressSearchFailure!) {
-                      YellowFlagAddressSearchFailure.offline =>
-                        'You are offline. Use Current Location or enter the address manually.',
-                      YellowFlagAddressSearchFailure.network =>
-                        'Network error while loading suggestions. Use Current Location or enter the address manually.',
-                      YellowFlagAddressSearchFailure.unavailable =>
-                        'Address search is unavailable. Use Current Location or enter the address manually.',
-                    }, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                    Text(
+                      switch (_addressSearchFailure!) {
+                        YellowFlagAddressSearchFailure.offline =>
+                          'You are offline. Suggestions are optional; your typed address is kept.',
+                        YellowFlagAddressSearchFailure.network =>
+                          'Suggestions could not be loaded. Your typed address is kept; a search result is not required.',
+                        YellowFlagAddressSearchFailure.unavailable =>
+                          'Suggestions are unavailable. Your typed address is kept; a search result is not required.',
+                      },
+                      style: TextStyle(
+                        color: context.adaptiveTextMid,
+                        fontSize: 12,
+                      ),
+                    ),
                   ],
                   if (!_searchingAddress &&
                       _addressCandidates.isEmpty &&
@@ -2865,36 +2849,25 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       _streetAddressCtrl.text.trim().isNotEmpty) ...[
                     const SizedBox(height: 8),
                     const Text(
-                      'No address suggestions. Try another address or use Current Location.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                      'No address suggestions. Keep your typed address; a search result is not required.',
+                      style: TextStyle(fontSize: 12),
                     ),
                   ],
                   if (_addressCandidates.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(
-                      'Choose the matching address. No result is selected automatically.',
+                      'Optional suggestions: tap a match to review and confirm its pin on the map.',
                       style: TextStyle(
                         fontSize: 12,
                         color: context.adaptiveTextMid,
                       ),
                     ),
                     ..._addressCandidates.map((candidate) {
-                      final selected =
-                          _isAddressLocation &&
-                          _latCtrl.text ==
-                              candidate.latitude.toStringAsFixed(6) &&
-                          _lngCtrl.text ==
-                              candidate.longitude.toStringAsFixed(6);
                       return Card(
                         margin: const EdgeInsets.only(top: 6),
                         child: ListTile(
                           dense: true,
-                          leading: Icon(
-                            selected
-                                ? Icons.radio_button_checked
-                                : Icons.location_on_outlined,
-                            color: selected ? AppColors.darkGreen : null,
-                          ),
+                          leading: const Icon(Icons.location_on_outlined),
                           title: Text(
                             candidate.formattedAddress,
                             maxLines: 3,
@@ -2903,17 +2876,15 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                           subtitle: Text(
                             '${candidate.latitude.toStringAsFixed(6)}, ${candidate.longitude.toStringAsFixed(6)}',
                           ),
-                          onTap: () => _selectAddressCandidate(candidate),
+                          onTap:
+                              _submitting ||
+                                  _fetchingLocation ||
+                                  _choosingLocation
+                              ? null
+                              : () => _selectAddressCandidate(candidate),
                         ),
                       );
                     }),
-                  ],
-                  if (_addressLocationNeedsRefresh) ...[
-                    const SizedBox(height: 8),
-                    const Text(
-                      'The address or barangay changed. Select a fresh address suggestion or use Current Location before submitting.',
-                      style: TextStyle(color: Colors.red, fontSize: 12),
-                    ),
                   ],
                   if (_usingLocalBarangayList) ...[
                     const SizedBox(height: 6),
@@ -2922,7 +2893,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                       style: TextStyle(fontSize: 11, color: Colors.orange),
                     ),
                   ],
-                  if (_isGpsLocked) ...[
+                  if (_isBarangayAutoDetected) ...[
                     const SizedBox(height: 6),
                     const Text(
                       'Barangay auto-detected from the selected location. You can change it in the dropdown.',
@@ -2936,7 +2907,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                   if (!_loadingBarangays) ...[
                     const SizedBox(height: 4),
                     Text(
-                      'GPS and selected address locations are checked against the official barangay boundary.',
+                      'Business pins are checked against the official barangay boundary.',
                       style: TextStyle(
                         fontSize: 11,
                         color: context.adaptiveTextMid,
@@ -2946,6 +2917,7 @@ class _YellowFlagSheetState extends State<_YellowFlagSheet> {
                   // Notes
                   TextFormField(
                     controller: _notesCtrl,
+                    enabled: !_submitting,
                     decoration: InputDecoration(
                       labelText: 'Notes (Optional)',
                       hintText: 'Observations, description, landmarks…',

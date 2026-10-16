@@ -368,6 +368,7 @@ def yellow_flag_route():
         flag_color=flag_color,
         reported_by_user_id=reporter_user_id,
         client_submission_id=client_submission_id,
+        business_address=data.get("businessAddress"),
     )
     if error:
         if isinstance(error, YellowFlagValidationError):

@@ -61,11 +61,15 @@ class BackendApiContractTests(unittest.TestCase):
         insert.return_value = ({"logID": 41, "lat": 13.960630, "lng": 121.113447,
                                 "alreadyAccepted": False}, None)
         self.body["clientSubmissionID"] = self.body["clientSubmissionID"].upper()
+        self.body["businessAddress"] = "Purok Makisig, behind the unnamed chapel"
         response = self.client.post("/api/flags/yellow", json=self.body, headers=self.headers)
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()["logID"], 41)
         self.assertEqual(insert.call_args.kwargs["reported_by_user_id"], 9)
         self.assertEqual(insert.call_args.kwargs["client_submission_id"], self.body["clientSubmissionID"].lower())
+        self.assertEqual(insert.call_args.kwargs["business_address"], self.body["businessAddress"])
+        self.assertEqual(insert.call_args.kwargs["lat"], self.body["lat"])
+        self.assertEqual(insert.call_args.kwargs["lng"], self.body["lng"])
 
     @patch.object(flag_routes, "insert_yellow_flag")
     def test_reporter_mismatch_cannot_access_insert_service(self, insert):

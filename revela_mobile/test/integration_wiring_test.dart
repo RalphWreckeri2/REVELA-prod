@@ -25,7 +25,6 @@ void main() {
     }
     for (final path in [
       'lib/service/walking_route_service.dart',
-      'lib/component/yellow_flag_pin_picker.dart',
       'lib/service/legal_policy_urls.dart',
     ]) {
       expect(File(path).existsSync(), isFalse, reason: path);

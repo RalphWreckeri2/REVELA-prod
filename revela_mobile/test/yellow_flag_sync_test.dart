@@ -105,6 +105,7 @@ void main() {
   Future<YellowFlagSubmissionResult> submit({int? barangayId = 2}) =>
       flags.submitYellowFlag(
         businessName: 'Sample Shop',
+        businessAddress: 'Purok Makisig, behind the unnamed chapel',
         lat: 13.960630,
         lng: 121.113447,
         barangayID: barangayId,
@@ -121,6 +122,12 @@ void main() {
       final drafts = await flags.getMyYellowFlagDrafts();
       expect(drafts, hasLength(1));
       expect(drafts.single.ownerUserId, '9');
+      expect(
+        drafts.single.businessAddress,
+        'Purok Makisig, behind the unnamed chapel',
+      );
+      expect(drafts.single.lat, 13.960630);
+      expect(drafts.single.lng, 121.113447);
       expect(drafts.single.clientSubmissionId, result.clientSubmissionId);
       expect(
         result.clientSubmissionId,
@@ -148,6 +155,12 @@ void main() {
         expect(request.path, '/api/flags/yellow');
         expect(request.data['clientSubmissionID'], result.clientSubmissionId);
         expect(request.data['expectedReporterUserID'], '9');
+        expect(
+          request.data['businessAddress'],
+          'Purok Makisig, behind the unnamed chapel',
+        );
+        expect(request.data['lat'], 13.960630);
+        expect(request.data['lng'], 121.113447);
         expect(request.headers['Authorization'], 'Bearer synthetic-test-token');
       }
     },
@@ -165,6 +178,104 @@ void main() {
       expect(adapter.requests.last.data['barangayID'], 2);
     },
   );
+
+  test('offline address and business pin survive restart and sync', () async {
+    reachable = false;
+    final result = await submit();
+    await storage.close();
+    final restarted = OfflineInspectionStorage(
+      databasePath: '${directory.path}/flags.db',
+    );
+    try {
+      final drafts = await restarted.getYellowFlagDrafts(ownerUserId: owner);
+      expect(
+        drafts.single.businessAddress,
+        'Purok Makisig, behind the unnamed chapel',
+      );
+      expect(drafts.single.lat, 13.960630);
+      expect(drafts.single.lng, 121.113447);
+    } finally {
+      await restarted.close();
+    }
+    reachable = true;
+    final outcomes = await flags.syncPendingYellowFlags();
+    expect(
+      outcomes[result.clientSubmissionId]!.flag!.businessAddress,
+      'Purok Makisig, behind the unnamed chapel',
+    );
+    expect(
+      adapter.requests.single.data['businessAddress'],
+      'Purok Makisig, behind the unnamed chapel',
+    );
+  });
+
+  test('v8 Yellow Flag queue upgrades without losing legacy reports', () async {
+    final path = '${directory.path}/legacy.db';
+    final legacy = await databaseFactory.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 8,
+        onCreate: (db, _) async {
+          await db.execute('''
+            CREATE TABLE yellow_flag_drafts (
+              clientSubmissionId TEXT NOT NULL, ownerUserId TEXT NOT NULL,
+              businessName TEXT NOT NULL, lat REAL NOT NULL, lng REAL NOT NULL,
+              barangayId INTEGER, barangayName TEXT NOT NULL, notes TEXT,
+              createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
+              status TEXT NOT NULL, lastError TEXT,
+              PRIMARY KEY (ownerUserId, clientSubmissionId)
+            )
+          ''');
+          await db.insert('yellow_flag_drafts', {
+            'clientSubmissionId': 'legacy-report',
+            'ownerUserId': '9',
+            'businessName': 'Legacy Shop',
+            'lat': 13.960630,
+            'lng': 121.113447,
+            'barangayId': 2,
+            'barangayName': 'Barangay II',
+            'notes': 'Keep me',
+            'createdAt': '2026-10-15',
+            'updatedAt': '2026-10-15',
+            'status': 'pendingSync',
+          });
+        },
+      ),
+    );
+    await legacy.close();
+    final upgraded = OfflineInspectionStorage(databasePath: path);
+    try {
+      final drafts = await upgraded.getYellowFlagDrafts(ownerUserId: '9');
+      expect(drafts, hasLength(1));
+      expect(drafts.single.businessAddress, isNull);
+      expect(drafts.single.businessName, 'Legacy Shop');
+      expect(drafts.single.notes, 'Keep me');
+      expect(drafts.single.lat, 13.960630);
+      expect(drafts.single.lng, 121.113447);
+      await upgraded.saveYellowFlagDraft(
+        YellowFlagDraft(
+          clientSubmissionId: 'new-report',
+          ownerUserId: '9',
+          businessName: 'New Shop',
+          businessAddress: 'Unnamed purok',
+          lat: 13.960630,
+          lng: 121.113447,
+          barangayId: 2,
+          barangayName: 'Barangay II',
+          notes: null,
+          createdAt: '2026-10-16',
+          updatedAt: '2026-10-16',
+          status: YellowFlagDraftStatus.pendingSync,
+        ),
+      );
+      expect(
+        await upgraded.getYellowFlagDrafts(ownerUserId: '9'),
+        hasLength(2),
+      );
+    } finally {
+      await upgraded.close();
+    }
+  });
 
   test(
     'validation rejection stays saved without repeated automatic submissions',

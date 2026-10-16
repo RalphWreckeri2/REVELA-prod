@@ -54,6 +54,7 @@ class MyFlag {
   final String flagColor;
   final String? verificationStatus;
   final String? notes;
+  final String? businessAddress;
 
   const MyFlag({
     required this.logID,
@@ -63,6 +64,7 @@ class MyFlag {
     required this.flagColor,
     this.verificationStatus,
     this.notes,
+    this.businessAddress,
   });
 
   factory MyFlag.fromJson(Map<String, dynamic> json) {
@@ -74,6 +76,11 @@ class MyFlag {
       flagColor: json['flagColor']?.toString() ?? 'Yellow',
       verificationStatus: json['verificationStatus']?.toString(),
       notes: json['notes']?.toString(),
+      businessAddress:
+          (json['businessAddress'] ??
+                  json['nearestLandmark'] ??
+                  json['resolvedAddress'])
+              ?.toString(),
     );
   }
 
@@ -234,11 +241,13 @@ class FlagService {
     required double lng,
     required int barangayID,
     String? notes,
+    String? businessAddress,
   }) async {
     final response = await _auth.dio.post(
       '/api/flags/yellow',
       data: {
         'businessName': businessName,
+        'businessAddress': ?businessAddress,
         'lat': lat,
         'lng': lng,
         'barangayID': barangayID,
@@ -254,11 +263,13 @@ class FlagService {
       lng: (data['lng'] as num?)?.toDouble() ?? lng,
       flagColor: 'Yellow',
       notes: notes,
+      businessAddress: businessAddress,
     );
   }
 
   Future<YellowFlagSubmissionResult> submitYellowFlag({
     required String businessName,
+    required String businessAddress,
     required double lat,
     required double lng,
     required int? barangayID,
@@ -277,6 +288,7 @@ class FlagService {
         clientSubmissionId: submissionId,
         ownerUserId: ownerUserId,
         businessName: businessName.trim(),
+        businessAddress: businessAddress.trim(),
         lat: lat,
         lng: lng,
         barangayId: barangayID,
@@ -379,6 +391,8 @@ class FlagService {
         '/api/flags/yellow',
         data: {
           'businessName': draft.businessName,
+          if (draft.businessAddress != null)
+            'businessAddress': draft.businessAddress,
           'lat': draft.lat,
           'lng': draft.lng,
           'barangayID': barangayId,
@@ -409,6 +423,7 @@ class FlagService {
           lng: (data['lng'] as num?)?.toDouble() ?? draft.lng,
           flagColor: 'Yellow',
           notes: draft.notes,
+          businessAddress: draft.businessAddress,
         ),
       );
     } on DioException catch (error) {

@@ -64,6 +64,7 @@ dependencies:
   timezone: ^0.10.0
 
 dev_dependencies:
+  google_maps_flutter_platform_interface: ^2.15.0
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.13.1
