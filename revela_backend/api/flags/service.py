@@ -3088,7 +3088,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
                 UNION ALL
 
-                SELECT -2147483648 - r.registryOrdinal AS logID
+                SELECT -CAST(2147483648 + r.registryOrdinal AS SIGNED) AS logID
                 FROM (
                     SELECT official_registry.*,
                            ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
@@ -3159,7 +3159,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
 
                 -- Branch 2: registry-only businesses (have coordinates, no geospatial_log yet)
                 SELECT
-                    -2147483648 - r.registryOrdinal AS logID,
+                    -CAST(2147483648 + r.registryOrdinal AS SIGNED) AS logID,
                     r.businessID               AS businessID,
                     r.businessName             AS detectedName,
                     r.latitude                 AS latitude,
