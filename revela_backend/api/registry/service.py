@@ -507,7 +507,7 @@ def search_address_candidates(
     get=http.get,
     reserve=None,
 ) -> tuple[list[dict] | None, str | None]:
-    """Search a local address and return selectable Geocoding API results."""
+    """Search a local address, retaining precision metadata for safe auto-resolution."""
     address = _clean_str(street_address)
     barangay_name = _clean_str(barangay) if barangay is not None else ""
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
@@ -595,6 +595,15 @@ def search_address_candidates(
             "latitude": lat,
             "longitude": lng,
             "placeId": str(result.get("place_id", "")),
+            "locationType": geometry.get("location_type"),
+            "resultTypes": result.get("types"),
+            # Google omits partial_match for a full match. Unknown/malformed
+            # metadata remains unknown, rather than upgrading it to precise.
+            "partialMatch": result.get("partial_match", False),
+            "addressComponents": result.get("address_components"),
+            # Count BEFORE filtering/capping: one surviving candidate must not
+            # hide an ambiguous provider response.
+            "providerResultCount": len(raw_results),
         })
         if len(candidates) == 5:
             break

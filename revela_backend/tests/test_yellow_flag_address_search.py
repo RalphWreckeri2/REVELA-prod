@@ -37,13 +37,22 @@ class YellowFlagAddressSearchTests(unittest.TestCase):
     def test_address_search_returns_client_candidate_contract(self):
         self.get.return_value = response(results=[{
             "formatted_address": "12 Main Street, Barangay II, Philippines",
-            "place_id": "place-1", "geometry": {"location": {"lat": 13.96, "lng": 121.11}},
+            "place_id": "place-1",
+            "geometry": {"location": {"lat": 13.96, "lng": 121.11}, "location_type": "ROOFTOP"},
+            "types": ["street_address"],
+            "address_components": [
+                {"long_name": "12", "short_name": "12", "types": ["street_number"]},
+                {"long_name": "Main Street", "short_name": "Main St", "types": ["route"]},
+            ],
         }])
         matches, error = self.search("12 Main Street")
         self.assertIsNone(error)
         self.assertEqual(matches, [{
             "formattedAddress": "12 Main Street, Barangay II, Philippines",
             "latitude": 13.96, "longitude": 121.11, "placeId": "place-1",
+            "locationType": "ROOFTOP", "resultTypes": ["street_address"],
+            "partialMatch": False, "providerResultCount": 1,
+            "addressComponents": self.get.return_value.json.return_value["results"][0]["address_components"],
         }])
         params = self.get.call_args.kwargs["params"]
         self.assertEqual(params["address"], "12 Main Street, Barangay II, Mataasnakahoy, Batangas, Philippines")
@@ -125,6 +134,23 @@ class YellowFlagAddressSearchTests(unittest.TestCase):
         matches, error = self.search()
         self.assertIsNone(error)
         self.assertEqual(len(matches), 5)
+        self.assertTrue(all(match["providerResultCount"] == 12 for match in matches))
+        self.assertTrue(all(match["locationType"] is None for match in matches))
+
+    def test_centroid_and_partial_match_metadata_is_not_upgraded(self):
+        self.get.return_value = response(results=[{
+            "formatted_address": "Barangay II, Mataasnakahoy, Batangas",
+            "geometry": {"location": {"lat": 13.96, "lng": 121.11},
+                         "location_type": "APPROXIMATE"},
+            "types": ["sublocality_level_1", "sublocality", "political"],
+            "partial_match": True,
+        }])
+        matches, error = self.search()
+        self.assertIsNone(error)
+        self.assertEqual(matches[0]["locationType"], "APPROXIMATE")
+        self.assertIn("political", matches[0]["resultTypes"])
+        self.assertTrue(matches[0]["partialMatch"])
+        self.assertIsNone(matches[0]["addressComponents"])
 
     def test_empty_address_fails_before_reservation(self):
         self.assertEqual(self.search(" "), (None, "invalid_request"))

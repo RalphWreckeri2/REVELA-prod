@@ -236,7 +236,7 @@ def get_my_flags_route():
 @flags_bp.route("/location-search", methods=["POST"])
 @jwt_required()
 def yellow_flag_location_search_route():
-    """Return selectable geocoding matches for a Yellow Flag address."""
+    """Return geocoding matches and precision metadata for a Yellow Flag address."""
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return jsonify({"error": "A JSON request body is required."}), 400
@@ -244,9 +244,9 @@ def yellow_flag_location_search_route():
     barangay_value = data.get("barangay")
     street_address = street_value.strip() if isinstance(street_value, str) else ""
     barangay = barangay_value.strip() if isinstance(barangay_value, str) else ""
-    if not street_address or len(street_address) > 200:
+    if not street_address or len(street_address) > 255:
         return jsonify({
-            "error": "Street / Purok / Landmark is required (maximum 200 characters).",
+            "error": "Street / Purok / Landmark is required (maximum 255 characters).",
         }), 400
     if len(barangay) > 100:
         return jsonify({"error": "Barangay name cannot exceed 100 characters."}), 400

@@ -9,11 +9,14 @@ enum DraftStatus { draft, syncing, synced, failed }
 
 enum YellowFlagDraftStatus { pendingSync, submitting, needsAttention }
 
+enum YellowFlagLocationMethod { address, gps, manualPin, savedReport }
+
 class YellowFlagDraft {
   final String clientSubmissionId;
   final String ownerUserId;
   final String businessName;
   final String? businessAddress;
+  final YellowFlagLocationMethod locationMethod;
   final double lat;
   final double lng;
   final int? barangayId;
@@ -29,6 +32,7 @@ class YellowFlagDraft {
     required this.ownerUserId,
     required this.businessName,
     this.businessAddress,
+    this.locationMethod = YellowFlagLocationMethod.savedReport,
     required this.lat,
     required this.lng,
     required this.barangayId,
@@ -45,6 +49,7 @@ class YellowFlagDraft {
     'ownerUserId': ownerUserId,
     'businessName': businessName,
     'businessAddress': businessAddress,
+    'locationMethod': locationMethod.name,
     'lat': lat,
     'lng': lng,
     'barangayId': barangayId,
@@ -61,6 +66,10 @@ class YellowFlagDraft {
     ownerUserId: map['ownerUserId'] as String,
     businessName: map['businessName'] as String,
     businessAddress: map['businessAddress'] as String?,
+    locationMethod: YellowFlagLocationMethod.values.firstWhere(
+      (method) => method.name == map['locationMethod'],
+      orElse: () => YellowFlagLocationMethod.savedReport,
+    ),
     lat: (map['lat'] as num).toDouble(),
     lng: (map['lng'] as num).toDouble(),
     barangayId: map['barangayId'] as int?,
@@ -224,7 +233,7 @@ class OfflineInspectionStorage {
     }
     _db = await openDatabase(
       normalizedDbPath,
-      version: 9,
+      version: 10,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS inspection_drafts (
@@ -326,6 +335,11 @@ class OfflineInspectionStorage {
             'ALTER TABLE yellow_flag_drafts ADD COLUMN businessAddress TEXT',
           );
         }
+        if (oldVersion >= 7 && oldVersion < 10) {
+          await db.execute(
+            'ALTER TABLE yellow_flag_drafts ADD COLUMN locationMethod TEXT',
+          );
+        }
       },
     );
     try {
@@ -340,6 +354,7 @@ class OfflineInspectionStorage {
         ownerUserId TEXT NOT NULL,
         businessName TEXT NOT NULL,
         businessAddress TEXT,
+        locationMethod TEXT,
         lat REAL NOT NULL,
         lng REAL NOT NULL,
         barangayId INTEGER,

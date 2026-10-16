@@ -270,6 +270,8 @@ class FlagService {
   Future<YellowFlagSubmissionResult> submitYellowFlag({
     required String businessName,
     required String businessAddress,
+    YellowFlagLocationMethod locationMethod =
+        YellowFlagLocationMethod.savedReport,
     required double lat,
     required double lng,
     required int? barangayID,
@@ -289,6 +291,7 @@ class FlagService {
         ownerUserId: ownerUserId,
         businessName: businessName.trim(),
         businessAddress: businessAddress.trim(),
+        locationMethod: locationMethod,
         lat: lat,
         lng: lng,
         barangayId: barangayID,

@@ -96,7 +96,10 @@ class BackendApiContractTests(unittest.TestCase):
     @patch.object(flag_routes.registry_service, "search_address_candidates")
     def test_location_search_route_returns_latest_flutter_contract(self, search):
         candidates = [{"formattedAddress": "Main Street", "latitude": 13.96,
-                       "longitude": 121.11, "placeId": "test-place"}]
+                       "longitude": 121.11, "placeId": "test-place",
+                       "locationType": "GEOMETRIC_CENTER", "resultTypes": ["route"],
+                       "partialMatch": False, "providerResultCount": 1,
+                       "addressComponents": []}]
         search.return_value = (candidates, None)
         response = self.client.post("/api/flags/location-search", json={
             "streetAddress": " Main Street ", "barangay": " Barangay II ",
@@ -104,6 +107,15 @@ class BackendApiContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {"results": candidates})
         search.assert_called_once_with("Main Street", "Barangay II")
+
+    @patch.object(flag_routes.registry_service, "search_address_candidates", return_value=([], None))
+    def test_search_accepts_the_same_address_length_as_the_business_field(self, search):
+        address = "x" * 255
+        response = self.client.post("/api/flags/location-search", json={
+            "streetAddress": address,
+        }, headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        search.assert_called_once_with(address, None)
 
     @patch.object(flag_routes.registry_service, "reverse_geocode_coordinates")
     def test_reverse_route_preserves_formatted_address_and_confirmed_null(self, reverse):
@@ -131,7 +143,7 @@ class BackendApiContractTests(unittest.TestCase):
         with patch.object(flag_routes.registry_service, "search_address_candidates") as search, \
                 patch.object(flag_routes.registry_service, "reverse_geocode_coordinates") as reverse:
             for path, body in (("location-search", []), ("location-search", {"streetAddress": ""}),
-                               ("location-search", {"streetAddress": "x" * 201}),
+                               ("location-search", {"streetAddress": "x" * 256}),
                                ("reverse-geocode", {"latitude": True, "longitude": 121})):
                 response = self.client.post(f"/api/flags/{path}", json=body, headers=self.headers)
                 self.assertEqual(response.status_code, 400)
