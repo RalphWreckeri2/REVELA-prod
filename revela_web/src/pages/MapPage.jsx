@@ -24,12 +24,11 @@ import {
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
 import { canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
+import FilterDropdown from "../components/FilterDropdown";
 import {
-  SOURCE_FILTERS,
-  isInspectorReported as isInspectorReportedFlag,
-  matchesSourceFilter,
-  sourceLabel,
-} from "../components/flagSource";
+  STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
+  businessSourceLabel, businessDetailsInfo, matchesMapFilters, paginateRecords,
+} from "../components/businessCompliance";
 import { AuthContext } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -41,7 +40,7 @@ import {
 } from "../utils/barangayCentroids";
 import {
   API_ORIGIN,
-  getFlagsRequest,
+  getAllFlagsRequest,
   escalateFlagToBlackRequest,
   runDetectionRequest,
   createYellowFlagRequest,
@@ -620,7 +619,7 @@ function normalizeFlag(flag) {
     barangay: flag.barangayName ?? "Unknown Barangay",
     address: flag.resolvedAddress ?? flag.nearestLandmark ?? "",
     notes: flag.notes || "",
-    source: flag.flagSource ?? "unknown",
+    source: flag.originSource ?? "unknown",
     size: flag.businessSize ?? "—",
     coords,
     latitude: lat,
@@ -639,12 +638,9 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
 
   const canShowDispatchButton = canDispatchFlag(flag, { isAdmin });
   const dispatchButtonText = dispatchButtonLabel(flag);
+  const information = businessDetailsInfo(flag);
 
 
-  // Source labels. The vocabulary is the one stored on the pin by
-  // migrations/20261017_01_geospatial_source.sql, not the labels the Map used
-  // to infer from which columns were set. See flagSource.js.
-  const isInspectorReported = isInspectorReportedFlag(flag.source);
   const mapsUrl = flag.latitude
     ? `https://www.google.com/maps/search/?api=1&query=${flag.latitude},${flag.longitude}${flag.placeID ? `&query_place_id=${flag.placeID}` : ''}`
     : null;
@@ -676,11 +672,6 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, background: fc.bg, border: `1px solid ${fc.marker}33`, fontSize: 12, fontWeight: 600, color: fc.marker }}>
               {fc.label}
             </div>
-            {isInspectorReported && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, background: "rgba(234, 88, 12, 0.15)", border: "1px solid rgba(234, 88, 12, 0.1)", fontSize: 12, fontWeight: 600, color: "#ea580c", marginTop: 8 }}>
-                Inspector reported
-              </div>
-            )}
           </div>
           <button
             style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "var(--color-muted)", flexShrink: 0 }}
@@ -705,6 +696,10 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
               <div style={{ lineHeight: 1.4 }}>{flag.address}</div>
             </div>
           )}
+          <div className="business-source-info">
+            <p>{information.source}</p>
+            {information.compliance && <p className="business-compliance-info">{information.compliance}</p>}
+          </div>
           {flag.notes && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
               <div style={{ color: "var(--color-muted)", marginTop: 2 }}><Icon.FileText size={16} /></div>
@@ -713,7 +708,7 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
             <div style={{ color: "var(--color-muted)" }}><Icon.Calendar size={16} /></div>
-            <div>{sourceLabel(flag.source)} <span style={{ color: "var(--color-muted)" }}>&bull; {flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
+            <div>Detected: <span style={{ color: "var(--color-muted)" }}>{flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
           </div>
         </div>
 
@@ -2369,6 +2364,8 @@ export default function MapPage() {
   const [search, setSearch] = useState("");
   const [satellite, setSatellite] = useState(false);
   const [filterSource, setFilterSource] = useState("all");
+  const [filterRegistryLink, setFilterRegistryLink] = useState("all");
+  const [locationsPage, setLocationsPage] = useState(1);
 
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const moreActionsRef = useRef(null);
@@ -2400,8 +2397,7 @@ export default function MapPage() {
     }
     setFlagsError("");
     try {
-      const result = await getFlagsRequest({ limit: 5000 }, token);
-      const rawList = Array.isArray(result) ? result : (result?.data ?? result?.flags ?? []);
+      const rawList = await getAllFlagsRequest(token);
       setFlags(rawList.map(normalizeFlag));
 
       // Fetch analytics for border-to-border risk heatmap (current state of the barangay)
@@ -2425,9 +2421,7 @@ export default function MapPage() {
         console.error("Failed to load analytics for map", err);
       }
     } catch (err) {
-      if (!isSilent) {
-        setFlagsError(err.message || "Unable to load flags.");
-      }
+      setFlagsError(err.message || "Unable to load flags.");
     } finally {
       setLoadingFlags(false);
       setIsRefreshing(false);
@@ -3742,30 +3736,16 @@ export default function MapPage() {
   }, [adjustingFlagId, isPickingYellowLocation, barangays]);
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const visibleFlags = flags.filter(f => {
-    let matchColor = filterColor === "all" || f.color === filterColor;
-    if (filterColor === "Yellow_Inspector") {
-      matchColor = f.color === "Yellow" && f.reportedByUserID;
-    } else if (filterColor === "in_inspection") {
-      matchColor = Boolean(
-        f.hasActiveInspection ||
-        ['Assigned', 'Reassigned', 'In Progress', 'Submitted'].includes(f.verificationStatus)
-      );
-    }
-    const q = search.trim().toLowerCase();
-    const cleanQ = q.startsWith("#") ? q.slice(1).trim() : q;
-    const matchSearch = !q || (
-      (f.name || "").toLowerCase().includes(q) ||
-      (f.barangay || "").toLowerCase().includes(q) ||
-      (f.address || "").toLowerCase().includes(q) ||
-      (f.notes || "").toLowerCase().includes(q) ||
-      (f.businessType || "").toLowerCase().includes(q) ||
-      String(f.id || "").toLowerCase().includes(cleanQ) ||
-      String(f.logID || "").toLowerCase().includes(cleanQ)
-    );
-    const matchSource = matchesSourceFilter(f.source, filterSource);
-    return matchColor && matchSearch && matchSource;
-  });
+  const visibleFlags = flags.filter(flag => matchesMapFilters(flag, {
+    status: filterColor, source: filterSource, registryLink: filterRegistryLink, search,
+  }));
+  const locations = paginateRecords(visibleFlags, locationsPage, 8);
+  const filteredCounts = Object.fromEntries(["Green", "Orange", "Red", "Yellow", "Purple", "Black"]
+    .map(color => [color, visibleFlags.filter(flag => flag.color === color).length]));
+  const clearViewFilters = () => {
+    setFilterColor("all"); setFilterSource("all"); setFilterRegistryLink("all");
+    setSearch(""); setLocationsPage(1);
+  };
 
   const panToSearchResults = useEffectEvent(() => {
     const q = search.trim();
@@ -3853,7 +3833,7 @@ export default function MapPage() {
             </button>
             <span className="map-inactive-flags" style={styles.livePill}>
               <span style={styles.liveDot} />
-              {flags.filter(f => f.color !== "Green").length} Inactive Flags
+              {visibleFlags.filter(f => f.color !== "Green").length} Matching Inactive Flags
             </span>
           </div>
         </div>
@@ -4158,7 +4138,7 @@ export default function MapPage() {
                 aria-label="Search businesses on the map"
                 placeholder="Search businesses, IDs, or barangays..."
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={e => { setSearch(e.target.value); setLocationsPage(1); }}
                 style={styles.mapSearchInput}
               />
               {search && (
@@ -4264,13 +4244,13 @@ export default function MapPage() {
           {/* Stats strip */}
           <div className="map-stats-strip" style={styles.statsStrip}>
             {[
-              { label: "Total Flags", value: flags.length, color: "var(--color-ink)" },
-              { label: "Active Businesses", value: counts.Green, color: isDark ? "#4ade80" : "#22c55e" },
-              { label: "1st/2nd Warning / Notice", value: counts.Orange, color: isDark ? "#fb923c" : "#e65100" },
-              { label: "Detected Unregistered", value: counts.Red, color: isDark ? "#f87171" : "#ef4444" },
-              { label: "Suspected Unregistered", value: counts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b" },
-              { label: "Closed / Abandoned", value: counts.Purple, color: isDark ? "#c084fc" : "#7c3aed" },
-              { label: "Critical Violations", value: counts.Black, color: "var(--color-ink)" },
+              { label: "Matching Locations", value: visibleFlags.length, color: "var(--color-ink)" },
+              { label: "Active Businesses", value: filteredCounts.Green, color: isDark ? "#4ade80" : "#22c55e" },
+              { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100" },
+              { label: "Detected Unregistered", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444" },
+              { label: "Suspected Unregistered", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b" },
+              { label: "Closed / Abandoned", value: filteredCounts.Purple, color: isDark ? "#c084fc" : "#7c3aed" },
+              { label: "Critical Violations", value: filteredCounts.Black, color: "var(--color-ink)" },
             ].map(s => (
               <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}>
                 <span style={{ fontSize: "clamp(15px, 1.4vw, 22px)", fontWeight: 800, color: s.color, lineHeight: 1, textAlign: "left" }}>{s.value}</span>
@@ -4297,108 +4277,55 @@ export default function MapPage() {
               <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--color-ink)", flex: 1 }}>
                 Flagged Locations
               </h3>
-              {(filterColor !== "all" || search !== "" || filterSource !== "all") && (
+              {(filterColor !== "all" || search !== "" || filterSource !== "all" || filterRegistryLink !== "all") && (
                 <button
                   type="button"
                   style={{ background: "transparent", border: "none", color: "var(--color-primary)", fontSize: 11, fontWeight: 600, cursor: "pointer", padding: "0 8px" }}
-                  onClick={() => { setFilterColor("all"); setSearch(""); setFilterSource("all"); }}
+                  onClick={clearViewFilters}
                 >
-                  Clear Filters
+                  Clear filters
                 </button>
               )}
-              <span style={styles.countBadge}>{visibleFlags.length}</span>
+              <span style={styles.countBadge} aria-live="polite">{loadingFlags ? "…" : flagsError ? "—" : visibleFlags.length}</span>
             </div>
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
 
-            {/* Legend / Filter List */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {["all", "in_inspection", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"].map(c => {
-                const isSelected = filterColor === c;
-                const dotColor = c === "all" ? "var(--color-ink)" : (FLAG_COLORS[c]?.marker ?? "var(--color-ink)");
-                const label = c === "all" ? "All Locations" : (FLAG_COLORS[c]?.label ?? c);
-
-                return (
-                  <button
-                    key={c}
-                    onClick={() => {
-                      setFilterColor(c);
-                      if (c !== "Green") setFilterSource("all");
-                    }}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      width: "100%",
-                      padding: "8px 12px",
-                      background: isSelected ? "var(--color-hover)" : "transparent",
-                      border: "1px solid",
-                      borderColor: isSelected ? "var(--color-border)" : "transparent",
-                      borderRadius: 8,
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                      textAlign: "left"
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <span style={{
-                        width: 10, height: 10, borderRadius: "50%",
-                        background: dotColor,
-                        boxShadow: isSelected ? `0 0 0 2px var(--color-surface), 0 0 0 4px ${dotColor}40` : "none"
-                      }} />
-                      <span style={{
-                        fontSize: 13,
-                        fontWeight: isSelected ? 700 : 500,
-                        color: "var(--color-ink)",
-                        opacity: isSelected ? 1 : 0.85,
-                      }}>
-                        {label}
-                      </span>
-                    </div>
-                    <span style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: "var(--color-ink)",
-                      opacity: isSelected ? 1 : 0.75,
-                      background: isSelected ? "var(--color-hover)" : "transparent",
-                      padding: "2px 8px",
-                      borderRadius: 12
-                    }}>
-                      {counts[c] || 0}
-                    </span>
-                  </button>
-                );
-              })}
+            <div className="map-location-filters">
+              <FilterDropdown label="Status" value={filterColor} options={STATUS_OPTIONS}
+                onChange={value => { setFilterColor(value); setLocationsPage(1); }} />
+              <FilterDropdown label="Source" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
+                onChange={value => { setFilterSource(value); setLocationsPage(1); }} />
+              <FilterDropdown label="Registry Link" value={filterRegistryLink} options={MAP_REGISTRY_LINK_OPTIONS}
+                onChange={value => { setFilterRegistryLink(value); setLocationsPage(1); }} />
             </div>
+          </div>
 
-            {/* Source filter — shows only when Green is selected */}
-            {filterColor === "Green" && (
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                {SOURCE_FILTERS.map(s => {
-                  const isSelected = filterSource === s.value;
-                  return (
-                    <button
-                      key={s.value}
-                      onClick={() => setFilterSource(s.value)}
-                      style={{
-                        ...styles.filterPill,
-                        fontSize: 10,
-                        fontWeight: isSelected ? 700 : 600,
-                        background: isSelected ? "var(--color-primary)" : "var(--color-input-bg)",
-                        color: isSelected ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-ink)",
-                        borderColor: isSelected ? "var(--color-primary)" : "var(--color-border)",
-                      }}
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
+          <div className="map-location-results" aria-busy={loadingFlags}>
+            {loadingFlags ? <p role="status">Loading locations…</p> : flagsError ? (
+              <div role="alert"><p>Locations could not be refreshed. {flagsError}</p>
+                <button type="button" className="ghost-btn" onClick={() => fetchFlags(false)}>Retry</button></div>
+            ) : visibleFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
+              <p className="map-location-count" role="status">{visibleFlags.length} matching {visibleFlags.length === 1 ? "location" : "locations"}</p>
+              <div style={styles.flagList}>
+                {locations.data.map(flag => <button key={flag.id} type="button" className="map-location-card"
+                  onClick={() => handleMarkerClick(flag.id)}>
+                  <span className="map-location-color" style={{ background: getFlagColor(flag.color).marker }} aria-hidden="true" />
+                  <span><strong>{flag.name}</strong><small>{flag.barangay} · {getFlagColor(flag.color).label}</small>
+                    <small>{businessSourceLabel(flag.source)} · {flag.registryLinked ? "Linked to Registry" : "Not in Registry"}</small></span>
+                </button>)}
               </div>
-            )}
+              <div className="map-location-pagination">
+                <button type="button" className="ghost-btn" disabled={locations.page === 1} onClick={() => setLocationsPage(locations.page - 1)}>Previous</button>
+                <span>Page {locations.page} of {locations.pages}</span>
+                <button type="button" className="ghost-btn" disabled={locations.page === locations.pages} onClick={() => setLocationsPage(locations.page + 1)}>Next</button>
+              </div>
+            </>}
           </div>
 
           {/* Priority Dispatch Queue */}
           {isAdmin && (
             <div className="priority-dispatch-queue" style={{ marginBottom: 14, background: "var(--color-input-bg)", padding: 12, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)" }}>
+              <p className="map-location-count">Municipal rankings · independent of view filters</p>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
                 <div className="priority-dispatch-icon" style={{ color: "var(--color-primary)", display: "flex" }}><Icon.AlertTriangle /></div>
                 <h4 style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -4426,6 +4353,7 @@ export default function MapPage() {
                       onClick={() => {
                         setSearch(r.barangayName);
                         setFilterColor("all");
+                        setLocationsPage(1);
                       }}
                     >
                       Filter
@@ -4479,7 +4407,7 @@ export default function MapPage() {
       {/* Flag detail modal â€” opens on marker or side panel click */}
       <AnimatePresence isVisible={!!modalFlag}>
         <FlagDetailModal
-          flag={modalFlag}
+          flag={flags.find(flag => flag.id === modalFlag?.id) ?? modalFlag}
           onClose={handleCloseDetailModal}
           onEscalate={handleEscalate}
           onAdjustLocation={handleStartAdjustLocation}

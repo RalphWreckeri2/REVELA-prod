@@ -3,7 +3,7 @@ from api.models.detection_runs import get_detection_quota_info
 from api.utils.quota_config import API_QUOTA_CONFIG
 import os
 import uuid
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_jwt_extended import get_jwt_identity
 from api.flags.service import (
     run_detection,
@@ -27,6 +27,18 @@ from api.registry.locks import BlackBusinessDeletionForbidden
 from api.registry import service as registry_service
 from app import mysql
 flags_bp = Blueprint("flags", __name__)
+
+
+@flags_bp.route("/inspection-verified-compliant", methods=["GET"])
+@admin_required()
+def inspection_verified_compliant_route():
+    """All eligible rows for one shared View List / PDF / CSV snapshot."""
+    from api.flags.compliance_report import get_inspection_verified_compliant
+    try:
+        return jsonify(get_inspection_verified_compliant()), 200
+    except Exception:
+        current_app.logger.exception("Could not load current-compliance report")
+        return jsonify({"error": "Unable to load inspection-verified compliant businesses."}), 500
 
 
 # ── GET /api/flags/places-usage ───────────────────────────────────────────────

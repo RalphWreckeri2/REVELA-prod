@@ -1,0 +1,31 @@
+{
+  "commit": "848303dd2f32ec015b5005b89d96ce0eb2a30944",
+  "passed": 948,
+  "skipped": 28,
+  "subtests_passed": 557,
+  "failures": {
+    "tests/test_admin_settings.py::TestModeScopeTests::test_full_grid_when_test_mode_is_off": "38 != 70",
+    "tests/test_backend_release_contract.py::ReleaseInfrastructureContractTests::test_migration_definitions_match_missing_fields_and_known_schema": "FileNotFoundError.*20261014_01_yellow_flag_idempotency",
+    "tests/test_black_escalation.py::test_virtual_registry_flag_gets_real_lock_and_black_color_without_a_pin": "blackLocked.*0",
+    "tests/test_black_guard_wiring.py::UpdateBusinessGuardTests::test_a_locked_business_refuses_the_edit": "True is not false",
+    "tests/test_black_guard_wiring.py::UpdateBusinessGuardTests::test_a_refused_edit_writes_nothing": "UPDATE official_registry",
+    "tests/test_black_guard_wiring.py::UpdateFlagColorGuardTests::test_a_locked_real_pin_refuses_the_recolour": "True is not false",
+    "tests/test_black_guard_wiring.py::UpdateFlagColorGuardTests::test_a_locked_registry_only_flag_refuses_the_recolour": "True is not false",
+    "tests/test_black_guard_wiring.py::UpdateFlagColorGuardTests::test_a_refused_registry_recolour_writes_nothing": "UPDATE official_registry SET applicationStatus",
+    "tests/test_black_guard_wiring.py::ReverifyGuardTests::test_a_locked_business_keeps_its_colour_during_reverify": "_sync_flag_color must not run",
+    "tests/test_cors.py::LoginCorsIntegrationTests::test_login_reaches_the_route_rather_than_being_blocked": "500 not found in \\(400, 401\\)",
+    "tests/test_delete_isolation.py::DeleteIsolationTests::test_delete_flag_isolates_to_single_log_id": "False is not true",
+    "tests/test_delete_isolation.py::DeleteIsolationTests::test_delete_flag_repoints_inspections_to_surviving_log_by_explicit_identity": "False is not true",
+    "tests/test_inspection_clear_warning.py::test_unregistered_pin_clear_refuses_unsafe_state_without_writes[changes0-pre-warning color is unknown]": "unexpected keyword argument 'warningBaseColor'",
+    "tests/test_inspection_clear_warning.py::test_unregistered_pin_clear_refuses_unsafe_state_without_writes[changes1-Black-locked]": "unexpected keyword argument 'blackLocked'",
+    "tests/test_inspection_clear_warning.py::test_revoked_without_lock_can_receive_the_existing_single_use_dispatch_grant": "Black businesses cannot be dispatched",
+    "tests/test_inspection_clear_warning.py::test_verified_yellow_red_or_purple_can_end_in_any_color[Black-Pending]": "blackLocked.*0",
+    "tests/test_inspection_clear_warning.py::test_verified_yellow_red_or_purple_can_end_in_any_color[Black-Expired]": "blackLocked.*0",
+    "tests/test_inspection_clear_warning.py::test_verified_yellow_red_or_purple_can_end_in_any_color[Black-Closed]": "blackLocked.*0",
+    "tests/test_lock_shield.py::LockShieldTests::test_update_flag_location_virtual_flag": "False is not true",
+    "tests/test_notifications_sse_security.py::NotificationStreamSecurityTests::test_bearer_authenticated_stream_starts": "You must call.*jwt_required",
+    "tests/test_registry_color_workflows.py::test_expiry_uses_current_warning_level_not_old_history[0-Red]": "NoneType.*not subscriptable",
+    "tests/test_registry_color_workflows.py::test_expiry_uses_current_warning_level_not_old_history[1-Orange]": "NoneType.*not subscriptable",
+    "tests/test_review_queue_and_status.py::ReviewQueueAndStatusExposureTests::test_verified_warning_inspection_sets_explicit_orange_designation": "'' is not None"
+  }
+}

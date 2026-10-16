@@ -140,6 +140,20 @@
   background: var(--color-modal-bg);
 }
 
+.map-location-filters { display: grid; gap: 12px; }
+.map-location-results { margin: 0 0 16px; min-width: 0; color: var(--color-muted); font-size: 12px; }
+.map-location-count { margin: 0 0 8px; font-size: 11px; color: var(--color-muted); line-height: 1.5; }
+.map-location-card { display: flex; gap: 9px; align-items: flex-start; padding: 10px; width: 100%; min-width: 0; border: 1px solid var(--color-border-soft); border-radius: var(--radius-md); text-align: left; background: var(--color-input-bg); color: var(--color-ink); cursor: pointer; }
+.map-location-card > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.map-location-card strong { display: block; font-size: 12px; line-height: 1.4; }
+.map-location-card small { display: block; margin-top: 4px; color: var(--color-muted); font-size: 10px; line-height: 1.4; }
+.map-location-color { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; margin-top: 4px; }
+.map-location-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-top: 10px; font-size: 11px; }
+.map-location-pagination button { padding: 5px 8px; font-size: 11px; }
+.business-source-info { padding-left: 28px; font-size: 12px; line-height: 1.6; color: var(--color-muted); overflow-wrap: anywhere; }
+.business-source-info p { margin: 0; }
+.business-compliance-info { margin-top: 5px !important; }
+
 html.theme-dark .map-detection-controls {
   --detection-accent: var(--color-primary);
 }

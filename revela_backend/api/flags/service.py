@@ -18,6 +18,9 @@ import json
 from geopy.distance import geodesic
 from app import mysql
 from api.registry.service import _flag_source_sql, _has_enforcement_columns
+from api.flags.compliance import (
+    decorate_compliance, origin_source_sql, registry_link_sql, verified_green_at_sql,
+)
 from api.models.geospatial import (
     SOURCE_DETECTION,
     geospatial_source_column_exists,
@@ -3089,6 +3092,9 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     COALESCE(g.nearestLandmark, r.businessAddress) AS resolvedAddress,
                     {_flag_source_sql("g", _OLD_MAP_FLAG_SOURCE, cursor)}
                         AS flagSource,
+                    {origin_source_sql("g", cursor)} AS originSource,
+                    {registry_link_sql("g")} AS registryLinked,
+                    {verified_green_at_sql("g", ladder=ladder)} AS verifiedGreenAt,
                     (
                         SELECT verificationStatus
                         FROM inspection_reports
@@ -3138,6 +3144,9 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     r.businessSize             AS businessSize,
                     r.businessAddress          AS resolvedAddress,
                     '{SOURCE_REGISTRY}'        AS flagSource,
+                    '{SOURCE_REGISTRY}'        AS originSource,
+                    1                          AS registryLinked,
+                    NULL                       AS verifiedGreenAt,
                     NULL                       AS verificationStatus,
                     r.matchStatus              AS matchStatus,
                     r.coordSource              AS coordSource,
@@ -3147,7 +3156,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                 {reg_where}
 
             ) AS combined
-            ORDER BY detectedDate DESC
+            ORDER BY detectedDate DESC, logID DESC
             LIMIT %s OFFSET %s
         """
         cursor.execute(fetch_sql, geo_params + reg_params + [per_page, offset])
@@ -3155,6 +3164,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         cursor.close()
 
         for row in rows:
+            decorate_compliance(row)
             if row.get("detectedDate"):
                 row["detectedDate"] = str(row["detectedDate"])
             if row.get("latitude") is not None:

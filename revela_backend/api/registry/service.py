@@ -1019,7 +1019,7 @@ def _registry_sync_business_fields_changed(existing, incoming):
     return False
 
 
-def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None):
+def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None, *, skip_open_unlinked=False):
     """
     Propagate a registry permit-status change to the business's map pin
     (preferring exact businessID match, then name + barangay).
@@ -1035,6 +1035,14 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     )"""
     color_sql = _effective_flag_color_sql(
         "g", ladder=True) if ladder else "NULL"
+    # New import seed paths may reuse a detected pin, but must not adopt or
+    # recolour an unlinked pin while an inspection is still in flight. Existing
+    # callers retain their current guards and semantics through the default.
+    open_guard = """AND NOT EXISTS (
+        SELECT 1 FROM inspection_reports pending
+        WHERE pending.targetType = 'geospatial_log' AND pending.targetID = g.logID
+          AND (pending.verificationStatus IS NULL OR pending.verificationStatus <> 'Verified')
+    )""" if skip_open_unlinked else ""
 
     cursor.execute(
         f"""
@@ -1043,7 +1051,7 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
                {color_sql} AS effectiveFlagColor
         FROM geospatial_logs g
         WHERE (g.businessID IS NOT NULL AND g.businessID = %s)
-           OR (g.businessID IS NULL AND g.barangayID = %s AND g.detectedName = %s)
+           OR (g.businessID IS NULL AND g.barangayID = %s AND g.detectedName = %s {open_guard})
         ORDER BY (g.businessID = %s) DESC, g.detectedDate DESC
         LIMIT 1
         """,
@@ -1377,7 +1385,7 @@ def upload_registry(file, ext: str):
                 if lat is not None:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 if not _is_retryable_resolution_failure(geo_meta):
-                    if status != "Expired" or not _sync_flag_color(
+                    if not _sync_flag_color(
                         cursor,
                         barangay_id,
                         name_key,
@@ -1386,6 +1394,7 @@ def upload_registry(file, ext: str):
                         lng,
                         address_raw,
                         business_id=biz_id,
+                        skip_open_unlinked=(status != "Expired"),
                     ):
                         insert_green_flag(
                             barangay_id,
@@ -2797,16 +2806,18 @@ def sync_registry(file, ext: str):
                         places_resolver.record_coord_meta(
                             cursor, biz_id, geo_meta)
                     if not _is_retryable_resolution_failure(geo_meta):
-                        flag_color = _status_to_flag_color(status)
-                        insert_green_flag(
-                            barangay_id,
-                            name_key,
-                            lat,
-                            lng,
-                            addr,
-                            color=flag_color,
-                            business_id=biz_id
-                        )
+                        # Reuse the existing pin/link helper before seeding.
+                        # Its UPDATE preserves source, logID and inspections.
+                        if not _sync_flag_color(
+                            cursor, barangay_id, name_key, status,
+                            lat, lng, addr, business_id=biz_id,
+                            skip_open_unlinked=True,
+                        ):
+                            insert_green_flag(
+                                barangay_id, name_key, lat, lng, addr,
+                                color=_status_to_flag_color(status),
+                                business_id=biz_id,
+                            )
 
         if not commit_unless_cancelled(
             "registry_import", mysql.connection.commit

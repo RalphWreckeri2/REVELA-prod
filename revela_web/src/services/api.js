@@ -617,6 +617,31 @@ export async function getFlagsRequest(params = {}, token) {
   }
 }
 
+export async function getAllFlagsRequest(token) {
+  const records = [];
+  let page = 1;
+  let pages;
+  do {
+    const result = await getFlagsRequest({ page, limit: 1000 }, token);
+    records.push(...(Array.isArray(result) ? result : result?.data ?? []));
+    pages = result?.pages ?? 1;
+    page += 1;
+  } while (page <= pages);
+  return records;
+}
+
+export async function getInspectionVerifiedCompliantRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/flags/inspection-verified-compliant`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 export async function createYellowFlagRequest(payload, token) {
   if (!token) {
     throw new Error("Missing authentication token.");

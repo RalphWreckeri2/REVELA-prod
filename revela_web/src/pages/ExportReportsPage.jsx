@@ -27,6 +27,8 @@ import Swal from "sweetalert2";
 import html2canvas from "html2canvas";
 import bpLogo from "../assets/bagongpilipinas.png";
 import sealImg from "../assets/seal.png";
+import ComplianceReportCard from "../components/ComplianceReportCard";
+import { COMPLIANCE_REPORT_TITLE } from "../components/businessCompliance";
 
 // ── Color Palettes ─────────────────────────────────────────────────────────────
 const SIZE_COLORS = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
@@ -71,6 +73,10 @@ const OPERATIONAL_REPORTS = [
     tagColor: "#dc2626",
     tagBg: "#fee2e2",
     desc: "Active Red and Yellow flags indicating suspected unregistered commercial activity with resolved addresses, landmarks, and coordinates for field verification."
+  },
+  {
+    id: "inspection-compliant",
+    title: COMPLIANCE_REPORT_TITLE,
   },
   {
     id: "dispatch",
@@ -2288,7 +2294,6 @@ export default function ExportReportsPage() {
 
           {/* ══════════════════════════════════════════════════════════════════════
               SECTION 2: FIELD OPERATIONS & DISPATCH REPORTS
-              (Strictly includes Top Unregistered Establishments & Inspector Dispatch Plan)
           ══════════════════════════════════════════════════════════════════════ */}
           <section style={{ marginBottom: 40 }}>
             {/* Section Header */}
@@ -2338,9 +2343,11 @@ export default function ExportReportsPage() {
               </span>
             </div>
 
-            {/* Operational Reports List (Strictly 2 cards) */}
+            {/* Operational reports remain independent of the registry census. */}
             <div style={{ display: "grid", gap: 16 }}>
-              {OPERATIONAL_REPORTS.map((report) => (
+              {OPERATIONAL_REPORTS.map((report) => report.id === "inspection-compliant" ? (
+                <ComplianceReportCard key={report.id} token={token} user={user} onPrint={setPrintReport} />
+              ) : (
                 <div
                   key={report.id}
                   className="saas-card frosted-glass"
@@ -2633,6 +2640,20 @@ export default function ExportReportsPage() {
             </div>
 
             {/* ── CASE 1: Single Demographic Chart Report ── */}
+            {printReport.type === "inspection-compliant" && (
+              <div>
+                <p style={{ fontSize: 11, color: "#334155" }}><strong>Applied filters:</strong> {printReport.data.filtersLabel}</p>
+                <p style={{ fontSize: 11, color: "#334155" }}><strong>Record count:</strong> {printReport.data.count}</p>
+                <p style={{ fontSize: 11, color: "#334155" }}>Detection Reference is the geospatial logID, not an official Business ID. Verified On is the admin verification time in Asia/Manila.</p>
+                <table className="print-table">
+                  <thead><tr>{printReport.data.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
+                  <tbody>{printReport.data.rows.length === 0 ? <tr><td colSpan={6}>No matching current-compliance records.</td></tr>
+                    : printReport.data.rows.map(row => <tr key={row["Detection Reference"]}>
+                      {printReport.data.columns.map(column => <td key={column}>{row[column] || "—"}</td>)}
+                    </tr>)}</tbody>
+                </table>
+              </div>
+            )}
             {printReport.type === "demographic-single" && (
               <div>
                 {/* Captured Visual Chart */}
