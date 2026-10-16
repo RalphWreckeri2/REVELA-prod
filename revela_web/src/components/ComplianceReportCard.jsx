@@ -66,8 +66,8 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
     }
   };
   const actions = <>
-    <button type="button" className="secondary-btn" onClick={() => void download("pdf")} disabled={loading}>Download PDF</button>
-    <button type="button" className="secondary-btn" onClick={() => void download("csv")} disabled={loading}>Download CSV</button>
+    <button type="button" className="ghost-btn compliance-report-download" onClick={() => void download("pdf")} disabled={loading}>Download PDF</button>
+    <button type="button" className="ghost-btn compliance-report-download" onClick={() => void download("csv")} disabled={loading}>Download CSV</button>
   </>;
 
   return <>

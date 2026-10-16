@@ -4043,12 +4043,13 @@ export default function MapPage() {
       </div>
 
       {/* Banner showing when picking location */}
-      {isPickingYellowLocation && (
-        <div style={{ ...styles.pickingBanner, zIndex: 10002 }}>
-          <Icon.Crosshair /> Click anywhere on the map to set the flag's coordinates.
+      {isPickingYellowLocation && createPortal(
+        <div className="map-picking-banner" role="status">
+          <Icon.Crosshair />
+          <span>Click anywhere on the map to set the flag's coordinates.</span>
           <button
             type="button"
-            style={{ marginLeft: 16, background: "none", border: "none", color: "#fff", textDecoration: "underline", cursor: "pointer" }}
+            aria-label="Cancel picking a map location"
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -4058,7 +4059,8 @@ export default function MapPage() {
           >
             Cancel
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* Banner showing when adjusting an existing flag */}
