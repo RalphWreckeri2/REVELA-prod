@@ -610,6 +610,7 @@ export async function getFlagsRequest(params = {}, token) {
     const res = await fetch(`${BASE_URL}/flags/?${qs.toString()}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      signal: params.signal,
     });
     return await handleResponse(res);
   } catch (err) {
@@ -623,7 +624,7 @@ export async function getAllFlagsRequest(token) {
   let pages;
   do {
     const result = await getFlagsRequest({ page, limit: 1000 }, token);
-    records.push(...(Array.isArray(result) ? result : result?.data ?? []));
+    records.push(...(Array.isArray(result) ? result : (result?.data ?? [])));
     pages = result?.pages ?? 1;
     page += 1;
   } while (page <= pages);
@@ -1008,6 +1009,7 @@ export async function getInspectionsRequest(params = {}, token) {
     const res = await fetch(`${BASE_URL}/inspections/?${qs.toString()}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      signal: params.signal,
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1045,11 +1047,12 @@ export async function getRegistryWorkflowSummaryRequest(token) {
  * GET /api/users (reuse if you already have this, otherwise add it)
  * Fetch inspector list for the assign dropdown.
  */
-export async function getInspectorsRequest(token) {
+export async function getInspectorsRequest(token, options = {}) {
   try {
     const res = await fetch(`${BASE_URL}/users/?role=Inspector`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      signal: options.signal,
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1194,7 +1197,7 @@ function analyticsFiltersToSearchParams(filters = {}) {
 
 // For Dashboard overview cards and charts (flag counts, inspection stats, etc.)
 // Accepts (token, filters) or (filters, token) like getFlagsRequest(params, token).
-export async function getAnalyticsOverviewRequest(arg1, arg2) {
+export async function getAnalyticsOverviewRequest(arg1, arg2, options = {}) {
   try {
     const { token, filters } = resolveTokenAndOptionalFilters(arg1, arg2);
     if (!token) {
@@ -1208,6 +1211,7 @@ export async function getAnalyticsOverviewRequest(arg1, arg2) {
     const res = await fetch(url, {
       method: "GET",
       headers: authHeaders(token),
+      signal: options.signal,
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1249,11 +1253,12 @@ export async function getAnalyticsFilterMetadataRequest(token) {
   }
 }
 
-export async function getOpsRankingsRequest(token) {
+export async function getOpsRankingsRequest(token, options = {}) {
   try {
     const res = await fetch(`${BASE_URL}/analytics/ops-rankings`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      signal: options.signal,
     });
     return await handleResponse(res);
   } catch (err) {

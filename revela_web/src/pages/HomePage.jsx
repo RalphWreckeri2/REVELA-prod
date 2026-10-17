@@ -809,6 +809,7 @@ export default function HomePage() {
   const [requestStates, setRequestStates] = useState(() => Object.fromEntries(
     ["kpis", "flags", "inspections", "inspectors", "ops"].map(key => [key, { loading: true, error: false, hasResult: false }]),
   ));
+  const dashboardRequestRef = useRef(null);
 
   useEffect(() => {
     if (!location.state?.showWelcome || !user || welcomeHandledRef.current) {
@@ -827,6 +828,12 @@ export default function HomePage() {
 
   const fetchDashboardData = useCallback(async (isSilent = false) => {
     if (!token) return;
+    if (dashboardRequestRef.current && !dashboardRequestRef.current.signal.aborted) {
+      if (isSilent) return;
+      dashboardRequestRef.current.abort();
+    }
+    const controller = new AbortController();
+    dashboardRequestRef.current = controller;
     if (!isSilent) {
       setIsRefreshing(true);
     }
@@ -834,12 +841,13 @@ export default function HomePage() {
 
     try {
       const [analyticsRes, flagsRes, inspRes, inspectorsRes, opsRes] = await Promise.allSettled([
-        getAnalyticsOverviewRequest(token),
-        getFlagsRequest({ limit: 200 }, token),
-        getInspectionsRequest({ limit: 1000 }, token),
-        getInspectorsRequest(token),
-        getOpsRankingsRequest(token),
+        getAnalyticsOverviewRequest(token, undefined, { signal: controller.signal }),
+        getFlagsRequest({ limit: 200, signal: controller.signal }, token),
+        getInspectionsRequest({ limit: 1000, signal: controller.signal }, token),
+        getInspectorsRequest(token, { signal: controller.signal }),
+        getOpsRankingsRequest(token, { signal: controller.signal }),
       ]);
+      if (controller.signal.aborted) return;
       const analyticsKpis = analyticsRes.status === "fulfilled" ? analyticsRes.value?.descriptive?.kpis : null;
       const inspectorData = inspectorsRes.status === "fulfilled" ? (inspectorsRes.value?.data ?? inspectorsRes.value) : null;
       const successful = {
@@ -909,19 +917,30 @@ export default function HomePage() {
         loading: false, error: !successful[key], hasResult: state.hasResult || successful[key],
       }])));
     } catch {
+      if (controller.signal.aborted) return;
       setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, {
         ...state, loading: false, error: true,
       }])));
     } finally {
-      setIsRefreshing(false);
+      if (dashboardRequestRef.current === controller) {
+        dashboardRequestRef.current = null;
+        setIsRefreshing(false);
+      }
     }
   }, [token, navigate]);
+
+  useEffect(() => () => {
+    dashboardRequestRef.current?.abort();
+    dashboardRequestRef.current = null;
+  }, [fetchDashboardData]);
 
   useEffect(() => {
     fetchDashboardData(false);
 
+    let eventTimer;
     const handleEventUpdate = () => {
-      fetchDashboardData(true);
+      window.clearTimeout(eventTimer);
+      eventTimer = window.setTimeout(() => fetchDashboardData(true), 200);
     };
 
     window.addEventListener("revela:inspection-update", handleEventUpdate);
@@ -953,6 +972,7 @@ export default function HomePage() {
       window.removeEventListener("revela:registry-update", handleEventUpdate);
       window.removeEventListener("revela:user-update", handleEventUpdate);
       window.removeEventListener("revela:global-refresh", handleEventUpdate);
+      window.clearTimeout(eventTimer);
       window.clearInterval(pollInterval);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleVisibilityChange);

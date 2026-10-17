@@ -49,8 +49,10 @@ class OriginParsingTests(unittest.TestCase):
         )
 
     def test_www_mirrors_to_apex_and_back(self):
-        self.assertEqual(cors_config.mirror_www(PRODUCTION_WWW), PRODUCTION_APEX)
-        self.assertEqual(cors_config.mirror_www(PRODUCTION_APEX), PRODUCTION_WWW)
+        self.assertEqual(cors_config.mirror_www(
+            PRODUCTION_WWW), PRODUCTION_APEX)
+        self.assertEqual(cors_config.mirror_www(
+            PRODUCTION_APEX), PRODUCTION_WWW)
 
     def test_mirroring_does_not_touch_non_https_or_hosted_values(self):
         self.assertEqual(cors_config.mirror_www("http://localhost:5173"),
@@ -61,16 +63,19 @@ class OriginParsingTests(unittest.TestCase):
 
     def test_apex_only_config_also_allows_www(self):
         """The exact production misconfiguration must now be self-correcting."""
-        self.assertIn(PRODUCTION_WWW, cors_config.parse_origins(PRODUCTION_APEX))
+        self.assertIn(PRODUCTION_WWW,
+                      cors_config.parse_origins(PRODUCTION_APEX))
 
     def test_www_only_config_also_allows_apex(self):
-        self.assertIn(PRODUCTION_APEX, cors_config.parse_origins(PRODUCTION_WWW))
+        self.assertIn(PRODUCTION_APEX,
+                      cors_config.parse_origins(PRODUCTION_WWW))
 
     def test_duplicates_are_collapsed(self):
         parsed = cors_config.parse_origins(
             f"{PRODUCTION_WWW},{PRODUCTION_APEX},{PRODUCTION_WWW}/"
         )
-        self.assertEqual(sorted(parsed), sorted([PRODUCTION_WWW, PRODUCTION_APEX]))
+        self.assertEqual(sorted(parsed), sorted(
+            [PRODUCTION_WWW, PRODUCTION_APEX]))
 
     def test_unset_env_defaults_to_production_hosts(self):
         allowed = cors_config.build_allowed_origins(None)
@@ -81,7 +86,8 @@ class OriginParsingTests(unittest.TestCase):
         self.assertIn(PRODUCTION_WWW, cors_config.build_allowed_origins(""))
 
     def test_env_value_overrides_production_defaults(self):
-        allowed = cors_config.build_allowed_origins("https://staging.revelasys.site")
+        allowed = cors_config.build_allowed_origins(
+            "https://staging.revelasys.site")
         self.assertNotIn(PRODUCTION_WWW, allowed)
         self.assertIn("https://staging.revelasys.site", allowed)
         self.assertIn("https://www.staging.revelasys.site", allowed)
@@ -151,7 +157,8 @@ class LoginCorsIntegrationTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.app = _build_app("https://www.revelasys.site,https://revelasys.site")
+        cls.app = _build_app(
+            "https://www.revelasys.site,https://revelasys.site")
         cls.client = cls.app.test_client()
 
     def _post_login(self, origin):
@@ -184,12 +191,14 @@ class LoginCorsIntegrationTests(unittest.TestCase):
     def test_login_from_apex_origin_returns_allow_origin(self):
         response = self._post_login(PRODUCTION_APEX)
         self.assertEqual(
-            response.headers.get("Access-Control-Allow-Origin"), PRODUCTION_APEX
+            response.headers.get(
+                "Access-Control-Allow-Origin"), PRODUCTION_APEX
         )
 
     def test_login_response_varies_on_origin(self):
         """Shared caches must not serve one origin's header to another."""
-        self.assertIn("Origin", self._post_login(PRODUCTION_WWW).headers.get("Vary", ""))
+        self.assertIn("Origin", self._post_login(
+            PRODUCTION_WWW).headers.get("Vary", ""))
 
     def test_login_reaches_the_route_rather_than_being_blocked(self):
         """A CORS failure hides the real status; assert the route actually ran."""
@@ -206,6 +215,8 @@ class LoginCorsIntegrationTests(unittest.TestCase):
         )
         methods = response.headers.get("Access-Control-Allow-Methods", "")
         self.assertIn("POST", methods)
+        self.assertEqual(response.headers.get(
+            "Access-Control-Max-Age"), "86400")
 
     def test_preflight_advertises_the_authorization_header(self):
         """The frontend sends Bearer tokens, so it must be preflight-allowed."""
@@ -217,7 +228,8 @@ class LoginCorsIntegrationTests(unittest.TestCase):
                 "Access-Control-Request-Headers": "authorization,content-type",
             },
         )
-        allowed = response.headers.get("Access-Control-Allow-Headers", "").lower()
+        allowed = response.headers.get(
+            "Access-Control-Allow-Headers", "").lower()
         self.assertIn("authorization", allowed)
         self.assertIn("content-type", allowed)
 
@@ -225,7 +237,8 @@ class LoginCorsIntegrationTests(unittest.TestCase):
     def test_disallowed_origin_gets_no_cors_headers(self):
         response = self._post_login(EVIL)
         self.assertIsNone(response.headers.get("Access-Control-Allow-Origin"))
-        self.assertIsNone(response.headers.get("Access-Control-Allow-Credentials"))
+        self.assertIsNone(response.headers.get(
+            "Access-Control-Allow-Credentials"))
 
     def test_disallowed_origin_preflight_gets_no_cors_headers(self):
         response = self._preflight_login(EVIL)
@@ -301,7 +314,8 @@ class MissingEnvironmentVariableTests(unittest.TestCase):
         client = app.test_client()
         response = client.post(
             "/api/auth/login",
-            headers={"Origin": PRODUCTION_WWW, "Content-Type": "application/json"},
+            headers={"Origin": PRODUCTION_WWW,
+                     "Content-Type": "application/json"},
             json={"email": "nobody@example.com", "password": "wrong"},
         )
         self.assertEqual(
@@ -317,7 +331,8 @@ class ApexOnlyConfigurationTests(unittest.TestCase):
         client = app.test_client()
         response = client.post(
             "/api/auth/login",
-            headers={"Origin": PRODUCTION_WWW, "Content-Type": "application/json"},
+            headers={"Origin": PRODUCTION_WWW,
+                     "Content-Type": "application/json"},
             json={"email": "nobody@example.com", "password": "wrong"},
         )
         self.assertEqual(

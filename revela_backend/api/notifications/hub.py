@@ -3,24 +3,39 @@ In-process pub/sub for admin notification SSE (single Flask process).
 For multiple workers, add Redis pub/sub or poll DB only.
 """
 
+import logging
 import queue
 import threading
 from typing import Any, Dict, List, Tuple
 
+# SSE telemetry: connection counts make thread-pool pressure observable (each
+# live stream holds one gunicorn gthread). No user identities are logged.
+logger = logging.getLogger("revela.sse")
+
 _lock = threading.Lock()
 _subscribers: List[Tuple[str, queue.Queue]] = []  # (user_id_str, Queue)
+
+
+def active_subscriber_count() -> int:
+    """Currently connected SSE consumers (telemetry / diagnostics)."""
+    with _lock:
+        return len(_subscribers)
 
 
 def subscribe(user_id: str) -> queue.Queue:
     q: queue.Queue = queue.Queue(maxsize=100)
     with _lock:
         _subscribers.append((user_id, q))
+        active = len(_subscribers)
+    logger.info("[sse] connect active=%d", active)
     return q
 
 
 def unsubscribe(user_id: str, q: queue.Queue) -> None:
     with _lock:
         _subscribers[:] = [p for p in _subscribers if not (p[0] == user_id and p[1] is q)]
+        active = len(_subscribers)
+    logger.info("[sse] disconnect active=%d", active)
 
 
 def publish_to_admins(event: Dict[str, Any]) -> None:
@@ -43,6 +58,7 @@ def _publish(q: queue.Queue, event: Dict[str, Any]) -> None:
     try:
         q.put_nowait(event)
     except queue.Full:
+        logger.warning("[sse] subscriber queue full; dropping oldest event")
         try:
             q.get_nowait()
         except queue.Empty:

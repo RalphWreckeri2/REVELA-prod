@@ -38,7 +38,11 @@
 
   /* Glass */
   --glass-bg: rgba(255, 255, 255, 0.7);
-  --glass-bg-pill: color-mix(in srgb, var(--color-primary) 25%, var(--glass-bg));
+  --glass-bg-pill: color-mix(
+    in srgb,
+    var(--color-primary) 25%,
+    var(--glass-bg)
+  );
   --glass-border: rgba(255, 255, 255, 0.9);
   --glass-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 1), 0 4px 16px rgba(0, 0, 0, 0.03);
@@ -101,6 +105,59 @@ body {
   color: var(--color-ink);
   background: var(--color-page-bg);
   -webkit-font-smoothing: antialiased;
+}
+
+.route-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: var(--color-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.route-error {
+  flex-direction: column;
+  padding: 24px;
+  text-align: center;
+}
+
+.route-error h1 {
+  color: var(--color-ink);
+  font-size: 20px;
+}
+
+.route-error p {
+  max-width: 440px;
+  line-height: 1.5;
+}
+
+.route-error button {
+  margin-top: 8px;
+}
+
+.route-loading-indicator {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: route-loading-spin 0.7s linear infinite;
+}
+
+@keyframes route-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-loading-indicator {
+    animation: none;
+  }
 }
 
 /* ── 3. SHARED UTILITY CLASSES ────────────────────────────── */
@@ -202,16 +259,24 @@ body {
   color: #1f2937;
   font: 600 12px var(--font-base);
   cursor: pointer;
-  transition: background var(--duration-normal), border-color var(--duration-normal);
+  transition:
+    background var(--duration-normal),
+    border-color var(--duration-normal);
 }
-.registry-action-btn:hover { background: #f8fafc; border-color: #64748b; }
+.registry-action-btn:hover {
+  background: #f8fafc;
+  border-color: #64748b;
+}
 
 .priority-filter-btn {
   background: #f8fafc !important;
   border-color: #cbd5e1 !important;
   color: #1f2937 !important;
 }
-.priority-filter-btn:hover { background: #e2e8f0 !important; border-color: #64748b !important; }
+.priority-filter-btn:hover {
+  background: #e2e8f0 !important;
+  border-color: #64748b !important;
+}
 
 .icon-btn {
   background: transparent;
@@ -877,9 +942,15 @@ html:not(.theme-dark) .priority-dispatch-item {
   background: #fff !important;
   border-color: #d1d5db !important;
 }
-html:not(.theme-dark) .priority-dispatch-name { color: #1f2937 !important; }
-html:not(.theme-dark) .priority-dispatch-meta { color: #4b5563 !important; }
-html:not(.theme-dark) .priority-dispatch-icon { color: #047857 !important; }
+html:not(.theme-dark) .priority-dispatch-name {
+  color: #1f2937 !important;
+}
+html:not(.theme-dark) .priority-dispatch-meta {
+  color: #4b5563 !important;
+}
+html:not(.theme-dark) .priority-dispatch-icon {
+  color: #047857 !important;
+}
 
 html.theme-dark {
   --color-primary: #34d399;
@@ -907,7 +978,11 @@ html.theme-dark {
   --color-hover: rgba(255, 255, 255, 0.05);
 
   --glass-bg: rgba(17, 17, 17, 0.75);
-  --glass-bg-pill: color-mix(in srgb, var(--color-primary) 15%, var(--glass-bg));
+  --glass-bg-pill: color-mix(
+    in srgb,
+    var(--color-primary) 15%,
+    var(--glass-bg)
+  );
   --glass-border: rgba(255, 255, 255, 0.2);
   --glass-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -988,14 +1063,22 @@ html.theme-dark .registry-action-btn {
   border-color: #262626;
   color: #e5e7eb;
 }
-html.theme-dark .registry-action-btn:hover { background: #1a1a1a; border-color: #383838; }
+html.theme-dark .registry-action-btn:hover {
+  background: #1a1a1a;
+  border-color: #383838;
+}
 html.theme-dark .priority-filter-btn {
   background: rgba(255, 255, 255, 0.05) !important;
   border-color: #262626 !important;
   color: #f3f4f6 !important;
 }
-html.theme-dark .priority-filter-btn:hover { background: #1a1a1a !important; border-color: #383838 !important; }
-html.theme-dark .saas-footer p { color: var(--color-muted); }
+html.theme-dark .priority-filter-btn:hover {
+  background: #1a1a1a !important;
+  border-color: #383838 !important;
+}
+html.theme-dark .saas-footer p {
+  color: var(--color-muted);
+}
 html.theme-dark .primary-btn {
   background: var(--color-primary);
   color: #111;
@@ -1167,42 +1250,84 @@ html.theme-dark .ambient-bg-mesh {
    modalSlideUp, um-slide-up, spin, shimmer) have been removed. */
 
 @keyframes revela-fade-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes revela-slide-up {
-  from { opacity: 0; transform: translateY(16px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 @keyframes revela-slide-down {
-  from { opacity: 0; transform: translateY(-10px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 @keyframes shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position:  200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 @keyframes revela-fade-out {
-  from { opacity: 1; }
-  to   { opacity: 0; }
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 @keyframes revela-slide-down-out {
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to   { opacity: 0; transform: translateY(16px) scale(0.97); }
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
 }
 
 /* Legacy aliases — keep old names working until all refs are updated */
 @keyframes modalFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 @keyframes modalSlideUp {
-  from { opacity: 0; transform: translateY(16px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* Entrance animation utility classes */
@@ -1224,8 +1349,9 @@ html.theme-dark .ambient-bg-mesh {
 
 /* Hover lift — replaces all onMouseOver/onMouseOut JS hacks */
 .hover-lift {
-  transition: transform var(--duration-fast) var(--ease-in-out),
-              box-shadow var(--duration-fast) var(--ease-in-out);
+  transition:
+    transform var(--duration-fast) var(--ease-in-out),
+    box-shadow var(--duration-fast) var(--ease-in-out);
 }
 .hover-lift:hover {
   transform: translateY(-2px);
@@ -1266,7 +1392,9 @@ html.theme-dark .ambient-bg-mesh {
   align-items: center;
   justify-content: center;
   color: var(--color-muted);
-  transition: background var(--duration-fast), color var(--duration-fast);
+  transition:
+    background var(--duration-fast),
+    color var(--duration-fast);
   flex-shrink: 0;
 }
 .modal-close-btn:hover {
@@ -1622,7 +1750,9 @@ html.theme-dark .ambient-bg-mesh {
     height: 100vh;
     width: 260px;
     visibility: hidden;
-    transition: left 0.3s ease, visibility 0s linear 0.3s;
+    transition:
+      left 0.3s ease,
+      visibility 0s linear 0.3s;
     z-index: 999;
     background: var(
       --color-modal-bg
@@ -2260,8 +2390,6 @@ html.theme-dark .legal-action-pill-btn:hover {
   color: #34d399;
 }
 
-
-
 @media (max-width: 640px) {
   .legal-page-content {
     padding: 32px 20px;
@@ -2339,7 +2467,9 @@ html.theme-dark .legal-action-pill-btn:hover {
   color: var(--color-ink);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
   user-select: none;
-  transition: background 0.2s, border-color 0.2s;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
 }
 
 .live-dot {
@@ -3084,7 +3214,9 @@ html.theme-dark .upload-column-badge {
   font-size: 15px;
   font-weight: 500;
   cursor: pointer;
-  transition: background var(--duration-fast), box-shadow var(--duration-fast);
+  transition:
+    background var(--duration-fast),
+    box-shadow var(--duration-fast);
 }
 .inspection-calendar-dates > .inspection-calendar-day,
 .inspection-calendar-dates > .inspection-calendar-empty {

@@ -1,6 +1,8 @@
 import json
+import logging
 import math
 import re
+import threading
 import traceback
 import os
 import time
@@ -73,6 +75,30 @@ def _get_candidate_gemini_models(client, force_refresh=False):
 _analytics_cache: dict = {}
 _ANALYTICS_CACHE_TTL = 60  # seconds
 
+# ── Cache/latency instrumentation (measurement only; behaviour unchanged) ─────
+# Tracks hit/miss/expired decisions and how many uncached pipelines are running
+# at once, so a burst of concurrent misses (cache stampede) is visible in logs.
+_analytics_metrics = {"hits": 0, "misses": 0}
+_analytics_inflight = 0
+_analytics_metrics_lock = threading.Lock()
+_analytics_log = logging.getLogger("revela.analytics")
+
+
+def _log_analytics_cache(state, inflight, inner_ms, key):
+    """Emit one cache decision line. Only a key prefix is logged, never filters."""
+    with _analytics_metrics_lock:
+        hits = _analytics_metrics["hits"]
+        misses = _analytics_metrics["misses"]
+    _analytics_log.info(
+        "[analytics-cache] state=%s inflight=%d inner_ms=%.1f key=%s hits=%d misses=%d",
+        state,
+        inflight,
+        inner_ms,
+        key[:8],
+        hits,
+        misses,
+    )
+
 
 def _analytics_cache_key(F: dict) -> str:
     """Stable MD5 key derived from the analytics filter dict."""
@@ -127,8 +153,26 @@ def get_all_analytics():
             # shallow copy so we can append per-user rollover
             data = dict(cached["data"])
             status_code = cached["status_code"]
+            with _analytics_metrics_lock:
+                _analytics_metrics["hits"] += 1
+            _log_analytics_cache("hit", 0, 0.0, cache_key)
         else:
-            data, status_code = _get_all_analytics_inner(F)
+            with _analytics_metrics_lock:
+                _analytics_metrics["misses"] += 1
+                _analytics_inflight += 1
+                inflight = _analytics_inflight
+            inner_start = time.perf_counter()
+            try:
+                data, status_code = _get_all_analytics_inner(F)
+            finally:
+                with _analytics_metrics_lock:
+                    _analytics_inflight -= 1
+            _log_analytics_cache(
+                "expired" if cached else "miss",
+                inflight,
+                (time.perf_counter() - inner_start) * 1000.0,
+                cache_key,
+            )
             if status_code == 200:
                 _analytics_cache[cache_key] = {
                     # store a clean copy so the local mutation below is safe

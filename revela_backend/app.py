@@ -30,7 +30,8 @@ def create_app():
     # frontend silently blocked; setting it overrides the production defaults.
     # Parsing, www/apex mirroring, and trailing-slash normalisation live in
     # api/utils/cors_config.py so they can be unit tested.
-    allowed_origins = cors_config.build_allowed_origins(os.getenv("CORS_ORIGINS"))
+    allowed_origins = cors_config.build_allowed_origins(
+        os.getenv("CORS_ORIGINS"))
     app.logger.info(
         "[CORS] Allowed origins: %s",
         ", ".join(
@@ -44,9 +45,17 @@ def create_app():
             "origins": allowed_origins,
             "allow_headers": ["Content-Type", "Authorization"],
             "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            "supports_credentials": True
+            "supports_credentials": True,
+            "max_age": 86400,
         }
     })
+
+    # Behavior-neutral request telemetry: one structured line per request
+    # (route, status, duration, size, correlation id) plus the shared `revela`
+    # logger used by the analytics-cache and SSE-hub counters. Additive only;
+    # it does not alter request handling or response bodies.
+    from api.middleware import request_telemetry
+    request_telemetry.init_app(app)
 
     # Register blueprints
     from api.auth.routes import auth_bp
@@ -115,7 +124,8 @@ def _start_permit_expiry_scheduler(app):
                 from api.registry.service import check_and_expire_old_permits
                 check_and_expire_old_permits()
             except Exception as exc:
-                app.logger.warning(f"[Scheduler] Permit expiry check failed: {exc}")
+                app.logger.warning(
+                    f"[Scheduler] Permit expiry check failed: {exc}")
 
     scheduler = BackgroundScheduler(daemon=True)
 
@@ -145,7 +155,7 @@ def _start_permit_expiry_scheduler(app):
                 # Automatically refresh coords older than 20 days (stays within 30-day limit)
                 res = refresh_expired_coords()
                 app.logger.info(f"[Scheduler] Map Pins Refresh: {res}")
-                
+
                 # Safety net: clear Google coords older than 28 days that failed to refresh
                 # Default is dry_run=True, so it just logs for now.
                 purge_res = purge_expired_coords(dry_run=True)

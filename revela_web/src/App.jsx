@@ -1,23 +1,31 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeProvider';
 import { AuthProvider } from './context/AuthProvider';
 import ProtectedRoute from './components/ProtectedRoute';   // ← add this
+import RouteErrorBoundary from './components/RouteErrorBoundary';
 import LoginPage from './pages/LoginPage';
-import HomePage from './pages/HomePage';
-import MapPage from './pages/MapPage';
-import RegistryPage from './pages/RegistryPage';
-import AnalyticsPage from './pages/AnalyticsPage';
-import InspectionPage from './pages/InspectionPage';
-import InspectionCalendarPage from './pages/InspectionCalendarPage';
-import UserManagementPage from './pages/UserManagementPage';
-import ExportReportsPage from './pages/ExportReportsPage';
-import SettingsPage from './pages/SettingsPage';
 import TermsPage from './components/TermsPage';
 import PrivacyPage from './components/PrivacyPage';
 import CookiePolicyPage from './components/CookiePolicyPage';
 import DesktopAccessRequired from './components/DesktopAccessRequired';
 import InactivityProvider from './components/InactivityProvider';
 import { useDeviceAccess } from './hooks/useDeviceAccess';
+
+const HomePage = lazy(() => import('./pages/HomePage'));
+const MapPage = lazy(() => import('./pages/MapPage'));
+const RegistryPage = lazy(() => import('./pages/RegistryPage'));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
+const InspectionPage = lazy(() => import('./pages/InspectionPage'));
+const InspectionCalendarPage = lazy(() => import('./pages/InspectionCalendarPage'));
+const UserManagementPage = lazy(() => import('./pages/UserManagementPage'));
+const ExportReportsPage = lazy(() => import('./pages/ExportReportsPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+
+function PathnameKeyedRouteErrorBoundary({ children }) {
+  const { pathname } = useLocation();
+  return <RouteErrorBoundary key={pathname}>{children}</RouteErrorBoundary>;
+}
 
 export default function App() {
   // Usability gate only: phone-sized screens get the restricted-access notice.
@@ -35,6 +43,15 @@ export default function App() {
         <BrowserRouter>
           {/* Inside the router so route changes count as activity. */}
           <InactivityProvider>
+          <PathnameKeyedRouteErrorBoundary>
+          <Suspense
+            fallback={(
+              <div className="route-loading" role="status">
+                <span className="route-loading-indicator" aria-hidden="true" />
+                Loading page...
+              </div>
+            )}
+          >
           <Routes>
             {/* Public & Legal */}
             <Route path="/" element={<LoginPage />} />
@@ -54,6 +71,8 @@ export default function App() {
             <Route path="/reports" element={<ProtectedRoute><ExportReportsPage /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           </Routes>
+          </Suspense>
+          </PathnameKeyedRouteErrorBoundary>
           </InactivityProvider>
         </BrowserRouter>
       </ThemeProvider>

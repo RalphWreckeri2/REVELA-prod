@@ -892,9 +892,16 @@ export default function AnalyticsPage() {
   const [filterMeta, setFilterMeta] = useState(null);
   const [barangaysList, setBarangaysList] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const analyticsRequestRef = useRef(null);
 
   const fetchAnalytics = useCallback(async (isSilent = false) => {
     if (!token) return;
+    if (analyticsRequestRef.current && !analyticsRequestRef.current.signal.aborted) {
+      if (isSilent) return;
+      analyticsRequestRef.current.abort();
+    }
+    const controller = new AbortController();
+    analyticsRequestRef.current = controller;
 
     if (!isSilent) {
       setLoading(true);
@@ -902,17 +909,27 @@ export default function AnalyticsPage() {
     }
     setError(null);
     try {
-      const json = await getAnalyticsOverviewRequest(token, appliedFilters);
+      const json = await getAnalyticsOverviewRequest(token, appliedFilters, { signal: controller.signal });
+      if (controller.signal.aborted) return;
       setData(json);
     } catch (e) {
+      if (controller.signal.aborted) return;
       if (!isSilent) {
         setError(e.message);
       }
     } finally {
-      setLoading(false);
-      setIsRefreshing(false);
+      if (analyticsRequestRef.current === controller) {
+        analyticsRequestRef.current = null;
+        setLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, [token, appliedFilters]);
+
+  useEffect(() => () => {
+    analyticsRequestRef.current?.abort();
+    analyticsRequestRef.current = null;
+  }, [fetchAnalytics]);
 
   const fetchWlcConfig = useCallback(async () => {
     if (!token) return;
@@ -967,8 +984,10 @@ export default function AnalyticsPage() {
 
   // Real-time event listeners and auto-polling
   useEffect(() => {
+    let syncTimer;
     const handleSync = () => {
-      fetchAnalytics(true);
+      window.clearTimeout(syncTimer);
+      syncTimer = window.setTimeout(() => fetchAnalytics(true), 200);
     };
 
     window.addEventListener("revela:inspection-update", handleSync);
@@ -999,6 +1018,7 @@ export default function AnalyticsPage() {
       window.removeEventListener("revela:registry-update", handleSync);
       window.removeEventListener("revela:user-update", handleSync);
       window.removeEventListener("revela:global-refresh", handleSync);
+      window.clearTimeout(syncTimer);
       window.clearInterval(pollTimer);
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleVisibility);
