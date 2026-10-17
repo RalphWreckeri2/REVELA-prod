@@ -1,10 +1,35 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+from flask import Flask
 
 from api.analytics import filters, routes
 
 
 class AnalyticsRegistryCompatibilityTests(unittest.TestCase):
+
+    def test_uncached_all_route_tracks_inflight_counter(self):
+        app = Flask(__name__)
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        mysql_stub = MagicMock()
+        mysql_stub.connection.cursor.return_value = cursor
+
+        def run_inner(_filters):
+            self.assertEqual(routes._analytics_inflight, 1)
+            return {"ok": True}, 200
+
+        with app.test_request_context("/api/analytics/all"):
+            with patch.object(routes, "_analytics_cache", {}), \
+                    patch.object(routes, "parse_analytics_filters", return_value={}), \
+                    patch.object(routes, "_get_all_analytics_inner", side_effect=run_inner), \
+                    patch.object(routes, "get_jwt_identity", return_value="1"), \
+                    patch.object(routes, "mysql", mysql_stub):
+                response, status_code = routes.get_all_analytics.__wrapped__()
+
+        self.assertEqual(status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        self.assertEqual(routes._analytics_inflight, 0)
 
     def test_effective_analytics_color_uses_only_verified_orange_reports(self):
         expression = routes._effective_flag_color_sql("g")

@@ -144,6 +144,7 @@ analytics_bp = Blueprint("analytics", __name__)
 @analytics_bp.route("/all", methods=["GET"])
 @jwt_required()
 def get_all_analytics():
+    global _analytics_inflight
     try:
         F = parse_analytics_filters(request.args)
         cache_key = _analytics_cache_key(F)
@@ -1073,7 +1074,8 @@ def get_demographic_reports():
     cur = mysql.connection.cursor()
     try:
         filters = parse_analytics_filters(request.args)
-        filters["registration_type_supported"] = _registry_has_registration_type(cur)
+        filters["registration_type_supported"] = _registry_has_registration_type(
+            cur)
         reg_all, reg_all_params = registry_sql("o", filters)
 
         cur.execute(
