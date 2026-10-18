@@ -1,4 +1,5 @@
 from api.flags.service import (
+    BarangayChangeConfirmationRequired,
     VIRTUAL_REGISTRY_LOG_ID_OFFSET,
     _match_registry_to_google,
     _registry_business_id_for_virtual_log_id,
@@ -265,6 +266,7 @@ class LockShieldTests(unittest.TestCase):
             log_id=-(VIRTUAL_REGISTRY_LOG_ID_OFFSET + 1),
             lat=13.97000000,
             lng=121.12000000,
+            confirm_barangay_id=1,
         )
         self.assertTrue(success)
         self.assertIsNone(err)
@@ -277,6 +279,126 @@ class LockShieldTests(unittest.TestCase):
         self.assertIn("matchStatus = 'approved'", sql)
         self.assertIn("WHERE businessID = %s", sql)
         self.assertEqual(params[-1], "S-0401018-00101")
+
+    @patch("api.flags.service._get_barangay_id_by_coords", return_value=11)
+    @patch("api.flags.service.mysql")
+    def test_pin_move_to_another_barangay_requires_confirmation_without_writes(
+        self, mock_mysql, mock_get_brgy
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.return_value = {
+            "detectedName": "TRI STAR BATANGAS CORP ( TOMATO & BASIL)",
+            "barangayID": 14,
+            "placeID": None,
+            "latitude": 13.99893750,
+            "longitude": 121.09843750,
+            "businessID": None,
+            "flagColor": "Green",
+        }
+        cursor.fetchall.return_value = [
+            {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+            {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+        ]
+
+        success, error = update_flag_location(
+            log_id=84,
+            lat=13.99906936,
+            lng=121.09840174,
+        )
+
+        self.assertFalse(success)
+        self.assertIsInstance(error, BarangayChangeConfirmationRequired)
+        self.assertEqual(error.current_barangay_id, 14)
+        self.assertEqual(error.new_barangay_id, 11)
+        self.assertIn("Barangay Kinalaglagan", str(error))
+        self.assertIn("Barangay San Sebastian", str(error))
+        self.assertFalse(any(
+            "UPDATE geospatial_logs" in call.args[0]
+            or "UPDATE official_registry" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        mock_mysql.connection.commit.assert_not_called()
+
+    @patch("api.flags.service._get_barangay_id_by_coords", return_value=11)
+    @patch("api.flags.service.mysql")
+    def test_pin_move_accepts_confirmed_barangay_id(self, mock_mysql, mock_get_brgy):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.side_effect = [
+            {
+                "detectedName": "Unlinked flagged business",
+                "barangayID": 14,
+                "placeID": None,
+                "latitude": 13.99893750,
+                "longitude": 121.09843750,
+                "businessID": None,
+                "flagColor": "Red",
+            },
+            None,
+        ]
+
+        success, error = update_flag_location(
+            log_id=84,
+            lat=13.99906936,
+            lng=121.09840174,
+            confirm_barangay_id=11,
+        )
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        update_geo_call = next(
+            call for call in cursor.execute.call_args_list
+            if "UPDATE geospatial_logs" in call.args[0]
+        )
+        self.assertEqual(update_geo_call.args[1][2], 11)
+        mock_mysql.connection.commit.assert_called_once()
+
+    @patch("api.flags.service.is_black_locked", return_value=False)
+    @patch("api.flags.service._get_barangay_id_by_coords", return_value=11)
+    @patch("api.flags.service.mysql")
+    def test_linked_real_pin_confirms_against_registry_barangay(
+        self, mock_mysql, mock_get_brgy, mock_is_black_locked
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.side_effect = [
+            {
+                "detectedName": "TRI STAR BATANGAS CORP ( TOMATO & BASIL)",
+                "barangayID": 11,
+                "placeID": None,
+                "latitude": 13.99906936,
+                "longitude": 121.09840174,
+                "businessID": "P-0401018-00037",
+                "flagColor": "Green",
+            },
+            {
+                "businessID": "P-0401018-00037",
+                "barangayID": 14,
+            },
+        ]
+        cursor.fetchall.return_value = [
+            {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+            {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+        ]
+
+        success, error = update_flag_location(
+            log_id=84,
+            lat=13.99906936,
+            lng=121.09840174,
+        )
+
+        self.assertFalse(success)
+        self.assertIsInstance(error, BarangayChangeConfirmationRequired)
+        self.assertEqual(error.current_barangay_id, 14)
+        self.assertEqual(error.new_barangay_id, 11)
+        self.assertIn("Barangay San Sebastian", str(error))
+        self.assertFalse(any(
+            "UPDATE geospatial_logs" in call.args[0]
+            or "UPDATE official_registry" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        mock_mysql.connection.commit.assert_not_called()
 
     @patch("api.registry.service._sync_flag_color")
     @patch("api.registry.service._load_barangay_lookup", return_value={"barangay i": 1})

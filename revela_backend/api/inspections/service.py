@@ -397,7 +397,8 @@ def _enforcement_state_table_available(cursor):
     return cursor.fetchone() is not None
 
 
-def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
+def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
+                      expected_barangay_id=None):
     """
     Create an INSPECTION_REPORTS row linking a geospatial log to an inspector.
     targetType is always 'geospatial_log' since we're dispatching from the flag map.
@@ -414,14 +415,17 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by):
         # pin's own colour, which is the only case where the registry cannot
         # speak. The ladder columns are only read once they exist.
 
+        barangay_filter = " AND g.barangayID = %s" if expected_barangay_id is not None else ""
+        flag_params = (
+            log_id, expected_barangay_id) if expected_barangay_id is not None else (log_id,)
         cursor.execute(
             f"""
             SELECT g.logID, g.flagColor, g.businessID,
                    {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor
             FROM geospatial_logs g
-            WHERE g.logID = %s
+            WHERE g.logID = %s{barangay_filter}
             """,
-            (log_id,),
+            flag_params,
         )
         flag = cursor.fetchone()
         if not flag:

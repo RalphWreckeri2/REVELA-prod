@@ -18,6 +18,7 @@ from api.flags.service import (
     delete_flag,
     reconcile_existing_flags,
     update_flag_location,
+    BarangayChangeConfirmationRequired,
     get_places_usage_today,
     YellowFlagSubmissionConflict,
     YellowFlagValidationError,
@@ -37,7 +38,8 @@ def inspection_verified_compliant_route():
     try:
         return jsonify(get_inspection_verified_compliant()), 200
     except Exception:
-        current_app.logger.exception("Could not load current-compliance report")
+        current_app.logger.exception(
+            "Could not load current-compliance report")
         return jsonify({"error": "Unable to load inspection-verified compliant businesses."}), 500
 
 
@@ -435,14 +437,33 @@ def change_flag_location_route(log_id):
     except (ValueError, TypeError):
         return jsonify({"error": "Invalid coordinates"}), 400
 
+    confirm_barangay_id = data.get("confirmBarangayID")
+    if confirm_barangay_id is not None:
+        try:
+            confirm_barangay_id = int(confirm_barangay_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid confirmBarangayID"}), 400
+
     identity = get_jwt_identity()
     try:
         actor_user_id = int(identity) if identity is not None else None
     except (TypeError, ValueError):
         actor_user_id = None
     success, error = update_flag_location(
-        log_id, lat, lng, actor_user_id=actor_user_id)
+        log_id,
+        lat,
+        lng,
+        actor_user_id=actor_user_id,
+        confirm_barangay_id=confirm_barangay_id,
+    )
     if not success:
+        if isinstance(error, BarangayChangeConfirmationRequired):
+            return jsonify({
+                "error": str(error),
+                "code": "barangay_change_confirmation_required",
+                "currentBarangayID": error.current_barangay_id,
+                "newBarangayID": error.new_barangay_id,
+            }), 409
         return jsonify({"error": error}), 400
     return jsonify({"message": f"Flag #{log_id} location updated successfully"}), 200
 

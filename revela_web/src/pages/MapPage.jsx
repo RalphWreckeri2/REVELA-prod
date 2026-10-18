@@ -13,6 +13,7 @@ import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markercluste
 import DashboardLayout from "../components/DashboardLayout";
 import "../styles/MapPage.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
+import BatchDispatchModal from "../components/BatchDispatchModal";
 import ApiUsageSettingsPanel from "../components/ApiUsageSettingsPanel";
 import {
   IMPORTED_LOCATION,
@@ -2360,6 +2361,7 @@ export default function MapPage() {
   }, [location.search, flags, rememberMapCamera]);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [dispatchTarget, setDispatchTarget] = useState(null);
+  const [isBatchDispatchOpen, setIsBatchDispatchOpen] = useState(false);
   const [filterColor, setFilterColor] = useState("all");
   const [filterBarangay, setFilterBarangay] = useState("all");
   const [search, setSearch] = useState("");
@@ -3543,15 +3545,57 @@ export default function MapPage() {
   const handleSaveAdjustedLocation = async () => {
     if (!adjustingFlagId || !adjustingLatLng) return;
     setSaveAdjustLoading(true);
+    setActionError("");
+    let barangayChangeConfirmed = false;
     try {
-      await updateFlagLocationRequest(adjustingFlagId, adjustingLatLng.lat, adjustingLatLng.lng, token);
+      try {
+        await updateFlagLocationRequest(
+          adjustingFlagId,
+          adjustingLatLng.lat,
+          adjustingLatLng.lng,
+          token,
+        );
+      } catch (err) {
+        if (err.code !== "barangay_change_confirmation_required") throw err;
+
+        const confirmation = await Swal.fire({
+          icon: "warning",
+          title: "Confirm Barangay Change",
+          text: err.responseData?.error || err.message,
+          showCancelButton: true,
+          confirmButtonText: "Save and update barangay",
+          cancelButtonText: "Cancel",
+          confirmButtonColor: "var(--color-primary)",
+          cancelButtonColor: "var(--color-muted)",
+        });
+        if (!confirmation.isConfirmed) return;
+
+        const confirmedBarangayID = err.responseData?.newBarangayID;
+        if (!Number.isInteger(confirmedBarangayID)) {
+          throw new Error(
+            "Could not confirm the destination barangay. Please try again.",
+            { cause: err },
+          );
+        }
+
+        await updateFlagLocationRequest(
+          adjustingFlagId,
+          adjustingLatLng.lat,
+          adjustingLatLng.lng,
+          token,
+          confirmedBarangayID,
+        );
+        barangayChangeConfirmed = true;
+      }
       await fetchFlags();
       setAdjustingFlagId(null);
       setAdjustingLatLng(null);
       Swal.fire({
         icon: 'success',
         title: 'Location Updated',
-        text: 'The flag location has been updated successfully.',
+        text: barangayChangeConfirmed
+          ? 'The flag location and barangay have been updated successfully.'
+          : 'The flag location has been updated successfully.',
         timer: 2000,
         showConfirmButton: false
       });
@@ -4417,6 +4461,23 @@ export default function MapPage() {
                   fontWeight: 700,
                   boxSizing: "border-box",
                 }}
+                onClick={() => setIsBatchDispatchOpen(true)}
+              >
+                <Icon.Send size={16} /> Batch Dispatch by Barangay
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                className="primary-btn"
+                style={{
+                  width: "100%",
+                  justifyContent: "center",
+                  padding: "12px 14px",
+                  borderRadius: 12,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  boxSizing: "border-box",
+                }}
                 onClick={() => setIsInspectorModalOpen(true)}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, flexShrink: 0 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
@@ -4471,6 +4532,15 @@ export default function MapPage() {
             handleCloseDetailModal();
             fetchFlags();
           }}
+        />
+      </AnimatePresence>
+
+      <AnimatePresence isVisible={isBatchDispatchOpen}>
+        <BatchDispatchModal
+          barangays={barangays}
+          token={token}
+          onClose={() => setIsBatchDispatchOpen(false)}
+          onSuccess={() => fetchFlags()}
         />
       </AnimatePresence>
 

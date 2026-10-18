@@ -71,6 +71,7 @@ async function handleResponse(res) {
       // Carry the machine-readable code so callers can react to specific
       // reasons (e.g. "session_idle") instead of matching on prose.
       error.code = data.code;
+      error.responseData = data;
       throw error;
     }
     return data;
@@ -767,7 +768,13 @@ export async function resetDetectionQuotaRequest(token) {
   }
 }
 
-export async function updateFlagLocationRequest(logId, lat, lng, token) {
+export async function updateFlagLocationRequest(
+  logId,
+  lat,
+  lng,
+  token,
+  confirmBarangayID = null,
+) {
   if (!token) {
     throw new Error("Missing authentication token.");
   }
@@ -779,7 +786,11 @@ export async function updateFlagLocationRequest(logId, lat, lng, token) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ latitude: lat, longitude: lng }),
+      body: JSON.stringify({
+        latitude: lat,
+        longitude: lng,
+        ...(confirmBarangayID !== null && { confirmBarangayID }),
+      }),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -909,6 +920,26 @@ export async function getInspectorTasksRequest(token) {
 export async function assignInspectionRequest(payload, token) {
   try {
     const res = await fetch(`${BASE_URL}/inspections/assign`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/**
+ * POST /api/inspections/assign-batch
+ * Admin assigns selected flags within one barangay to an inspector.
+ */
+export async function assignInspectionBatchRequest(payload, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/inspections/assign-batch`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

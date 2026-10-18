@@ -10,6 +10,10 @@ the registry-status lookup is substituted, with the value the row resolves to.
 Every CASE arm, its precedence and the ELSE <stored colour> fallback are the
 shipped expression.
 """
+from api.registry.colors import _effective_flag_color_sql
+from api.inspections import service as inspection_service
+from api.inspections import routes as inspections_routes
+from flask import Flask
 import os
 import re
 import sqlite3
@@ -20,11 +24,6 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from flask import Flask
-
-from api.inspections import routes as inspections_routes
-from api.inspections import service as inspection_service
-from api.registry.colors import _effective_flag_color_sql
 
 _STATUS_LOOKUP = re.compile(
     r"\(\s*SELECT\s+r_chk\.applicationStatus.*?LIMIT\s+1\s*\)", re.DOTALL)
@@ -76,7 +75,7 @@ def _sqlite_registry_status(status):
 class _AssignBase(unittest.TestCase):
 
     def _assign(self, stored_color, registry_status, *, business_id="BIZ-1",
-                place_id=None, open_status=None):
+                place_id=None, open_status=None, expected_barangay_id=None):
         effective = _sqlite_registry_status(registry_status)
         cursor = MagicMock()
         cursor.lastrowid = 31
@@ -97,6 +96,7 @@ class _AssignBase(unittest.TestCase):
             return None
 
         cursor.fetchone.side_effect = fetchone
+        self.last_cursor = cursor
         with (
             patch.object(inspection_service, "mysql") as mock_mysql,
             patch.object(inspection_service, "_ensure_gps_columns"),
@@ -107,7 +107,8 @@ class _AssignBase(unittest.TestCase):
         ):
             mock_mysql.connection.cursor.return_value = cursor
             return inspection_service.assign_inspection(
-                log_id=22, inspector_user_id=9, deadline=None, assigned_by=2)
+                log_id=22, inspector_user_id=9, deadline=None, assigned_by=2,
+                expected_barangay_id=expected_barangay_id)
 
 
 class EligibilityGateTests(_AssignBase):
@@ -125,6 +126,16 @@ class EligibilityGateTests(_AssignBase):
         self.assertIsInstance(error,
                               inspection_service.InspectionAssignmentConflict)
         self.assertIn("Black", str(error))
+
+    def test_expected_barangay_is_enforced_in_target_lookup(self):
+        self._assign("Red", "Active", expected_barangay_id=7)
+        target_query = next(
+            call for call in self.last_cursor.execute.call_args_list
+            if "FROM geospatial_logs g" in call.args[0]
+            and "WHERE g.logID = %s" in call.args[0]
+        )
+        self.assertIn("AND g.barangayID = %s", target_query.args[0])
+        self.assertEqual(target_query.args[1], (22, 7))
 
     def test_allowed_colours_are_assignable(self):
         for colour, status in (("Red", "Expired"), ("Yellow", "Pending"),
@@ -208,8 +219,8 @@ class AssignRouteStatusCodeTests(unittest.TestCase):
     def _call(self, service_result):
         with patch.object(inspections_routes, "assign_inspection",
                           return_value=service_result), \
-             patch.object(inspections_routes, "get_jwt_identity",
-                          return_value=2):
+            patch.object(inspections_routes, "get_jwt_identity",
+                         return_value=2):
             with self.app.test_request_context(
                     "/inspections/assign", method="POST",
                     json={"logID": 22, "userID": 9}):
@@ -238,6 +249,59 @@ class AssignRouteStatusCodeTests(unittest.TestCase):
         text = body.get_data(as_text=True)
         self.assertIn("inspection_assignment_conflict", text)
         self.assertIn("nope", text)
+
+
+class BatchAssignRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.app = Flask(__name__)
+        self.view = inspections_routes.assign_batch.__wrapped__
+
+    def test_selected_ids_are_assigned_with_barangay_scope(self):
+        assigned_result = {
+            "reportID": 31, "logID": 22, "inspectorID": 9,
+            "status": "Assigned",
+        }
+        with (
+            patch.object(inspections_routes, "assign_inspection",
+                         return_value=(assigned_result, None)) as assign_mock,
+            patch.object(inspections_routes,
+                         "get_jwt_identity", return_value=2),
+            patch.object(inspections_routes, "notify_inspection_assigned"),
+        ):
+            with self.app.test_request_context(
+                "/inspections/assign-batch", method="POST",
+                json={"barangayID": 7, "userID": 9, "logIDs": [22]},
+            ):
+                body, status = self.view()
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get_json()["assignedCount"], 1)
+        self.assertEqual(body.get_json()["skippedCount"], 0)
+        self.assertEqual(
+            assign_mock.call_args.kwargs["expected_barangay_id"], 7)
+
+    def test_empty_selection_is_rejected(self):
+        with patch.object(inspections_routes, "get_jwt_identity", return_value=2):
+            with self.app.test_request_context(
+                "/inspections/assign-batch", method="POST",
+                json={"barangayID": 7, "userID": 9, "logIDs": []},
+            ):
+                body, status = self.view()
+        self.assertEqual(status, 400)
+        self.assertIn("logIDs", body.get_json()["error"])
+
+    def test_fractional_log_id_is_rejected_without_assignment(self):
+        with (
+            patch.object(inspections_routes, "get_jwt_identity", return_value=2),
+            patch.object(inspections_routes, "assign_inspection") as assign_mock,
+        ):
+            with self.app.test_request_context(
+                "/inspections/assign-batch", method="POST",
+                json={"barangayID": 7, "userID": 9, "logIDs": [22.5]},
+            ):
+                body, status = self.view()
+        self.assertEqual(status, 400)
+        self.assertIn("logIDs", body.get_json()["error"])
+        assign_mock.assert_not_called()
 
 
 if __name__ == "__main__":

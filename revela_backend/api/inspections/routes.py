@@ -189,6 +189,69 @@ def assign():
     return jsonify(result), 201
 
 
+@inspections_bp.route("/assign-batch", methods=["POST"])
+@admin_required()
+def assign_batch():
+    """Admin: assign selected flags from one barangay to an inspector."""
+    assigned_by = get_jwt_identity()
+    data = request.get_json()
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required"}), 400
+
+    try:
+        barangay_id = data.get("barangayID")
+        inspector_user_id = data.get("userID")
+        raw_log_ids = data.get("logIDs")
+        if (
+            type(barangay_id) is not int
+            or type(inspector_user_id) is not int
+            or barangay_id <= 0
+            or inspector_user_id <= 0
+        ):
+            raise ValueError
+        if not isinstance(raw_log_ids, list) or not raw_log_ids or len(raw_log_ids) > 500:
+            raise ValueError
+        if any(type(log_id) is not int or log_id <= 0 for log_id in raw_log_ids):
+            raise ValueError
+        log_ids = list(dict.fromkeys(raw_log_ids))
+    except (TypeError, ValueError):
+        return jsonify({
+            "error": "Provide a barangayID, inspector userID, and 1 to 500 positive logIDs",
+        }), 400
+
+    deadline = data.get("deadline") or None
+    assigned = []
+    skipped = []
+    for log_id in log_ids:
+        result, error = assign_inspection(
+            log_id=log_id,
+            inspector_user_id=inspector_user_id,
+            deadline=deadline,
+            assigned_by=assigned_by,
+            expected_barangay_id=barangay_id,
+        )
+        if error:
+            skipped.append({"logID": log_id, "error": str(error)})
+            continue
+        assigned.append(result)
+        try:
+            notify_inspection_assigned(
+                report_id=result["reportID"],
+                log_id=result["logID"],
+                inspector_user_id=result["inspectorID"],
+                status=result.get("status", "Assigned"),
+            )
+        except (TypeError, ValueError, KeyError) as exc:
+            print(f"notify_inspection_assigned skipped: {exc}")
+
+    return jsonify({
+        "assigned": assigned,
+        "skipped": skipped,
+        "assignedCount": len(assigned),
+        "skippedCount": len(skipped),
+    }), 200
+
+
 # ── POST /api/inspections/submit ──────────────────────────────────────────────
 @inspections_bp.route("/submit", methods=["POST"])
 @jwt_required()

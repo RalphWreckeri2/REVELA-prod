@@ -3567,7 +3567,64 @@ def update_flag_color(log_id, color):
         return False, str(e)
 
 
-def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None):
+class BarangayChangeConfirmationRequired(ValueError):
+    def __init__(self, current_barangay_id, new_barangay_id,
+                 current_barangay_name, new_barangay_name):
+        self.current_barangay_id = current_barangay_id
+        self.new_barangay_id = new_barangay_id
+        self.current_barangay_name = current_barangay_name
+        self.new_barangay_name = new_barangay_name
+        super().__init__(
+            f"The new pin is in {new_barangay_name}, but this record is "
+            f"currently assigned to {current_barangay_name}. Saving will "
+            "update the record's barangay. Continue?"
+        )
+
+
+def _barangay_change_confirmation_error(
+    cursor, current_barangay_id, new_barangay_id, confirmed_barangay_id
+):
+    if current_barangay_id is None or new_barangay_id is None:
+        return None
+
+    if str(current_barangay_id) == str(new_barangay_id):
+        return None
+    if str(confirmed_barangay_id) == str(new_barangay_id):
+        return None
+
+    cursor.execute(
+        "SELECT barangayID, barangayName FROM barangays "
+        "WHERE barangayID IN (%s, %s)",
+        (current_barangay_id, new_barangay_id),
+    )
+    names = {}
+    for row in cursor.fetchall() or []:
+        if isinstance(row, dict):
+            names[str(row.get("barangayID"))] = row.get("barangayName")
+        else:
+            names[str(row[0])] = row[1]
+
+    current_name = names.get(
+        str(current_barangay_id), f"Barangay ID {current_barangay_id}"
+    )
+    new_name = names.get(
+        str(new_barangay_id), f"Barangay ID {new_barangay_id}"
+    )
+    return BarangayChangeConfirmationRequired(
+        current_barangay_id,
+        new_barangay_id,
+        current_name,
+        new_name,
+    )
+
+
+def update_flag_location(
+    log_id: int,
+    lat: float,
+    lng: float,
+    actor_user_id=None,
+    confirm_barangay_id=None,
+):
     """
     Update coordinates of a flag manually (e.g. via drag-and-drop on the map).
     Handles both:
@@ -3601,6 +3658,15 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
             except BlackLockedError as exc:
                 cursor.close()
                 return False, exc
+            confirmation_error = _barangay_change_confirmation_error(
+                cursor,
+                row.get("barangayID"),
+                new_barangay_id,
+                confirm_barangay_id,
+            )
+            if confirmation_error:
+                cursor.close()
+                return False, confirmation_error
             old_lat, old_lng = row.get("latitude"), row.get("longitude")
             final_barangay_id = new_barangay_id or row.get("barangayID")
             from api.registry.places_resolver import compute_resolve_key
@@ -3673,6 +3739,58 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
 
         detected_name = row["detectedName"]
         old_place_id = row.get("placeID")
+        original_barangay_id = row.get("barangayID")
+
+        # Resolve the linked registry row before confirming so the prompt uses
+        # its stored barangay, not only the geospatial pin's barangay.
+        target_biz_id = row.get("businessID")
+        registry_match = None
+        if target_biz_id:
+            cursor.execute(
+                "SELECT businessID, barangayID FROM official_registry "
+                "WHERE businessID = %s LIMIT 1",
+                (target_biz_id,),
+            )
+            registry_match = cursor.fetchone()
+            if not registry_match:
+                target_biz_id = None
+
+        if not target_biz_id and old_place_id:
+            cursor.execute(
+                "SELECT businessID, barangayID FROM official_registry "
+                "WHERE placeID = %s LIMIT 1",
+                (old_place_id,),
+            )
+            registry_match = cursor.fetchone()
+            if registry_match:
+                target_biz_id = registry_match["businessID"]
+
+        if not target_biz_id and detected_name:
+            cursor.execute(
+                """SELECT businessID, barangayID FROM official_registry
+                   WHERE LOWER(businessName) = LOWER(%s)
+                     AND (barangayID = %s OR barangayID = %s)
+                   LIMIT 1""",
+                (detected_name, original_barangay_id, new_barangay_id),
+            )
+            registry_match = cursor.fetchone()
+            if registry_match:
+                target_biz_id = registry_match["businessID"]
+
+        current_barangay_id = (
+            registry_match.get("barangayID")
+            if target_biz_id and registry_match
+            else original_barangay_id
+        )
+        confirmation_error = _barangay_change_confirmation_error(
+            cursor,
+            current_barangay_id,
+            new_barangay_id,
+            confirm_barangay_id,
+        )
+        if confirmation_error:
+            cursor.close()
+            return False, confirmation_error
 
         # Admin physically moved the pin: clear placeID on geospatial_logs
         cursor.execute("""
@@ -3684,27 +3802,7 @@ def update_flag_location(log_id: int, lat: float, lng: float, actor_user_id=None
             WHERE logID = %s
         """, (lat, lng, new_barangay_id, log_id))
 
-        # Also backfill official_registry strictly by businessID
-        target_biz_id = None
-        if old_place_id:
-            cursor.execute(
-                "SELECT businessID FROM official_registry WHERE placeID = %s LIMIT 1", (old_place_id,))
-            reg_match = cursor.fetchone()
-            if reg_match:
-                target_biz_id = reg_match["businessID"]
-
-        if not target_biz_id and detected_name:
-            orig_barangay_id = row.get("barangayID")
-            cursor.execute("""
-                SELECT businessID FROM official_registry
-                WHERE LOWER(businessName) = LOWER(%s)
-                  AND (barangayID = %s OR barangayID = %s)
-                LIMIT 1
-            """, (detected_name, orig_barangay_id, new_barangay_id))
-            reg_match = cursor.fetchone()
-            if reg_match:
-                target_biz_id = reg_match["businessID"]
-
+        # Backfill the pre-resolved official-registry match by businessID.
         if target_biz_id:
             cursor.execute(
                 """SELECT businessID, businessName, businessAddress, barangayID,
