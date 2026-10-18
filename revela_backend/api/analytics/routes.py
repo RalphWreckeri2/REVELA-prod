@@ -10,7 +10,7 @@ import hashlib
 import numpy as np
 from collections import Counter
 from sklearn.cluster import DBSCAN
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, g, has_app_context, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from google import genai
 from google.genai import types
@@ -84,13 +84,127 @@ _analytics_metrics_lock = threading.Lock()
 _analytics_log = logging.getLogger("revela.analytics")
 
 
+# ── Pipeline phase instrumentation (measurement only) ────────────────────────
+# Enabled with REVELA_ANALYTICS_PHASES=1. When off, the cursor proxy is never
+# installed and the timing helpers skip the clock read entirely, so behavior
+# and overhead are unchanged. phases_sum_ms counts ONLY exclusive,
+# non-overlapping leaf spans
+# (the timed SQL calls). Inclusive spans enclose other timed work and are logged
+# for context but never summed, so nothing is double-counted.
+
+
+def _phases_enabled():
+    return os.getenv("REVELA_ANALYTICS_PHASES", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _telemetry_request_id():
+    """Reuse the correlation id emitted by request_telemetry ([req] id=...)."""
+    if has_app_context():
+        return getattr(g, "_revela_id", None) or "-"
+    return "-"
+
+
+class _PhaseCollector:
+    """Per-request span recorder for the analytics pipeline."""
+
+    def __init__(self):
+        self.exclusive = []   # (name, dur_ms) leaf spans, the only addends
+        self.inclusive = []   # (name, dur_ms) parent spans, context only
+        self._sql_seq = 0
+
+    def add_exclusive(self, name, dur_ms):
+        self.exclusive.append((name, dur_ms))
+
+    def add_inclusive(self, name, dur_ms):
+        self.inclusive.append((name, dur_ms))
+
+    def next_sql_name(self):
+        self._sql_seq += 1
+        return "sql#%d" % self._sql_seq
+
+    def exclusive_sum_ms(self):
+        return sum(d for _, d in self.exclusive)
+
+
+class _TimedCursor:
+    """Cursor proxy that times each execute() as an exclusive sql#N leaf span.
+
+    Every other attribute is forwarded to the wrapped cursor unchanged, so the
+    pipeline behaves exactly as before. SQL run through a cursor the pipeline
+    does not own (e.g. get_recent_detection_runs) intentionally bypasses this
+    proxy and is captured only as an inclusive span.
+    """
+
+    def __init__(self, cursor, collector):
+        self._cursor = cursor
+        self._collector = collector
+
+    def execute(self, *args, **kwargs):
+        t0 = time.perf_counter()
+        try:
+            return self._cursor.execute(*args, **kwargs)
+        finally:
+            self._collector.add_exclusive(
+                self._collector.next_sql_name(),
+                (time.perf_counter() - t0) * 1000.0,
+            )
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
+def _phase_start(collector):
+    """Return a start timestamp, or None when the collector is inactive.
+
+    Returning None when the gate is off means the disabled path performs no
+    clock read at all, so an off gate is exactly zero-overhead rather than
+    merely log-free.
+    """
+    if collector is None:
+        return None
+    return time.perf_counter()
+
+
+def _record_inclusive(collector, name, t0):
+    if collector is None or t0 is None:
+        return
+    collector.add_inclusive(name, (time.perf_counter() - t0) * 1000.0)
+
+
+def _log_analytics_phases(collector, wall_ms, key):
+    """Emit the phase summary. Called from a finally, so it survives failures."""
+    if collector is None:
+        return
+    total = collector.exclusive_sum_ms()
+    coverage = (total / wall_ms) if wall_ms else 0.0
+    _analytics_log.info(
+        "[analytics-phases] req_id=%s key=%s phases_sum_ms=%.1f wall_ms=%.1f "
+        "coverage=%.3f exclusive=%s",
+        _telemetry_request_id(),
+        key[:8],
+        total,
+        wall_ms,
+        coverage,
+        ",".join("%s=%.1f" % (n, d) for n, d in collector.exclusive) or "-",
+    )
+    if collector.inclusive:
+        _analytics_log.info(
+            "[analytics-phases] req_id=%s key=%s inclusive=%s",
+            _telemetry_request_id(),
+            key[:8],
+            ",".join("%s=%.1f" % (n, d) for n, d in collector.inclusive),
+        )
+
+
 def _log_analytics_cache(state, inflight, inner_ms, key):
     """Emit one cache decision line. Only a key prefix is logged, never filters."""
     with _analytics_metrics_lock:
         hits = _analytics_metrics["hits"]
         misses = _analytics_metrics["misses"]
     _analytics_log.info(
-        "[analytics-cache] state=%s inflight=%d inner_ms=%.1f key=%s hits=%d misses=%d",
+        "[analytics-cache] req_id=%s state=%s inflight=%d inner_ms=%.1f key=%s hits=%d misses=%d",
+        _telemetry_request_id(),
         state,
         inflight,
         inner_ms,
@@ -162,16 +276,23 @@ def get_all_analytics():
                 _analytics_metrics["misses"] += 1
                 _analytics_inflight += 1
                 inflight = _analytics_inflight
+            collector = _PhaseCollector() if _phases_enabled() else None
+            if has_app_context():
+                g._analytics_phases = collector
             inner_start = time.perf_counter()
             try:
                 data, status_code = _get_all_analytics_inner(F)
             finally:
+                inner_wall_ms = (time.perf_counter() - inner_start) * 1000.0
                 with _analytics_metrics_lock:
                     _analytics_inflight -= 1
+                # Logged in `finally` so a failing pipeline still reports its
+                # measured spans; the summary is the point here.
+                _log_analytics_phases(collector, inner_wall_ms, cache_key)
             _log_analytics_cache(
                 "expired" if cached else "miss",
                 inflight,
-                (time.perf_counter() - inner_start) * 1000.0,
+                inner_wall_ms,
                 cache_key,
             )
             if status_code == 200:
@@ -230,7 +351,12 @@ def _get_all_analytics_inner(F=None):
         F = {}
     # check_and_expire_old_permits is now handled by APScheduler (app.py).
     # It is no longer called inline so reads don't pay write-operation cost.
-    cur = mysql.connection.cursor()
+    raw_cur = mysql.connection.cursor()
+    # Per-request span collector, installed by the caller via flask.g. When the
+    # REVELA_ANALYTICS_PHASES gate is off this is None and the raw cursor is used
+    # unchanged, so behavior and overhead match the previous code.
+    phases = getattr(g, "_analytics_phases", None) if has_app_context() else None
+    cur = _TimedCursor(raw_cur, phases) if phases is not None else raw_cur
 
     Fx = dict(F or {})
     Fx["registration_type_supported"] = _registry_has_registration_type(cur)
@@ -687,6 +813,7 @@ def _get_all_analytics_inner(F=None):
     # DBSCAN Hotspot Intelligence
     dbscan_insight = "There is not enough location data to identify nearby groups of flagged records."
     dbscan_clusters = []
+    _dbscan_t0 = _phase_start(phases)
     try:
         cur.execute(f"""
                  SELECT g.logID, g.detectedName, g.detectedDate,
@@ -755,10 +882,14 @@ def _get_all_analytics_inner(F=None):
     except Exception as e:
         print(f"DBSCAN Error: {e}")
         dbscan_insight = "Hotspot detection temporarily unavailable."
+    finally:
+        # Inclusive span (it encloses a timed sql#N SELECT): logged, never summed.
+        _record_inclusive(phases, "py:dbscan", _dbscan_t0)
 
     # Moran's I Proxy (Spatial Autocorrelation)
     morans_insight = "There is not enough data to compare risk patterns across barangays."
     morans_data = {"points": [], "threshold": 0}
+    _morans_t0 = _phase_start(phases)
     try:
         cur.execute(f"""
             SELECT 
@@ -834,6 +965,9 @@ def _get_all_analytics_inner(F=None):
     except Exception as e:
         print(f"Moran's I Proxy Error: {e}")
         morans_insight = "Regional pattern analysis temporarily unavailable."
+    finally:
+        # Inclusive span (it encloses a timed sql#N SELECT): logged, never summed.
+        _record_inclusive(phases, "py:morans", _morans_t0)
 
     # ══════════════════════════════════════════════════════════════════════════
     # TIER 3 — PRESCRIPTIVE (WLC / OPS)
@@ -1008,6 +1142,15 @@ def _get_all_analytics_inner(F=None):
 
     cur.close()
 
+    # Informational only: get_recent_detection_runs opens its own cursor, so its
+    # table-check + DDL/commit + SELECT + fetch + formatting are captured as one
+    # inclusive span and deliberately NOT added to phases_sum_ms.
+    _scan_t0 = _phase_start(phases)
+    try:
+        scan_history = get_recent_detection_runs()
+    finally:
+        _record_inclusive(phases, "py:get_recent_detection_runs", _scan_t0)
+
     return {
         "applied_filters": Fx,
         # new_year_rollover is intentionally omitted here — it is user-specific
@@ -1044,7 +1187,7 @@ def _get_all_analytics_inner(F=None):
             },
         },
         "diagnostic": {
-            "scan_history":         get_recent_detection_runs(),
+            "scan_history":         scan_history,
             "barangay_risk_data":     barangay_risk_data,
             "category_risk_drivers": category_risk_drivers,
             "category_linkage_summary": category_linkage_summary,
