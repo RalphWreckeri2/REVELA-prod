@@ -137,8 +137,8 @@ export default function BatchDispatchModal({ barangays, token, onClose, onSucces
   };
 
   return createPortal(
-    <div className="modal-backdrop" style={{ zIndex: 10002 }} onClick={!loading ? onClose : undefined}>
-      <div className="modal-panel" style={{ width: "min(720px, 100%)", maxHeight: "88vh", padding: 24, display: "flex", flexDirection: "column" }} onClick={event => event.stopPropagation()}>
+    <div className="modal-backdrop" style={{ position: "fixed", inset: 0, zIndex: 10002, background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={!loading ? onClose : undefined}>
+      <div className="modal-panel" style={{ width: "min(720px, calc(100vw - 32px))", maxHeight: "88vh", padding: 24, display: "flex", flexDirection: "column", overflowY: "auto", borderRadius: 12, background: "var(--color-modal-bg)", boxShadow: "0 24px 48px rgba(0,0,0,0.2)" }} onClick={event => event.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <h3 style={{ margin: 0, color: "var(--color-ink)" }}>Batch Dispatch by Barangay</h3>
           {!loading && <button className="modal-close-btn" onClick={onClose} aria-label="Close">X</button>}

@@ -291,7 +291,8 @@ class BatchAssignRouteTests(unittest.TestCase):
 
     def test_fractional_log_id_is_rejected_without_assignment(self):
         with (
-            patch.object(inspections_routes, "get_jwt_identity", return_value=2),
+            patch.object(inspections_routes,
+                         "get_jwt_identity", return_value=2),
             patch.object(inspections_routes, "assign_inspection") as assign_mock,
         ):
             with self.app.test_request_context(
