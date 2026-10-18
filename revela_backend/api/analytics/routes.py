@@ -340,6 +340,108 @@ def get_all_analytics():
         return jsonify({"error": "Failed to load analytics"}), 500
 
 
+def _rankings_split_enabled():
+    """Opt-in gate for the candidate split ranking aggregate (default off)."""
+    return os.getenv("REVELA_ANALYTICS_RANKINGS_SPLIT", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+# The actionable-pin predicate, shared by the original ON clause and the split
+# subquery so the two forms cannot drift.
+_PIN_ACTIONABLE_SQL = (
+    "(g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL "
+    "OR g.flagColor = 'Orange' "
+    "OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))"
+)
+
+
+def _barangay_rankings_sql(effective_flag_color, geo_on_g, geo_on_g_p,
+                           reg_o, reg_o_p, brgy_b, brgy_b_p):
+    """Shipped form: aggregates over the geospatial x registry fan-out."""
+    sql = f"""
+        SELECT
+            b.barangayID,
+            b.barangayName,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
+            AVG(g.latitude)                                          AS avg_lat,
+            AVG(g.longitude)                                         AS avg_lng,
+            COUNT(DISTINCT o.businessID)                             AS total_registered
+        FROM barangays b
+        LEFT JOIN geospatial_logs   g ON g.barangayID = b.barangayID
+            AND {_PIN_ACTIONABLE_SQL}{geo_on_g}
+        LEFT JOIN official_registry o ON o.barangayID = b.barangayID{reg_o}
+        WHERE 1=1 {brgy_b}
+        GROUP BY b.barangayID, b.barangayName
+    """
+    return sql, geo_on_g_p + reg_o_p + brgy_b_p
+
+
+def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
+                                 reg_o, reg_o_p, brgy_b, brgy_b_p):
+    """Candidate: aggregate geospatial and registry per barangay, then join.
+
+    STATUS: candidate only, DEFAULT-OFF and runtime-UNVERIFIED.  Reachable only
+    when REVELA_ANALYTICS_RANKINGS_SPLIT is set (see _rankings_split_enabled);
+    the shipped path stays _barangay_rankings_sql.  Value parity passes on the
+    SQLite harness and a reviewed EXPLAIN shows ga/oa materialized with lower
+    estimates, but there is no MySQL runtime/benchmark comparison yet - so keep
+    this gated off until one exists.  Do not flip the default here.
+
+    Multiplicity proof.  Let a barangay hold G actionable geo rows and R
+    registry rows (after filters).  The shipped query joins them into G*R rows
+    (G rows when R=0, R rows when G=0, via LEFT JOIN), then:
+      * COUNT(DISTINCT g.logID) sees each logID once per registry row, so
+        DISTINCT cancels the registry multiplicity exactly;
+      * AVG(g.latitude/longitude) repeats every geo row of the barangay the same
+        number of times, so SUM/COUNT is the mean of the geo rows - unchanged;
+      * COUNT(DISTINCT o.businessID) sees each businessID once per geo row, so
+        DISTINCT cancels the geo multiplicity exactly.
+    Aggregating g and o separately therefore yields identical values, while the
+    effective-colour expression is evaluated once per geo row instead of once
+    per fanned-out row.  Empty sides collapse to 0 / NULL exactly like a LEFT
+    JOIN because of the COALESCE around each aggregate.
+    """
+    sql = f"""
+        SELECT
+            b.barangayID,
+            b.barangayName,
+            COALESCE(ga.flagged_count, 0)    AS flagged_count,
+            COALESCE(ga.red_count, 0)        AS red_count,
+            COALESCE(ga.yellow_count, 0)     AS yellow_count,
+            COALESCE(ga.black_count, 0)      AS black_count,
+            ga.avg_lat                       AS avg_lat,
+            ga.avg_lng                       AS avg_lng,
+            COALESCE(oa.total_registered, 0) AS total_registered
+        FROM barangays b
+        LEFT JOIN (
+            SELECT
+                g.barangayID,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
+                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
+                AVG(g.latitude)  AS avg_lat,
+                AVG(g.longitude) AS avg_lng
+            FROM geospatial_logs g
+            WHERE {_PIN_ACTIONABLE_SQL}{geo_on_g}
+            GROUP BY g.barangayID
+        ) ga ON ga.barangayID = b.barangayID
+        LEFT JOIN (
+            SELECT
+                o.barangayID,
+                COUNT(DISTINCT o.businessID) AS total_registered
+            FROM official_registry o
+            WHERE 1=1{reg_o}
+            GROUP BY o.barangayID
+        ) oa ON oa.barangayID = b.barangayID
+        WHERE 1=1 {brgy_b}
+    """
+    return sql, geo_on_g_p + reg_o_p + brgy_b_p
+
+
 def _get_all_analytics_inner(F=None):
     """
     Run all analytics queries and return (data_dict, status_code).
@@ -981,24 +1083,12 @@ def _get_all_analytics_inner(F=None):
     # deployment. flagged_count therefore counts ONLY Red/Yellow/Black logs,
     # which drives the risk-score scaling term, the non-compliance rate, and
     # the proportional inspector allocation in dispatch recommendations.
-    cur.execute(f"""
-        SELECT
-            b.barangayID,
-            b.barangayName,
-            COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
-            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
-            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
-            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
-            AVG(g.latitude)                                          AS avg_lat,
-            AVG(g.longitude)                                         AS avg_lng,
-            COUNT(DISTINCT o.businessID)                             AS total_registered
-        FROM barangays b
-        LEFT JOIN geospatial_logs   g ON g.barangayID = b.barangayID 
-            AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
-        LEFT JOIN official_registry o ON o.barangayID = b.barangayID{reg_o}
-        WHERE 1=1 {brgy_b}
-        GROUP BY b.barangayID, b.barangayName
-    """, geo_on_g_p + reg_o_p + brgy_b_p)
+    rankings_builder = (_barangay_rankings_sql_split
+                        if _rankings_split_enabled()
+                        else _barangay_rankings_sql)
+    rankings_sql, rankings_params = rankings_builder(
+        effective_flag_color, geo_on_g, geo_on_g_p, reg_o, reg_o_p, brgy_b, brgy_b_p)
+    cur.execute(rankings_sql, rankings_params)
     rows = cur.fetchall()
 
     max_flagged = max((r["flagged_count"] or 0 for r in rows), default=1) or 1
