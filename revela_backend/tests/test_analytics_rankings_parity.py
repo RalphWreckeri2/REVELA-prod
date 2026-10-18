@@ -178,10 +178,29 @@ class RankingsParityTests(unittest.TestCase):
         F = parse_analytics_filters({})
         F["registration_type_supported"] = True
         sql, _ = _build(routes._barangay_rankings_sql_split, F, True)
-        self.assertIn("GROUP BY g.barangayID", sql)
+        # Geospatial side: the split is written with an inner derived table that
+        # computes eff_color once per actionable geo row (GROUP BY the logID
+        # primary key), then the aggregate regroups by barangayID.  This asserts
+        # the generated SQL text only; MySQL planner behavior is not tested here.
+        self.assertIn("AS eff_color", sql)
+        self.assertIn("GROUP BY g.logID", sql)
+        self.assertIn("GROUP BY c.barangayID", sql)
         self.assertIn("GROUP BY o.barangayID", sql)
         self.assertIn("COALESCE(ga.flagged_count, 0)", sql)
         self.assertNotIn("LEFT JOIN geospatial_logs   g ON g.barangayID = b.barangayID", sql)
+
+    def test_split_expands_color_case_once_textually(self):
+        """The GENERATED SQL carries the effective-colour CASE once in the split
+        against four in the shipped form.  'ELSE g.flagColor' closes the CASE
+        exactly once per expansion.  This is a TEXT property: it does not measure
+        how many times MySQL evaluates the expression, nor prove materialization.
+        """
+        F = parse_analytics_filters({})
+        F["registration_type_supported"] = True
+        orig_sql, _ = _build(routes._barangay_rankings_sql, F, True)
+        new_sql, _ = _build(routes._barangay_rankings_sql_split, F, True)
+        self.assertEqual(orig_sql.count("ELSE g.flagColor"), 4)
+        self.assertEqual(new_sql.count("ELSE g.flagColor"), 1)
 
     def test_gate_defaults_off(self):
         prev = os.environ.pop("REVELA_ANALYTICS_RANKINGS_SPLIT", None)

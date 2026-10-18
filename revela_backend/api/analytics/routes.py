@@ -386,9 +386,12 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
     STATUS: candidate only, DEFAULT-OFF and runtime-UNVERIFIED.  Reachable only
     when REVELA_ANALYTICS_RANKINGS_SPLIT is set (see _rankings_split_enabled);
     the shipped path stays _barangay_rankings_sql.  Value parity passes on the
-    SQLite harness and a reviewed EXPLAIN shows ga/oa materialized with lower
-    estimates, but there is no MySQL runtime/benchmark comparison yet - so keep
-    this gated off until one exists.  Do not flip the default here.
+    SQLite harness.  The previously reviewed EXPLAIN, and the checked-in
+    scripts/explain_rankings_split_ladder_true.sql snapshot, describe the
+    EARLIER split shape from before the inner eff_color table below, so they are
+    NOT evidence for this revision.  This shape has no MySQL plan or runtime
+    comparison yet - keep it gated off until both exist.  Do not flip the
+    default here.
 
     Multiplicity proof.  Let a barangay hold G actionable geo rows and R
     registry rows (after filters).  The shipped query joins them into G*R rows
@@ -403,6 +406,18 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
     effective-colour expression is evaluated once per geo row instead of once
     per fanned-out row.  Empty sides collapse to 0 / NULL exactly like a LEFT
     JOIN because of the COALESCE around each aggregate.
+
+    Single-evaluation guard.  {effective_flag_color} is a large CASE carrying
+    correlated official_registry/enforcement_state lookups, and it appears in
+    four COUNT aggregates; written directly against geospatial_logs MySQL would
+    expand it four times per geo row.  The inner derived table below selects it
+    once as eff_color; its GROUP BY on the geospatial_logs primary key (logID)
+    is intended to make the derived table non-mergeable under MySQL's
+    derived-table rules, so eff_color would be materialized once per actionable
+    geo row and the four outer aggregates read that plain column.  Grouping by
+    the primary key keeps one row per geo row, so values are unchanged.  MySQL
+    materialization and the actual evaluation count are UNVERIFIED: they must be
+    confirmed by this shape's own EXPLAIN (and the estimate not assumed here).
     """
     sql = f"""
         SELECT
@@ -418,16 +433,25 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
         FROM barangays b
         LEFT JOIN (
             SELECT
-                g.barangayID,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
-                AVG(g.latitude)  AS avg_lat,
-                AVG(g.longitude) AS avg_lng
-            FROM geospatial_logs g
-            WHERE {_PIN_ACTIONABLE_SQL}{geo_on_g}
-            GROUP BY g.barangayID
+                c.barangayID,
+                COUNT(DISTINCT CASE WHEN c.eff_color IN ('Red', 'Yellow', 'Black') THEN c.logID END) AS flagged_count,
+                COUNT(DISTINCT CASE WHEN c.eff_color = 'Red'    THEN c.logID END) AS red_count,
+                COUNT(DISTINCT CASE WHEN c.eff_color = 'Yellow' THEN c.logID END) AS yellow_count,
+                COUNT(DISTINCT CASE WHEN c.eff_color = 'Black'  THEN c.logID END) AS black_count,
+                AVG(c.latitude)  AS avg_lat,
+                AVG(c.longitude) AS avg_lng
+            FROM (
+                SELECT
+                    g.logID,
+                    g.barangayID,
+                    {effective_flag_color} AS eff_color,
+                    g.latitude,
+                    g.longitude
+                FROM geospatial_logs g
+                WHERE {_PIN_ACTIONABLE_SQL}{geo_on_g}
+                GROUP BY g.logID
+            ) c
+            GROUP BY c.barangayID
         ) ga ON ga.barangayID = b.barangayID
         LEFT JOIN (
             SELECT
