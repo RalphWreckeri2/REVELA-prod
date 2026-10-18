@@ -49,11 +49,10 @@ function SettingsSection({ id, title, summary, status, initialOpen = false, chil
   );
 }
 
-const policySignature = (config, rows) => JSON.stringify([
+const policySignature = (config) => JSON.stringify([
   config.w1_risk, config.w2_sector, config.w3_distance, config.bplo_lat, config.bplo_lng,
-  rows.map(row => [row.name, Number(row.score)]),
 ]);
-const policySummary = (config, count) => `Weights ${config.w1_risk}/${config.w2_sector}/${config.w3_distance} · ${count} defined rule${count === 1 ? "" : "s"} · Base ${config.bplo_lat ?? "—"}, ${config.bplo_lng ?? "—"}`;
+const policySummary = (config) => `Weights ${config.w1_risk}/${config.w2_sector}/${config.w3_distance} · Base ${config.bplo_lat ?? "—"}, ${config.bplo_lng ?? "—"}`;
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const EyeIcon = () => (
@@ -337,6 +336,7 @@ function MapPickerModal({ isDark, center, marker, onPick, onClose, isClosing }) 
 
 export default function SettingsPage() {
   const { token, user, refreshUser } = useContext(AuthContext);
+  const canEditPolicy = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const savedEmailAlerts = localStorage.getItem("revela_emailAlerts");
   const serverEmailAlerts = typeof user?.emailInspectionAlerts === "boolean" ? user.emailInspectionAlerts : null;
   const emailAlertsSeed = serverEmailAlerts !== null ? serverEmailAlerts
@@ -380,7 +380,6 @@ export default function SettingsPage() {
     setShowCookieDoc(docKey === "cookies");
   };
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 });
-  const [sectors, setSectors] = useState([]);
 
   // Evidence Storage & Archival states
   const [storageStats, setStorageStats] = useState(null);
@@ -389,8 +388,6 @@ export default function SettingsPage() {
   const [selectedFilter, setSelectedFilter] = useState("older_180d");
   const [downloadingArchive, setDownloadingArchive] = useState(false);
   const [cleaningStorage, setCleaningStorage] = useState(false);
-
-  const SECTOR_OPTIONS = ["Food Service", "Retail", "Manufacturing", "Healthcare", "Education", "Real Estate", "Logistics", "Other"];
 
   // Stable across renders so the mount effect below can depend on it; a plain
   // arrow function would be a new reference every render and re-run storage
@@ -419,10 +416,6 @@ export default function SettingsPage() {
       if (data) {
         setWlcConfig(data);
         setSavedPolicy(data);
-        if (data.sectors) {
-          const loadedSectors = Object.entries(data.sectors).map(([name, score]) => ({ name, score }));
-          setSectors(loadedSectors);
-        }
       }
     }).catch(err => {
       setPolicyError(err.message || "Could not load policy.");
@@ -575,11 +568,11 @@ export default function SettingsPage() {
     setPolicyError("");
 
     try {
-      const sectorObj = {};
-      sectors.forEach(s => { if (s.name) sectorObj[s.name] = Number(s.score); });
+      const policyPayload = { ...wlcConfig };
+      delete policyPayload.sectors;
 
-      await updateWlcConfigRequest({ ...wlcConfig, sectors: sectorObj }, token);
-      setSavedPolicy({ ...wlcConfig, sectors: sectorObj });
+      await updateWlcConfigRequest(policyPayload, token);
+      setSavedPolicy(policyPayload);
       Swal.fire({ icon: 'success', title: 'Saved', text: 'Settings updated successfully.', timer: 2000, showConfirmButton: false });
     } catch (err) {
       setPolicyError(err.message || "Policy save failed.");
@@ -642,22 +635,7 @@ export default function SettingsPage() {
   };
 
   const DEFAULT_WLC = { w1_risk: 68, w2_sector: 7, w3_distance: 25 };
-
-  const applyPreset = (preset) => {
-    if (preset === "ahp" || preset === "default") {
-      setWlcConfig(prev => ({ ...prev, ...DEFAULT_WLC }));
-    }
-    if (preset === "health") setWlcConfig(prev => ({ ...prev, w1_risk: 20, w2_sector: 70, w3_distance: 10 }));
-    if (preset === "renewal") setWlcConfig(prev => ({ ...prev, w1_risk: 70, w2_sector: 20, w3_distance: 10 }));
-  };
-
-  const addSector = () => setSectors([...sectors, { name: "", score: 50 }]);
-  const updateSector = (index, field, value) => {
-    const newSectors = [...sectors];
-    newSectors[index][field] = value;
-    setSectors(newSectors);
-  };
-  const removeSector = (index) => setSectors(sectors.filter((_, i) => i !== index));
+  const applyDefaultWlc = () => setWlcConfig(prev => ({ ...prev, ...DEFAULT_WLC }));
 
   const handleUseCurrentLocation = () => {
     if (navigator.geolocation) {
@@ -689,16 +667,15 @@ export default function SettingsPage() {
 
   const preferencesDirty = (previewTheme && previewTheme !== theme)
     || (emailAlertsSeed === null ? emailAlertsEdited : emailAlerts !== emailAlertsSeed);
-  const savedPolicyRows = Object.entries(savedPolicy?.sectors || {}).map(([name, score]) => ({ name, score }));
-  const policyDirty = savedPolicy && policySignature(wlcConfig, sectors) !== policySignature(savedPolicy, savedPolicyRows);
+  const policyDirty = savedPolicy && policySignature(wlcConfig) !== policySignature(savedPolicy);
   const selectedStorage = storageStats?.categories?.[selectedFilter];
   const preferencesSummary = <>
     <span>Saved: appearance {theme} (browser) · Email {emailAlertsSeed === null ? "unavailable" : emailAlertsSeed ? "On" : "Off"}{emailAlertsSeed !== null ? serverEmailAlerts !== null ? " (account)" : " (browser fallback)" : ""}</span>
     {preferencesDirty && <span className="settings-draft-summary">Draft: appearance {activeTheme} · Email {emailAlerts ? "On" : "Off"}</span>}
   </>;
   const policyHeaderSummary = <>
-    <span>{savedPolicy ? `Saved: ${policySummary(savedPolicy, savedPolicyRows.length)}` : policyLoading ? "Loading saved system-wide policy…" : "Saved policy unavailable; displayed inputs are unconfirmed."}</span>
-    {policyDirty && <span className="settings-draft-summary">Draft: {policySummary(wlcConfig, sectors.length)}</span>}
+    <span>{savedPolicy ? `Saved: ${policySummary(savedPolicy)}` : policyLoading ? "Loading saved system-wide policy…" : "Saved policy unavailable; displayed inputs are unconfirmed."}</span>
+    {policyDirty && <span className="settings-draft-summary">Draft: {policySummary(wlcConfig)}</span>}
   </>;
 
   if (!token) return null;
@@ -834,43 +811,13 @@ export default function SettingsPage() {
         </SettingsSection>
 
         {/* System Policy (OPS WLC) */}
-        <SettingsSection id="settings-policy" title="System Policy (OPS WLC)" summary={policyHeaderSummary}
+        {canEditPolicy && <SettingsSection id="settings-policy" title="System Policy (OPS WLC)" summary={policyHeaderSummary}
           status={savingPolicy ? { text: "Saving…" } : policyLoading ? { text: "Loading…" } : policyError ? { text: "Policy error", tone: "error" } : policyDirty ? { text: "Unsaved changes", tone: "draft" } : null}>
           <div style={{ marginBottom: 16 }}>
             {policyError && <p className="settings-error" role="alert">{policyError}</p>}
-            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Set up priority score scenarios, linked weights, and dynamic sector rules.</p>
+            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Adjust the default priority weights and BPLO base station location.</p>
           </div>
           <div style={{ display: "grid", gap: 16 }}>
-            {/* Scenario Presets */}
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8, alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>Apply Preset:</span>
-              <button
-                type="button"
-                className="ghost-btn"
-                style={{
-                  padding: "6px 12px",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: "var(--color-primary, #10b981)",
-                  border: "1px solid var(--color-primary, #10b981)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6
-                }}
-                onClick={() => applyPreset("default")}
-                title="Reset to system default: 68% Risk, 7% Sector, 25% Distance"
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
-                Use Default (68/7/25)
-              </button>
-              <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => applyPreset("health")}>
-                Health Crisis Mode
-              </button>
-              <button type="button" className="ghost-btn" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => applyPreset("renewal")}>
-                Business Renewal Peak
-              </button>
-            </div>
-
             {/* Linked Sliders */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "16px 0", borderTop: "1px solid var(--color-border-soft)", borderBottom: "1px solid var(--color-border-soft)", margin: "8px 0" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -889,7 +836,7 @@ export default function SettingsPage() {
                       alignItems: "center",
                       gap: 4
                     }}
-                    onClick={() => applyPreset("default")}
+                    onClick={applyDefaultWlc}
                     title="Reset to default weights (68% / 7% / 25%)"
                   >
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
@@ -911,29 +858,6 @@ export default function SettingsPage() {
                   <div style={{ width: 40, textAlign: "right", fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>{wlcConfig[w.key]}%</div>
                 </div>
               ))}
-            </div>
-
-            {/* Dynamic Sector List */}
-            <div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <label style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>Sector Severity Settings</label>
-                <button type="button" className="ghost-btn" style={{ padding: "4px 10px", fontSize: 12 }} onClick={addSector}>+ Add Sector</button>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {sectors.length === 0 && <p style={{ fontSize: 12, color: "var(--color-muted)" }}>No sector policies defined. Click "Add Sector" to set custom severities.</p>}
-                {sectors.map((sec, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "var(--color-input-bg)", padding: "10px 14px", borderRadius: 8, border: "1px solid var(--color-border)" }}>
-                    <select value={sec.name} onChange={e => updateSector(i, "name", e.target.value)} style={{ padding: "6px", borderRadius: 6, border: "1px solid var(--color-border)", fontSize: 13, minWidth: 140, flex: "1 1 140px", background: "var(--color-modal-bg)" }}>
-                      <option value="">Select Sector ▾</option>
-                      {SECTOR_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                    </select>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-muted)", whiteSpace: "nowrap" }}>Severity:</span>
-                    <input type="range" min="0" max="100" value={sec.score} onChange={e => updateSector(i, "score", e.target.value)} style={{ flex: "1 1 120px", minWidth: 100, accentColor: "var(--color-primary)" }} />
-                    <span style={{ width: 36, fontSize: 12, fontWeight: 700, color: "var(--color-ink)", textAlign: "right" }}>{(sec.score / 100).toFixed(1)}</span>
-                    <button type="button" onClick={() => removeSector(i)} style={{ background: "none", border: "none", color: "var(--color-danger)", cursor: "pointer", padding: 4, fontSize: 14, marginLeft: "auto" }} title="Remove Sector">✕</button>
-                  </div>
-                ))}
-              </div>
             </div>
 
             {/* BPLO Location */}
@@ -969,7 +893,7 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
-        </SettingsSection>
+        </SettingsSection>}
 
         {/* System Security */}
         <SettingsSection id="settings-security" title="Account Security"

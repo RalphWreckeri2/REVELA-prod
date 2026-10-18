@@ -322,6 +322,28 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
               </div>
             </div>
 
+            {(summary.expired_by_renewal_date ?? 0) > 0 && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  margin: "12px 0",
+                  padding: "12px 14px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(239, 68, 68, 0.35)",
+                  background: "rgba(239, 68, 68, 0.08)",
+                  color: "var(--color-ink)",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong style={{ color: "var(--color-danger)" }}>
+                  {summary.expired_by_renewal_date} business{summary.expired_by_renewal_date === 1 ? " was" : "es were"} newly marked Expired
+                </strong>{" "}
+                because the last renewal date is from a previous calendar year. Review them using the Expired status filter in the Registry.
+              </div>
+            )}
+
             <div style={s.summaryResult}>
               {[
                 ["Total rows in file",             summary.total_rows,       "var(--color-muted)"],

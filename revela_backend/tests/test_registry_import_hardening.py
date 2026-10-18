@@ -388,16 +388,16 @@ class RegistryImportHardeningTests(unittest.TestCase):
 
     def test_initial_import_derives_expired_and_preserves_other_statuses(self):
         cases = (
-            ("Active", "2025-08-15", "Expired", "Red"),
-            ("Active", "2026-02-10", "Active", "Green"),
-            ("Active", "2027-02-10", "Active", "Green"),
-            ("Active", None, "Active", "Green"),
-            ("Active", "not a date", "Active", "Green"),
-            ("Pending", "2025-08-15", "Pending", "Yellow"),
-            ("Closed", "2025-08-15", "Closed", "Purple"),
-            ("Revoked", "2025-08-15", "Revoked", "Black"),
+            ("Active", "2025-08-15", "Expired", "Red", 1),
+            ("Active", "2026-02-10", "Active", "Green", 0),
+            ("Active", "2027-02-10", "Active", "Green", 0),
+            ("Active", None, "Active", "Green", 0),
+            ("Active", "not a date", "Active", "Green", 0),
+            ("Pending", "2025-08-15", "Pending", "Yellow", 0),
+            ("Closed", "2025-08-15", "Closed", "Purple", 0),
+            ("Revoked", "2025-08-15", "Revoked", "Black", 0),
         )
-        for status, renewal_date, expected_status, expected_flag in cases:
+        for status, renewal_date, expected_status, expected_flag, expected_expired_count in cases:
             with self.subTest(status=status, renewal_date=renewal_date):
                 summary, error, insert_call, flag_color, _ = (
                     self._run_mocked_initial_import(status, renewal_date)
@@ -408,6 +408,8 @@ class RegistryImportHardeningTests(unittest.TestCase):
                 self.assertEqual(
                     insert_call.args[1][9], service._parse_renewal_date(renewal_date))
                 self.assertEqual(flag_color, expected_flag)
+                self.assertEqual(
+                    summary["expired_by_renewal_date"], expected_expired_count)
 
     def test_initial_import_verified_orange_survives_immediate_expiration(self):
         summary, error, insert_call, flag_color, flag_update = self._run_mocked_initial_import(
@@ -419,6 +421,7 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertEqual(flag_color, "Orange")
         self.assertIn("UPDATE geospatial_logs", flag_update.args[0])
         self.assertEqual(summary["inserted"], 1)
+        self.assertEqual(summary["expired_by_renewal_date"], 1)
 
     def test_cancel_before_import_commit_rolls_back_the_insert(self):
         summary, error, _, _, _ = self._run_mocked_initial_import(
@@ -468,7 +471,7 @@ class RegistryImportHardeningTests(unittest.TestCase):
     def _run_mocked_sync(self, frame, existing_rows, resolve_result=None,
                          cancel_before_commit=False):
         cursor = MagicMock()
-        cursor.fetchone.side_effect = list(existing_rows)
+        cursor.fetchone.side_effect = list(existing_rows) or [None]
         cursor.rowcount = 1
         mysql = MagicMock()
         mysql.connection.cursor.return_value = cursor
@@ -567,6 +570,7 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertEqual(summary["updated"], 3)
         self.assertEqual(summary["unchanged"], 7)
         self.assertEqual(summary["skipped"], 0)
+        self.assertEqual(summary["expired_by_renewal_date"], 1)
         update_calls = [
             call for call in cursor.execute.call_args_list
             if "UPDATE official_registry SET" in call.args[0]
@@ -643,7 +647,25 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertEqual(len(update_calls), 1)
         self.assertEqual(update_calls[0].args[1][7], "Expired")
         self.assertEqual(update_calls[0].args[1][8], "2025-08-15 00:00:00")
+        self.assertEqual(summary["expired_by_renewal_date"], 1)
         resolve_location.assert_not_called()
+
+    def test_sync_counts_new_prior_year_row_as_expired(self):
+        frame_record = self._sync_frame_record(1)
+        frame_record["lastRenewalDate"] = "2025-08-15"
+
+        summary, error, cursor, _ = self._run_mocked_sync(
+            pd.DataFrame([frame_record]), []
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["inserted"], 1)
+        self.assertEqual(summary["expired_by_renewal_date"], 1)
+        insert_call = next(
+            call for call in cursor.execute.call_args_list
+            if "INSERT INTO official_registry" in call.args[0]
+        )
+        self.assertEqual(insert_call.args[1][8], "Expired")
 
     def test_sync_existing_expired_qualifying_row_is_idempotently_unchanged(self):
         existing = self._existing_sync_record(1)
@@ -659,11 +681,32 @@ class RegistryImportHardeningTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(summary["updated"], 0)
         self.assertEqual(summary["unchanged"], 1)
+        self.assertEqual(summary["expired_by_renewal_date"], 0)
         self.assertFalse(any(
             "UPDATE official_registry SET" in call.args[0]
             for call in cursor.execute.call_args_list
         ))
         resolve_location.assert_not_called()
+
+    def test_sync_does_not_recount_expired_row_with_other_business_changes(self):
+        existing = self._existing_sync_record(1)
+        existing["applicationStatus"] = "Expired"
+        existing["lastRenewalDate"] = pd.Timestamp("2025-08-15")
+        frame_record = self._sync_frame_record(1)
+        frame_record["lastRenewalDate"] = "2025-08-15"
+        frame_record["businessAddress"] = "2 Main Street"
+
+        summary, error, cursor, _ = self._run_mocked_sync(
+            pd.DataFrame([frame_record]), [existing]
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(summary["updated"], 1)
+        self.assertEqual(summary["expired_by_renewal_date"], 0)
+        self.assertTrue(any(
+            "UPDATE official_registry SET" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
 
     def test_sync_immediately_expires_old_renewal_date_without_running_scheduler(self):
         existing = self._existing_sync_record(1)

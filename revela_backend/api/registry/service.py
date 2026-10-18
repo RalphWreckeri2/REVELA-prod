@@ -1217,6 +1217,7 @@ def upload_registry(file, ext: str):
                 )
 
         inserted = 0
+        expired_by_renewal_date = 0
         geocoded_ok = 0
         geocoded_failed = 0
         coordinates_out_of_bounds = 0
@@ -1360,8 +1361,12 @@ def upload_registry(file, ext: str):
 
             # Renewal date
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
+            imported_status = status
             status = _effective_import_status(
                 status, renewal_date, import_year)
+            expired_by_renewal_date_row = (
+                imported_status != status and status == "Expired"
+            )
 
             addr_key = address_raw
 
@@ -1393,6 +1398,8 @@ def upload_registry(file, ext: str):
 
             if cursor.rowcount > 0:
                 inserted += 1
+                if expired_by_renewal_date_row:
+                    expired_by_renewal_date += 1
                 inserted_ids.append(biz_id)
                 if lat is not None:
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
@@ -1454,6 +1461,7 @@ def upload_registry(file, ext: str):
         return {
             "total_rows":       total_rows,
             "inserted":         inserted,
+            "expired_by_renewal_date": expired_by_renewal_date,
             "inserted_ids":     inserted_ids,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,
@@ -2217,6 +2225,7 @@ def sync_registry(file, ext: str):
 
         inserted = 0
         updated = 0
+        expired_by_renewal_date = 0
         unchanged = 0
         skipped = 0
         skipped_open_inspection = 0
@@ -2519,8 +2528,16 @@ def sync_registry(file, ext: str):
                 row.get("registrationType"))
 
             renewal_date = _parse_renewal_date(row.get("lastRenewalDate"))
+            imported_status = status
+            previous_status = (
+                _status_for_compare(existing.get("applicationStatus"))
+                if existing else None
+            )
             status = _effective_import_status(
                 status, renewal_date, import_year)
+            expired_by_renewal_date_row = (
+                imported_status != status and status == "Expired"
+            )
 
             btype = _clean_upper(row.get("businessType"))
             lob = _clean_upper(row.get("lineOfBusiness"))
@@ -2739,6 +2756,12 @@ def sync_registry(file, ext: str):
                     places_resolver.record_coord_meta(cursor, biz_id, geo_meta)
                 if business_fields_changed and not pending_location_reapproval:
                     updated += 1
+                if (
+                    expired_by_renewal_date_row
+                    and previous_status != "Expired"
+                    and (pending_location_reapproval or business_fields_changed)
+                ):
+                    expired_by_renewal_date += 1
                 warning_cleared = None
                 if status == "Active":
                     warning_cleared = _clear_warning_for_active_import(
@@ -2813,6 +2836,8 @@ def sync_registry(file, ext: str):
                 )
                 if cursor.rowcount > 0:
                     inserted += 1
+                    if expired_by_renewal_date_row:
+                        expired_by_renewal_date += 1
                     inserted_ids.append(biz_id)
                     if lat is not None:
                         places_resolver.record_coord_meta(
@@ -2868,6 +2893,7 @@ def sync_registry(file, ext: str):
             "inserted":         inserted,
             "inserted_ids":     inserted_ids,
             "updated":          updated,
+            "expired_by_renewal_date": expired_by_renewal_date,
             "unchanged":        unchanged,
             "geocoded_ok":      geocoded_ok,
             "geocoded_failed":  geocoded_failed,

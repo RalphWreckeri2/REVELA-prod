@@ -830,7 +830,8 @@ const GlobalAIAssistant = memo(({ globalData }) => {
 
 
 export default function AnalyticsPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const canEditWlc = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -3175,12 +3176,14 @@ export default function AnalyticsPage() {
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
                     OPS Radar — Top 8 Barangays
                   </h3>
-                  <button className="ghost-btn" onClick={() => showWlcConfig ? handleCancelWlc() : setShowWlcConfig(true)} style={{ fontSize: 12, padding: "4px 10px", margin: 0 }}>
-                    {showWlcConfig ? "Close Quick Adjust" : "⚙ Quick Adjust WLC Weights"}
-                  </button>
+                  {canEditWlc && (
+                    <button className="ghost-btn" onClick={() => showWlcConfig ? handleCancelWlc() : setShowWlcConfig(true)} style={{ fontSize: 12, padding: "4px 10px", margin: 0 }}>
+                      {showWlcConfig ? "Close Quick Adjust" : "⚙ Quick Adjust WLC Weights"}
+                    </button>
+                  )}
                 </div>
 
-                {showWlcConfig && (
+                {canEditWlc && showWlcConfig && (
                   <div style={{ background: "var(--color-hover)", marginBottom: 16, padding: "16px", borderRadius: 8, border: "1px solid var(--color-border)" }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                       <h4 style={{ margin: 0, fontSize: 13, color: "var(--color-ink)" }}>WLC Weight Configuration</h4>
