@@ -12,7 +12,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import Footer from "../components/Footer";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
-import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getOpsRankingsRequest, markNotificationsReadRequest } from "../services/api";
+import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
@@ -840,22 +840,24 @@ export default function HomePage() {
     setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: true }])));
 
     try {
-      const [analyticsRes, flagsRes, inspRes, inspectorsRes, opsRes] = await Promise.allSettled([
+      const [analyticsRes, flagsRes, inspRes, inspectorsRes] = await Promise.allSettled([
         getAnalyticsOverviewRequest(token, undefined, { signal: controller.signal }),
         getFlagsRequest({ limit: 200, signal: controller.signal }, token),
         getInspectionsRequest({ limit: 1000, signal: controller.signal }, token),
         getInspectorsRequest(token, { signal: controller.signal }),
-        getOpsRankingsRequest(token, { signal: controller.signal }),
       ]);
       if (controller.signal.aborted) return;
       const analyticsKpis = analyticsRes.status === "fulfilled" ? analyticsRes.value?.descriptive?.kpis : null;
+      const analyticsRankings = analyticsRes.status === "fulfilled"
+        ? analyticsRes.value?.prescriptive?.rankings
+        : null;
       const inspectorData = inspectorsRes.status === "fulfilled" ? (inspectorsRes.value?.data ?? inspectorsRes.value) : null;
       const successful = {
         kpis: Boolean(analyticsKpis && typeof analyticsKpis === "object" && !Array.isArray(analyticsKpis)),
         flags: flagsRes.status === "fulfilled" && Array.isArray(flagsRes.value?.data),
         inspections: inspRes.status === "fulfilled" && Array.isArray(inspRes.value?.data),
         inspectors: Array.isArray(inspectorData),
-        ops: opsRes.status === "fulfilled" && Array.isArray(opsRes.value?.data),
+        ops: Array.isArray(analyticsRankings),
       };
 
       // KPIs & Rollover
@@ -911,7 +913,7 @@ export default function HomePage() {
 
       // OPS Rankings
       if (successful.ops) {
-        setOpsRankings(opsRes.value.data);
+        setOpsRankings(analyticsRankings);
       }
       setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, {
         loading: false, error: !successful[key], hasResult: state.hasResult || successful[key],

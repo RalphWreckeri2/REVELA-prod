@@ -25,6 +25,20 @@ export const INSPECTABLE_FLAG_COLORS = Object.freeze([
 /** Colours that are never dispatchable, whatever the flag's history. */
 export const NON_DISPATCHABLE_FLAG_COLORS = Object.freeze(["Green", "Black"]);
 
+const KNOWN_FLAG_COLORS = new Set([
+  ...INSPECTABLE_FLAG_COLORS,
+  ...NON_DISPATCHABLE_FLAG_COLORS,
+]);
+
+export function normalizeDispatchColor(rawColor) {
+  const normalized = String(rawColor ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized) return "Unknown";
+  const color = normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  return KNOWN_FLAG_COLORS.has(color) ? color : "Unknown";
+}
+
 export function canDispatchFlag(flag, { isAdmin } = {}) {
   if (!isAdmin) return false;
   if (NON_DISPATCHABLE_FLAG_COLORS.includes(flag?.color)) {

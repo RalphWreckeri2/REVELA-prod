@@ -91,6 +91,16 @@ _analytics_log = logging.getLogger("revela.analytics")
 # non-overlapping leaf spans
 # (the timed SQL calls). Inclusive spans enclose other timed work and are logged
 # for context but never summed, so nothing is double-counted.
+#
+# Each SQL span is named for the query it ran, not its position in the request:
+#   kpi.*              headline counts (total/active/expired/... businesses)
+#   descriptive.*      Tier 1 aggregates
+#   diagnostic.*       Tier 2 aggregates, including DBSCAN and Moran's I
+#   prescriptive.*     rankings and inspector count
+#   operations.*       Tier 4 aggregates
+#   schema:*           conditional schema probes run before the queries
+# The same name appears on every request even when filters skip conditional
+# queries and change the execution order.
 
 
 def _phases_enabled():
@@ -111,7 +121,6 @@ class _PhaseCollector:
     def __init__(self):
         self.exclusive = []   # (name, dur_ms) leaf spans, the only addends
         self.inclusive = []   # (name, dur_ms) parent spans, context only
-        self._sql_seq = 0
 
     def add_exclusive(self, name, dur_ms):
         self.exclusive.append((name, dur_ms))
@@ -119,16 +128,24 @@ class _PhaseCollector:
     def add_inclusive(self, name, dur_ms):
         self.inclusive.append((name, dur_ms))
 
-    def next_sql_name(self):
-        self._sql_seq += 1
-        return "sql#%d" % self._sql_seq
-
     def exclusive_sum_ms(self):
         return sum(d for _, d in self.exclusive)
 
 
+def _sql_fingerprint(sql):
+    """Order-independent fallback name for SQL executed without a label.
+
+    An explicit label is preferred everywhere in this pipeline. This exists so
+    an unlabelled call still names the same query on every run instead of
+    inheriting a position-dependent sql#N number.
+    """
+    normalized = " ".join(str(sql).split())
+    return "sql:unlabeled.%s" % hashlib.sha256(
+        normalized.encode("utf-8")).hexdigest()[:8]
+
+
 class _TimedCursor:
-    """Cursor proxy that times each execute() as an exclusive sql#N leaf span.
+    """Cursor proxy that times each execute() as an exclusive, named leaf span.
 
     Every other attribute is forwarded to the wrapped cursor unchanged, so the
     pipeline behaves exactly as before. SQL run through a cursor the pipeline
@@ -136,22 +153,52 @@ class _TimedCursor:
     proxy and is captured only as an inclusive span.
     """
 
-    def __init__(self, cursor, collector):
+    def __init__(self, cursor, collector, label=None):
         self._cursor = cursor
         self._collector = collector
+        self._label = label
 
-    def execute(self, *args, **kwargs):
+    def labeled(self, label):
+        """Return a proxy that names the SQL its wrapped helpers execute."""
+        return _TimedCursor(self._cursor, self._collector, label=label)
+
+    def execute(self, *args, label=None, **kwargs):
         t0 = time.perf_counter()
         try:
             return self._cursor.execute(*args, **kwargs)
         finally:
             self._collector.add_exclusive(
-                self._collector.next_sql_name(),
+                label or self._label or _sql_fingerprint(args[0] if args else ""),
                 (time.perf_counter() - t0) * 1000.0,
             )
 
     def __getattr__(self, name):
         return getattr(self._cursor, name)
+
+
+_NO_PARAMS = object()
+
+
+def _execute(cursor, label, sql, params=_NO_PARAMS):
+    """Run SQL, naming its phase span when timing is active.
+
+    When the REVELA_ANALYTICS_PHASES gate is off, ``cursor`` is the raw DB
+    cursor and the label is simply ignored, so the disabled path is unchanged.
+    """
+    if isinstance(cursor, _TimedCursor):
+        if params is _NO_PARAMS:
+            return cursor.execute(sql, label=label)
+        return cursor.execute(sql, params, label=label)
+    if params is _NO_PARAMS:
+        return cursor.execute(sql)
+    return cursor.execute(sql, params)
+
+
+def _labeled(cursor, label):
+    """Name the SQL a shared helper (schema probes) executes on this cursor."""
+    if isinstance(cursor, _TimedCursor):
+        return cursor.labeled(label)
+    return cursor
 
 
 def _phase_start(collector):
@@ -485,7 +532,8 @@ def _get_all_analytics_inner(F=None):
     cur = _TimedCursor(raw_cur, phases) if phases is not None else raw_cur
 
     Fx = dict(F or {})
-    Fx["registration_type_supported"] = _registry_has_registration_type(cur)
+    Fx["registration_type_supported"] = _registry_has_registration_type(
+        _labeled(cur, "schema:official_registry.registration_type"))
     reg_all, reg_all_p = registry_sql("official_registry", Fx)
     reg_no_status, reg_no_status_p = registry_sql(
         "official_registry", filters_without(Fx, "application_status"))
@@ -494,7 +542,8 @@ def _get_all_analytics_inner(F=None):
     # One colour rule for every query below, including the colour filters.
     # ladder_columns_available() is False until the ladder migration has run,
     # which leaves the SQL as it was before.
-    ladder = ladder_columns_available(cur)
+    ladder = ladder_columns_available(
+        _labeled(cur, "schema:enforcement_state.ladder_columns"))
     effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
     geo_g, geo_g_p = geo_sql("g", Fx, ladder=ladder)
     geo_g2, geo_g2_p = geo_sql("g2", Fx, ladder=ladder)
@@ -515,55 +564,71 @@ def _get_all_analytics_inner(F=None):
     # TIER 1 — DESCRIPTIVE
     # ══════════════════════════════════════════════════════════════════════════
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.total_businesses",
         "SELECT COUNT(*) AS n FROM official_registry WHERE 1=1" + reg_all,
         reg_all_p,
     )
     total_businesses = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.active_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Active'"
         + reg_no_status,
         reg_no_status_p,
     )
     active_count = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.expired_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Expired'"
         + reg_no_status,
         reg_no_status_p,
     )
     expired_count = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.closed_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Closed'"
         + reg_no_status,
         reg_no_status_p,
     )
     closed_count = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.pending_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Pending'"
         + reg_no_status,
         reg_no_status_p,
     )
     pending_count = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.revoked_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Revoked'"
         + reg_no_status,
         reg_no_status_p,
     )
     revoked_count = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.current_year_registered",
         "SELECT COUNT(*) AS n FROM official_registry WHERE YEAR(lastRenewalDate) = YEAR(CURDATE())"
         + reg_all,
         reg_all_p,
     )
     current_year_registered_count = cur.fetchone()["n"]
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.upcoming_year_renewal",
         "SELECT COUNT(*) AS n FROM official_registry WHERE ((YEAR(lastRenewalDate) = YEAR(CURDATE()) AND applicationStatus = 'Active') OR YEAR(lastRenewalDate) = YEAR(CURDATE()) + 1)"
         + reg_all,
         reg_all_p,
@@ -573,14 +638,18 @@ def _get_all_analytics_inner(F=None):
     new_registration_count = 0
     renewal_registration_count = 0
     if Fx["registration_type_supported"]:
-        cur.execute(
+        _execute(
+            cur,
+            "kpi.new_registration",
             "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'New'"
             + reg_all,
             reg_all_p,
         )
         new_registration_count = cur.fetchone()["n"]
 
-        cur.execute(
+        _execute(
+            cur,
+            "kpi.renewal_registration",
             "SELECT COUNT(*) AS n FROM official_registry WHERE registrationType = 'Renewal'"
             + reg_all,
             reg_all_p,
@@ -589,7 +658,9 @@ def _get_all_analytics_inner(F=None):
 
     current_year_count = current_year_registered_count
 
-    cur.execute(
+    _execute(
+        cur,
+        "kpi.total_flagged",
         "SELECT COUNT(*) AS n FROM geospatial_logs g WHERE g.flagColor != 'Green' AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))" + geo_g,
         geo_g_p,
     )
@@ -599,7 +670,7 @@ def _get_all_analytics_inner(F=None):
         (active_count / total_businesses * 100), 1) if total_businesses else 0
 
     # Enforcement progress — unified across official_registry and geospatial_logs
-    cur.execute(f"""
+    _execute(cur, "descriptive.enforcement_progress", f"""
         SELECT
             b.barangayName,
             COUNT(DISTINCT CASE WHEN combined.flagColor = 'Green'  THEN combined.id END) AS green_count,
@@ -665,7 +736,7 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # Sectoral distribution
-    cur.execute(f"""
+    _execute(cur, "descriptive.sectoral_distribution", f"""
         SELECT COALESCE(lineOfBusiness, 'Unclassified') AS sector, COUNT(*) AS count
         FROM official_registry
         WHERE 1=1 {reg_all}
@@ -678,7 +749,7 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # Nature per barangay
-    cur.execute(f"""
+    _execute(cur, "descriptive.nature_per_barangay", f"""
         SELECT COALESCE(b.barangayName, 'Unknown') AS barangayName, COALESCE(o.lineOfBusiness, 'Unclassified') AS nature, COUNT(*) AS count
         FROM official_registry o
         LEFT JOIN barangays b ON o.barangayID = b.barangayID
@@ -702,7 +773,7 @@ def _get_all_analytics_inner(F=None):
     nature_per_barangay = list(nature_per_barangay_dict.values())
 
     # Business size
-    cur.execute(f"""
+    _execute(cur, "descriptive.business_size_dist", f"""
         SELECT COALESCE(businessSize, 'Unknown') AS size_label, COUNT(*) AS count
         FROM official_registry
         WHERE 1=1 {reg_all}
@@ -715,7 +786,7 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # Business type (Legal Structure)
-    cur.execute(f"""
+    _execute(cur, "descriptive.business_type_dist", f"""
         SELECT COALESCE(businessType, 'Unknown') AS type_label, COUNT(*) AS count
         FROM official_registry
         WHERE 1=1 {reg_all}
@@ -730,7 +801,7 @@ def _get_all_analytics_inner(F=None):
     # Registration lifecycle is optional in registry schemas predating this field.
     registration_type_dist = []
     if Fx["registration_type_supported"]:
-        cur.execute(f"""
+        _execute(cur, "descriptive.registration_type_dist", f"""
             SELECT COALESCE(registrationType, 'Unspecified') AS type_label, COUNT(*) AS count
             FROM official_registry
             WHERE 1=1 {reg_all}
@@ -743,7 +814,7 @@ def _get_all_analytics_inner(F=None):
         ]
 
     # Compliance by Business Size
-    cur.execute(f"""
+    _execute(cur, "descriptive.compliance_by_size", f"""
         SELECT COALESCE(businessSize, 'Unknown') AS size_label,
                SUM(CASE WHEN applicationStatus = 'Active' THEN 1 ELSE 0 END) AS active_count,
                SUM(CASE WHEN applicationStatus != 'Active' THEN 1 ELSE 0 END) AS inactive_count
@@ -761,7 +832,7 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # Compliance timeline
-    cur.execute(f"""
+    _execute(cur, "descriptive.compliance_timeline", f"""
         SELECT
             DATE_FORMAT(lastRenewalDate, '%%Y-%%m') AS month,
             SUM(CASE WHEN applicationStatus = 'Active'  THEN 1 ELSE 0 END) AS active_count,
@@ -782,14 +853,14 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # Audit summary
-    cur.execute(f"""
+    _execute(cur, "descriptive.audit_summary", f"""
         SELECT COUNT(*) AS n FROM inspection_reports ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE 1=1 {insp_ir} {geo_g}
     """, insp_ir_p + geo_g_p)
     total_inspections = cur.fetchone()["n"]
 
-    cur.execute(f"""
+    _execute(cur, "descriptive.inspection_result_breakdown", f"""
         SELECT ir.inspectionResult, COUNT(*) AS count
         FROM inspection_reports ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
@@ -806,7 +877,7 @@ def _get_all_analytics_inner(F=None):
     # ══════════════════════════════════════════════════════════════════════════
 
     # Barangay risk heatmap
-    cur.execute(f"""
+    _execute(cur, "diagnostic.barangay_risk", f"""
         SELECT
             b.barangayID,
             b.barangayName,
@@ -851,7 +922,7 @@ def _get_all_analytics_inner(F=None):
         FROM official_registry
         GROUP BY TRIM(businessName), barangayID
     """
-    cur.execute(f"""
+    _execute(cur, "diagnostic.category_risk_drivers", f"""
         SELECT
             COALESCE(NULLIF(TRIM(o.lineOfBusiness), ''), 'Unspecified sector') AS category,
             COUNT(DISTINCT o.businessID) AS flagged_count
@@ -870,7 +941,7 @@ def _get_all_analytics_inner(F=None):
     """, geo_g_p + reg_o_p)
     flagged_by_sector = list(cur.fetchall())
 
-    cur.execute(f"""
+    _execute(cur, "diagnostic.sector_denominators", f"""
         SELECT COALESCE(NULLIF(TRIM(lineOfBusiness), ''), 'Unspecified sector') AS category,
                COUNT(DISTINCT businessID) AS total_registered
         FROM official_registry
@@ -893,7 +964,7 @@ def _get_all_analytics_inner(F=None):
             "non_green_rate": round(flagged_count / total_registered * 100, 1) if total_registered else 0,
         })
 
-    cur.execute(f"""
+    _execute(cur, "diagnostic.category_linkage", f"""
         SELECT COUNT(DISTINCT g.logID) AS total_flagged_records,
                COUNT(DISTINCT CASE WHEN rm.match_count = 1 THEN g.logID END) AS linked_records,
                COUNT(DISTINCT CASE WHEN rm.match_count IS NULL THEN g.logID END) AS unlinked_records,
@@ -917,7 +988,7 @@ def _get_all_analytics_inner(F=None):
     }
 
     # Weekly red-flag trend
-    cur.execute(f"""
+    _execute(cur, "diagnostic.flag_trend", f"""
         SELECT
             DATE_FORMAT(
                 DATE_SUB(g.detectedDate, INTERVAL WEEKDAY(g.detectedDate) DAY),
@@ -941,7 +1012,7 @@ def _get_all_analytics_inner(F=None):
     dbscan_clusters = []
     _dbscan_t0 = _phase_start(phases)
     try:
-        cur.execute(f"""
+        _execute(cur, "diagnostic.dbscan_hotspots", f"""
                  SELECT g.logID, g.detectedName, g.detectedDate,
                      {effective_flag_color} AS flagColor,
                      g.latitude, g.longitude,
@@ -1009,7 +1080,7 @@ def _get_all_analytics_inner(F=None):
         print(f"DBSCAN Error: {e}")
         dbscan_insight = "Hotspot detection temporarily unavailable."
     finally:
-        # Inclusive span (it encloses a timed sql#N SELECT): logged, never summed.
+        # Inclusive span (it encloses a timed SQL leaf): logged, never summed.
         _record_inclusive(phases, "py:dbscan", _dbscan_t0)
 
     # Moran's I Proxy (Spatial Autocorrelation)
@@ -1017,7 +1088,7 @@ def _get_all_analytics_inner(F=None):
     morans_data = {"points": [], "threshold": 0}
     _morans_t0 = _phase_start(phases)
     try:
-        cur.execute(f"""
+        _execute(cur, "diagnostic.morans_barangay_spatial", f"""
             SELECT 
                 b.barangayName,
                 AVG(g.latitude) as lat,
@@ -1092,7 +1163,7 @@ def _get_all_analytics_inner(F=None):
         print(f"Moran's I Proxy Error: {e}")
         morans_insight = "Regional pattern analysis temporarily unavailable."
     finally:
-        # Inclusive span (it encloses a timed sql#N SELECT): logged, never summed.
+        # Inclusive span (it encloses a timed SQL leaf): logged, never summed.
         _record_inclusive(phases, "py:morans", _morans_t0)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1112,7 +1183,12 @@ def _get_all_analytics_inner(F=None):
                         else _barangay_rankings_sql)
     rankings_sql, rankings_params = rankings_builder(
         effective_flag_color, geo_on_g, geo_on_g_p, reg_o, reg_o_p, brgy_b, brgy_b_p)
-    cur.execute(rankings_sql, rankings_params)
+    _execute(
+        cur,
+        "prescriptive.barangay_rankings",
+        rankings_sql,
+        rankings_params,
+    )
     rows = cur.fetchall()
 
     max_flagged = max((r["flagged_count"] or 0 for r in rows), default=1) or 1
@@ -1184,7 +1260,9 @@ def _get_all_analytics_inner(F=None):
     # --- Dispatch Recommendations ---
     from api.analytics.dispatch import generate_recommendations
 
-    cur.execute(
+    _execute(
+        cur,
+        "prescriptive.active_inspectors",
         "SELECT COUNT(*) AS n FROM users WHERE userRole = 'Inspector' AND isActive = 1")
     inspector_row = cur.fetchone()
     total_inspectors = int(
@@ -1205,7 +1283,7 @@ def _get_all_analytics_inner(F=None):
     # from-reports version silently omitted idle inspectors, which made the
     # AI assistant under-count the workforce. Filter fragments live in the ON
     # clauses so date/status filters don't re-inner-join and hide them again.
-    cur.execute(f"""
+    _execute(cur, "operations.inspector_leaderboard", f"""
         SELECT 
             u.userID, 
             u.fullName, 
@@ -1228,7 +1306,7 @@ def _get_all_analytics_inner(F=None):
             stat["avg_resolution_time"] = 0.0
 
     # 2. Inspection Status Breakdown
-    cur.execute(f"""
+    _execute(cur, "operations.inspection_status_breakdown", f"""
         SELECT COALESCE(ir.verificationStatus, 'Unassigned') as status, COUNT(ir.reportID) as count
         FROM inspection_reports ir
         LEFT JOIN geospatial_logs g ON ir.targetID = g.logID
@@ -1238,7 +1316,7 @@ def _get_all_analytics_inner(F=None):
     status_breakdown = list(cur.fetchall())
 
     # 3. Inspection Timeline
-    cur.execute(f"""
+    _execute(cur, "operations.inspection_timeline", f"""
         SELECT DATE(ir.irTimestamp) as date, COUNT(ir.reportID) as count
         FROM inspection_reports ir
         LEFT JOIN geospatial_logs g ON ir.targetID = g.logID

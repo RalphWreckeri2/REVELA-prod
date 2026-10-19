@@ -7,6 +7,7 @@ import {
   NON_DISPATCHABLE_FLAG_COLORS,
   canReassignInspection,
   canFollowUpInspection,
+  normalizeDispatchColor,
 } from "./dispatchEligibility.js";
 
 const flag = (color, extra = {}) => ({ color, ...extra });
@@ -42,6 +43,35 @@ test("an unknown colour is not dispatchable", () => {
   assert.equal(canDispatchFlag(flag("Magenta"), { isAdmin: true }), false);
   assert.equal(canDispatchFlag(flag(undefined), { isAdmin: true }), false);
   assert.equal(canDispatchFlag(null, { isAdmin: true }), false);
+});
+
+test("dispatch color normalization preserves compliant and blocked colors", () => {
+  assert.equal(normalizeDispatchColor("Green"), "Green");
+  assert.equal(normalizeDispatchColor("Black"), "Black");
+  assert.equal(normalizeDispatchColor("red"), "Red");
+  assert.equal(normalizeDispatchColor(null), "Unknown");
+  assert.equal(normalizeDispatchColor("Magenta"), "Unknown");
+  assert.equal(
+    canDispatchFlag(
+      { color: normalizeDispatchColor("Green") },
+      { isAdmin: true },
+    ),
+    false,
+  );
+  assert.equal(
+    canDispatchFlag(
+      { color: normalizeDispatchColor("Black") },
+      { isAdmin: true },
+    ),
+    false,
+  );
+  assert.equal(
+    canDispatchFlag(
+      { color: normalizeDispatchColor("Magenta") },
+      { isAdmin: true },
+    ),
+    false,
+  );
 });
 
 test("non-admins can never dispatch", () => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
-import { canDispatchFlag } from "./dispatchEligibility";
+import { canDispatchFlag, normalizeDispatchColor } from "./dispatchEligibility";
 import {
   API_ORIGIN,
   assignInspectionBatchRequest,
@@ -16,13 +16,11 @@ const FLAG_COLORS = {
 };
 
 function normalizeBatchFlag(flag) {
-  const rawColor = String(flag.flagColor ?? "Red").trim();
-  const color = rawColor.charAt(0).toUpperCase() + rawColor.slice(1).toLowerCase();
   return {
     id: Number(flag.logID ?? flag.id),
     name: flag.detectedName || "Unknown Establishment",
     barangayID: flag.barangayID,
-    color: FLAG_COLORS[color] ? color : "Red",
+    color: normalizeDispatchColor(flag.flagColor),
     verificationStatus: flag.verificationStatus,
     hasActiveInspection: flag.verificationStatus != null &&
       flag.verificationStatus !== "Verified",
