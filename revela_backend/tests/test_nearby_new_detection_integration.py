@@ -1,4 +1,5 @@
 import unittest
+from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 from api.flags import service
@@ -13,6 +14,7 @@ class StatefulDetectionDatabase:
         self.flags = []
         self.checkpoints = set()
         self.rejected_pairs = set()
+        self.plans = {}
         self.next_log_id = 1
         self.connection = self
 
@@ -57,10 +59,21 @@ class StatefulDetectionCursor:
                 for business_id, place_id in self.database.rejected_pairs
             ]
         elif "select pointkey from scan_point_log" in sql:
+            prefixes = tuple(value.rstrip("%") for value in params) if "like %s" in sql else ("",)
             self._rows = [
                 {"pointKey": point_key}
                 for point_key in sorted(self.database.checkpoints)
+                if point_key.startswith(prefixes)
             ]
+        elif "select cycleid, points, status from detection_scan_plans" in sql:
+            self._row = self.database.plans.get(params[0])
+        elif sql.startswith("insert into detection_scan_plans"):
+            scope, cycle, points = params
+            self.database.plans[scope] = {"cycleID": cycle, "points": points, "status": "running"}
+        elif sql.startswith("update detection_scan_plans"):
+            scope, cycle = params
+            if self.database.plans[scope]["cycleID"] == cycle:
+                self.database.plans[scope]["status"] = "completed"
         elif "from geospatial_logs g where g.placeid in" in sql:
             place_ids = set(params)
             self._rows = [
@@ -301,19 +314,25 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
             "is_limit_reached": False,
             "monthly_limit": 10,
             "registry_count": len(registry),
+            "remaining_this_month": 10,
         }
         cap_values = {
-            "quota.nearby_new.daily": 5,
+            "quota.nearby_new.daily": 20,
             "quota.nearby_new.monthly": 20,
             "run_detection.max_seconds": 90,
             "run_detection.max_requests": 10,
             "run_detection.grid_step_degrees": 0.009,
         }
 
-        with (
+        reserve = MagicMock(return_value=(True, None))
+        post = MagicMock(side_effect=mocked_post)
+        with ExitStack() as stack:
+            for context in (
             patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "offline-test-key"}),
             patch.object(service, "RUN_DETECTION_NEARBY_API", "new"),
             patch.object(service, "mysql", database),
+            patch.object(service, "_ensure_budget_tables"),
+            patch.object(service, "read_usage", return_value={"month": 0, "day": 0}),
             patch.object(service, "get_detection_quota_info", return_value=quota_info),
             patch.object(service, "_ensure_place_types_column"),
             patch.object(service, "_load_registry", side_effect=lambda: database.registry),
@@ -330,18 +349,21 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
                 side_effect=lambda key: cap_values.get(key, 100),
             ),
             patch.object(service.test_mode, "is_enabled", return_value=False),
-            patch.object(service, "reserve_usage_slot", return_value=(True, None)) as reserve,
-            patch.object(service.http, "post", side_effect=mocked_post) as post,
+            patch.object(service, "reserve_usage_slot", reserve),
+            patch.object(service.http, "post", post),
             patch.object(service, "_nearby_last_request_at", 0),
             patch.object(service.time, "sleep"),
             patch.object(service.hub, "publish_to_admins"),
-        ):
+            ):
+                stack.enter_context(context)
             first_result, first_error = service.run_detection(mode="full")
 
             self.assertIsNone(first_error)
             self.assertEqual(first_result["status"], "partial")
             self.assertEqual(first_result["completed_points"], 1)
             self.assertEqual(first_result["incomplete_points"], 1)
+            self.assertEqual(first_result["run_summary"]["api_requests_consumed"], 2)
+            self.assertEqual(first_result["quota"]["remaining_this_month"], 10)
             self.assertEqual(first_result["run_summary"]["matched"], 1)
             self.assertEqual(first_result["run_summary"]["new_flags"], 1)
             self.assertEqual(first_result["run_summary"]["non_business"], 2)
@@ -365,8 +387,9 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
             ))
             self.assertEqual(calls_by_point, {point_a: 1, point_b: 1})
             fingerprint = service._checkpoint_configuration_fingerprint("full")
-            point_a_key = service._checkpoint_point_key(*point_a, fingerprint)
-            point_b_key = service._checkpoint_point_key(*point_b, fingerprint)
+            cycle = database.plans[fingerprint]["cycleID"]
+            point_a_key = service._checkpoint_point_key(*point_a, cycle)
+            point_b_key = service._checkpoint_point_key(*point_b, cycle)
             self.assertEqual(database.checkpoints, {point_a_key})
             self.assertNotIn(point_b_key, database.checkpoints)
 
@@ -376,6 +399,9 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
         self.assertIsNone(second_error)
         self.assertEqual(second_result["status"], "completed")
         self.assertEqual(second_result["completed_points"], 2)
+        self.assertEqual(second_result["attempted_points"], 1)
+        self.assertEqual(second_result["saved_points"], 1)
+        self.assertEqual(second_result["run_summary"]["api_requests_consumed"], 1)
         self.assertEqual(second_result["run_summary"]["new_flags"], 0)
         self.assertEqual(second_result["run_summary"]["non_business"], 2)
         self.assertEqual(calls_by_point, {point_a: 1, point_b: 2})
@@ -389,6 +415,32 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
         self.assertEqual(reserve.call_count, 3)
         self.assertNotIn("place-library", {f.get("placeID") for f in database.flags})
         self.assertNotIn("place-hall", {f.get("placeID") for f in database.flags})
+
+    def test_quick_plan_is_frozen_and_another_mode_completion_does_not_erase_it(self):
+        database = StatefulDetectionDatabase([], [])
+        quick = [(13.9667, 121.1167), (13.97, 121.12)]
+        full = [(13.96, 121.11)]
+        caps = {key: spec["baseline"] for key, spec in service.quota_settings.QUOTA_FIELDS.items()}
+        with patch.object(service, "mysql", database), \
+                patch.object(service, "_ensure_budget_tables"), \
+                patch.object(service.test_mode, "is_enabled", return_value=False), \
+                patch.object(service.quota_settings, "cap", side_effect=lambda key: caps[key]), \
+                patch.object(service, "_detection_points_for_mode", side_effect=lambda mode, *_args: quick if mode == "quick" else full):
+            quick_cycle, quick_points = service._scan_plan("quick", [], create=True)
+            quick_key = service._checkpoint_point_key(*quick[0], quick_cycle)
+            service._mark_point_done(quick_key)
+            full_cycle, _ = service._scan_plan("full", [], create=True)
+            service._places_run_state.cycle_id = full_cycle
+            service._mark_point_done(service._checkpoint_point_key(*full[0], full_cycle))
+            service._finish_scan_plan("full")
+            # Simulate another request/thread with different rotation history.
+            service._places_run_state.quick_scan_history = {(13.9667, 121.1167): 999}
+            resumed_cycle, resumed_points = service._scan_plan("quick", [])
+            service._places_run_state.cycle_id = resumed_cycle
+            self.assertEqual(service._completed_points_this_cycle(), {quick_key})
+        service._places_run_state.cycle_id = None
+        self.assertEqual(resumed_cycle, quick_cycle)
+        self.assertEqual(resumed_points, quick_points)
 
 
 if __name__ == "__main__":

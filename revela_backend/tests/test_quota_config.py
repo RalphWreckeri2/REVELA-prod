@@ -155,7 +155,7 @@ class ApiQuotaConfigTests(unittest.TestCase):
         )
         self.assertEqual(config.place_details.daily, 80)
         self.assertEqual(config.geocoding.monthly, 4000)
-        self.assertEqual(config.legacy_nearby.daily, 120)
+        self.assertEqual(config.legacy_nearby.daily, 500)
         self.assertEqual(config.nearby_new.daily, 5)
         self.assertEqual(config.nearby_new.monthly, 600)
 

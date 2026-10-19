@@ -6,6 +6,40 @@
   min-width: 0;
 }
 
+.analytics-skeleton {
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--color-border) 25%, var(--color-card-alt) 50%, var(--color-border) 75%);
+  background-size: 200% 100%;
+  animation: analytics-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes analytics-shimmer {
+  to { background-position: -200% 0; }
+}
+
+.analytics-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.analytics-loading-layout { margin-bottom: 40px; }
+.analytics-skeleton-title { width: 260px; max-width: 80%; height: 26px; margin: 16px 0 28px; }
+.analytics-skeleton-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 24px; }
+.analytics-skeleton-kpi { display: flex; align-items: center; gap: 14px; padding: 18px 14px; min-height: 90px; }
+.analytics-skeleton-icon { width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; }
+.analytics-skeleton-value { height: 26px; width: 55px; margin-bottom: 8px; }
+.analytics-skeleton-label { height: 13px; width: 120px; max-width: 100%; }
+.analytics-skeleton-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.analytics-skeleton-chart { padding: 24px; min-width: 0; }
+.analytics-skeleton-chart:first-child { grid-column: 1 / -1; }
+.analytics-skeleton-plot { display: flex; align-items: flex-end; gap: 5%; padding: 35px 12px 12px; border-bottom: 1px solid var(--color-border); }
+.analytics-skeleton-plot > div { flex: 1; border-radius: 5px 5px 0 0; }
+.analytics-skeleton-pie-wrap { display: grid; place-items: center; }
+.analytics-skeleton-donut { width: 190px; height: 190px; border-radius: 50%; position: relative; }
+.analytics-skeleton-donut::after { content: ""; position: absolute; inset: 45px; border-radius: 50%; background: var(--color-surface); }
+.analytics-updating { color: var(--color-muted); font-size: 13px; margin-bottom: 16px; }
+.analytics-section-state { padding: 28px; text-align: center; margin-bottom: 32px; }
+
+@media (max-width: 900px) { .analytics-skeleton-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .analytics-skeleton-charts { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .analytics-skeleton { animation: none; } }
+
 .analytics-feature-card {
   box-sizing: border-box;
   height: var(--analytics-reference-card-height, auto);

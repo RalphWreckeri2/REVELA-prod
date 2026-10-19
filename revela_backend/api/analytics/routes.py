@@ -75,6 +75,11 @@ def _get_candidate_gemini_models(client, force_refresh=False):
 # The Analytics page can opt into stale-while-revalidate; other callers still
 # wait for a fresh snapshot. No separate rankings cache or SQL path is added.
 _analytics_cache: dict = {}
+# Section snapshots share the SAME pipeline/flight as /all. A cold descriptive
+# read must not wait for DBSCAN, rankings, and operations to finish.
+_ANALYTICS_SECTIONS = ("descriptive", "diagnostic", "prescriptive", "operations")
+_analytics_sections: dict = {}
+_analytics_failures: dict = {}
 _ANALYTICS_CACHE_TTL = 60  # seconds
 _ANALYTICS_MAX_STALE_AGE = 15 * 60  # hard limit measured from computed_at
 _ANALYTICS_REFRESH_RETRY = 15
@@ -282,9 +287,34 @@ def invalidate_analytics_cache():
     global _analytics_cache_generation
     with _analytics_cache_lock:
         _analytics_cache.clear()
+        _analytics_sections.clear()
+        _analytics_failures.clear()
         _analytics_cache_generation += 1
         # Reserve active flights until their queries finish, but do not publish
         # or satisfy fresh reads from a result computed before invalidation.
+
+
+def init_analytics_cache_invalidation(app):
+    """Invalidate once after a data-writing HTTP operation, including quota pauses."""
+    @app.after_request
+    def invalidate_after_write(response):
+        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+            return response
+        if not (200 <= response.status_code < 300 or response.status_code == 429):
+            return response
+        blueprint = request.blueprint
+        if blueprint == "analytics":
+            changes_data = request.path in ("/api/analytics/wlc-config", "/api/analytics/wlc-config/reset")
+        else:
+            changes_data = blueprint in ("registry", "flags", "inspections", "users")
+            if request.path in (
+                "/api/flags/location-search", "/api/flags/reverse-geocode",
+                "/api/flags/cancel-detection", "/api/registry/cancel", "/api/registry/reset-quota",
+            ):
+                changes_data = False
+        if changes_data:
+            invalidate_analytics_cache()
+        return response
 
 
 def _finish_analytics_refresh(key, flight, entry=None, error=None):
@@ -293,12 +323,28 @@ def _finish_analytics_refresh(key, flight, entry=None, error=None):
         if generation == _analytics_cache_generation:
             if error is None and entry["status_code"] == 200:
                 _analytics_cache[key] = entry
+                _analytics_failures.pop(key, None)
+                # Also supports callers/tests that supply a complete snapshot
+                # without the pipeline's intermediate publication hooks.
+                sections = _analytics_sections.setdefault(key, {})
+                for section in _ANALYTICS_SECTIONS:
+                    if section in entry["data"]:
+                        published = sections.get(section, {})
+                        sections[section] = {
+                            **entry, "data": {section: entry["data"][section]},
+                            **({"computed_at": published["computed_at"]}
+                               if published.get("flight") is flight else {}),
+                        }
             elif key in _analytics_cache:
                 _analytics_cache[key] = {
                     **_analytics_cache[key],
                     "refresh_failed": True,
                     "retry_after": time.time() + _ANALYTICS_REFRESH_RETRY,
                 }
+            if error is not None or (entry and entry["status_code"] != 200):
+                _analytics_failures[key] = time.time() + _ANALYTICS_REFRESH_RETRY
+                for section_entry in _analytics_sections.get(key, {}).values():
+                    section_entry["refresh_failed"] = True
         if _analytics_refreshes.get(key) is flight:
             del _analytics_refreshes[key]
     if error is None:
@@ -312,11 +358,13 @@ def _compute_analytics_snapshot(F, key, flight):
     global _analytics_inflight
     collector = _PhaseCollector() if _phases_enabled() else None
     g._analytics_phases = collector
+    g._analytics_section_context = (key, flight[1])
     with _analytics_metrics_lock:
         _analytics_metrics["misses"] += 1
         _analytics_inflight += 1
         inflight = _analytics_inflight
     started = time.perf_counter()
+    g._analytics_section_started = started
     entry = error = None
     try:
         data, status_code = _get_all_analytics_inner(F)
@@ -326,6 +374,7 @@ def _compute_analytics_snapshot(F, key, flight):
         error = exc
         _analytics_log.exception("Analytics refresh failed key=%s", key[:8])
     finally:
+        g.pop("_analytics_section_context", None)
         elapsed = (time.perf_counter() - started) * 1000.0
         with _analytics_metrics_lock:
             _analytics_inflight -= 1
@@ -334,6 +383,65 @@ def _compute_analytics_snapshot(F, key, flight):
             _log_analytics_cache("refresh", inflight, elapsed, key)
         finally:
             _finish_analytics_refresh(key, flight, entry, error)
+
+
+def _publish_analytics_section(section, data):
+    """Publish finished work only; never expose a half-built/mutating payload."""
+    context = getattr(g, "_analytics_section_context", None) if has_app_context() else None
+    if context is None:
+        return
+    key, generation = context
+    computed_at = time.time()
+    with _analytics_cache_lock:
+        if generation != _analytics_cache_generation:
+            return
+        _analytics_sections.setdefault(key, {})[section] = {
+            "data": {section: data}, "status_code": 200, "ts": computed_at,
+            "computed_at": datetime.fromtimestamp(computed_at, timezone.utc).isoformat(),
+            "flight": _analytics_refreshes.get(key),
+        }
+    _analytics_log.info(
+        "[analytics-section] key=%s section=%s ready_ms=%.1f", key[:8], section,
+        (time.perf_counter() - getattr(g, "_analytics_section_started", time.perf_counter())) * 1000,
+    )
+
+
+def _get_analytics_section(F, section):
+    """Nonblocking section read, coalesced with startup warming and /all reads."""
+    key = _analytics_cache_key(F)
+    background = deferred = False
+    with _analytics_cache_lock:
+        full = _analytics_cache.get(key)
+        entry = _analytics_sections.get(key, {}).get(section)
+        if entry is None and full and section in full["data"]:
+            entry = {**full, "data": {section: full["data"][section]}}
+        fresh = entry and not _analytics_snapshot_metadata(entry)["stale"]
+        flight = _analytics_refreshes.get(key)
+        retry_after = _analytics_failures.get(key, 0)
+        if not fresh and flight is None and time.time() >= retry_after:
+            background = _analytics_background_slot.acquire(blocking=False)
+            deferred = not background
+            if background:
+                flight = (Future(), _analytics_cache_generation)
+                _analytics_refreshes[key] = flight
+    if background:
+        _start_analytics_background_refresh(
+            current_app._get_current_object(), F, key, flight)
+    if entry:
+        data, status = _analytics_snapshot_data(entry, key, deferred, prefer_full=False)
+        # _analytics_snapshot_data normally prefers the latest complete cache.
+        # A section read still returns only the requested tier.
+        return {k: v for k, v in data.items()
+                if k in (section, "analytics_cache", "error")}, status
+    failed = time.time() < _analytics_failures.get(key, 0)
+    return {
+        **({"error": "Analytics refresh failed. Please retry."} if failed else {}),
+        "analytics_cache": {
+            "loading": not failed, "refreshing": bool(flight) and not failed,
+            "refresh_deferred": deferred, "refresh_failed": failed,
+            "retry_after_seconds": _ANALYTICS_REFRESH_RETRY if failed else 1,
+        },
+    }, 503 if failed else 202
 
 
 def _background_analytics_refresh(app, F, key, flight):
@@ -396,7 +504,7 @@ def start_analytics_cache_warmup(app):
 
 
 def _analytics_snapshot_metadata(entry):
-    computed_at = entry["data"].get(
+    computed_at = entry.get("computed_at") or entry["data"].get(
         "prescriptive", {}).get("rankings_computed_at")
     if not computed_at:
         computed_at = datetime.fromtimestamp(
@@ -404,6 +512,11 @@ def _analytics_snapshot_metadata(entry):
     try:
         computed = datetime.fromisoformat(computed_at)
         age = time.time() - computed.timestamp() if computed.tzinfo else None
+        # datetime rounds the cache's float timestamp to microseconds. On
+        # coarse-resolution clocks an immediate read can therefore appear a
+        # fraction of a microsecond in the future, not an invalid snapshot.
+        if age is not None and -0.001 < age < 0:
+            age = 0
     except (TypeError, ValueError, OverflowError):
         age = None
     expired = age is None or age < 0 or age > _ANALYTICS_MAX_STALE_AGE
@@ -416,10 +529,10 @@ def _analytics_snapshot_metadata(entry):
     }
 
 
-def _analytics_snapshot_data(entry, key, deferred=False):
+def _analytics_snapshot_data(entry, key, deferred=False, *, prefer_full=True):
     with _analytics_cache_lock:
         latest = _analytics_cache.get(key)
-        if entry["status_code"] == 200 and latest and latest["ts"] >= entry["ts"]:
+        if prefer_full and entry["status_code"] == 200 and latest and latest["ts"] >= entry["ts"]:
             entry = latest
         refreshing = key in _analytics_refreshes
     data = dict(entry["data"])
@@ -429,7 +542,9 @@ def _analytics_snapshot_data(entry, key, deferred=False):
     metadata.update({
         "refreshing": metadata["stale"] and refreshing,
         "refresh_deferred": metadata["stale"] and deferred,
-        "refresh_failed": metadata["stale"] and entry.get("refresh_failed", False),
+        "refresh_failed": metadata["stale"] and not refreshing and entry.get("refresh_failed", False),
+        "retry_after_seconds": max(1, math.ceil(
+            entry.get("retry_after", _analytics_failures.get(key, 0)) - time.time())),
     })
     if metadata["expired"]:
         # Keep the timestamp/status, not the expired rankings, charts or KPIs.
@@ -519,6 +634,12 @@ analytics_bp = Blueprint("analytics", __name__)
 def get_all_analytics():
     try:
         F = parse_analytics_filters(request.args)
+        section = request.args.get("section")
+        if section:
+            if section not in _ANALYTICS_SECTIONS:
+                return jsonify({"error": "Unknown analytics section."}), 400
+            data, status_code = _get_analytics_section(F, section)
+            return jsonify(data), status_code
         data, status_code = _get_cached_analytics(
             F, allow_stale=request.args.get("stale_while_revalidate") == "1")
 
@@ -1055,6 +1176,31 @@ def _get_all_analytics_inner(F=None):
         for row in cur.fetchall()
     ]
 
+    descriptive = {
+        "kpis": {
+            "total_businesses": total_businesses, "active_count": active_count,
+            "expired_count": expired_count, "closed_count": closed_count,
+            "pending_count": pending_count, "revoked_count": revoked_count,
+            "new_registration_count": new_registration_count,
+            "renewal_registration_count": renewal_registration_count,
+            "current_year_count": current_year_registered_count,
+            "current_year_registered_count": current_year_registered_count,
+            "upcoming_year_renewal_count": upcoming_year_renewal_count,
+            "total_flagged": total_flagged, "compliance_rate": compliance_rate,
+        },
+        "enforcement_progress": enforcement_progress,
+        "nature_per_barangay": nature_per_barangay,
+        "sectoral_distribution": sectoral_distribution,
+        "business_size_dist": business_size_dist,
+        "business_type_dist": business_type_dist,
+        "registration_type_dist": registration_type_dist,
+        "compliance_by_size": compliance_by_size,
+        "compliance_timeline": compliance_timeline,
+        "audit_summary": {"total_inspections": total_inspections,
+                          "result_breakdown": result_breakdown},
+    }
+    _publish_analytics_section("descriptive", descriptive)
+
     # ══════════════════════════════════════════════════════════════════════════
     # TIER 2 — DIAGNOSTIC
     # ══════════════════════════════════════════════════════════════════════════
@@ -1349,6 +1495,21 @@ def _get_all_analytics_inner(F=None):
         # Inclusive span (it encloses a timed SQL leaf): logged, never summed.
         _record_inclusive(phases, "py:morans", _morans_t0)
 
+    _scan_t0 = _phase_start(phases)
+    try:
+        scan_history = get_recent_detection_runs()
+    finally:
+        _record_inclusive(phases, "py:get_recent_detection_runs", _scan_t0)
+    diagnostic = {
+        "scan_history": scan_history, "barangay_risk_data": barangay_risk_data,
+        "category_risk_drivers": category_risk_drivers,
+        "category_linkage_summary": category_linkage_summary,
+        "flag_trend": flag_trend, "dbscan_insight": dbscan_insight,
+        "morans_insight": morans_insight, "dbscan_clusters": dbscan_clusters,
+        "morans_data": morans_data,
+    }
+    _publish_analytics_section("diagnostic", diagnostic)
+
     # ══════════════════════════════════════════════════════════════════════════
     # TIER 3 — PRESCRIPTIVE (WLC / OPS)
     # ══════════════════════════════════════════════════════════════════════════
@@ -1456,6 +1617,11 @@ def _get_all_analytics_inner(F=None):
     dispatch_weights = {"w1": w1, "w2": w2, "w3": w3}
     dispatch_recommendations = generate_recommendations(
         rankings, total_inspectors, dispatch_weights)
+    prescriptive = {
+        "rankings": rankings, "rankings_computed_at": rankings_computed_at,
+        "wlc_config": config, "dispatch_recommendations": dispatch_recommendations,
+    }
+    _publish_analytics_section("prescriptive", prescriptive)
 
     # ══════════════════════════════════════════════════════════════════════════
     # TIER 4 — OPERATIONS
@@ -1517,73 +1683,23 @@ def _get_all_analytics_inner(F=None):
         })
 
     cur.close()
-
-    # Informational only: get_recent_detection_runs opens its own cursor, so its
-    # table-check + DDL/commit + SELECT + fetch + formatting are captured as one
-    # inclusive span and deliberately NOT added to phases_sum_ms.
-    _scan_t0 = _phase_start(phases)
-    try:
-        scan_history = get_recent_detection_runs()
-    finally:
-        _record_inclusive(phases, "py:get_recent_detection_runs", _scan_t0)
+    operations = {
+        "inspector_stats": inspector_stats, "status_breakdown": status_breakdown,
+        "inspection_timeline": inspection_timeline,
+    }
+    _publish_analytics_section("operations", operations)
 
     return {
         "applied_filters": Fx,
         # new_year_rollover is intentionally omitted here — it is user-specific
         # (unread flag) and is appended by the get_all_analytics route after
         # checking revela_notifications for the requesting user.
-        "descriptive": {
-            "kpis": {
-                "total_businesses":              total_businesses,
-                "active_count":                  active_count,
-                "expired_count":                 expired_count,
-                "closed_count":                  closed_count,
-                "pending_count":                 pending_count,
-                "revoked_count":                 revoked_count,
-                "new_registration_count":        new_registration_count,
-                "renewal_registration_count":    renewal_registration_count,
-                "current_year_count":            current_year_registered_count,
-                "current_year_registered_count": current_year_registered_count,
-                "upcoming_year_renewal_count":   upcoming_year_renewal_count,
-                "total_flagged":                 total_flagged,
-                "compliance_rate":               compliance_rate,
-                "high_risk_barangays":           high_risk_barangays,
-            },
-            "enforcement_progress":  enforcement_progress,
-            "nature_per_barangay":   nature_per_barangay,
-            "sectoral_distribution": sectoral_distribution,
-            "business_size_dist":    business_size_dist,
-            "business_type_dist":    business_type_dist,
-            "registration_type_dist": registration_type_dist,
-            "compliance_by_size":    compliance_by_size,
-            "compliance_timeline":   compliance_timeline,
-            "audit_summary": {
-                "total_inspections": total_inspections,
-                "result_breakdown":  result_breakdown,
-            },
-        },
-        "diagnostic": {
-            "scan_history":         scan_history,
-            "barangay_risk_data":     barangay_risk_data,
-            "category_risk_drivers": category_risk_drivers,
-            "category_linkage_summary": category_linkage_summary,
-            "flag_trend":             flag_trend,
-            "dbscan_insight":         dbscan_insight,
-            "morans_insight":         morans_insight,
-            "dbscan_clusters":        dbscan_clusters,
-            "morans_data":            morans_data,
-        },
-        "prescriptive": {
-            "rankings":   rankings,
-            "rankings_computed_at": rankings_computed_at,
-            "wlc_config": config,
-            "dispatch_recommendations": dispatch_recommendations,
-        },
-        "operations": {
-            "inspector_stats": inspector_stats,
-            "status_breakdown": status_breakdown,
-            "inspection_timeline": inspection_timeline,
-        },
+        "descriptive": {**descriptive, "kpis": {
+            **descriptive["kpis"], "high_risk_barangays": high_risk_barangays,
+        }},
+        "diagnostic": diagnostic,
+        "prescriptive": prescriptive,
+        "operations": operations,
     }, 200
 
 

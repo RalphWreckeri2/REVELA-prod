@@ -71,15 +71,18 @@ async function handleResponse(res) {
       // Carry the machine-readable code so callers can react to specific
       // reasons (e.g. "session_idle") instead of matching on prose.
       error.code = data.code;
+      error.status = res.status;
       error.responseData = data;
       throw error;
     }
     return data;
   } catch (err) {
     if (err instanceof SyntaxError) {
-      throw new Error(`Server error: Invalid response (${res.status})`, {
+      const error = new Error(`Server error: Invalid response (${res.status})`, {
         cause: err,
       });
+      error.status = res.status;
+      throw error;
     }
     throw err;
   }
@@ -589,8 +592,9 @@ export async function deleteBusinessRequest(businessId, token) {
   }
 }
 
-export async function getBarangaysRequest(token) {
+export async function getBarangaysRequest(token, options = {}) {
   const res = await fetch(`${BASE_URL}/registry/barangays`, {
+    signal: options.signal,
     headers: { Authorization: `Bearer ${token}` },
   });
   return await handleResponse(res);
@@ -701,6 +705,13 @@ export async function runDetectionRequest(token, mode = "quick") {
   } catch (err) {
     connectionGuard(err);
   }
+}
+
+export async function getDetectionPreflightRequest(token, mode = "quick") {
+  const response = await fetch(`${BASE_URL}/flags/detection-preflight?mode=${encodeURIComponent(mode)}`, {
+    headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+  });
+  return handleResponse(response);
 }
 
 export async function cancelRunDetection(token) {
@@ -1235,6 +1246,7 @@ export async function getAnalyticsOverviewRequest(arg1, arg2, options = {}) {
       throw new Error("Missing authentication token.");
     }
     const qs = analyticsFiltersToSearchParams(filters);
+    if (options.section) qs.set("section", options.section);
     if (options.staleWhileRevalidate) qs.set("stale_while_revalidate", "1");
     const q = qs.toString();
     const url = q
@@ -1267,7 +1279,7 @@ export async function getDemographicReportsRequest(token) {
   }
 }
 
-export async function getAnalyticsFilterMetadataRequest(token) {
+export async function getAnalyticsFilterMetadataRequest(token, options = {}) {
   try {
     const { token: accessToken } = resolveTokenAndOptionalFilters(
       token,
@@ -1277,6 +1289,7 @@ export async function getAnalyticsFilterMetadataRequest(token) {
       throw new Error("Missing authentication token.");
     }
     const res = await fetch(`${BASE_URL}/analytics/filter-metadata`, {
+      signal: options.signal,
       method: "GET",
       headers: authHeaders(accessToken),
     });

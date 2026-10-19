@@ -73,8 +73,11 @@ def create_app():
     from api.inspections.routes import inspections_bp
     app.register_blueprint(inspections_bp, url_prefix="/api/inspections")
 
-    from api.analytics.routes import analytics_bp, start_analytics_cache_warmup
+    from api.analytics.routes import (
+        analytics_bp, start_analytics_cache_warmup, init_analytics_cache_invalidation,
+    )
     app.register_blueprint(analytics_bp, url_prefix="/api/analytics")
+    init_analytics_cache_invalidation(app)
 
     from api.geospatial.routes import geospatial_bp
     app.register_blueprint(geospatial_bp, url_prefix="/api/geospatial")

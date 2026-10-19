@@ -117,7 +117,7 @@ class QuotaValidationTests(unittest.TestCase):
         self.assertTrue(errors)
         self.assertIn("Google Cloud quota", errors[0])
 
-    def test_new_nearby_daily_persisted_override_cannot_exceed_five(self):
+    def test_new_nearby_daily_persisted_override_honors_rollout_maximum(self):
         from api.utils.quota_settings import _coerce
 
         key = "quota.nearby_new.daily"
@@ -125,13 +125,10 @@ class QuotaValidationTests(unittest.TestCase):
         original_baseline = spec["baseline"]
         try:
             spec["baseline"] = 0
-            with self.assertRaisesRegex(ValueError, "environment baseline"):
-                _coerce(key, 1)
-
-            spec["baseline"] = 5
-            self.assertEqual(_coerce(key, 5), 5)
-            with self.assertRaisesRegex(ValueError, "no more than 5"):
-                _coerce(key, 6)
+            maximum = quota_ceilings.NEARBY_NEW_APPLICATION_DAILY_MAX
+            self.assertEqual(_coerce(key, maximum), maximum)
+            with self.assertRaisesRegex(ValueError, f"no more than {maximum}"):
+                _coerce(key, maximum + 1)
         finally:
             spec["baseline"] = original_baseline
 
@@ -190,7 +187,9 @@ class QuotaValidationTests(unittest.TestCase):
     def test_unverified_cloud_report_cannot_raise_above_env_baseline(self):
         key = "quota.text_search.daily"
         baseline = quota_settings.QUOTA_FIELDS[key]["baseline"]
-        clean, errors = quota_settings.validate_patch({key: baseline + 1})
+        unverified = CloudMethodQuota(500, 600, False, "Unverified test fixture; confirm in Cloud Console")
+        with patch.object(quota_settings, "cloud_quota_for", return_value=unverified):
+            clean, errors = quota_settings.validate_patch({key: baseline + 1})
 
         self.assertEqual(clean, {})
         self.assertTrue(any(
@@ -910,7 +909,7 @@ class TestModeScopeTests(unittest.TestCase):
         with patch.object(test_mode, "is_enabled", return_value=False), \
                 patch.object(quota_settings, "cap", side_effect=lambda key: 0.009):
             points = service._grid_points()
-        self.assertEqual(len(points), 70)
+        self.assertEqual(len(points), 38)
 
 
 class UsageReportTests(unittest.TestCase):
@@ -926,7 +925,10 @@ class UsageReportTests(unittest.TestCase):
         ):
             quota_settings.invalidate()
             from api.utils import usage_report
-            with patch.object(usage_report, "mysql", MagicMock()):
+            with patch.object(usage_report, "mysql", MagicMock()), \
+                    patch("api.flags.service.get_detection_preflight", return_value={"can_start": True}), \
+                    patch.object(usage_report, "cloud_quota_for", return_value=CloudMethodQuota(
+                        500, 600, False, "Unverified test fixture; confirm in Cloud Console")):
                 self.report = usage_report.build_usage_report()
 
     def test_every_method_reports_all_three_limit_concepts(self):

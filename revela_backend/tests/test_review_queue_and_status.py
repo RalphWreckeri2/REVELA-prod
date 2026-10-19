@@ -576,7 +576,11 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         ]
         self.assertEqual(len(history_inserts), 1)
         self.assertIn(13.962, history_inserts[0].args[1])
-        update_pin.assert_called_once()
+        update_pin.assert_called_once_with(
+            cursor, 1, "Candidate Store", 13.962, 121.112, 13.965, 121.115,
+            business_id="BIZ-IMPORT-CHOICE", force_linked=True,
+            place_id="old_place", new_place_id=None,
+        )
 
     @patch("api.registry.places_resolver.mysql")
     def test_stale_imported_candidate_id_is_rejected_without_registry_change(
@@ -788,7 +792,11 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         self.assertNotIn("latitude=%s", approval.args[0])
         self.assertNotIn("longitude=%s", approval.args[0])
         self.assertNotIn("old-address-proposal", str(approval.args[1]))
-        update_pin.assert_not_called()
+        update_pin.assert_called_once_with(
+            cursor, 1, "Candidate Store", 13.962, 121.112, 13.962, 121.112,
+            business_id="BIZ-REV-STALE", force_linked=True,
+            place_id="retained_place", new_place_id="retained_place",
+        )
 
     @patch("api.registry.places_resolver._update_pin")
     @patch("api.registry.places_resolver.mysql")
@@ -852,7 +860,12 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
             "UPDATE official_registry SET latitude=%s" in call.args[0]
             for call in previous_cursor.execute.call_args_list
         ))
-        update_pin.assert_not_called()
+        update_pin.assert_called_once_with(
+            previous_cursor, 1, "History Store", 13.962, 121.112,
+            13.962, 121.112, business_id="BIZ-DECISION-HISTORY",
+            force_linked=True, place_id="retained_place",
+            new_place_id="retained_place",
+        )
 
     @patch("api.flags.service._get_barangay_id_by_coords", return_value=1)
     @patch("api.flags.service.mysql")
@@ -974,6 +987,9 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         update_pin.assert_called_once_with(
             cursor, 1, "Candidate Store", 13.962, 121.112, 13.965, 121.115,
             business_id="BIZ-REV-02",
+            force_linked=True,
+            place_id="existing_place",
+            new_place_id="proposed_place",
         )
         self.assertTrue(any(
             "review_approved" in call.args[0]

@@ -8,18 +8,12 @@ import {
 import DashboardLayout from "../components/DashboardLayout";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
-import {
-  analyticsRefreshPending,
-  analyticsSnapshotDeadline,
-  analyticsSnapshotExpired,
-  analyticsSnapshotMatchesFilters,
-  analyticsSnapshotStatus,
-} from "../components/analyticsCachePolicy";
+import { analyticsSnapshotStatus } from "../components/analyticsCachePolicy";
+import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useAuth } from "../context/authContext";
 import {
   getWlcConfigRequest,
   updateWlcConfigRequest,
-  getAnalyticsOverviewRequest,
   getAnalyticsFilterMetadataRequest,
   getBarangaysRequest,
   sendAnalyticsChatRequest,
@@ -51,8 +45,8 @@ const FLAG_COLORS = {
 };
 
 // ── Detection scan outcomes ───────────────────────────────────────────────────
-// `completed_with_gaps` attempted every grid cell but left saturated cells
-// uncheckpointed. It consumed a monthly scan and processed a real POI set, so
+// `completed_with_gaps` processed every cell and recorded bounded saturated
+// cells as coverage gaps. It consumed a monthly scan and a real POI set, so
 // it renders as a finished scan (amber) rather than an interruption.
 const SCAN_STATUS_LABEL = {
   completed: "Completed",
@@ -134,13 +128,39 @@ const SectionHeader = ({ tier, title, subtitle }) => {
 
 // ── Loading skeleton ──────────────────────────────────────────────────────────
 const Skeleton = ({ h = 200 }) => (
-  <div style={{
-    height: h, borderRadius: 12,
-    background: "linear-gradient(90deg, rgba(226,232,240,0.5) 25%, rgba(241,245,249,0.5) 50%, rgba(226,232,240,0.5) 75%)",
-    backgroundSize: "200% 100%",
-    animation: "shimmer 1.5s infinite",
-  }} />
+  <div aria-hidden="true" className="analytics-skeleton" style={{ height: h }} />
 );
+
+function AnalyticsSkeleton({ tab }) {
+  return (
+    <section role="status" aria-label={`Loading ${tab} analytics`} aria-busy="true" className="analytics-loading-layout">
+      <span className="analytics-sr-only">Loading analytics…</span>
+      <div className="analytics-skeleton-title analytics-skeleton" />
+      {tab === "descriptive" && (
+        <div className="analytics-skeleton-kpis">
+          {Array.from({ length: 8 }, (_, i) => (
+            <div key={i} className="saas-card analytics-skeleton-kpi" aria-hidden="true">
+              <div className="analytics-skeleton analytics-skeleton-icon" />
+              <div><div className="analytics-skeleton analytics-skeleton-value" /><div className="analytics-skeleton analytics-skeleton-label" /></div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="analytics-skeleton-charts">
+        {[350, 260, 260].map((h, i) => (
+          <div key={i} className="saas-card analytics-skeleton-chart" aria-hidden="true">
+            <div className="analytics-skeleton analytics-skeleton-label" />
+            {tab === "descriptive" && i > 0 ? (
+              <div className="analytics-skeleton-pie-wrap" style={{ height: h }}><div className="analytics-skeleton analytics-skeleton-donut" /></div>
+            ) : <div className="analytics-skeleton-plot" style={{ height: h }}>
+              {[42, 65, 52, 82, 60, 93, 72, 58].map((height, j) => <div key={j} className="analytics-skeleton" style={{ height: `${height}%` }} />)}
+            </div>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 // ── Empty State ──────────────────────────────────────────────────────────────
 const EmptyState = ({ title = "No Data", message = "", h = 220, icon }) => (
@@ -839,10 +859,6 @@ const GlobalAIAssistant = memo(({ globalData }) => {
 export default function AnalyticsPage() {
   const { token, user } = useAuth();
   const canEditWlc = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
-  const [snapshot, setSnapshot] = useState(null);
-  const [expiredSnapshot, setExpiredSnapshot] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("descriptive"); // descriptive, diagnostic, prescriptive
   const [leaderboardCardHeight, setLeaderboardCardHeight] = useState(null);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -892,11 +908,17 @@ export default function AnalyticsPage() {
   const [expandedDispatch, setExpandedDispatch] = useState({});
   const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
   const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
-  const snapshotMatches = analyticsSnapshotMatchesFilters(snapshot, appliedFilters);
-  const snapshotIsExpired = snapshotMatches && (snapshot.expired || expiredSnapshot === snapshot);
-  const data = snapshotMatches && !snapshotIsExpired ? snapshot.data : null;
-  const cacheMetadata = snapshotMatches ? snapshot.data?.analytics_cache : null;
-  const backgroundRefreshing = analyticsRefreshPending(cacheMetadata);
+  const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, appliedFilters);
+  const currentSection = sections[activeTab];
+  const data = useMemo(() => Object.fromEntries(
+    Object.entries(sections).map(([name, section]) => [name, section.data]),
+  ), [sections]);
+  const loading = !currentSection.data && currentSection.status === "loading";
+  const error = currentSection.error;
+  const snapshotIsExpired = currentSection.status === "expired";
+  const cacheMetadata = currentSection.metadata;
+  const isRefreshing = Object.values(sections).some((section) => section.updating);
+  const backgroundRefreshing = currentSection.updating;
   const [showFilters, setShowFilters] = useState(false);
   const [openSections, setOpenSections] = useState({ location: false, business: false, flags: false, inspection: false });
   const [brgySearchTerm, setBrgySearchTerm] = useState("");
@@ -905,83 +927,8 @@ export default function AnalyticsPage() {
 
   const [filterMeta, setFilterMeta] = useState(null);
   const [barangaysList, setBarangaysList] = useState([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const analyticsRequestRef = useRef(null);
-  const loadedFiltersRef = useRef(null);
-
-  const fetchAnalytics = useCallback(async (isSilent = false) => {
-    if (!token) return;
-    if (analyticsRequestRef.current && !analyticsRequestRef.current.signal.aborted) {
-      if (isSilent) return;
-      analyticsRequestRef.current.abort();
-    }
-    const controller = new AbortController();
-    analyticsRequestRef.current = controller;
-    const requestStartedAt = performance.now();
-    const requestWallTime = Date.now();
-
-    if (!isSilent) {
-      setLoading(loadedFiltersRef.current !== appliedFilters);
-      setIsRefreshing(true);
-    }
-    setError(null);
-    try {
-      const json = await getAnalyticsOverviewRequest(token, appliedFilters, {
-        signal: controller.signal, staleWhileRevalidate: true,
-      });
-      if (controller.signal.aborted) return;
-      const expiresAt = analyticsSnapshotDeadline(json.analytics_cache, requestStartedAt);
-      const wallExpiresAt = analyticsSnapshotDeadline(json.analytics_cache, requestWallTime);
-      const expired = analyticsSnapshotExpired({ expiresAt, wallExpiresAt }, performance.now());
-      loadedFiltersRef.current = expired ? null : appliedFilters;
-      setSnapshot({ filters: appliedFilters, data: json, expiresAt, wallExpiresAt, expired });
-    } catch (e) {
-      if (controller.signal.aborted) return;
-      if (e.responseData?.analytics_cache?.expired) {
-        loadedFiltersRef.current = null;
-        setSnapshot({
-          filters: appliedFilters, expired: true, expiresAt: 0,
-          data: { analytics_cache: e.responseData.analytics_cache },
-        });
-      } else if (!isSilent) {
-        setError(e.message);
-      }
-    } finally {
-      if (analyticsRequestRef.current === controller) {
-        analyticsRequestRef.current = null;
-        setLoading(false);
-        setIsRefreshing(false);
-      }
-    }
-  }, [token, appliedFilters]);
-
-  useEffect(() => () => {
-    analyticsRequestRef.current?.abort();
-    analyticsRequestRef.current = null;
-  }, [fetchAnalytics]);
-
-  // Expire the displayed snapshot even if the refresh hangs, the network is
-  // offline, or a hidden tab resumes without a successful response. Use the
-  // monotonic clock so moving the wall clock back cannot extend its age, plus
-  // a wall-clock deadline for browsers whose monotonic clock pauses in sleep.
-  useEffect(() => {
-    if (!snapshot || snapshot.expired) return undefined;
-    const expireIfNeeded = () => {
-      if (analyticsSnapshotExpired(snapshot, performance.now())) setExpiredSnapshot(snapshot);
-    };
-    const timer = window.setTimeout(
-      () => setExpiredSnapshot(snapshot), Math.max(0, Math.min(
-        snapshot.expiresAt - performance.now(), snapshot.wallExpiresAt - Date.now(),
-      )) + 1,
-    );
-    window.addEventListener("focus", expireIfNeeded);
-    document.addEventListener("visibilitychange", expireIfNeeded);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("focus", expireIfNeeded);
-      document.removeEventListener("visibilitychange", expireIfNeeded);
-    };
-  }, [snapshot]);
+  const [filterMetaError, setFilterMetaError] = useState(false);
+  const [filterRetry, setFilterRetry] = useState(0);
 
   const fetchWlcConfig = useCallback(async () => {
     if (!token) return;
@@ -1025,85 +972,45 @@ export default function AnalyticsPage() {
 
 
   useEffect(() => {
-    let isCurrent = true;
-    queueMicrotask(() => {
-      if (!isCurrent) return;
-      void fetchAnalytics(false);
-      void fetchWlcConfig();
-    });
-    return () => { isCurrent = false; };
-  }, [fetchAnalytics, fetchWlcConfig]);
-
-  useEffect(() => {
-    if (!backgroundRefreshing) return undefined;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") fetchAnalytics(true);
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [backgroundRefreshing, fetchAnalytics]);
-
-  // Real-time event listeners and auto-polling
-  useEffect(() => {
-    let syncTimer;
-    const handleSync = () => {
-      window.clearTimeout(syncTimer);
-      syncTimer = window.setTimeout(() => fetchAnalytics(true), 200);
-    };
-
-    window.addEventListener("revela:inspection-update", handleSync);
-    window.addEventListener("revela:yellow-flag", handleSync);
-    window.addEventListener("revela:flag-update", handleSync);
-    window.addEventListener("revela:registry-update", handleSync);
-    window.addEventListener("revela:user-update", handleSync);
-    window.addEventListener("revela:global-refresh", handleSync);
-
-    const pollTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchAnalytics(true);
-      }
-    }, 30000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchAnalytics(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-
-    return () => {
-      window.removeEventListener("revela:inspection-update", handleSync);
-      window.removeEventListener("revela:yellow-flag", handleSync);
-      window.removeEventListener("revela:flag-update", handleSync);
-      window.removeEventListener("revela:registry-update", handleSync);
-      window.removeEventListener("revela:user-update", handleSync);
-      window.removeEventListener("revela:global-refresh", handleSync);
-      window.clearTimeout(syncTimer);
-      window.clearInterval(pollTimer);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-    };
-  }, [fetchAnalytics]);
+    let current = true;
+    queueMicrotask(() => { if (current) void fetchWlcConfig(); });
+    return () => { current = false; };
+  }, [fetchWlcConfig]);
 
   useEffect(() => {
     if (!token) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const [meta, brgy] = await Promise.all([
-          getAnalyticsFilterMetadataRequest(token),
-          getBarangaysRequest(token),
+    let pending;
+    let controller;
+    let timer;
+    const load = () => {
+      if (pending) return pending;
+      controller = new AbortController();
+      timer = window.setTimeout(() => controller.abort(), 20000);
+      pending = (async () => {
+        const [meta, brgy] = await Promise.allSettled([
+          getAnalyticsFilterMetadataRequest(token, { signal: controller.signal }),
+          getBarangaysRequest(token, { signal: controller.signal }),
         ]);
-        if (!cancelled) {
-          setFilterMeta(meta);
-          setBarangaysList(Array.isArray(brgy) ? brgy : (Array.isArray(brgy?.data) ? brgy.data : []));
+        if (cancelled) return;
+        if (meta.status === "fulfilled") setFilterMeta(meta.value);
+        if (brgy.status === "fulfilled") {
+          const value = brgy.value;
+          setBarangaysList(Array.isArray(value) ? value : (Array.isArray(value?.data) ? value.data : []));
         }
-      } catch (e) {
-        console.error(e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [token]);
+        setFilterMetaError(meta.status === "rejected" || brgy.status === "rejected");
+      })().finally(() => { window.clearTimeout(timer); pending = null; });
+      return pending;
+    };
+    queueMicrotask(() => { if (!cancelled) void load(); });
+    window.addEventListener("online", load);
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      window.clearTimeout(timer);
+      window.removeEventListener("online", load);
+    };
+  }, [token, filterRetry]);
 
   // ── Derived shorthand references ──────────────────────────────────────────
   const desc = data?.descriptive;
@@ -1232,14 +1139,14 @@ export default function AnalyticsPage() {
   const clearedCount = auditBreakdown.find(r => r.inspectionResult === 'Green' || r.inspectionResult === 'Compliant')?.count || 0;
 
   const dispatchedCount = useMemo(() => {
-    const breakdown = data?.operations?.status_breakdown || [];
+    const breakdown = data.operations?.status_breakdown || [];
     return breakdown.reduce((sum, r) => {
       if (['Assigned', 'Reassigned', 'In Progress'].includes(r.status)) {
         return sum + Number(r.count || 0);
       }
       return sum;
     }, 0);
-  }, [data?.operations?.status_breakdown]);
+  }, [data.operations?.status_breakdown]);
 
   const flagCounts = useMemo(() => {
     const progress = desc?.enforcement_progress || [];
@@ -1292,7 +1199,7 @@ export default function AnalyticsPage() {
   }, [desc?.enforcement_progress]);
 
 
-  const activeFilterCount = countActiveBackendFilters(data?.applied_filters);
+  const activeFilterCount = countActiveBackendFilters(appliedFilters);
 
   const handleApplyFilters = () => {
     setAppliedFilters({
@@ -1806,6 +1713,12 @@ export default function AnalyticsPage() {
           </div>
 
           {/* ── Active filter chips (always visible when filters are set) ── */}
+          {filterMetaError && (
+            <p role="status" style={{ color: "var(--color-muted)", fontSize: 13 }}>
+              Some filter options could not be loaded.
+              <button className="ghost-btn" type="button" onClick={() => setFilterRetry((value) => value + 1)} disabled={offline}>Retry filter options</button>
+            </p>
+          )}
           {activeChips.length > 0 && (
             <div className="filter-chips-row" style={{ marginTop: showFilters ? 0 : 10, marginBottom: showFilters ? 12 : 0 }}>
               {activeChips.map((chip) => (
@@ -2237,12 +2150,26 @@ export default function AnalyticsPage() {
           })}
         </div>
 
-        {error && (
-          <div style={{
+        {(error || offline) && (
+          <div role="status" style={{
             background: COLOR.redLight, border: `1px solid ${COLOR.red}`, borderRadius: 10,
             padding: "14px 20px", marginBottom: 24, color: COLOR.red, fontWeight: 600, fontSize: 14,
           }}>
-            ⚠ Failed to load analytics: {error}. Check that the backend is running.
+            {offline
+              ? "You are offline. Available data is kept visible; analytics will retry when you reconnect."
+              : `Unable to update this section: ${error}`}
+            {!offline && <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()}>Retry analytics</button>}
+          </div>
+        )}
+        {currentSection.data && currentSection.updating && (
+          <p role="status" className="analytics-updating">Updating analytics… Showing the last available data.</p>
+        )}
+        {loading && <AnalyticsSkeleton tab={activeTab} />}
+        {!loading && !currentSection.data && !snapshotIsExpired && (
+          <div className="saas-card analytics-section-state">
+            <h3>{offline ? "Analytics unavailable offline" : "Analytics could not be loaded"}</h3>
+            <p>{offline ? "Reconnect to load this section automatically." : "Please retry to load this section."}</p>
+            <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}
 
@@ -2259,10 +2186,11 @@ export default function AnalyticsPage() {
             <p>{cacheMetadata?.refresh_failed
               ? "The refresh failed. The next request will retry after the backoff."
               : backgroundRefreshing ? "Waiting for the background refresh."
-                : "Refresh Analytics to retry; no expired rankings are being shown."}</p>
+                 : "Refresh Analytics to retry; no expired rankings are being shown."}</p>
+            <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}
-        {!snapshotIsExpired && activeTab === "descriptive" && (
+        {data.descriptive && activeTab === "descriptive" && (
           <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="descriptive"
@@ -2820,7 +2748,7 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 2 — DIAGNOSTIC ANALYTICS
       ══════════════════════════════════════════════════════════════════════ */}
-        {!snapshotIsExpired && activeTab === "diagnostic" && (
+        {data.diagnostic && activeTab === "diagnostic" && (
           <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="diagnostic"
@@ -3149,7 +3077,7 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 3 — PRESCRIPTIVE ANALYTICS (WLC / OPS)
       ══════════════════════════════════════════════════════════════════════ */}
-        {!snapshotIsExpired && activeTab === "prescriptive" && (
+        {data.prescriptive && activeTab === "prescriptive" && (
           <section style={{ marginBottom: 32 }}>
             <SectionHeader
               tier="prescriptive"
@@ -3453,7 +3381,7 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
             OPERATIONS
         ══════════════════════════════════════════════════════════════════════ */}
-        {!snapshotIsExpired && activeTab === "operations" && (
+        {data.operations && activeTab === "operations" && (
           <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="operations"

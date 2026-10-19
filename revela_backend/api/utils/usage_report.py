@@ -159,7 +159,7 @@ def _method_report(method):
             "monthly_remaining": max(0, monthly_cap - used_month),
             "daily_quota_exceeded": daily_cap > 0 and used_day >= daily_cap,
             "monthly_quota_exceeded": monthly_cap > 0 and used_month >= monthly_cap,
-            "disabled": daily_cap <= 0 and monthly_cap <= 0,
+            "disabled": daily_cap <= 0 or monthly_cap <= 0,
             "over_cloud_ceiling": bool(
                 daily_field["cloud_quota_verified"]
                 and daily_field["cloud_ceiling"] is not None
@@ -199,12 +199,16 @@ def build_usage_report():
             "source": field["source"],
         }
 
+    from api.flags.service import get_detection_preflight, _detection_work_limits
+    seconds, requests = _detection_work_limits()
     run_detection = {
         "monthly_scan_limit": quota_settings.cap("run_detection.monthly_scan_limit"),
-        "work_slice_seconds": quota_settings.cap("run_detection.max_seconds"),
-        "work_slice_requests": quota_settings.cap("run_detection.max_requests"),
+        "work_slice_seconds": seconds,
+        "work_slice_requests": requests,
+        "configured_work_slice_requests": quota_settings.cap("run_detection.max_requests"),
         "grid_step_degrees": quota_settings.cap("run_detection.grid_step_degrees"),
         "nearby_api_mode": quota_settings.BASELINE_API_MODE,
+        "preflight": {mode: get_detection_preflight(mode) for mode in ("quick", "full")},
         "note": "The work slice bounds grid traversal only. Pre-scan "
                 "reconciliation runs before it and counts toward total "
                 "request time.",

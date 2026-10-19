@@ -6,6 +6,8 @@ import { createServer } from "vite";
 
 const edge = process.env.EDGE_BINARY || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const tempRoot = "C:\\Users\\RUFFAA~1\\AppData\\Local\\Temp\\opencode";
+const smokePage = process.argv[2] || "compliance-smoke";
+if (!/^[a-z-]+$/.test(smokePage)) throw new Error("Invalid browser fixture name.");
 if (!existsSync(edge) || !existsSync(tempRoot)) throw new Error("This optional browser check requires local Edge and the approved temporary directory.");
 const profile = mkdtempSync(join(tempRoot, "revela-compliance-browser-"));
 const server = await createServer({ server: { host: "127.0.0.1", port: 0, open: false } });
@@ -51,11 +53,11 @@ try {
   });
   const target = await call("Target.createTarget", { url: "about:blank" });
   const { sessionId } = await call("Target.attachToTarget", { targetId: target.targetId, flatten: true });
-  await call("Page.navigate", { url: `http://127.0.0.1:${port}/scripts/compliance-smoke.html` }, sessionId);
+  await call("Page.navigate", { url: `http://127.0.0.1:${port}/scripts/${smokePage}.html` }, sessionId);
   let parsed;
   for (let attempt = 0; attempt < 400; attempt += 1) {
     const response = await call("Runtime.evaluate", {
-      expression: "document.getElementById('compliance-smoke-results')?.textContent", returnByValue: true,
+      expression: `document.getElementById('${smokePage}-results')?.textContent`, returnByValue: true,
     }, sessionId);
     const text = response.result?.value;
     if (text?.startsWith("{")) { parsed = JSON.parse(text); break; }
