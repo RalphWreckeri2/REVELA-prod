@@ -234,7 +234,7 @@ function KpiSummary({ kpis, state }) {
     { label: "Active share of registry", value: kpis?.compliance_rate, suffix: "%", note: "Active records as a share of all registry records." },
     { label: "Renewal/issue-year records", value: kpis?.current_year_registered_count ?? kpis?.current_year_count, note: "Renewal/issue date in the backend’s current year." },
     { label: "Next-year renewal basis — derived", value: kpis?.upcoming_year_renewal_count, note: "Current-year active and next-year dated records." },
-    { label: "Qualifying non-green logs", value: kpis?.total_flagged, note: "Eligible logs across non-green flag colors." },
+    { label: "Non-green map locations", value: kpis?.total_flagged, note: "Non-green logs and registry-only locations shown on the Map." },
   ];
   const partial = state.hasResult && measures.some(measure => availableNumber(measure.value) === null);
   const metric = ({ label, value, suffix, note }, index) => (
@@ -258,7 +258,7 @@ function KpiSummary({ kpis, state }) {
         <summary>About these measures</summary>
         <p>Active share describes registry status, not municipality-wide compliance. The next-year basis is a derived count, not a renewal schedule.</p>
         <p>Reporting-year metadata is not supplied. Current-year and next-year wording follows the backend’s reporting period, using each record’s renewal/issue date.</p>
-        <p>Qualifying non-green logs have a Places ID, an inspector reporter, an Orange flag, or inspection history. Missing values appear as —; zero is a reported value.</p>
+        <p>This count includes non-green logs and non-green registry locations without a matching log, using the same population as the Map. Missing values appear as —; zero is a reported value.</p>
       </details>
     </section>
   );

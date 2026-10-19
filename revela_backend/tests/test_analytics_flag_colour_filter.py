@@ -102,16 +102,19 @@ class AnalyticsFilterWiringTests(unittest.TestCase):
             self.assertTrue(any(
                 isinstance(part, ast.FormattedValue)
                 and isinstance(part.value, ast.Name)
-                and part.value.id == "effective_flag_color"
+                and part.value.id in {"effective_flag_color", "registry_flag_color"}
                 for query_part in query_parts
                 for part in query_part.values
             ))
-            self.assertIn("!= 'Green'", "".join(
+            query_text = "".join(
                 part.value
                 for query_part in query_parts
                 for part in query_part.values
                 if isinstance(part, ast.Constant) and isinstance(part.value, str)
-            ))
+            )
+            self.assertIn("!= 'Green'", query_text)
+            self.assertIn("UNION ALL", query_text)
+            self.assertIn("NOT EXISTS", query_text)
             return
         self.fail("kpi.total_flagged query was not found")
 

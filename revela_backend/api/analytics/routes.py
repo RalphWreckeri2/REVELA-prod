@@ -293,7 +293,11 @@ def _registry_has_registration_type(cursor):
 # re-exported here under their original names, so every existing caller below
 # and tests/test_analytics_registry_compat.py are unaffected.
 from api.registry.colors import (  # noqa: E402,F401
+    FIRST_WARNING_LEVEL,
+    _color_case_sql,
     _effective_flag_color_sql,
+    _pin_state_column_sql,
+    registry_row_color_sql,
     _verified_orange_sql,
     ladder_columns_available,
 )
@@ -545,6 +549,7 @@ def _get_all_analytics_inner(F=None):
     ladder = ladder_columns_available(
         _labeled(cur, "schema:enforcement_state.ladder_columns"))
     effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
+    registry_flag_color = registry_row_color_sql("r", ladder=ladder)
     geo_g, geo_g_p = geo_sql("g", Fx, ladder=ladder)
     geo_g2, geo_g2_p = geo_sql("g2", Fx, ladder=ladder)
     geo_on_g, geo_on_g_p = geo_on_extra("g", Fx, ladder=ladder)
@@ -661,8 +666,27 @@ def _get_all_analytics_inner(F=None):
     _execute(
         cur,
         "kpi.total_flagged",
-        f"SELECT COUNT(*) AS n FROM geospatial_logs g WHERE {effective_flag_color} != 'Green' AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))" + geo_g,
-        geo_g_p,
+        f"""SELECT COUNT(*) AS n
+        FROM (
+            SELECT g.logID AS id
+            FROM geospatial_logs g
+            WHERE {effective_flag_color} != 'Green' {geo_g}
+
+            UNION ALL
+
+            SELECT r.businessID AS id
+            FROM official_registry r
+            WHERE {registry_flag_color} != 'Green'
+              AND NOT EXISTS (
+                  SELECT 1 FROM geospatial_logs g2
+                  WHERE (g2.businessID IS NOT NULL AND g2.businessID = r.businessID)
+                     OR (g2.placeID IS NOT NULL AND g2.placeID = r.placeID
+                         AND (g2.businessID IS NULL OR g2.businessID = r.businessID))
+                     OR (g2.businessID IS NULL AND g2.detectedName = r.businessName
+                         AND g2.barangayID = r.barangayID)
+              ) {reg_r}
+        ) AS map_non_green""",
+        geo_g_p + reg_r_p,
     )
     total_flagged = cur.fetchone()["n"]
 
