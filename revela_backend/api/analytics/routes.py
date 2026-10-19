@@ -79,7 +79,8 @@ _ANALYTICS_CACHE_TTL = 60  # seconds
 _ANALYTICS_MAX_STALE_AGE = 15 * 60  # hard limit measured from computed_at
 _ANALYTICS_REFRESH_RETRY = 15
 _analytics_cache_lock = threading.Lock()
-_analytics_refreshes: dict = {}  # filter key -> (Future, invalidation generation)
+# filter key -> (Future, invalidation generation)
+_analytics_refreshes: dict = {}
 _analytics_cache_generation = 0
 _analytics_background_slot = threading.BoundedSemaphore(1)
 
@@ -175,7 +176,8 @@ class _TimedCursor:
             return self._cursor.execute(*args, **kwargs)
         finally:
             self._collector.add_exclusive(
-                label or self._label or _sql_fingerprint(args[0] if args else ""),
+                label or self._label or _sql_fingerprint(
+                    args[0] if args else ""),
                 (time.perf_counter() - t0) * 1000.0,
             )
 
@@ -318,7 +320,8 @@ def _compute_analytics_snapshot(F, key, flight):
     entry = error = None
     try:
         data, status_code = _get_all_analytics_inner(F)
-        entry = {"data": dict(data), "status_code": status_code, "ts": time.time()}
+        entry = {"data": dict(
+            data), "status_code": status_code, "ts": time.time()}
     except Exception as exc:
         error = exc
         _analytics_log.exception("Analytics refresh failed key=%s", key[:8])
@@ -340,7 +343,8 @@ def _background_analytics_refresh(app, F, key, flight):
         with app.app_context():
             _compute_analytics_snapshot(F, key, flight)
     except Exception as exc:
-        _analytics_log.exception("Analytics background refresh failed key=%s", key[:8])
+        _analytics_log.exception(
+            "Analytics background refresh failed key=%s", key[:8])
         if not flight[0].done():
             _finish_analytics_refresh(key, flight, error=exc)
     finally:
@@ -356,7 +360,8 @@ def _start_analytics_background_refresh(app, F, key, flight):
             daemon=True,
         ).start()
     except Exception as exc:
-        _analytics_log.exception("Could not start Analytics refresh key=%s", key[:8])
+        _analytics_log.exception(
+            "Could not start Analytics refresh key=%s", key[:8])
         _finish_analytics_refresh(key, flight, error=exc)
         _analytics_background_slot.release()
         return False
@@ -391,9 +396,11 @@ def start_analytics_cache_warmup(app):
 
 
 def _analytics_snapshot_metadata(entry):
-    computed_at = entry["data"].get("prescriptive", {}).get("rankings_computed_at")
+    computed_at = entry["data"].get(
+        "prescriptive", {}).get("rankings_computed_at")
     if not computed_at:
-        computed_at = datetime.fromtimestamp(entry["ts"], timezone.utc).isoformat()
+        computed_at = datetime.fromtimestamp(
+            entry["ts"], timezone.utc).isoformat()
     try:
         computed = datetime.fromisoformat(computed_at)
         age = time.time() - computed.timestamp() if computed.tzinfo else None
@@ -448,7 +455,8 @@ def _get_cached_analytics(F, *, allow_stale=False):
             if not fresh and flight is None:
                 if cached and allow_stale:
                     if time.time() >= cached.get("retry_after", 0):
-                        background = _analytics_background_slot.acquire(blocking=False)
+                        background = _analytics_background_slot.acquire(
+                            blocking=False)
                         deferred = not background
                         owner = background
                 else:
@@ -692,7 +700,8 @@ def _get_all_analytics_inner(F=None):
     # Per-request span collector, installed by the caller via flask.g. When the
     # REVELA_ANALYTICS_PHASES gate is off this is None and the raw cursor is used
     # unchanged, so behavior and overhead match the previous code.
-    phases = getattr(g, "_analytics_phases", None) if has_app_context() else None
+    phases = getattr(g, "_analytics_phases",
+                     None) if has_app_context() else None
     cur = _TimedCursor(raw_cur, phases) if phases is not None else raw_cur
 
     Fx = dict(F or {})
@@ -870,36 +879,26 @@ def _get_all_analytics_inner(F=None):
                 g.barangayID,
                 {effective_flag_color} AS flagColor
             FROM geospatial_logs g
-            LEFT JOIN LATERAL (
-                SELECT businessID, applicationStatus
-                FROM official_registry
-                WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
-                   OR (g.placeID IS NOT NULL AND placeID = g.placeID
-                       AND (g.businessID IS NULL OR businessID = g.businessID))
-                   OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
-                ORDER BY (businessID = g.businessID) DESC
-                LIMIT 1
-            ) r ON TRUE
-            WHERE (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR r.businessID IS NOT NULL OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)){geo_on_g}
+            WHERE 1=1 {geo_on_g}
 
             UNION ALL
 
             SELECT
-                r.businessID * -1 AS id,
+                -CAST(2147483648 + r.registryOrdinal AS SIGNED) AS id,
                 r.barangayID,
-                CASE r.applicationStatus
-                    WHEN 'Active'  THEN 'Green'
-                    WHEN 'Expired' THEN 'Red'
-                    WHEN 'Revoked' THEN 'Black'
-                    WHEN 'Blacklisted' THEN 'Black'
-                    WHEN 'Closed'  THEN 'Purple'
-                    ELSE 'Yellow'
-                END AS flagColor
-            FROM official_registry r
+                {registry_flag_color} AS flagColor
+            FROM (
+                SELECT official_registry.*,
+                       ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
+                FROM official_registry
+            ) r
             WHERE NOT EXISTS (
                 SELECT 1 FROM geospatial_logs g2
                 WHERE (g2.businessID IS NOT NULL AND g2.businessID = r.businessID)
-                   OR (g2.businessID IS NULL AND g2.detectedName = r.businessName AND g2.barangayID = r.barangayID)
+                   OR (g2.placeID IS NOT NULL AND g2.placeID = r.placeID
+                       AND (g2.businessID IS NULL OR g2.businessID = r.businessID))
+                   OR (g2.businessID IS NULL AND g2.detectedName = r.businessName
+                       AND g2.barangayID = r.barangayID)
             ){reg_r}
         ) AS combined ON combined.barangayID = b.barangayID
         WHERE 1=1 {brgy_b}

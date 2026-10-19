@@ -118,6 +118,43 @@ class AnalyticsFilterWiringTests(unittest.TestCase):
             return
         self.fail("kpi.total_flagged query was not found")
 
+    def test_enforcement_progress_uses_map_location_population(self):
+        routes_path = Path(
+            __file__).parents[1] / "api" / "analytics" / "routes.py"
+        tree = ast.parse(routes_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) < 3:
+                continue
+            if not (isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value == "descriptive.enforcement_progress"):
+                continue
+
+            query_parts = [
+                part for part in ast.walk(node.args[2])
+                if isinstance(part, ast.JoinedStr)
+            ]
+            query_text = "".join(
+                part.value
+                for query_part in query_parts
+                for part in query_part.values
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            )
+            format_names = {
+                part.value.id
+                for query_part in query_parts
+                for part in query_part.values
+                if isinstance(part, ast.FormattedValue)
+                and isinstance(part.value, ast.Name)
+            }
+            self.assertIn("WHERE 1=1", query_text)
+            self.assertIn("registryOrdinal", query_text)
+            self.assertIn(
+                "g2.placeID IS NOT NULL AND g2.placeID = r.placeID", query_text)
+            self.assertIn("registry_flag_color", format_names)
+            self.assertNotIn("g.reportedByUserID IS NOT NULL", query_text)
+            return
+        self.fail("descriptive.enforcement_progress query was not found")
+
     def test_geo_sql_embeds_the_shared_expression(self):
         fragment, _ = filters.geo_sql("g", {"flag_color": "Red"})
         self.assertIn(_effective_flag_color_sql("g"), fragment)
