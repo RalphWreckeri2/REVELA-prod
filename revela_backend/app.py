@@ -73,7 +73,7 @@ def create_app():
     from api.inspections.routes import inspections_bp
     app.register_blueprint(inspections_bp, url_prefix="/api/inspections")
 
-    from api.analytics.routes import analytics_bp
+    from api.analytics.routes import analytics_bp, start_analytics_cache_warmup
     app.register_blueprint(analytics_bp, url_prefix="/api/analytics")
 
     from api.geospatial.routes import geospatial_bp
@@ -106,6 +106,10 @@ def create_app():
     #   1. Once at startup (with a short delay to let DB connections settle).
     #   2. Daily at midnight so year-rollover is caught automatically.
     _start_permit_expiry_scheduler(app)
+
+    # Start the default snapshot before the first page request, without waiting
+    # for the analytics pipeline or creating a second query if a request races.
+    start_analytics_cache_warmup(app)
 
     return app
 

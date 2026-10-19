@@ -9,6 +9,8 @@ import time
 import hashlib
 import numpy as np
 from collections import Counter
+from concurrent.futures import Future
+from datetime import datetime, timezone
 from sklearn.cluster import DBSCAN
 from flask import Blueprint, current_app, g, has_app_context, jsonify, request
 from flask_jwt_extended import get_jwt_identity
@@ -70,14 +72,19 @@ def _get_candidate_gemini_models(client, force_refresh=False):
 
 # ── Analytics Response Cache (60-second TTL) ─────────────────────────────────
 # Caches the full _get_all_analytics_inner result keyed by filter hash.
-# 60 s is short enough to reflect near-real-time updates while eliminating
-# redundant multi-query bursts from concurrent dashboard loads.
+# The Analytics page can opt into stale-while-revalidate; other callers still
+# wait for a fresh snapshot. No separate rankings cache or SQL path is added.
 _analytics_cache: dict = {}
 _ANALYTICS_CACHE_TTL = 60  # seconds
+_ANALYTICS_MAX_STALE_AGE = 15 * 60  # hard limit measured from computed_at
+_ANALYTICS_REFRESH_RETRY = 15
+_analytics_cache_lock = threading.Lock()
+_analytics_refreshes: dict = {}  # filter key -> (Future, invalidation generation)
+_analytics_cache_generation = 0
+_analytics_background_slot = threading.BoundedSemaphore(1)
 
-# ── Cache/latency instrumentation (measurement only; behaviour unchanged) ─────
-# Tracks hit/miss/expired decisions and how many uncached pipelines are running
-# at once, so a burst of concurrent misses (cache stampede) is visible in logs.
+# ── Cache/latency instrumentation ─────────────────────────────────────────────
+# Misses/inflight count actual computations, not coalesced waiting requests.
 _analytics_metrics = {"hits": 0, "misses": 0}
 _analytics_inflight = 0
 _analytics_metrics_lock = threading.Lock()
@@ -270,7 +277,200 @@ def _analytics_cache_key(F: dict) -> str:
 
 def invalidate_analytics_cache():
     """Clear the full analytics cache (call after data-mutating operations)."""
-    _analytics_cache.clear()
+    global _analytics_cache_generation
+    with _analytics_cache_lock:
+        _analytics_cache.clear()
+        _analytics_cache_generation += 1
+        # Reserve active flights until their queries finish, but do not publish
+        # or satisfy fresh reads from a result computed before invalidation.
+
+
+def _finish_analytics_refresh(key, flight, entry=None, error=None):
+    future, generation = flight
+    with _analytics_cache_lock:
+        if generation == _analytics_cache_generation:
+            if error is None and entry["status_code"] == 200:
+                _analytics_cache[key] = entry
+            elif key in _analytics_cache:
+                _analytics_cache[key] = {
+                    **_analytics_cache[key],
+                    "refresh_failed": True,
+                    "retry_after": time.time() + _ANALYTICS_REFRESH_RETRY,
+                }
+        if _analytics_refreshes.get(key) is flight:
+            del _analytics_refreshes[key]
+    if error is None:
+        future.set_result(entry)
+    else:
+        future.set_exception(error)
+
+
+def _compute_analytics_snapshot(F, key, flight):
+    """Run the unchanged pipeline once, with a thread-local app context/cursor."""
+    global _analytics_inflight
+    collector = _PhaseCollector() if _phases_enabled() else None
+    g._analytics_phases = collector
+    with _analytics_metrics_lock:
+        _analytics_metrics["misses"] += 1
+        _analytics_inflight += 1
+        inflight = _analytics_inflight
+    started = time.perf_counter()
+    entry = error = None
+    try:
+        data, status_code = _get_all_analytics_inner(F)
+        entry = {"data": dict(data), "status_code": status_code, "ts": time.time()}
+    except Exception as exc:
+        error = exc
+        _analytics_log.exception("Analytics refresh failed key=%s", key[:8])
+    finally:
+        elapsed = (time.perf_counter() - started) * 1000.0
+        with _analytics_metrics_lock:
+            _analytics_inflight -= 1
+        try:
+            _log_analytics_phases(collector, elapsed, key)
+            _log_analytics_cache("refresh", inflight, elapsed, key)
+        finally:
+            _finish_analytics_refresh(key, flight, entry, error)
+
+
+def _background_analytics_refresh(app, F, key, flight):
+    try:
+        # flask_mysqldb creates/closes a separate connection for this context.
+        # Never copy the request/JWT context, g, or an existing cursor.
+        with app.app_context():
+            _compute_analytics_snapshot(F, key, flight)
+    except Exception as exc:
+        _analytics_log.exception("Analytics background refresh failed key=%s", key[:8])
+        if not flight[0].done():
+            _finish_analytics_refresh(key, flight, error=exc)
+    finally:
+        _analytics_background_slot.release()
+
+
+def _start_analytics_background_refresh(app, F, key, flight):
+    """Shared launcher for startup warming and request-driven revalidation."""
+    try:
+        threading.Thread(
+            target=_background_analytics_refresh,
+            args=(app, dict(F), key, flight),
+            daemon=True,
+        ).start()
+    except Exception as exc:
+        _analytics_log.exception("Could not start Analytics refresh key=%s", key[:8])
+        _finish_analytics_refresh(key, flight, error=exc)
+        _analytics_background_slot.release()
+        return False
+    return True
+
+
+def start_analytics_cache_warmup(app):
+    """Best-effort, nonblocking default snapshot warm-up, once per active flight.
+
+    Parse the empty filters just like /all: hashing {} directly would use a
+    different key. Reserve the same flight/slot as page requests before starting
+    a thread, so either startup or an early request owns the computation, never
+    both. Existing valid snapshots stay available while a refresh runs.
+    """
+    F = parse_analytics_filters({})
+    key = _analytics_cache_key(F)
+    with _analytics_cache_lock:
+        if key in _analytics_refreshes:
+            return False
+        cached = _analytics_cache.get(key)
+        if cached:
+            if ((time.time() - cached["ts"]) < _ANALYTICS_CACHE_TTL
+                    and not _analytics_snapshot_metadata(cached)["expired"]):
+                return False
+            if time.time() < cached.get("retry_after", 0):
+                return False
+        if not _analytics_background_slot.acquire(blocking=False):
+            return False
+        flight = (Future(), _analytics_cache_generation)
+        _analytics_refreshes[key] = flight
+    return _start_analytics_background_refresh(app, F, key, flight)
+
+
+def _analytics_snapshot_metadata(entry):
+    computed_at = entry["data"].get("prescriptive", {}).get("rankings_computed_at")
+    if not computed_at:
+        computed_at = datetime.fromtimestamp(entry["ts"], timezone.utc).isoformat()
+    try:
+        computed = datetime.fromisoformat(computed_at)
+        age = time.time() - computed.timestamp() if computed.tzinfo else None
+    except (TypeError, ValueError, OverflowError):
+        age = None
+    expired = age is None or age < 0 or age > _ANALYTICS_MAX_STALE_AGE
+    return {
+        "computed_at": computed_at,
+        "age_seconds": age,
+        "max_stale_seconds": _ANALYTICS_MAX_STALE_AGE,
+        "expired": expired,
+        "stale": expired or (time.time() - entry["ts"]) >= _ANALYTICS_CACHE_TTL,
+    }
+
+
+def _analytics_snapshot_data(entry, key, deferred=False):
+    with _analytics_cache_lock:
+        latest = _analytics_cache.get(key)
+        if entry["status_code"] == 200 and latest and latest["ts"] >= entry["ts"]:
+            entry = latest
+        refreshing = key in _analytics_refreshes
+    data = dict(entry["data"])
+    if entry["status_code"] != 200:
+        return data, entry["status_code"]
+    metadata = _analytics_snapshot_metadata(entry)
+    metadata.update({
+        "refreshing": metadata["stale"] and refreshing,
+        "refresh_deferred": metadata["stale"] and deferred,
+        "refresh_failed": metadata["stale"] and entry.get("refresh_failed", False),
+    })
+    if metadata["expired"]:
+        # Keep the timestamp/status, not the expired rankings, charts or KPIs.
+        return {
+            "error": "Analytics snapshot is expired or its computation time cannot be verified. "
+                     "Rankings older than 15 minutes are hidden until refreshed.",
+            "analytics_cache": metadata,
+        }, 503
+    data["analytics_cache"] = metadata
+    return data, 200
+
+
+def _get_cached_analytics(F, *, allow_stale=False):
+    """Existing process-local cache with per-filter single-flight and age cap."""
+    key = _analytics_cache_key(F)
+    while True:
+        owner = deferred = background = False
+        with _analytics_cache_lock:
+            cached = _analytics_cache.get(key)
+            fresh = (cached and (time.time() - cached["ts"]) < _ANALYTICS_CACHE_TTL
+                     and not _analytics_snapshot_metadata(cached)["expired"])
+            flight = _analytics_refreshes.get(key)
+            if not fresh and flight is None:
+                if cached and allow_stale:
+                    if time.time() >= cached.get("retry_after", 0):
+                        background = _analytics_background_slot.acquire(blocking=False)
+                        deferred = not background
+                        owner = background
+                else:
+                    owner = True
+                if owner:
+                    flight = (Future(), _analytics_cache_generation)
+                    _analytics_refreshes[key] = flight
+        if fresh or (cached and allow_stale):
+            if background:
+                _start_analytics_background_refresh(
+                    current_app._get_current_object(), F, key, flight)
+            with _analytics_metrics_lock:
+                _analytics_metrics["hits"] += 1
+            _log_analytics_cache("hit" if fresh else "stale", 0, 0.0, key)
+            return _analytics_snapshot_data(cached, key, deferred)
+        if owner:
+            _compute_analytics_snapshot(F, key, flight)
+        entry = flight[0].result()
+        with _analytics_cache_lock:
+            if flight[1] != _analytics_cache_generation:
+                continue
+        return _analytics_snapshot_data(entry, key)
 
 
 def _registry_has_registration_type(cursor):
@@ -309,50 +509,10 @@ analytics_bp = Blueprint("analytics", __name__)
 @analytics_bp.route("/all", methods=["GET"])
 @jwt_required()
 def get_all_analytics():
-    global _analytics_inflight
     try:
         F = parse_analytics_filters(request.args)
-        cache_key = _analytics_cache_key(F)
-
-        cached = _analytics_cache.get(cache_key)
-        if cached and (time.time() - cached["ts"]) < _ANALYTICS_CACHE_TTL:
-            # shallow copy so we can append per-user rollover
-            data = dict(cached["data"])
-            status_code = cached["status_code"]
-            with _analytics_metrics_lock:
-                _analytics_metrics["hits"] += 1
-            _log_analytics_cache("hit", 0, 0.0, cache_key)
-        else:
-            with _analytics_metrics_lock:
-                _analytics_metrics["misses"] += 1
-                _analytics_inflight += 1
-                inflight = _analytics_inflight
-            collector = _PhaseCollector() if _phases_enabled() else None
-            if has_app_context():
-                g._analytics_phases = collector
-            inner_start = time.perf_counter()
-            try:
-                data, status_code = _get_all_analytics_inner(F)
-            finally:
-                inner_wall_ms = (time.perf_counter() - inner_start) * 1000.0
-                with _analytics_metrics_lock:
-                    _analytics_inflight -= 1
-                # Logged in `finally` so a failing pipeline still reports its
-                # measured spans; the summary is the point here.
-                _log_analytics_phases(collector, inner_wall_ms, cache_key)
-            _log_analytics_cache(
-                "expired" if cached else "miss",
-                inflight,
-                inner_wall_ms,
-                cache_key,
-            )
-            if status_code == 200:
-                _analytics_cache[cache_key] = {
-                    # store a clean copy so the local mutation below is safe
-                    "data": dict(data),
-                    "ts": time.time(),
-                    "status_code": status_code,
-                }
+        data, status_code = _get_cached_analytics(
+            F, allow_stale=request.args.get("stale_while_revalidate") == "1")
 
         # Rollover notification is user-specific (unread flag) so it lives
         # outside the shared cache and is fetched per-request.
@@ -1280,6 +1440,7 @@ def _get_all_analytics_inner(F=None):
     rankings.sort(key=lambda x: x["ops_score"], reverse=True)
     for i, r in enumerate(rankings):
         r["rank"] = i + 1
+    rankings_computed_at = datetime.now(timezone.utc).isoformat()
 
     # --- Dispatch Recommendations ---
     from api.analytics.dispatch import generate_recommendations
@@ -1415,6 +1576,7 @@ def _get_all_analytics_inner(F=None):
         },
         "prescriptive": {
             "rankings":   rankings,
+            "rankings_computed_at": rankings_computed_at,
             "wlc_config": config,
             "dispatch_recommendations": dispatch_recommendations,
         },

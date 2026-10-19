@@ -8,6 +8,13 @@ import {
 import DashboardLayout from "../components/DashboardLayout";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
+import {
+  analyticsRefreshPending,
+  analyticsSnapshotDeadline,
+  analyticsSnapshotExpired,
+  analyticsSnapshotMatchesFilters,
+  analyticsSnapshotStatus,
+} from "../components/analyticsCachePolicy";
 import { useAuth } from "../context/authContext";
 import {
   getWlcConfigRequest,
@@ -832,7 +839,8 @@ const GlobalAIAssistant = memo(({ globalData }) => {
 export default function AnalyticsPage() {
   const { token, user } = useAuth();
   const canEditWlc = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
-  const [data, setData] = useState(null);
+  const [snapshot, setSnapshot] = useState(null);
+  const [expiredSnapshot, setExpiredSnapshot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("descriptive"); // descriptive, diagnostic, prescriptive
@@ -884,6 +892,11 @@ export default function AnalyticsPage() {
   const [expandedDispatch, setExpandedDispatch] = useState({});
   const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
   const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
+  const snapshotMatches = analyticsSnapshotMatchesFilters(snapshot, appliedFilters);
+  const snapshotIsExpired = snapshotMatches && (snapshot.expired || expiredSnapshot === snapshot);
+  const data = snapshotMatches && !snapshotIsExpired ? snapshot.data : null;
+  const cacheMetadata = snapshotMatches ? snapshot.data?.analytics_cache : null;
+  const backgroundRefreshing = analyticsRefreshPending(cacheMetadata);
   const [showFilters, setShowFilters] = useState(false);
   const [openSections, setOpenSections] = useState({ location: false, business: false, flags: false, inspection: false });
   const [brgySearchTerm, setBrgySearchTerm] = useState("");
@@ -894,6 +907,7 @@ export default function AnalyticsPage() {
   const [barangaysList, setBarangaysList] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const analyticsRequestRef = useRef(null);
+  const loadedFiltersRef = useRef(null);
 
   const fetchAnalytics = useCallback(async (isSilent = false) => {
     if (!token) return;
@@ -903,19 +917,33 @@ export default function AnalyticsPage() {
     }
     const controller = new AbortController();
     analyticsRequestRef.current = controller;
+    const requestStartedAt = performance.now();
+    const requestWallTime = Date.now();
 
     if (!isSilent) {
-      setLoading(true);
+      setLoading(loadedFiltersRef.current !== appliedFilters);
       setIsRefreshing(true);
     }
     setError(null);
     try {
-      const json = await getAnalyticsOverviewRequest(token, appliedFilters, { signal: controller.signal });
+      const json = await getAnalyticsOverviewRequest(token, appliedFilters, {
+        signal: controller.signal, staleWhileRevalidate: true,
+      });
       if (controller.signal.aborted) return;
-      setData(json);
+      const expiresAt = analyticsSnapshotDeadline(json.analytics_cache, requestStartedAt);
+      const wallExpiresAt = analyticsSnapshotDeadline(json.analytics_cache, requestWallTime);
+      const expired = analyticsSnapshotExpired({ expiresAt, wallExpiresAt }, performance.now());
+      loadedFiltersRef.current = expired ? null : appliedFilters;
+      setSnapshot({ filters: appliedFilters, data: json, expiresAt, wallExpiresAt, expired });
     } catch (e) {
       if (controller.signal.aborted) return;
-      if (!isSilent) {
+      if (e.responseData?.analytics_cache?.expired) {
+        loadedFiltersRef.current = null;
+        setSnapshot({
+          filters: appliedFilters, expired: true, expiresAt: 0,
+          data: { analytics_cache: e.responseData.analytics_cache },
+        });
+      } else if (!isSilent) {
         setError(e.message);
       }
     } finally {
@@ -931,6 +959,29 @@ export default function AnalyticsPage() {
     analyticsRequestRef.current?.abort();
     analyticsRequestRef.current = null;
   }, [fetchAnalytics]);
+
+  // Expire the displayed snapshot even if the refresh hangs, the network is
+  // offline, or a hidden tab resumes without a successful response. Use the
+  // monotonic clock so moving the wall clock back cannot extend its age, plus
+  // a wall-clock deadline for browsers whose monotonic clock pauses in sleep.
+  useEffect(() => {
+    if (!snapshot || snapshot.expired) return undefined;
+    const expireIfNeeded = () => {
+      if (analyticsSnapshotExpired(snapshot, performance.now())) setExpiredSnapshot(snapshot);
+    };
+    const timer = window.setTimeout(
+      () => setExpiredSnapshot(snapshot), Math.max(0, Math.min(
+        snapshot.expiresAt - performance.now(), snapshot.wallExpiresAt - Date.now(),
+      )) + 1,
+    );
+    window.addEventListener("focus", expireIfNeeded);
+    document.addEventListener("visibilitychange", expireIfNeeded);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", expireIfNeeded);
+      document.removeEventListener("visibilitychange", expireIfNeeded);
+    };
+  }, [snapshot]);
 
   const fetchWlcConfig = useCallback(async () => {
     if (!token) return;
@@ -982,6 +1033,14 @@ export default function AnalyticsPage() {
     });
     return () => { isCurrent = false; };
   }, [fetchAnalytics, fetchWlcConfig]);
+
+  useEffect(() => {
+    if (!backgroundRefreshing) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") fetchAnalytics(true);
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [backgroundRefreshing, fetchAnalytics]);
 
   // Real-time event listeners and auto-polling
   useEffect(() => {
@@ -1342,7 +1401,7 @@ export default function AnalyticsPage() {
 
   return (
     <DashboardLayout>
-      <GlobalAIAssistant globalData={globalData} />
+      {!snapshotIsExpired && <GlobalAIAssistant globalData={globalData} />}
       <style>{`
         /* shimmer keyframe now defined globally in global.css */
         .saas-card { position: relative; }
@@ -1682,11 +1741,11 @@ export default function AnalyticsPage() {
               className="quick-refresh-btn"
               type="button"
               onClick={() => fetchAnalytics(false)}
-              disabled={isRefreshing}
+              disabled={isRefreshing || backgroundRefreshing}
               title="Refresh analytics data"
             >
               <svg
-                className={isRefreshing ? "spin-icon" : ""}
+                className={isRefreshing || backgroundRefreshing ? "spin-icon" : ""}
                 viewBox="0 0 24 24"
                 width="14"
                 height="14"
@@ -1698,10 +1757,20 @@ export default function AnalyticsPage() {
               >
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
               </svg>
-              <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
+              <span>{isRefreshing || backgroundRefreshing ? "Syncing…" : "Refresh"}</span>
             </button>
           </div>
         </div>
+
+        {cacheMetadata?.computed_at && (
+          <p role="status" style={{ color: "var(--color-muted)", fontSize: 12, margin: "-16px 0 24px" }}>
+            Barangay rankings computed {" "}
+            <time dateTime={cacheMetadata.computed_at}>
+              {new Date(cacheMetadata.computed_at).toLocaleString()}
+            </time>
+            {" · "}{analyticsSnapshotStatus({ ...cacheMetadata, expired: snapshotIsExpired })}
+          </p>
+        )}
 
         {/* ANALYTICS FILTERS — redesigned: chips + accordion + sticky footer */}
         <div className="saas-card frosted-glass" style={{ marginBottom: 24, padding: "20px 22px", maxHeight: showFilters ? "85vh" : "auto", overflowY: showFilters ? "auto" : "visible" }}>
@@ -2180,7 +2249,20 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
           OVERVIEW SUMMARY
       ══════════════════════════════════════════════════════════════════════ */}
-        {activeTab === "descriptive" && (
+        {snapshotIsExpired && (
+          <div role="alert" className="saas-card" style={{ padding: 20, marginBottom: 24, color: COLOR.red }}>
+            <strong>Analytics snapshot expired — rankings are hidden.</strong>
+            <p>The maximum display age is 15 minutes. This snapshot is no longer eligible
+              for display, or its computation time cannot be verified.
+              A fresh snapshot is required before rankings and charts can be displayed.</p>
+            <p>Last computed: {cacheMetadata?.computed_at || "Unavailable"}.</p>
+            <p>{cacheMetadata?.refresh_failed
+              ? "The refresh failed. The next request will retry after the backoff."
+              : backgroundRefreshing ? "Waiting for the background refresh."
+                : "Refresh Analytics to retry; no expired rankings are being shown."}</p>
+          </div>
+        )}
+        {!snapshotIsExpired && activeTab === "descriptive" && (
           <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="descriptive"
@@ -2738,7 +2820,7 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 2 — DIAGNOSTIC ANALYTICS
       ══════════════════════════════════════════════════════════════════════ */}
-        {activeTab === "diagnostic" && (
+        {!snapshotIsExpired && activeTab === "diagnostic" && (
           <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="diagnostic"
@@ -3067,7 +3149,7 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 3 — PRESCRIPTIVE ANALYTICS (WLC / OPS)
       ══════════════════════════════════════════════════════════════════════ */}
-        {activeTab === "prescriptive" && (
+        {!snapshotIsExpired && activeTab === "prescriptive" && (
           <section style={{ marginBottom: 32 }}>
             <SectionHeader
               tier="prescriptive"
@@ -3371,7 +3453,7 @@ export default function AnalyticsPage() {
         {/* ══════════════════════════════════════════════════════════════════════
             OPERATIONS
         ══════════════════════════════════════════════════════════════════════ */}
-        {activeTab === "operations" && (
+        {!snapshotIsExpired && activeTab === "operations" && (
           <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="operations"

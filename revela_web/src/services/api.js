@@ -1235,6 +1235,7 @@ export async function getAnalyticsOverviewRequest(arg1, arg2, options = {}) {
       throw new Error("Missing authentication token.");
     }
     const qs = analyticsFiltersToSearchParams(filters);
+    if (options.staleWhileRevalidate) qs.set("stale_while_revalidate", "1");
     const q = qs.toString();
     const url = q
       ? `${BASE_URL}/analytics/all?${q}`
@@ -1243,6 +1244,7 @@ export async function getAnalyticsOverviewRequest(arg1, arg2, options = {}) {
       method: "GET",
       headers: authHeaders(token),
       signal: options.signal,
+      cache: options.staleWhileRevalidate ? "no-store" : "default",
     });
     return await handleResponse(res);
   } catch (err) {
