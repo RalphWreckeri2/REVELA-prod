@@ -16,7 +16,11 @@ There is no test database in this project. These tests assert two things:
      bytes. (SQLite cannot bind a correlated reference inside a subquery
      ORDER BY, which MySQL allows and this expression already relies on.)
 """
+from api.registry.colors import _effective_flag_color_sql
+from api.analytics import filters
+import ast
 import os
+from pathlib import Path
 import re
 import sqlite3
 import sys
@@ -25,8 +29,6 @@ import unittest
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..")))
 
-from api.analytics import filters
-from api.registry.colors import _effective_flag_color_sql
 
 # The correlated registry-status lookup, as emitted by the shared builder.
 _STATUS_LOOKUP = re.compile(
@@ -80,6 +82,38 @@ def _connection():
 
 class AnalyticsFilterWiringTests(unittest.TestCase):
     """The filter must reuse the shared expression, not a new mapping."""
+
+    def test_total_flagged_kpi_uses_effective_flag_color(self):
+        routes_path = Path(
+            __file__).parents[1] / "api" / "analytics" / "routes.py"
+        tree = ast.parse(routes_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or len(node.args) < 3:
+                continue
+            if not (isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value == "kpi.total_flagged"):
+                continue
+
+            query_parts = [
+                part for part in ast.walk(node.args[2])
+                if isinstance(part, ast.JoinedStr)
+            ]
+            self.assertTrue(query_parts)
+            self.assertTrue(any(
+                isinstance(part, ast.FormattedValue)
+                and isinstance(part.value, ast.Name)
+                and part.value.id == "effective_flag_color"
+                for query_part in query_parts
+                for part in query_part.values
+            ))
+            self.assertIn("!= 'Green'", "".join(
+                part.value
+                for query_part in query_parts
+                for part in query_part.values
+                if isinstance(part, ast.Constant) and isinstance(part.value, str)
+            ))
+            return
+        self.fail("kpi.total_flagged query was not found")
 
     def test_geo_sql_embeds_the_shared_expression(self):
         fragment, _ = filters.geo_sql("g", {"flag_color": "Red"})

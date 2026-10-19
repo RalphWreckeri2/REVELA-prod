@@ -661,7 +661,7 @@ def _get_all_analytics_inner(F=None):
     _execute(
         cur,
         "kpi.total_flagged",
-        "SELECT COUNT(*) AS n FROM geospatial_logs g WHERE g.flagColor != 'Green' AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))" + geo_g,
+        f"SELECT COUNT(*) AS n FROM geospatial_logs g WHERE {effective_flag_color} != 'Green' AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))" + geo_g,
         geo_g_p,
     )
     total_flagged = cur.fetchone()["n"]
