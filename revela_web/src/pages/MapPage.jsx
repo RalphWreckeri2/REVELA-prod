@@ -4020,7 +4020,7 @@ export default function MapPage() {
                       reconcileProgress?.stage === 'running' ||
                       snapProgress?.stage === 'running' ||
                       isSnapMonthlyMaxed ||
-                      isSnapDailyMaxed
+                      isReverifyDailyMaxed
                     }
                     title={
                       detectionQuota && detectionQuota.registry_count === 0

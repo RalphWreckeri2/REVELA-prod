@@ -19,7 +19,7 @@ def ensure_registry_workflow_events():
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS registry_workflow_events (
                     eventID BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-                    businessID VARCHAR(50) NOT NULL,
+                    businessID VARCHAR(50) COLLATE utf8mb4_unicode_ci NOT NULL,
                     eventType VARCHAR(24) NOT NULL,
                     resultStatus VARCHAR(24) NULL,
                     placeID VARCHAR(255) NULL,
@@ -29,7 +29,7 @@ def ensure_registry_workflow_events():
                     eventAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     KEY idx_registry_workflow_type_time (eventType, eventAt),
                     KEY idx_registry_workflow_business (businessID, eventID)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
             mysql.connection.commit()
             _table_ready = True

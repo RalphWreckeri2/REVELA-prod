@@ -66,6 +66,8 @@ class WorkflowViewTests(unittest.TestCase):
         queries = [call.args[0] for call in self.cursor.execute.call_args_list]
         self.assertIn("COUNT(DISTINCT e.businessID)", queries[0])
         self.assertIn("MAX(eventID)", queries[1])
+        self.assertIn("r.businessID COLLATE utf8mb4_unicode_ci", queries[1])
+        self.assertIn("e.businessID COLLATE utf8mb4_unicode_ci", queries[1])
         self.assertEqual(
             [call.args[1] for call in self.cursor.execute.call_args_list],
             [("snapped",), ("snapped", "snapped")],
@@ -90,6 +92,8 @@ class WorkflowViewTests(unittest.TestCase):
         self.assertIn("COUNT(DISTINCT businessID)", queries[0])
         self.assertIn("MAX(id)", queries[1])
         self.assertIn("GROUP BY businessID", queries[1])
+        self.assertIn("r.businessID COLLATE utf8mb4_unicode_ci", queries[1])
+        self.assertIn("h.businessID COLLATE utf8mb4_unicode_ci", queries[1])
 
     def test_evidence_access_is_scoped_to_owner_unless_current_admin(self):
         self.cursor.fetchone.return_value = (1,)

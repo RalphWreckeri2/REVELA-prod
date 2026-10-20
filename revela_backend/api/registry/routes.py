@@ -59,7 +59,9 @@ def _workflow_summary_rows(event_type):
                 WHERE eventType = %s
                 GROUP BY businessID
             ) latest ON latest.latestEventID = e.eventID
-            LEFT JOIN official_registry r ON r.businessID = e.businessID
+            LEFT JOIN official_registry r
+                ON r.businessID COLLATE utf8mb4_unicode_ci =
+                   e.businessID COLLATE utf8mb4_unicode_ci
             WHERE e.eventType = %s
             ORDER BY e.eventAt DESC, e.eventID DESC
             LIMIT 100
@@ -94,7 +96,9 @@ def _reverification_summary():
                 FROM registry_pin_history
                 GROUP BY businessID
             ) latest ON latest.latestID = h.id
-            LEFT JOIN official_registry r ON r.businessID = h.businessID
+            LEFT JOIN official_registry r
+                ON r.businessID COLLATE utf8mb4_unicode_ci =
+                   h.businessID COLLATE utf8mb4_unicode_ci
             ORDER BY h.attemptedAt DESC, h.id DESC
             LIMIT 100
         """)
