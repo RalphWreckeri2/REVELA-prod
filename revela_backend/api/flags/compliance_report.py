@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 from app import mysql
 from api.flags.compliance import (
-    decorate_compliance, is_detection_compliant, origin_source_sql,
+    decorate_compliance, is_report_compliant, origin_source_sql,
     registry_link_sql, utc_iso, verified_green_at_sql,
 )
 from api.registry.colors import _effective_flag_color_sql, ladder_columns_available
@@ -24,13 +24,13 @@ def get_inspection_verified_compliant():
             FROM geospatial_logs g
             LEFT JOIN barangays b ON b.barangayID = g.barangayID
             LEFT JOIN official_registry r ON r.businessID = g.businessID
-            WHERE {source} = 'detection'
+            WHERE {source} IN ('detection', 'manual')
             ORDER BY g.detectedName, g.logID
         """)
         records = []
         for row in cursor.fetchall():
             decorate_compliance(row)
-            if not is_detection_compliant(row):
+            if not is_report_compliant(row):
                 continue
             records.append({
                 "detectionReference": row["logID"],

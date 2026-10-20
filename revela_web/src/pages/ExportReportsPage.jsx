@@ -2628,11 +2628,11 @@ export default function ExportReportsPage() {
               <div>
                 <p style={{ fontSize: 11, color: "#334155" }}><strong>Applied filters:</strong> {printReport.data.filtersLabel}</p>
                 <p style={{ fontSize: 11, color: "#334155" }}><strong>Record count:</strong> {printReport.data.count}</p>
-                <p style={{ fontSize: 11, color: "#334155" }}>Detection Reference is the geospatial logID, not an official Business ID. Verified On is the admin verification time in Asia/Manila.</p>
+                <p style={{ fontSize: 11, color: "#334155" }}>Pin Reference is the geospatial logID, not an official Business ID. Verified On is the admin verification time in Asia/Manila.</p>
                 <table className="print-table">
                   <thead><tr>{printReport.data.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
                   <tbody>{printReport.data.rows.length === 0 ? <tr><td colSpan={6}>No matching current-compliance records.</td></tr>
-                    : printReport.data.rows.map(row => <tr key={row["Detection Reference"]}>
+                    : printReport.data.rows.map(row => <tr key={row["Pin Reference"]}>
                       {printReport.data.columns.map(column => <td key={column}>{row[column] || "—"}</td>)}
                     </tr>)}</tbody>
                 </table>

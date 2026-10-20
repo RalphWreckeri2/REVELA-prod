@@ -97,7 +97,7 @@ test("View List, CSV and PDF share all filtered records, including beyond page o
   assert.deepEqual(csv.data, report.rows);
   const pdf = compliancePrintReport(report, { fullName: "Test Admin" });
   assert.deepEqual(pdf.data.rows, [...pageOne.data, ...pageTwo.data]);
-  assert.equal(pdf.data.rows.at(-1)["Detection Reference"], "30");
+  assert.equal(pdf.data.rows.at(-1)["Pin Reference"], "30");
   assert.equal(pdf.data.count, csv.data.length);
   assert.match(pdf.title, /Inspection-Verified Compliant Businesses/);
   assert.match(pdf.subtitle, /Current compliance only/);
@@ -106,10 +106,10 @@ test("View List, CSV and PDF share all filtered records, including beyond page o
   assert.ok(!report.columns.includes("Business ID"));
 });
 
-test("report search finds a detection reference and pagination clamps after filtering", () => {
+test("report search finds a pin reference and pagination clamps after filtering", () => {
   const report = buildComplianceReport(reportRecords, { search: "#35" });
   assert.equal(report.count, 1);
-  assert.equal(report.rows[0]["Detection Reference"], "35");
+  assert.equal(report.rows[0]["Pin Reference"], "35");
   assert.equal(paginateRecords(report.rows, 5).page, 1);
   assert.equal(buildComplianceReport(reportRecords, {}).count, 35);
 });

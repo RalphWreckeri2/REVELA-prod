@@ -32,10 +32,10 @@ export const MAP_REGISTRY_LINK_OPTIONS = Object.freeze([
 ]);
 export const UNLINKED_COMPLIANCE_TEXT = "Inspection-verified compliant · Not yet in imported registry";
 export const COMPLIANCE_REPORT_TITLE = "Inspection-Verified Compliant Businesses";
-export const COMPLIANCE_REPORT_DESCRIPTION = "Businesses identified through Business Detection and subsequently verified as compliant. Includes their current registry-link status.";
+export const COMPLIANCE_REPORT_DESCRIPTION = "Businesses identified through Business Detection or an unlinked Inspector Report and subsequently verified as compliant. Includes their current registry-link status.";
 export const COMPLIANCE_REPORT_SCOPE = "Current compliance only: effective Green with applicable admin-verified Green inspection evidence. Historical Green results alone are excluded.";
 export const COMPLIANCE_COLUMNS = Object.freeze([
-  "Detection Reference", "Business Name", "Barangay", "Address", "Verified On", "Registry Link",
+  "Pin Reference", "Business Name", "Barangay", "Address", "Verified On", "Registry Link",
 ]);
 
 export function businessSourceLabel(source) {
@@ -121,7 +121,7 @@ export function formatManilaDate(value) {
 
 export function complianceRow(record) {
   return {
-    "Detection Reference": String(record.detectionReference),
+    "Pin Reference": String(record.detectionReference),
     "Business Name": record.businessName ?? "",
     Barangay: record.barangayName ?? "",
     Address: record.address ?? "",

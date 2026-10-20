@@ -98,6 +98,10 @@ def decorate_compliance(row):
     return row
 
 
-def is_detection_compliant(row):
-    return (row.get("originSource") == "detection"
-            and row.get("inspectionVerifiedCompliant") is True)
+def is_report_compliant(row):
+    origin = row.get("originSource")
+    eligible_origin = (
+        origin == "detection"
+        or (origin == "manual" and row.get("registryLinked") is False)
+    )
+    return eligible_origin and row.get("inspectionVerifiedCompliant") is True

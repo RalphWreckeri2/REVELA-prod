@@ -38,8 +38,8 @@ fallback as provenance.
 existing `official_registry.businessID`. Source, place/name matching used by
 legacy color lookups, dangling IDs and similarity alone do not establish this
 read-side relationship. A registry-only virtual location represents an actual
-registry row and is linked by definition. Detection Reference is `logID`, never
-an official Business ID.
+registry row and is linked by definition. Pin Reference is `logID`, never an
+official Business ID.
 
 **Current verified compliance** requires the existing shared effective-color
 builder in `api/registry/colors.py` to return Green, plus reliable, applicable
@@ -51,7 +51,9 @@ evidence. The actor is attributed by the existing admin-only verification route;
 historical actions are not reinterpreted using the actor's present-day role.
 
 The details indicator adds the requirement of **no valid registry link**. The
-report instead adds **source = detection** and includes both linkage states.
+report includes **source = detection** with either linkage state, and
+**source = manual** only when there is no valid registry link. Registry,
+registry-detected, unknown-origin and linked manual pins are excluded.
 Orange warnings and Black locks exclude rows through the existing color rule.
 Clear Warning does not itself supply Green inspection evidence and its workflow
 is unchanged.
@@ -121,7 +123,7 @@ providers were not exercised.
 
 Legacy rows with unknown provenance, missing actor/verification timestamp,
 missing lifecycle events, or superseded evidence are conservatively excluded
-from the detection report. No history or missing permit details are invented.
+from the report. No history or missing permit details are invented.
 No schema changes, official-registry creation workflow, official Business IDs,
 mobile changes, migrations/backfills, deployment or push are part of this work.
 

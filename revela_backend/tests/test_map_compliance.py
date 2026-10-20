@@ -119,6 +119,16 @@ def test_verified_detection_is_current_compliant_with_independent_link(db, linke
         assert db.rows("SELECT * FROM official_registry") == []
 
 
+@pytest.mark.parametrize("linked", [False, True])
+def test_verified_manual_report_is_included_only_when_not_registry_linked(db, linked):
+    pin(db, source="manual", linked=linked)
+    verify_green(db)
+    row = map_pin()
+    assert row["originSource"] == "manual"
+    assert row["inspectionVerifiedCompliant"] is True
+    assert report_ids() == ([] if linked else [17])
+
+
 def test_green_without_qualifying_verification_is_not_evidence(db):
     pin(db, color="Green")
     assert map_pin()["inspectionVerifiedCompliant"] is False
@@ -162,8 +172,8 @@ def test_clear_warning_to_a_green_base_does_not_invent_verified_compliance(db):
     assert report_ids() == []
 
 
-@pytest.mark.parametrize("source", ["manual", "unknown", "registry_detected", "unexpected-source"])
-def test_non_detection_origin_is_never_in_detection_report(db, source):
+@pytest.mark.parametrize("source", ["registry", "registry_detected", "unknown", "unexpected-source"])
+def test_registry_and_unknown_origins_are_excluded_from_report(db, source):
     pin(db, source=source)
     verify_green(db)
     assert map_pin()["originSource"] == source

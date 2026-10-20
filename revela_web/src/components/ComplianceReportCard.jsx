@@ -119,10 +119,10 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
       onClose={() => setOpen(false)} busy={loading} className="compliance-report-dialog"
       panelStyle={{ width: "min(1100px, calc(100vw - 40px))", maxHeight: "90vh" }}>
       <div className="compliance-report-content">
-        <p className="compliance-report-note">Detection Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila.</p>
+        <p className="compliance-report-note">Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila.</p>
         <div className="compliance-report-filters">
           <label className="compliance-report-search">Business name / reference
-            <input type="search" placeholder="Search business name or detection reference" value={filters.search}
+            <input type="search" placeholder="Search business name or pin reference" value={filters.search}
               disabled={loading} onChange={event => changeFilter({ search: event.target.value })} />
           </label>
           <FilterDropdown label="Barangay" value={filters.barangayID} options={barangays} disabled={loading}
@@ -145,7 +145,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
               : <>
                 <div className="compliance-report-table-scroll"><table className="compliance-report-table">
                   <thead><tr>{report.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>
-                  <tbody>{visible.data.map(row => <tr key={row["Detection Reference"]}>
+                  <tbody>{visible.data.map(row => <tr key={row["Pin Reference"]}>
                     {report.columns.map(column => <td key={column}>{row[column] || "—"}</td>)}
                   </tr>)}</tbody>
                 </table></div>
