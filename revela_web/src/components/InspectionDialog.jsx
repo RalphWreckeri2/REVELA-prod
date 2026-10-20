@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import "../styles/InspectionDialog.css";
 
 // Dispatch-only stack: leave the shared modal/animation components untouched.
 const dialogs = [];

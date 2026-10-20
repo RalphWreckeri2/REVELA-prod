@@ -116,8 +116,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
       </div>
     </div>
     {open && <InspectionDialog title={COMPLIANCE_REPORT_TITLE} description={COMPLIANCE_REPORT_SCOPE}
-      onClose={() => setOpen(false)} busy={loading} className="compliance-report-dialog"
-      panelStyle={{ width: "min(1100px, calc(100vw - 40px))", maxHeight: "90vh" }}>
+      onClose={() => setOpen(false)} busy={loading} className="compliance-report-dialog">
       <div className="compliance-report-content">
         <p className="compliance-report-note">Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila.</p>
         <div className="compliance-report-filters">
