@@ -1,0 +1,2905 @@
+{
+  "zoom": "100%",
+  "browser": "Microsoft Edge (Chromium), fresh profile",
+  "consoleIssues": [],
+  "results": [
+    {
+      "page": "analytics",
+      "width": 768,
+      "height": 1024,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 0,
+        "y": 70,
+        "width": 768,
+        "height": 895,
+        "right": 768,
+        "bottom": 965
+      },
+      "dock": {
+        "x": 0,
+        "y": 965,
+        "width": 768,
+        "height": 59,
+        "right": 768,
+        "bottom": 1024
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 16,
+          "y": 1391,
+          "width": 736,
+          "height": 522.84375,
+          "right": 752,
+          "bottom": 1913.84375,
+          "chart": {
+            "x": 37,
+            "y": 1468.84375,
+            "width": 694,
+            "height": 424,
+            "right": 731,
+            "bottom": 1892.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 16,
+          "y": 1933.84375,
+          "width": 736,
+          "height": 378.84375,
+          "right": 752,
+          "bottom": 2312.6875,
+          "chart": {
+            "x": 37,
+            "y": 2011.6875,
+            "width": 694,
+            "height": 280,
+            "right": 731,
+            "bottom": 2291.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 16,
+          "y": 2332.6875,
+          "width": 736,
+          "height": 318.84375,
+          "right": 752,
+          "bottom": 2651.53125,
+          "chart": {
+            "x": 37,
+            "y": 2410.53125,
+            "width": 339,
+            "height": 220,
+            "right": 376,
+            "bottom": 2630.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 16,
+          "y": 2671.53125,
+          "width": 736,
+          "height": 318.84375,
+          "right": 752,
+          "bottom": 2990.375,
+          "chart": {
+            "x": 37,
+            "y": 2749.375,
+            "width": 339,
+            "height": 220,
+            "right": 376,
+            "bottom": 2969.375
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 16,
+          "y": 3010.375,
+          "width": 736,
+          "height": 318.84375,
+          "right": 752,
+          "bottom": 3329.21875,
+          "chart": {
+            "x": 37,
+            "y": 3088.21875,
+            "width": 339,
+            "height": 220,
+            "right": 376,
+            "bottom": 3308.21875
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 16,
+          "y": 3349.21875,
+          "width": 736,
+          "height": 338.84375,
+          "right": 752,
+          "bottom": 3688.0625,
+          "chart": {
+            "x": 37,
+            "y": 3427.0625,
+            "width": 694,
+            "height": 240,
+            "right": 731,
+            "bottom": 3667.0625
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 16,
+          "y": 3712.0625,
+          "width": 736,
+          "height": 354,
+          "right": 752,
+          "bottom": 4066.0625,
+          "chart": {
+            "x": 37,
+            "y": 3785.0625,
+            "width": 694,
+            "height": 260,
+            "right": 731,
+            "bottom": 4045.0625
+          },
+          "overflow": false,
+          "titleWidth": 694,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 768,
+      "height": 1024,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 0,
+        "y": 70,
+        "width": 768,
+        "height": 895,
+        "right": 768,
+        "bottom": 965
+      },
+      "dock": {
+        "x": 0,
+        "y": 965,
+        "width": 768,
+        "height": 59,
+        "right": 768,
+        "bottom": 1024
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 16,
+          "y": 1391,
+          "width": 736,
+          "height": 522.84375,
+          "right": 752,
+          "bottom": 1913.84375,
+          "chart": {
+            "x": 37,
+            "y": 1468.84375,
+            "width": 694,
+            "height": 424,
+            "right": 731,
+            "bottom": 1892.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 16,
+          "y": 1933.84375,
+          "width": 736,
+          "height": 378.84375,
+          "right": 752,
+          "bottom": 2312.6875,
+          "chart": {
+            "x": 37,
+            "y": 2011.6875,
+            "width": 694,
+            "height": 280,
+            "right": 731,
+            "bottom": 2291.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 16,
+          "y": 2332.6875,
+          "width": 736,
+          "height": 318.84375,
+          "right": 752,
+          "bottom": 2651.53125,
+          "chart": {
+            "x": 37,
+            "y": 2410.53125,
+            "width": 339,
+            "height": 220,
+            "right": 376,
+            "bottom": 2630.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 16,
+          "y": 2671.53125,
+          "width": 736,
+          "height": 318.84375,
+          "right": 752,
+          "bottom": 2990.375,
+          "chart": {
+            "x": 37,
+            "y": 2749.375,
+            "width": 339,
+            "height": 220,
+            "right": 376,
+            "bottom": 2969.375
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 16,
+          "y": 3010.375,
+          "width": 736,
+          "height": 318.84375,
+          "right": 752,
+          "bottom": 3329.21875,
+          "chart": {
+            "x": 37,
+            "y": 3088.21875,
+            "width": 339,
+            "height": 220,
+            "right": 376,
+            "bottom": 3308.21875
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 16,
+          "y": 3349.21875,
+          "width": 736,
+          "height": 338.84375,
+          "right": 752,
+          "bottom": 3688.0625,
+          "chart": {
+            "x": 37,
+            "y": 3427.0625,
+            "width": 694,
+            "height": 240,
+            "right": 731,
+            "bottom": 3667.0625
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 16,
+          "y": 3712.0625,
+          "width": 736,
+          "height": 354,
+          "right": 752,
+          "bottom": 4066.0625,
+          "chart": {
+            "x": 37,
+            "y": 3785.0625,
+            "width": 694,
+            "height": 260,
+            "right": 731,
+            "bottom": 4045.0625
+          },
+          "overflow": false,
+          "titleWidth": 694,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 768,
+      "height": 1024,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 0,
+        "y": 70,
+        "width": 768,
+        "height": 954,
+        "right": 768,
+        "bottom": 1024
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 16,
+          "y": 615,
+          "width": 736,
+          "height": 366.59375,
+          "right": 752,
+          "bottom": 981.59375,
+          "chart": {
+            "x": 39,
+            "y": 697.59375,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 917.59375
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 16,
+          "y": 1001.59375,
+          "width": 736,
+          "height": 416.59375,
+          "right": 752,
+          "bottom": 1418.1875,
+          "chart": {
+            "x": 39,
+            "y": 1084.1875,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 1304.1875
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 16,
+          "y": 1438.1875,
+          "width": 736,
+          "height": 362.25,
+          "right": 752,
+          "bottom": 1800.4375,
+          "chart": {
+            "x": 39,
+            "y": 1516.4375,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 1736.4375
+          },
+          "overflow": false,
+          "titleWidth": 476.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 16,
+          "y": 1820.4375,
+          "width": 736,
+          "height": 476.59375,
+          "right": 752,
+          "bottom": 2297.03125,
+          "chart": {
+            "x": 39,
+            "y": 1903.03125,
+            "width": 690,
+            "height": 280,
+            "right": 729,
+            "bottom": 2183.03125
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 16,
+          "y": 2317.03125,
+          "width": 736,
+          "height": 570.59375,
+          "right": 752,
+          "bottom": 2887.625,
+          "chart": {
+            "x": 39,
+            "y": 2399.625,
+            "width": 690,
+            "height": 424,
+            "right": 729,
+            "bottom": 2823.625
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 16,
+          "y": 2907.625,
+          "width": 736,
+          "height": 366.59375,
+          "right": 752,
+          "bottom": 3274.21875,
+          "chart": {
+            "x": 39,
+            "y": 2990.21875,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 3210.21875
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 16,
+          "y": 3294.21875,
+          "width": 736,
+          "height": 406.59375,
+          "right": 752,
+          "bottom": 3700.8125,
+          "chart": {
+            "x": 39,
+            "y": 3376.8125,
+            "width": 690,
+            "height": 260,
+            "right": 729,
+            "bottom": 3636.8125
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 768,
+      "height": 1024,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 0,
+        "y": 70,
+        "width": 768,
+        "height": 954,
+        "right": 768,
+        "bottom": 1024
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 16,
+          "y": 615,
+          "width": 736,
+          "height": 366.59375,
+          "right": 752,
+          "bottom": 981.59375,
+          "chart": {
+            "x": 39,
+            "y": 697.59375,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 917.59375
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 16,
+          "y": 1001.59375,
+          "width": 736,
+          "height": 416.59375,
+          "right": 752,
+          "bottom": 1418.1875,
+          "chart": {
+            "x": 39,
+            "y": 1084.1875,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 1304.1875
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 16,
+          "y": 1438.1875,
+          "width": 736,
+          "height": 362.25,
+          "right": 752,
+          "bottom": 1800.4375,
+          "chart": {
+            "x": 39,
+            "y": 1516.4375,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 1736.4375
+          },
+          "overflow": false,
+          "titleWidth": 476.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 16,
+          "y": 1820.4375,
+          "width": 736,
+          "height": 476.59375,
+          "right": 752,
+          "bottom": 2297.03125,
+          "chart": {
+            "x": 39,
+            "y": 1903.03125,
+            "width": 690,
+            "height": 280,
+            "right": 729,
+            "bottom": 2183.03125
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 16,
+          "y": 2317.03125,
+          "width": 736,
+          "height": 570.59375,
+          "right": 752,
+          "bottom": 2887.625,
+          "chart": {
+            "x": 39,
+            "y": 2399.625,
+            "width": 690,
+            "height": 424,
+            "right": 729,
+            "bottom": 2823.625
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 16,
+          "y": 2907.625,
+          "width": 736,
+          "height": 366.59375,
+          "right": 752,
+          "bottom": 3274.21875,
+          "chart": {
+            "x": 39,
+            "y": 2990.21875,
+            "width": 690,
+            "height": 220,
+            "right": 729,
+            "bottom": 3210.21875
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 16,
+          "y": 3294.21875,
+          "width": 736,
+          "height": 406.59375,
+          "right": 752,
+          "bottom": 3700.8125,
+          "chart": {
+            "x": 39,
+            "y": 3376.8125,
+            "width": 690,
+            "height": 260,
+            "right": 729,
+            "bottom": 3636.8125
+          },
+          "overflow": false,
+          "titleWidth": 464.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 1024,
+      "height": 768,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 260,
+        "y": 70,
+        "width": 764,
+        "height": 639,
+        "right": 1024,
+        "bottom": 709
+      },
+      "dock": {
+        "x": 260,
+        "y": 709,
+        "width": 764,
+        "height": 59,
+        "right": 1024,
+        "bottom": 768
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 308,
+          "y": 1359,
+          "width": 668,
+          "height": 522.84375,
+          "right": 976,
+          "bottom": 1881.84375,
+          "chart": {
+            "x": 329,
+            "y": 1436.84375,
+            "width": 626,
+            "height": 424,
+            "right": 955,
+            "bottom": 1860.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 308,
+          "y": 1901.84375,
+          "width": 668,
+          "height": 378.84375,
+          "right": 976,
+          "bottom": 2280.6875,
+          "chart": {
+            "x": 329,
+            "y": 1979.6875,
+            "width": 626,
+            "height": 280,
+            "right": 955,
+            "bottom": 2259.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 308,
+          "y": 2300.6875,
+          "width": 668,
+          "height": 318.84375,
+          "right": 976,
+          "bottom": 2619.53125,
+          "chart": {
+            "x": 329,
+            "y": 2378.53125,
+            "width": 305,
+            "height": 220,
+            "right": 634,
+            "bottom": 2598.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 308,
+          "y": 2639.53125,
+          "width": 668,
+          "height": 318.84375,
+          "right": 976,
+          "bottom": 2958.375,
+          "chart": {
+            "x": 329,
+            "y": 2717.375,
+            "width": 305,
+            "height": 220,
+            "right": 634,
+            "bottom": 2937.375
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 308,
+          "y": 2978.375,
+          "width": 668,
+          "height": 318.84375,
+          "right": 976,
+          "bottom": 3297.21875,
+          "chart": {
+            "x": 329,
+            "y": 3056.21875,
+            "width": 305,
+            "height": 220,
+            "right": 634,
+            "bottom": 3276.21875
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 308,
+          "y": 3317.21875,
+          "width": 668,
+          "height": 338.84375,
+          "right": 976,
+          "bottom": 3656.0625,
+          "chart": {
+            "x": 329,
+            "y": 3395.0625,
+            "width": 626,
+            "height": 240,
+            "right": 955,
+            "bottom": 3635.0625
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 308,
+          "y": 3680.0625,
+          "width": 668,
+          "height": 354,
+          "right": 976,
+          "bottom": 4034.0625,
+          "chart": {
+            "x": 329,
+            "y": 3753.0625,
+            "width": 626,
+            "height": 260,
+            "right": 955,
+            "bottom": 4013.0625
+          },
+          "overflow": false,
+          "titleWidth": 626,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 1024,
+      "height": 768,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 76,
+        "y": 70,
+        "width": 948,
+        "height": 639,
+        "right": 1024,
+        "bottom": 709
+      },
+      "dock": {
+        "x": 76,
+        "y": 709,
+        "width": 948,
+        "height": 59,
+        "right": 1024,
+        "bottom": 768
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 124,
+          "y": 1287,
+          "width": 852,
+          "height": 522.84375,
+          "right": 976,
+          "bottom": 1809.84375,
+          "chart": {
+            "x": 145,
+            "y": 1364.84375,
+            "width": 810,
+            "height": 424,
+            "right": 955,
+            "bottom": 1788.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 124,
+          "y": 1829.84375,
+          "width": 852,
+          "height": 378.84375,
+          "right": 976,
+          "bottom": 2208.6875,
+          "chart": {
+            "x": 145,
+            "y": 1907.6875,
+            "width": 810,
+            "height": 280,
+            "right": 955,
+            "bottom": 2187.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 124,
+          "y": 2228.6875,
+          "width": 852,
+          "height": 318.84375,
+          "right": 976,
+          "bottom": 2547.53125,
+          "chart": {
+            "x": 145,
+            "y": 2306.53125,
+            "width": 397,
+            "height": 220,
+            "right": 542,
+            "bottom": 2526.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 124,
+          "y": 2567.53125,
+          "width": 852,
+          "height": 318.84375,
+          "right": 976,
+          "bottom": 2886.375,
+          "chart": {
+            "x": 145,
+            "y": 2645.375,
+            "width": 397,
+            "height": 220,
+            "right": 542,
+            "bottom": 2865.375
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 124,
+          "y": 2906.375,
+          "width": 852,
+          "height": 318.84375,
+          "right": 976,
+          "bottom": 3225.21875,
+          "chart": {
+            "x": 145,
+            "y": 2984.21875,
+            "width": 397,
+            "height": 220,
+            "right": 542,
+            "bottom": 3204.21875
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 124,
+          "y": 3245.21875,
+          "width": 852,
+          "height": 338.84375,
+          "right": 976,
+          "bottom": 3584.0625,
+          "chart": {
+            "x": 145,
+            "y": 3323.0625,
+            "width": 810,
+            "height": 240,
+            "right": 955,
+            "bottom": 3563.0625
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 124,
+          "y": 3608.0625,
+          "width": 852,
+          "height": 354,
+          "right": 976,
+          "bottom": 3962.0625,
+          "chart": {
+            "x": 145,
+            "y": 3681.0625,
+            "width": 810,
+            "height": 260,
+            "right": 955,
+            "bottom": 3941.0625
+          },
+          "overflow": false,
+          "titleWidth": 810,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 1024,
+      "height": 768,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 260,
+        "y": 70,
+        "width": 764,
+        "height": 698,
+        "right": 1024,
+        "bottom": 768
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 308,
+          "y": 603,
+          "width": 668,
+          "height": 366.59375,
+          "right": 976,
+          "bottom": 969.59375,
+          "chart": {
+            "x": 331,
+            "y": 685.59375,
+            "width": 622,
+            "height": 220,
+            "right": 953,
+            "bottom": 905.59375
+          },
+          "overflow": false,
+          "titleWidth": 396.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 308,
+          "y": 989.59375,
+          "width": 668,
+          "height": 448.59375,
+          "right": 976,
+          "bottom": 1438.1875,
+          "chart": {
+            "x": 331,
+            "y": 1090.1875,
+            "width": 622,
+            "height": 220,
+            "right": 953,
+            "bottom": 1310.1875
+          },
+          "overflow": false,
+          "titleWidth": 396.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 308,
+          "y": 1458.1875,
+          "width": 668,
+          "height": 362.25,
+          "right": 976,
+          "bottom": 1820.4375,
+          "chart": {
+            "x": 331,
+            "y": 1536.4375,
+            "width": 622,
+            "height": 220,
+            "right": 953,
+            "bottom": 1756.4375
+          },
+          "overflow": false,
+          "titleWidth": 408.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 308,
+          "y": 1840.4375,
+          "width": 668,
+          "height": 494.59375,
+          "right": 976,
+          "bottom": 2335.03125,
+          "chart": {
+            "x": 331,
+            "y": 1941.03125,
+            "width": 622,
+            "height": 280,
+            "right": 953,
+            "bottom": 2221.03125
+          },
+          "overflow": false,
+          "titleWidth": 396.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 308,
+          "y": 2355.03125,
+          "width": 668,
+          "height": 588.59375,
+          "right": 976,
+          "bottom": 2943.625,
+          "chart": {
+            "x": 331,
+            "y": 2455.625,
+            "width": 622,
+            "height": 424,
+            "right": 953,
+            "bottom": 2879.625
+          },
+          "overflow": false,
+          "titleWidth": 396.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 308,
+          "y": 2963.625,
+          "width": 668,
+          "height": 366.59375,
+          "right": 976,
+          "bottom": 3330.21875,
+          "chart": {
+            "x": 331,
+            "y": 3046.21875,
+            "width": 622,
+            "height": 220,
+            "right": 953,
+            "bottom": 3266.21875
+          },
+          "overflow": false,
+          "titleWidth": 396.828125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 308,
+          "y": 3350.21875,
+          "width": 668,
+          "height": 406.59375,
+          "right": 976,
+          "bottom": 3756.8125,
+          "chart": {
+            "x": 331,
+            "y": 3432.8125,
+            "width": 622,
+            "height": 260,
+            "right": 953,
+            "bottom": 3692.8125
+          },
+          "overflow": false,
+          "titleWidth": 396.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 1024,
+      "height": 768,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 76,
+        "y": 70,
+        "width": 948,
+        "height": 698,
+        "right": 1024,
+        "bottom": 768
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 124,
+          "y": 587,
+          "width": 416,
+          "height": 502.59375,
+          "right": 540,
+          "bottom": 1089.59375,
+          "chart": {
+            "x": 147,
+            "y": 733.59375,
+            "width": 370,
+            "height": 220,
+            "right": 517,
+            "bottom": 953.59375
+          },
+          "overflow": false,
+          "titleWidth": 370,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 560,
+          "y": 587,
+          "width": 416,
+          "height": 502.59375,
+          "right": 976,
+          "bottom": 1089.59375,
+          "chart": {
+            "x": 583,
+            "y": 733.59375,
+            "width": 370,
+            "height": 220,
+            "right": 953,
+            "bottom": 953.59375
+          },
+          "overflow": false,
+          "titleWidth": 370,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 124,
+          "y": 1109.59375,
+          "width": 416,
+          "height": 598.59375,
+          "right": 540,
+          "bottom": 1708.1875,
+          "chart": {
+            "x": 147,
+            "y": 1221.84375,
+            "width": 370,
+            "height": 220,
+            "right": 517,
+            "bottom": 1441.84375
+          },
+          "overflow": false,
+          "titleWidth": 370,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 560,
+          "y": 1109.59375,
+          "width": 416,
+          "height": 598.59375,
+          "right": 976,
+          "bottom": 1708.1875,
+          "chart": {
+            "x": 583,
+            "y": 1256.1875,
+            "width": 370,
+            "height": 280,
+            "right": 953,
+            "bottom": 1536.1875
+          },
+          "overflow": false,
+          "titleWidth": 370,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 124,
+          "y": 1728.1875,
+          "width": 416,
+          "height": 634.59375,
+          "right": 540,
+          "bottom": 2362.78125,
+          "chart": {
+            "x": 147,
+            "y": 1874.78125,
+            "width": 370,
+            "height": 424,
+            "right": 517,
+            "bottom": 2298.78125
+          },
+          "overflow": false,
+          "titleWidth": 370,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 560,
+          "y": 1728.1875,
+          "width": 416,
+          "height": 634.59375,
+          "right": 976,
+          "bottom": 2362.78125,
+          "chart": {
+            "x": 583,
+            "y": 1874.78125,
+            "width": 370,
+            "height": 220,
+            "right": 953,
+            "bottom": 2094.78125
+          },
+          "overflow": false,
+          "titleWidth": 370,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 124,
+          "y": 2382.78125,
+          "width": 852,
+          "height": 406.59375,
+          "right": 976,
+          "bottom": 2789.375,
+          "chart": {
+            "x": 147,
+            "y": 2465.375,
+            "width": 806,
+            "height": 260,
+            "right": 953,
+            "bottom": 2725.375
+          },
+          "overflow": false,
+          "titleWidth": 580.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 1280,
+      "height": 800,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 260,
+        "y": 70,
+        "width": 1020,
+        "height": 671,
+        "right": 1280,
+        "bottom": 741
+      },
+      "dock": {
+        "x": 260,
+        "y": 741,
+        "width": 1020,
+        "height": 59,
+        "right": 1280,
+        "bottom": 800
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 308,
+          "y": 1035,
+          "width": 909,
+          "height": 522.84375,
+          "right": 1217,
+          "bottom": 1557.84375,
+          "chart": {
+            "x": 329,
+            "y": 1112.84375,
+            "width": 867,
+            "height": 424,
+            "right": 1196,
+            "bottom": 1536.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 308,
+          "y": 1577.84375,
+          "width": 909,
+          "height": 378.84375,
+          "right": 1217,
+          "bottom": 1956.6875,
+          "chart": {
+            "x": 329,
+            "y": 1655.6875,
+            "width": 867,
+            "height": 280,
+            "right": 1196,
+            "bottom": 1935.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 308,
+          "y": 1976.6875,
+          "width": 444.5,
+          "height": 375.84375,
+          "right": 752.5,
+          "bottom": 2352.53125,
+          "chart": {
+            "x": 329,
+            "y": 2067.03125,
+            "width": 402.5,
+            "height": 200,
+            "right": 731.5,
+            "bottom": 2267.03125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 772.5,
+          "y": 1976.6875,
+          "width": 444.5,
+          "height": 375.84375,
+          "right": 1217,
+          "bottom": 2352.53125,
+          "chart": {
+            "x": 793.5,
+            "y": 2054.53125,
+            "width": 402.5,
+            "height": 200,
+            "right": 1196,
+            "bottom": 2254.53125
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 308,
+          "y": 2372.53125,
+          "width": 444.5,
+          "height": 338.84375,
+          "right": 752.5,
+          "bottom": 2711.375,
+          "chart": {
+            "x": 329,
+            "y": 2456.875,
+            "width": 402.5,
+            "height": 200,
+            "right": 731.5,
+            "bottom": 2656.875
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 772.5,
+          "y": 2372.53125,
+          "width": 444.5,
+          "height": 338.84375,
+          "right": 1217,
+          "bottom": 2711.375,
+          "chart": {
+            "x": 793.5,
+            "y": 2450.375,
+            "width": 402.5,
+            "height": 240,
+            "right": 1196,
+            "bottom": 2690.375
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 308,
+          "y": 2735.375,
+          "width": 909,
+          "height": 354,
+          "right": 1217,
+          "bottom": 3089.375,
+          "chart": {
+            "x": 329,
+            "y": 2808.375,
+            "width": 867,
+            "height": 260,
+            "right": 1196,
+            "bottom": 3068.375
+          },
+          "overflow": false,
+          "titleWidth": 867,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 1280,
+      "height": 800,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 76,
+        "y": 70,
+        "width": 1204,
+        "height": 671,
+        "right": 1280,
+        "bottom": 741
+      },
+      "dock": {
+        "x": 76,
+        "y": 741,
+        "width": 1204,
+        "height": 59,
+        "right": 1280,
+        "bottom": 800
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 124,
+          "y": 1005,
+          "width": 1093,
+          "height": 522.84375,
+          "right": 1217,
+          "bottom": 1527.84375,
+          "chart": {
+            "x": 145,
+            "y": 1082.84375,
+            "width": 1051,
+            "height": 424,
+            "right": 1196,
+            "bottom": 1506.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 124,
+          "y": 1547.84375,
+          "width": 1093,
+          "height": 378.84375,
+          "right": 1217,
+          "bottom": 1926.6875,
+          "chart": {
+            "x": 145,
+            "y": 1625.6875,
+            "width": 1051,
+            "height": 280,
+            "right": 1196,
+            "bottom": 1905.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 124,
+          "y": 1946.6875,
+          "width": 536.5,
+          "height": 318.84375,
+          "right": 660.5,
+          "bottom": 2265.53125,
+          "chart": {
+            "x": 145,
+            "y": 2024.53125,
+            "width": 239.25,
+            "height": 220,
+            "right": 384.25,
+            "bottom": 2244.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 680.5,
+          "y": 1946.6875,
+          "width": 536.5,
+          "height": 318.84375,
+          "right": 1217,
+          "bottom": 2265.53125,
+          "chart": {
+            "x": 701.5,
+            "y": 2024.53125,
+            "width": 239.25,
+            "height": 220,
+            "right": 940.75,
+            "bottom": 2244.53125
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 124,
+          "y": 2285.53125,
+          "width": 536.5,
+          "height": 338.84375,
+          "right": 660.5,
+          "bottom": 2624.375,
+          "chart": {
+            "x": 145,
+            "y": 2373.375,
+            "width": 239.25,
+            "height": 220,
+            "right": 384.25,
+            "bottom": 2593.375
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 680.5,
+          "y": 2285.53125,
+          "width": 536.5,
+          "height": 338.84375,
+          "right": 1217,
+          "bottom": 2624.375,
+          "chart": {
+            "x": 701.5,
+            "y": 2363.375,
+            "width": 494.5,
+            "height": 240,
+            "right": 1196,
+            "bottom": 2603.375
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 124,
+          "y": 2648.375,
+          "width": 1093,
+          "height": 354,
+          "right": 1217,
+          "bottom": 3002.375,
+          "chart": {
+            "x": 145,
+            "y": 2721.375,
+            "width": 1051,
+            "height": 260,
+            "right": 1196,
+            "bottom": 2981.375
+          },
+          "overflow": false,
+          "titleWidth": 1051,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 1280,
+      "height": 800,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 260,
+        "y": 70,
+        "width": 1020,
+        "height": 730,
+        "right": 1280,
+        "bottom": 800
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 308,
+          "y": 491,
+          "width": 444.5,
+          "height": 488.59375,
+          "right": 752.5,
+          "bottom": 979.59375,
+          "chart": {
+            "x": 331,
+            "y": 619.59375,
+            "width": 398.5,
+            "height": 220,
+            "right": 729.5,
+            "bottom": 839.59375
+          },
+          "overflow": false,
+          "titleWidth": 398.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 772.5,
+          "y": 491,
+          "width": 444.5,
+          "height": 488.59375,
+          "right": 1217,
+          "bottom": 979.59375,
+          "chart": {
+            "x": 795.5,
+            "y": 637.59375,
+            "width": 398.5,
+            "height": 220,
+            "right": 1194,
+            "bottom": 857.59375
+          },
+          "overflow": false,
+          "titleWidth": 398.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 308,
+          "y": 999.59375,
+          "width": 444.5,
+          "height": 598.59375,
+          "right": 752.5,
+          "bottom": 1598.1875,
+          "chart": {
+            "x": 331,
+            "y": 1111.84375,
+            "width": 398.5,
+            "height": 220,
+            "right": 729.5,
+            "bottom": 1331.84375
+          },
+          "overflow": false,
+          "titleWidth": 398.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 772.5,
+          "y": 999.59375,
+          "width": 444.5,
+          "height": 598.59375,
+          "right": 1217,
+          "bottom": 1598.1875,
+          "chart": {
+            "x": 795.5,
+            "y": 1146.1875,
+            "width": 398.5,
+            "height": 280,
+            "right": 1194,
+            "bottom": 1426.1875
+          },
+          "overflow": false,
+          "titleWidth": 398.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 308,
+          "y": 1618.1875,
+          "width": 444.5,
+          "height": 634.59375,
+          "right": 752.5,
+          "bottom": 2252.78125,
+          "chart": {
+            "x": 331,
+            "y": 1764.78125,
+            "width": 398.5,
+            "height": 424,
+            "right": 729.5,
+            "bottom": 2188.78125
+          },
+          "overflow": false,
+          "titleWidth": 398.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 772.5,
+          "y": 1618.1875,
+          "width": 444.5,
+          "height": 634.59375,
+          "right": 1217,
+          "bottom": 2252.78125,
+          "chart": {
+            "x": 795.5,
+            "y": 1746.78125,
+            "width": 398.5,
+            "height": 220,
+            "right": 1194,
+            "bottom": 1966.78125
+          },
+          "overflow": false,
+          "titleWidth": 398.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 308,
+          "y": 2272.78125,
+          "width": 909,
+          "height": 406.59375,
+          "right": 1217,
+          "bottom": 2679.375,
+          "chart": {
+            "x": 331,
+            "y": 2355.375,
+            "width": 863,
+            "height": 260,
+            "right": 1194,
+            "bottom": 2615.375
+          },
+          "overflow": false,
+          "titleWidth": 637.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 1280,
+      "height": 800,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 76,
+        "y": 70,
+        "width": 1204,
+        "height": 730,
+        "right": 1280,
+        "bottom": 800
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 124,
+          "y": 430,
+          "width": 536.5,
+          "height": 434.59375,
+          "right": 660.5,
+          "bottom": 864.59375,
+          "chart": {
+            "x": 147,
+            "y": 530.59375,
+            "width": 490.5,
+            "height": 220,
+            "right": 637.5,
+            "bottom": 750.59375
+          },
+          "overflow": false,
+          "titleWidth": 265.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 680.5,
+          "y": 430,
+          "width": 536.5,
+          "height": 434.59375,
+          "right": 1217,
+          "bottom": 864.59375,
+          "chart": {
+            "x": 703.5,
+            "y": 530.59375,
+            "width": 490.5,
+            "height": 220,
+            "right": 1194,
+            "bottom": 750.59375
+          },
+          "overflow": false,
+          "titleWidth": 265.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 124,
+          "y": 884.59375,
+          "width": 536.5,
+          "height": 508.59375,
+          "right": 660.5,
+          "bottom": 1393.1875,
+          "chart": {
+            "x": 147,
+            "y": 962.84375,
+            "width": 490.5,
+            "height": 220,
+            "right": 637.5,
+            "bottom": 1182.84375
+          },
+          "overflow": false,
+          "titleWidth": 277.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 680.5,
+          "y": 884.59375,
+          "width": 536.5,
+          "height": 508.59375,
+          "right": 1217,
+          "bottom": 1393.1875,
+          "chart": {
+            "x": 703.5,
+            "y": 985.1875,
+            "width": 490.5,
+            "height": 280,
+            "right": 1194,
+            "bottom": 1265.1875
+          },
+          "overflow": false,
+          "titleWidth": 265.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 124,
+          "y": 1413.1875,
+          "width": 536.5,
+          "height": 610.1875,
+          "right": 660.5,
+          "bottom": 2023.375,
+          "chart": {
+            "x": 147,
+            "y": 1535.375,
+            "width": 490.5,
+            "height": 424,
+            "right": 637.5,
+            "bottom": 1959.375
+          },
+          "overflow": false,
+          "titleWidth": 265.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 680.5,
+          "y": 1413.1875,
+          "width": 536.5,
+          "height": 610.1875,
+          "right": 1217,
+          "bottom": 2023.375,
+          "chart": {
+            "x": 703.5,
+            "y": 1513.78125,
+            "width": 490.5,
+            "height": 220,
+            "right": 1194,
+            "bottom": 1733.78125
+          },
+          "overflow": false,
+          "titleWidth": 265.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 124,
+          "y": 2043.375,
+          "width": 1093,
+          "height": 406.59375,
+          "right": 1217,
+          "bottom": 2449.96875,
+          "chart": {
+            "x": 147,
+            "y": 2125.96875,
+            "width": 1047,
+            "height": 260,
+            "right": 1194,
+            "bottom": 2385.96875
+          },
+          "overflow": false,
+          "titleWidth": 821.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 1440,
+      "height": 1000,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 260,
+        "y": 70,
+        "width": 1180,
+        "height": 871,
+        "right": 1440,
+        "bottom": 941
+      },
+      "dock": {
+        "x": 260,
+        "y": 941,
+        "width": 1180,
+        "height": 59,
+        "right": 1440,
+        "bottom": 1000
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 308,
+          "y": 1005,
+          "width": 1069,
+          "height": 522.84375,
+          "right": 1377,
+          "bottom": 1527.84375,
+          "chart": {
+            "x": 329,
+            "y": 1082.84375,
+            "width": 1027,
+            "height": 424,
+            "right": 1356,
+            "bottom": 1506.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 308,
+          "y": 1547.84375,
+          "width": 1069,
+          "height": 378.84375,
+          "right": 1377,
+          "bottom": 1926.6875,
+          "chart": {
+            "x": 329,
+            "y": 1625.6875,
+            "width": 1027,
+            "height": 280,
+            "right": 1356,
+            "bottom": 1905.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 308,
+          "y": 1946.6875,
+          "width": 524.5,
+          "height": 318.84375,
+          "right": 832.5,
+          "bottom": 2265.53125,
+          "chart": {
+            "x": 329,
+            "y": 2024.53125,
+            "width": 233.25,
+            "height": 220,
+            "right": 562.25,
+            "bottom": 2244.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 852.5,
+          "y": 1946.6875,
+          "width": 524.5,
+          "height": 318.84375,
+          "right": 1377,
+          "bottom": 2265.53125,
+          "chart": {
+            "x": 873.5,
+            "y": 2024.53125,
+            "width": 233.25,
+            "height": 220,
+            "right": 1106.75,
+            "bottom": 2244.53125
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 308,
+          "y": 2285.53125,
+          "width": 524.5,
+          "height": 338.84375,
+          "right": 832.5,
+          "bottom": 2624.375,
+          "chart": {
+            "x": 329,
+            "y": 2373.375,
+            "width": 233.25,
+            "height": 220,
+            "right": 562.25,
+            "bottom": 2593.375
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 852.5,
+          "y": 2285.53125,
+          "width": 524.5,
+          "height": 338.84375,
+          "right": 1377,
+          "bottom": 2624.375,
+          "chart": {
+            "x": 873.5,
+            "y": 2363.375,
+            "width": 482.5,
+            "height": 240,
+            "right": 1356,
+            "bottom": 2603.375
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 308,
+          "y": 2648.375,
+          "width": 1069,
+          "height": 354,
+          "right": 1377,
+          "bottom": 3002.375,
+          "chart": {
+            "x": 329,
+            "y": 2721.375,
+            "width": 1027,
+            "height": 260,
+            "right": 1356,
+            "bottom": 2981.375
+          },
+          "overflow": false,
+          "titleWidth": 1027,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "analytics",
+      "width": 1440,
+      "height": 1000,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 76,
+        "y": 70,
+        "width": 1364,
+        "height": 871,
+        "right": 1440,
+        "bottom": 941
+      },
+      "dock": {
+        "x": 76,
+        "y": 941,
+        "width": 1364,
+        "height": 59,
+        "right": 1440,
+        "bottom": 1000
+      },
+      "cards": [
+        {
+          "title": "Geographic & Sector Spread",
+          "x": 124,
+          "y": 1005,
+          "width": 1253,
+          "height": 522.84375,
+          "right": 1377,
+          "bottom": 1527.84375,
+          "chart": {
+            "x": 145,
+            "y": 1082.84375,
+            "width": 1211,
+            "height": 424,
+            "right": 1356,
+            "bottom": 1506.84375
+          },
+          "overflow": false,
+          "titleWidth": 281.8125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Sectors",
+          "x": 124,
+          "y": 1547.84375,
+          "width": 1253,
+          "height": 378.84375,
+          "right": 1377,
+          "bottom": 1926.6875,
+          "chart": {
+            "x": 145,
+            "y": 1625.6875,
+            "width": 1211,
+            "height": 280,
+            "right": 1356,
+            "bottom": 1905.6875
+          },
+          "overflow": false,
+          "titleWidth": 174.875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Size Profile",
+          "x": 124,
+          "y": 1946.6875,
+          "width": 616.5,
+          "height": 318.84375,
+          "right": 740.5,
+          "bottom": 2265.53125,
+          "chart": {
+            "x": 145,
+            "y": 2024.53125,
+            "width": 279.25,
+            "height": 220,
+            "right": 424.25,
+            "bottom": 2244.53125
+          },
+          "overflow": false,
+          "titleWidth": 177.75,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 760.5,
+          "y": 1946.6875,
+          "width": 616.5,
+          "height": 318.84375,
+          "right": 1377,
+          "bottom": 2265.53125,
+          "chart": {
+            "x": 781.5,
+            "y": 2024.53125,
+            "width": 279.25,
+            "height": 220,
+            "right": 1060.75,
+            "bottom": 2244.53125
+          },
+          "overflow": false,
+          "titleWidth": 192.953125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 124,
+          "y": 2285.53125,
+          "width": 616.5,
+          "height": 338.84375,
+          "right": 740.5,
+          "bottom": 2624.375,
+          "chart": {
+            "x": 145,
+            "y": 2373.375,
+            "width": 279.25,
+            "height": 220,
+            "right": 424.25,
+            "bottom": 2593.375
+          },
+          "overflow": false,
+          "titleWidth": 171.96875,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 760.5,
+          "y": 2285.53125,
+          "width": 616.5,
+          "height": 338.84375,
+          "right": 1377,
+          "bottom": 2624.375,
+          "chart": {
+            "x": 781.5,
+            "y": 2363.375,
+            "width": 574.5,
+            "height": 240,
+            "right": 1356,
+            "bottom": 2603.375
+          },
+          "overflow": false,
+          "titleWidth": 225.859375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance Timeline (12 Months)",
+          "x": 124,
+          "y": 2648.375,
+          "width": 1253,
+          "height": 354,
+          "right": 1377,
+          "bottom": 3002.375,
+          "chart": {
+            "x": 145,
+            "y": 2721.375,
+            "width": 1211,
+            "height": 260,
+            "right": 1356,
+            "bottom": 2981.375
+          },
+          "overflow": false,
+          "titleWidth": 1211,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 1440,
+      "height": 1000,
+      "sidebar": "expanded",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 260,
+        "y": 70,
+        "width": 1180,
+        "height": 930,
+        "right": 1440,
+        "bottom": 1000
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 308,
+          "y": 430,
+          "width": 524.5,
+          "height": 476.59375,
+          "right": 832.5,
+          "bottom": 906.59375,
+          "chart": {
+            "x": 331,
+            "y": 558.59375,
+            "width": 478.5,
+            "height": 220,
+            "right": 809.5,
+            "bottom": 778.59375
+          },
+          "overflow": false,
+          "titleWidth": 478.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 852.5,
+          "y": 430,
+          "width": 524.5,
+          "height": 476.59375,
+          "right": 1377,
+          "bottom": 906.59375,
+          "chart": {
+            "x": 875.5,
+            "y": 558.59375,
+            "width": 478.5,
+            "height": 220,
+            "right": 1354,
+            "bottom": 778.59375
+          },
+          "overflow": false,
+          "titleWidth": 478.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 308,
+          "y": 926.59375,
+          "width": 524.5,
+          "height": 536.59375,
+          "right": 832.5,
+          "bottom": 1463.1875,
+          "chart": {
+            "x": 331,
+            "y": 1004.84375,
+            "width": 478.5,
+            "height": 220,
+            "right": 809.5,
+            "bottom": 1224.84375
+          },
+          "overflow": false,
+          "titleWidth": 265.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 852.5,
+          "y": 926.59375,
+          "width": 524.5,
+          "height": 536.59375,
+          "right": 1377,
+          "bottom": 1463.1875,
+          "chart": {
+            "x": 875.5,
+            "y": 1055.1875,
+            "width": 478.5,
+            "height": 280,
+            "right": 1354,
+            "bottom": 1335.1875
+          },
+          "overflow": false,
+          "titleWidth": 478.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 308,
+          "y": 1483.1875,
+          "width": 524.5,
+          "height": 616.59375,
+          "right": 832.5,
+          "bottom": 2099.78125,
+          "chart": {
+            "x": 331,
+            "y": 1611.78125,
+            "width": 478.5,
+            "height": 424,
+            "right": 809.5,
+            "bottom": 2035.78125
+          },
+          "overflow": false,
+          "titleWidth": 478.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 852.5,
+          "y": 1483.1875,
+          "width": 524.5,
+          "height": 616.59375,
+          "right": 1377,
+          "bottom": 2099.78125,
+          "chart": {
+            "x": 875.5,
+            "y": 1611.78125,
+            "width": 478.5,
+            "height": 220,
+            "right": 1354,
+            "bottom": 1831.78125
+          },
+          "overflow": false,
+          "titleWidth": 478.5,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 308,
+          "y": 2119.78125,
+          "width": 1069,
+          "height": 406.59375,
+          "right": 1377,
+          "bottom": 2526.375,
+          "chart": {
+            "x": 331,
+            "y": 2202.375,
+            "width": 1023,
+            "height": 260,
+            "right": 1354,
+            "bottom": 2462.375
+          },
+          "overflow": false,
+          "titleWidth": 797.828125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "page": "reports",
+      "width": 1440,
+      "height": 1000,
+      "sidebar": "collapsed",
+      "zoom": 1,
+      "overflow": false,
+      "content": {
+        "x": 76,
+        "y": 70,
+        "width": 1364,
+        "height": 930,
+        "right": 1440,
+        "bottom": 1000
+      },
+      "dock": null,
+      "cards": [
+        {
+          "title": "Business Size Classification",
+          "x": 124,
+          "y": 414,
+          "width": 404.328125,
+          "height": 502.59375,
+          "right": 528.328125,
+          "bottom": 916.59375,
+          "chart": {
+            "x": 147,
+            "y": 560.59375,
+            "width": 358.328125,
+            "height": 220,
+            "right": 505.328125,
+            "bottom": 780.59375
+          },
+          "overflow": false,
+          "titleWidth": 358.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Business Legal Structure",
+          "x": 548.328125,
+          "y": 414,
+          "width": 404.328125,
+          "height": 502.59375,
+          "right": 952.65625,
+          "bottom": 916.59375,
+          "chart": {
+            "x": 571.328125,
+            "y": 560.59375,
+            "width": 358.328125,
+            "height": 220,
+            "right": 929.65625,
+            "bottom": 780.59375
+          },
+          "overflow": false,
+          "titleWidth": 358.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Registration Lifecycle",
+          "x": 972.65625,
+          "y": 414,
+          "width": 404.34375,
+          "height": 502.59375,
+          "right": 1377,
+          "bottom": 916.59375,
+          "chart": {
+            "x": 995.65625,
+            "y": 526.25,
+            "width": 358.34375,
+            "height": 220,
+            "right": 1354,
+            "bottom": 746.25
+          },
+          "overflow": false,
+          "titleWidth": 358.34375,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Top Economic Sectors",
+          "x": 124,
+          "y": 936.59375,
+          "width": 616.5,
+          "height": 588.59375,
+          "right": 740.5,
+          "bottom": 1525.1875,
+          "chart": {
+            "x": 147,
+            "y": 1037.1875,
+            "width": 570.5,
+            "height": 280,
+            "right": 717.5,
+            "bottom": 1317.1875
+          },
+          "overflow": false,
+          "titleWidth": 345.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Geographic Spread Across Barangays",
+          "x": 760.5,
+          "y": 936.59375,
+          "width": 616.5,
+          "height": 588.59375,
+          "right": 1377,
+          "bottom": 1525.1875,
+          "chart": {
+            "x": 783.5,
+            "y": 1037.1875,
+            "width": 570.5,
+            "height": 424,
+            "right": 1354,
+            "bottom": 1461.1875
+          },
+          "overflow": false,
+          "titleWidth": 345.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "Compliance by Business Size",
+          "x": 124,
+          "y": 1545.1875,
+          "width": 616.5,
+          "height": 424.59375,
+          "right": 740.5,
+          "bottom": 1969.78125,
+          "chart": {
+            "x": 147,
+            "y": 1645.78125,
+            "width": 570.5,
+            "height": 220,
+            "right": 717.5,
+            "bottom": 1865.78125
+          },
+          "overflow": false,
+          "titleWidth": 345.328125,
+          "axesInside": true,
+          "legendInside": true
+        },
+        {
+          "title": "12-Month Renewal & Compliance Trend",
+          "x": 760.5,
+          "y": 1545.1875,
+          "width": 616.5,
+          "height": 424.59375,
+          "right": 1377,
+          "bottom": 1969.78125,
+          "chart": {
+            "x": 783.5,
+            "y": 1645.78125,
+            "width": 570.5,
+            "height": 260,
+            "right": 1354,
+            "bottom": 1905.78125
+          },
+          "overflow": false,
+          "titleWidth": 345.328125,
+          "axesInside": true,
+          "legendInside": true
+        }
+      ]
+    },
+    {
+      "checks": "long tooltip, tab remount, assistant space, narrow donut legends, live resize"
+    },
+    {
+      "page": "analytics",
+      "width": 768,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 768,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 768,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 768,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 768,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 768,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1024,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1024,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1024,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1024,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1024,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1024,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1280,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1280,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1280,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1280,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1280,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1280,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1440,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1440,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "analytics",
+      "width": 1440,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1440,
+      "state": "loading",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1440,
+      "state": "empty",
+      "passed": true
+    },
+    {
+      "page": "reports",
+      "width": 1440,
+      "state": "error",
+      "passed": true
+    },
+    {
+      "checks": "actual PNG download and official PDF/print chart preparation"
+    },
+    {
+      "device": "Android tablet portrait",
+      "width": 768,
+      "height": 1024,
+      "normalLogin": true
+    },
+    {
+      "device": "Android tablet landscape",
+      "width": 1024,
+      "height": 768,
+      "normalLogin": true
+    },
+    {
+      "device": "iPad Safari",
+      "width": 768,
+      "height": 1024,
+      "normalLogin": true
+    },
+    {
+      "device": "iPadOS Macintosh Mobile",
+      "width": 1024,
+      "height": 768,
+      "normalLogin": true
+    },
+    {
+      "device": "iPhone",
+      "width": 393,
+      "height": 852,
+      "normalLogin": false
+    },
+    {
+      "device": "Android phone",
+      "width": 412,
+      "height": 915,
+      "normalLogin": false
+    }
+  ]
+}

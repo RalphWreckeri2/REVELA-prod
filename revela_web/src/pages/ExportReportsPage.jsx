@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import {
-  ResponsiveContainer,
   PieChart,
   Pie,
   Cell,
@@ -14,6 +13,9 @@ import {
   Area
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
+import ResponsiveChart from "../components/ResponsiveChart";
+import WrappedAxisTick from "../components/WrappedAxisTick";
+import GeographicBarChart from "../components/GeographicBarChart";
 import "../styles/ExportReportsPage.css";
 import { useAuth } from "../context/authContext";
 import {
@@ -41,7 +43,7 @@ const SECTOR_COLORS = [
 function CustomChartTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
   return (
-    <div
+    <div className="export-chart-tooltip"
       style={{
         background: "#0f172a",
         border: "1px solid #334155",
@@ -815,12 +817,12 @@ export default function ExportReportsPage() {
     <>
       {/* ── Screen UI Container (Completely hidden during window.print()) ── */}
       <div className="screen-only no-print">
-        <DashboardLayout>
+        <DashboardLayout className="export-reports-page">
           {/* Page Header */}
           <div className="page-header" style={{ marginBottom: 28 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, width: "100%" }}>
               <div style={{ flex: "1 1 320px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                <div className="export-report-title-row" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                   <h1 className="page-title" style={{ margin: 0, fontSize: 24, fontWeight: 800 }}>
                     Export Reports &amp; Demographics
                   </h1>
@@ -903,7 +905,7 @@ export default function ExportReportsPage() {
           ══════════════════════════════════════════════════════════════════════ */}
           <section style={{ marginBottom: 44 }}>
             {/* Section Header */}
-            <div
+            <div className="export-report-section-heading"
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1070,15 +1072,8 @@ export default function ExportReportsPage() {
               </div>
             </div>
 
-            {/* Demographic Charts Grid (3-2-2 on wide screens) */}
-            <div
-              className="export-report-demographic-grid"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: 18
-              }}
-            >
+            {/* Columns follow available content width, including sidebar changes. */}
+            <div className="export-report-demographic-grid">
               {/* ── CHART 1: Business Size Classification ── */}
               <div
                 id="chart-card-size"
@@ -1197,7 +1192,7 @@ export default function ExportReportsPage() {
                       message="Enterprise scale classifications (Micro, Small, Medium, Large) will appear once businesses are registered."
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveChart>
                       <PieChart>
                         <Pie
                           data={sizeData}
@@ -1216,7 +1211,7 @@ export default function ExportReportsPage() {
                         </Pie>
                         <Tooltip content={<CustomChartTooltip />} />
                       </PieChart>
-                    </ResponsiveContainer>
+                    </ResponsiveChart>
                   )}
                 </div>
 
@@ -1379,7 +1374,7 @@ export default function ExportReportsPage() {
                       message="Sole proprietorships, corporations, and partnerships will appear here once registered."
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveChart>
                       <PieChart>
                         <Pie
                           data={typeData}
@@ -1398,7 +1393,7 @@ export default function ExportReportsPage() {
                         </Pie>
                         <Tooltip content={<CustomChartTooltip />} />
                       </PieChart>
-                    </ResponsiveContainer>
+                    </ResponsiveChart>
                   )}
                 </div>
 
@@ -1553,7 +1548,7 @@ export default function ExportReportsPage() {
                         : "No registration lifecycle records are currently available."}
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveChart>
                       <PieChart>
                         <Pie
                           data={regTypeData}
@@ -1572,7 +1567,7 @@ export default function ExportReportsPage() {
                         </Pie>
                         <Tooltip content={<CustomChartTooltip />} />
                       </PieChart>
-                    </ResponsiveContainer>
+                    </ResponsiveChart>
                   )}
                 </div>
 
@@ -1735,7 +1730,10 @@ export default function ExportReportsPage() {
                       message="Commercial lines of business and industry sectors will appear here once records are imported."
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveChart>
+                      {({ width }) => {
+                        const labelWidth = Math.min(260, Math.max(160, width * 0.42));
+                        return (
                       <BarChart
                         data={sectoralData.slice(0, 6)}
                         layout="vertical"
@@ -1746,9 +1744,9 @@ export default function ExportReportsPage() {
                         <YAxis
                           dataKey="name"
                           type="category"
-                          width={140}
-                          tickFormatter={(v) => (v.length > 20 ? `${v.substring(0, 20)}...` : v)}
-                          tick={{ fontSize: 11, fill: "var(--color-muted)" }}
+                          width={labelWidth}
+                          interval={0}
+                          tick={<WrappedAxisTick width={labelWidth - 12} />}
                           axisLine={false}
                           tickLine={false}
                         />
@@ -1759,7 +1757,9 @@ export default function ExportReportsPage() {
                           ))}
                         </Bar>
                       </BarChart>
-                    </ResponsiveContainer>
+                        );
+                      }}
+                    </ResponsiveChart>
                   )}
                 </div>
 
@@ -1908,23 +1908,7 @@ export default function ExportReportsPage() {
                       message="Establishment density per barangay will display once location data is mapped."
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={barangaySpreadData} margin={{ top: 10, right: 10, left: -20, bottom: 45 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.4)" />
-                        <XAxis
-                          dataKey="barangayName"
-                          tick={{ fontSize: 10, fill: "var(--color-muted)" }}
-                          axisLine={false}
-                          tickLine={false}
-                          interval={0}
-                          angle={-45}
-                          textAnchor="end"
-                        />
-                        <YAxis tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                        <Tooltip content={<CustomChartTooltip />} />
-                        <Bar dataKey="total" name="Registered Establishments" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    <GeographicBarChart data={barangaySpreadData} seriesName="Registered Establishments" tooltipContent={<CustomChartTooltip />} />
                   )}
                 </div>
 
@@ -2068,7 +2052,7 @@ export default function ExportReportsPage() {
                       message="Active versus expired permit breakdowns will display once compliance logs are generated."
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveChart>
                       <BarChart data={complianceBySizeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 232, 240, 0.4)" />
                         <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
@@ -2077,7 +2061,7 @@ export default function ExportReportsPage() {
                         <Bar dataKey="Active" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
                         <Bar dataKey="Non-Active" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
                       </BarChart>
-                    </ResponsiveContainer>
+                    </ResponsiveChart>
                   )}
                 </div>
 
@@ -2233,7 +2217,7 @@ export default function ExportReportsPage() {
                       message="Monthly registration and renewal trends will trace dynamically once recorded."
                     />
                   ) : (
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveChart>
                       <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                         <defs>
                           <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
@@ -2252,7 +2236,7 @@ export default function ExportReportsPage() {
                         <Area type="monotone" dataKey="Active" name="Active Renewals" stroke="#10b981" fillOpacity={1} fill="url(#colorActive)" />
                         <Area type="monotone" dataKey="Non-Active" name="Non-Active Backlog" stroke="#f43f5e" fillOpacity={1} fill="url(#colorNonActive)" />
                       </AreaChart>
-                    </ResponsiveContainer>
+                    </ResponsiveChart>
                   )}
                 </div>
 

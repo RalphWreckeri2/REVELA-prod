@@ -344,3 +344,41 @@ test("isMobileBrowser reflects the viewport as well as the user agent", () => {
     () => assert.equal(isMobileBrowser(), false),
   );
 });
+
+test("Mobile-marked Android tablets reach login in portrait and landscape", () => {
+  for (const [width, height] of [[768, 1024], [1024, 768]]) {
+    assert.equal(evaluateAccess({
+      width, height,
+      screenWidth: width, screenHeight: height, maxTouchPoints: 5,
+      userAgent: UA.androidTablet.replace(" Safari/", " Mobile Safari/"),
+      uaDataMobile: true,
+    }).restricted, false);
+  }
+});
+
+test("Macintosh iPadOS with a Mobile token is recognized by its touch screen", () => {
+  assert.equal(evaluateAccess({
+    width: 820, height: 1180, screenWidth: 820, screenHeight: 1180,
+    maxTouchPoints: 5, userAgent: UA.iphoneDesktopMode,
+  }).restricted, false);
+});
+
+test("inflating a phone viewport still cannot bypass the restriction", () => {
+  for (const userAgent of [UA.iphoneDesktopMode, UA.androidPhone, UA.androidPhoneReduced]) {
+    assert.equal(evaluateAccess({
+      width: 980, height: 1200, screenWidth: 393, screenHeight: 852,
+      maxTouchPoints: 5, userAgent, uaDataMobile: true,
+    }).restricted, true);
+  }
+});
+
+test("a tablet keyboard does not interrupt the authentication flow", () => {
+  assert.equal(evaluateAccess({
+    width: 1024, height: 380, screenWidth: 1024, screenHeight: 768,
+    maxTouchPoints: 5, userAgent: UA.ipadSafari,
+  }).restricted, false);
+  assert.equal(evaluateAccess({
+    width: 430, height: 800, screenWidth: 1024, screenHeight: 768,
+    maxTouchPoints: 5, userAgent: UA.ipadSafari,
+  }).restricted, true, "a genuinely narrow split-screen is still unsupported");
+});

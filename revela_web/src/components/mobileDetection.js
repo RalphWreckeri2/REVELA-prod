@@ -17,7 +17,7 @@
  *   which is wider than an iPad in portrait (820px). Width alone cannot tell
  *   them apart.
  *
- * The policy therefore combines two signals:
+ * The policy therefore combines these signals:
  *   1. The *short side* of the viewport -- the dimension that actually decides
  *      whether the dashboard fits. Phones stay under ~440px on their short
  *      side in either orientation; the smallest common tablet (iPad mini) is
@@ -25,6 +25,9 @@
  *   2. A tablet-aware user-agent check, used to catch a phone that inflates its
  *      layout viewport by requesting the desktop site. Tablets always win this
  *      check, so no tablet can be blocked for carrying a "Mobile" token.
+ *   3. Touch capability and the physical screen in CSS pixels disambiguate
+ *      Android tablets that emit Mobile and iPadOS that identifies as a Mac.
+ *      A large layout viewport alone never overrides a phone user agent.
  *
  * LIMITATION: none of this is a security boundary. A user agent and a viewport
  * can both be spoofed (browser devtools, desktop user-agent switchers). The
@@ -44,10 +47,8 @@ const TABLET_USER_AGENT =
   /iPad|Tablet|PlayBook|Silk|Kindle|Nexus (?:7|9|10)|Android(?![\s\S]*Mobile)/i;
 
 /**
- * Phone markers. `Mobile/<digits>` catches iPhone/iPadOS browsers in desktop
- * mode, whose layout viewport is inflated to 980px; Android tablets never emit
- * a `Mobile` token at all, and any UA that also matches TABLET_USER_AGENT is
- * treated as a tablet before this regex is consulted.
+ * Some tablet browsers also emit these markers; evaluateAccess disambiguates
+ * them using touch + screen size before consulting the phone fallback.
  */
 const PHONE_USER_AGENT =
   /iPhone|iPod|Android[\s\S]*Mobile|Windows Phone|IEMobile|Opera Mini|BlackBerry|BB10|webOS|Mobile\/\d/i;
@@ -72,11 +73,22 @@ export function evaluateAccess({
   height,
   userAgent = "",
   uaDataMobile = false,
+  screenWidth,
+  screenHeight,
+  maxTouchPoints = 0,
 } = {}) {
-  const tablet = isTabletUserAgent(userAgent);
+  const screenShortSide = Math.min(screenWidth, screenHeight);
+  const tabletScreen = Number.isFinite(screenShortSide) && screenShortSide >= MIN_SUPPORTED_SHORT_SIDE;
+  const explicitPhone = /iPhone|iPod|Windows Phone|IEMobile|Opera Mini|BlackBerry|BB10|webOS/i.test(userAgent);
+  const touchTablet = !explicitPhone && maxTouchPoints > 1 && tabletScreen && /Android|Linux|Macintosh/i.test(userAgent);
+  const tablet = isTabletUserAgent(userAgent) || touchTablet;
   const phone = tablet ? false : isPhoneUserAgent(userAgent) || uaDataMobile === true;
 
-  const shortSide = Math.min(width, height);
+  // An on-screen keyboard can shrink innerHeight on a supported tablet. It
+  // must not replace the login form with the access notice while typing.
+  const shortSide = tablet && tabletScreen && width >= MIN_SUPPORTED_SHORT_SIDE
+    ? Math.min(width, screenShortSide)
+    : Math.min(width, height);
 
   // Unknown/unmeasured viewport: fall back to the user agent alone. Tablets are
   // never blocked on that path.
@@ -112,6 +124,16 @@ function readViewport() {
   };
 }
 
+// Also sent with web login so the server's usability gate can recognize the
+// same Mobile-marked tablets. These hints never grant authentication/roles.
+export function readDeviceAccessHints() {
+  return {
+    screenWidth: typeof window === "undefined" ? undefined : window.screen?.width,
+    screenHeight: typeof window === "undefined" ? undefined : window.screen?.height,
+    maxTouchPoints: typeof navigator === "undefined" ? 0 : navigator.maxTouchPoints || 0,
+  };
+}
+
 export function readAccessDecision() {
   if (typeof navigator === "undefined") {
     return { restricted: false, reason: "no-navigator" };
@@ -120,6 +142,7 @@ export function readAccessDecision() {
     ...readViewport(),
     userAgent: navigator.userAgent,
     uaDataMobile: navigator.userAgentData?.mobile === true,
+    ...readDeviceAccessHints(),
   });
 }
 

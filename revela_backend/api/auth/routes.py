@@ -41,12 +41,32 @@ _PHONE_USER_AGENT = re.compile(
 )
 
 
-def _is_phone_user_agent(user_agent):
+def _is_phone_user_agent(user_agent, device_access=None):
     """True only for phone-class clients; never for a tablet."""
     if not user_agent:
         return False
     if _TABLET_USER_AGENT.search(user_agent):
         return False
+    # Android tablets can send Mobile; iPadOS can identify as a Macintosh with
+    # Mobile/15E148. Match the web usability policy using physical-screen CSS
+    # pixels + touch, not the inflated layout viewport of a phone's desktop mode.
+    # These untrusted hints only affect this usability gate, never authentication.
+    if isinstance(device_access, dict):
+        width = device_access.get("screenWidth")
+        height = device_access.get("screenHeight")
+        touch = device_access.get("maxTouchPoints")
+        numbers = (width, height, touch)
+        if all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in numbers):
+            if (
+                560 <= width <= 10000 and 560 <= height <= 10000
+                and 1 < touch <= 50
+                and re.search(r"Android|Linux|Macintosh", user_agent, re.IGNORECASE)
+                and not re.search(
+                    r"iPhone|iPod|Windows Phone|IEMobile|Opera Mini|BlackBerry|BB10|webOS",
+                    user_agent, re.IGNORECASE,
+                )
+            ):
+                return False
     return bool(_PHONE_USER_AGENT.search(user_agent))
 
 
@@ -78,7 +98,7 @@ def login():
     if source not in ("web", "mobile"):
         return jsonify({"error": "Unsupported login client."}), 400
     if source == "web" and _is_phone_user_agent(
-        request.headers.get("User-Agent", "")
+        request.headers.get("User-Agent", ""), data.get("device_access")
     ):
         return jsonify({
             "code": "desktop_access_required",

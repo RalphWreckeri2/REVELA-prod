@@ -87,9 +87,11 @@ test("expired refreshes continue polling for recovery, without displaying their 
   assert.match(analyticsSnapshotStatus({ refresh_deferred: true }), /waiting to refresh/);
 });
 
-// Only replace Vite's environment constant. Every HTTP call below is mocked.
+// Replace Vite's environment constant and resolve the browser helper from the
+// data-URL test module. Every HTTP call below is mocked.
 const apiSource = readFileSync(new URL("../services/api.js", import.meta.url), "utf8")
-  .replace("import.meta.env.VITE_API_ORIGIN", '"http://analytics.test"');
+  .replace("import.meta.env.VITE_API_ORIGIN", '"http://analytics.test"')
+  .replace("../components/mobileDetection.js", new URL("./mobileDetection.js", import.meta.url).href);
 const { getAnalyticsOverviewRequest } = await import(
   `data:text/javascript;base64,${Buffer.from(apiSource).toString("base64")}`
 );

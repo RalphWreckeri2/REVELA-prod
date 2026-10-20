@@ -1,7 +1,78 @@
+.export-reports-page .saas-content { container: export-content / inline-size; }
+.export-reports-page .saas-content > * { flex-shrink: 0; min-width: 0; }
+.export-reports-page .page-header h1 { overflow-wrap: normal; }
+.export-report-title-row, .export-report-section-heading { flex-wrap: wrap; gap: 10px; }
+.export-report-section-heading > div { flex: 1 1 340px; min-width: 0; }
+.export-report-section-heading > span { flex-shrink: 0; }
+.export-report-section-heading > div > div { flex-wrap: wrap; }
+
 .export-report-demographic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
   align-items: stretch;
-  grid-auto-rows: 1fr;
-  grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+  min-width: 0;
+}
+.export-report-demographic-grid > [id^="chart-card-"] {
+  box-sizing: border-box;
+  container: export-report-card / inline-size;
+  min-width: 0;
+  overflow: visible;
+}
+.export-report-demographic-grid > #chart-card-timeline { grid-column: 1 / -1; }
+
+/* A title always gets a usable line length. The toolbar wraps as a group. */
+.export-report-demographic-grid > [id^="chart-card-"] > div:first-child {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.export-report-demographic-grid > [id^="chart-card-"] > div:first-child > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.export-report-demographic-grid h3 { line-height: 1.35; overflow-wrap: normal; word-break: normal; }
+.export-report-demographic-grid p { line-height: 1.5; }
+.export-report-demographic-grid .no-export { flex-wrap: wrap; max-width: 100%; }
+.export-report-demographic-grid .no-export button { white-space: nowrap; min-height: 34px; }
+
+.export-report-demographic-grid > [id^="chart-card-"] > div:nth-child(2) {
+  box-sizing: border-box;
+  height: 220px !important;
+  flex: 0 0 auto;
+  min-width: 0;
+  width: 100%;
+}
+.export-report-demographic-grid > #chart-card-sector > div:nth-child(2) { height: 280px !important; }
+.export-report-demographic-grid > #chart-card-barangay > div:nth-child(2) { height: auto !important; min-height: 260px; }
+.export-report-demographic-grid > #chart-card-barangay > div:nth-child(2) > :not(.responsive-chart) { height: 260px !important; }
+.export-report-demographic-grid > #chart-card-timeline > div:nth-child(2) { height: 260px !important; }
+.export-report-demographic-grid > [id^="chart-card-"] > div:nth-child(2) > * { box-sizing: border-box; }
+.export-report-demographic-grid > [id^="chart-card-"] > div:last-child {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+.export-report-demographic-grid > [id^="chart-card-"] > div:last-child > div { min-width: 0; }
+.export-report-demographic-grid > #chart-card-sector > div:last-child > div { flex: 1 1 220px; align-items: flex-start !important; }
+.export-report-demographic-grid > #chart-card-sector > div:last-child > div > span:first-child { flex-shrink: 0; margin-top: 4px; }
+.export-report-demographic-grid > #chart-card-sector > div:last-child > div > span:nth-child(2) { flex: 1; min-width: 0; overflow-wrap: break-word; }
+.export-report-demographic-grid .recharts-tooltip-wrapper { z-index: 20; }
+.export-chart-tooltip { max-width: 280px; white-space: normal; overflow-wrap: break-word; }
+
+@container export-content (max-width: 739px) {
+  .export-report-demographic-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@container export-content (min-width: 1150px) {
+  .export-report-demographic-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .export-report-demographic-grid > [id^="chart-card-"] { grid-column: span 2; }
+  .export-report-demographic-grid > #chart-card-sector,
+  .export-report-demographic-grid > #chart-card-barangay,
+  .export-report-demographic-grid > #chart-card-compliance_size,
+  .export-report-demographic-grid > #chart-card-timeline { grid-column: span 3; }
 }
 
 .operational-report-card { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; padding: 20px 24px; border-radius: 12px; min-width: 0; }
@@ -27,196 +98,3 @@
 .compliance-report-empty { text-align: center; padding: 32px 12px; color: var(--color-muted); font-size: 13px; }
 @media (max-width: 900px) { .compliance-report-filters { grid-template-columns: 1fr; } .compliance-report-content { padding: 0 16px 16px; } }
 @media print { .compliance-report-dialog, .dispatch-modal { display: none !important; } .print-table thead { display: table-header-group; } }
-
-.export-report-demographic-grid > [id^="chart-card-"] {
-  grid-column: span 2;
-}
-
-.export-report-demographic-grid > #chart-card-sector {
-  grid-row: 2;
-  grid-column: 1 / span 3;
-}
-
-.export-report-demographic-grid > #chart-card-barangay {
-  grid-row: 2;
-  grid-column: 4 / span 3;
-}
-
-.export-report-demographic-grid > #chart-card-compliance_size {
-  grid-row: 3;
-  grid-column: 1 / span 3;
-}
-
-.export-report-demographic-grid > #chart-card-timeline {
-  grid-row: 3;
-  grid-column: 4 / span 3;
-}
-
-.export-report-demographic-grid > [id^="chart-card-"] {
-  box-sizing: border-box;
-  container: export-report-card / inline-size;
-  display: flex !important;
-  flex-direction: column;
-  height: 100%;
-  min-width: 0;
-}
-
-.export-report-demographic-grid > [id^="chart-card-"] > div:first-child {
-  box-sizing: border-box;
-  display: grid !important;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  grid-template-rows: auto auto;
-  align-items: start !important;
-  align-content: start;
-  column-gap: 12px !important;
-  row-gap: 6px !important;
-  flex: 0 0 auto !important;
-  min-height: 132px;
-  min-width: 0;
-  margin-bottom: 16px !important;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:first-child
-  > div:first-child {
-  display: contents;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:first-child
-  h3 {
-  grid-column: 1;
-  grid-row: 1;
-  min-width: 0;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:first-child
-  p {
-  grid-column: 1 / -1;
-  grid-row: 2;
-  min-width: 0;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:first-child
-  > div:nth-child(2) {
-  display: flex;
-  grid-column: 2;
-  grid-row: 1;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px !important;
-  min-height: 30px;
-  min-width: 0;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:first-child
-  > div:nth-child(2)
-  button {
-  flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.export-report-demographic-grid > [id^="chart-card-"] > div:nth-child(2) {
-  box-sizing: border-box;
-  display: grid;
-  flex: 0 0 220px;
-  place-items: center;
-  width: 100%;
-  height: 220px !important;
-  min-width: 0;
-  position: relative;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:nth-child(2)
-  > * {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-}
-
-.export-report-demographic-grid > [id^="chart-card-"] > div:last-child {
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  min-height: 60px;
-  min-width: 0;
-  max-width: 100%;
-  margin-top: auto !important;
-  overflow-wrap: anywhere;
-}
-
-.export-report-demographic-grid
-  > [id^="chart-card-"]
-  > div:last-child
-  > div:only-child {
-  display: grid;
-  min-height: 34px;
-  place-items: center;
-  text-align: center;
-  overflow-wrap: anywhere;
-}
-
-@container export-report-card (max-width: 320px) {
-  .export-report-demographic-grid
-    > [id^="chart-card-"]
-    > div:first-child {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto auto;
-  }
-
-  .export-report-demographic-grid
-    > [id^="chart-card-"]
-    > div:first-child
-    h3 {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .export-report-demographic-grid
-    > [id^="chart-card-"]
-    > div:first-child
-    p {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .export-report-demographic-grid
-    > [id^="chart-card-"]
-    > div:first-child
-    > div:nth-child(2) {
-    grid-column: 1;
-    grid-row: 3;
-    justify-content: flex-start;
-  }
-}
-
-@media (max-width: 1000px) {
-  .export-report-demographic-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
-
-  .export-report-demographic-grid > [id^="chart-card-"] {
-    grid-column: auto;
-    grid-row: auto;
-  }
-}
-
-@media (max-width: 640px) {
-  .export-report-demographic-grid {
-    grid-template-columns: minmax(0, 1fr) !important;
-  }
-}

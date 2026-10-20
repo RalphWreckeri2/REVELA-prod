@@ -592,6 +592,38 @@ class ActiveSessionTests(unittest.TestCase):
         self.assertEqual(response.get_json()["access_token"], "signed-token")
         issue_session.assert_called_once_with(user, "web")
 
+    def test_mobile_marked_tablets_reach_normal_credential_validation(self):
+        app = Flask(__name__)
+        app.register_blueprint(auth_routes.auth_bp, url_prefix="/api/auth")
+        agents = [
+            "Mozilla/5.0 (Linux; Android 14; SM-X200) Chrome/130.0 Mobile Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Version/17.0 Mobile/15E148 Safari/604.1",
+        ]
+        for agent in agents:
+            for width, height in [(768, 1024), (1024, 768)]:
+                with self.subTest(agent=agent, width=width):
+                    with app.test_client() as client, patch.object(
+                        auth_routes, "login_user", return_value=(False, "Invalid email or password")
+                    ) as authenticate:
+                        response = client.post("/api/auth/login", json={
+                            "email": "admin@example.com", "password": "incorrect", "source": "web",
+                            "device_access": {"screenWidth": width, "screenHeight": height, "maxTouchPoints": 5},
+                        }, headers={"User-Agent": agent})
+                    self.assertEqual(response.status_code, 401)
+                    authenticate.assert_called_once_with("admin@example.com", "incorrect")
+
+    def test_phone_or_malformed_screen_hints_do_not_bypass_device_gate(self):
+        agent = "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/130.0 Mobile Safari/537.36"
+        for hints in [None, [], "tablet", {},
+                      {"screenWidth": 393, "screenHeight": 852, "maxTouchPoints": 5},
+                      {"screenWidth": "768", "screenHeight": 1024, "maxTouchPoints": 5},
+                      {"screenWidth": 768, "screenHeight": 1024, "maxTouchPoints": False}]:
+            self.assertTrue(auth_routes._is_phone_user_agent(agent, hints))
+        self.assertTrue(auth_routes._is_phone_user_agent(
+            "Mozilla/5.0 (iPhone) Mobile/15E148",
+            {"screenWidth": 768, "screenHeight": 1024, "maxTouchPoints": 5},
+        ))
+
     def test_web_login_allows_every_ipad_browser(self):
         """REGRESSION: iPadOS sends `Mobile/15E148` even in Safari.
 

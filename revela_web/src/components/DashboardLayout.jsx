@@ -12,6 +12,7 @@
  *   children  — page content rendered inside .saas-content
  *   user      — { initials: string, name: string }
  *   logo      — imported logo asset (optional)
+ *   bottomBar — optional in-flow controls below the scrolling page content
  */
 
 import { useState, useEffect, useRef, useCallback, useEffectEvent } from "react";
@@ -809,9 +810,9 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 // ── Public export ──────────────────────────────────────────
 
 /**
- * @param {{ children: React.ReactNode, user?: object, onLogout?: () => void, className?: string }} props
+ * @param {{ children: React.ReactNode, user?: object, onLogout?: () => void, className?: string, bottomBar?: React.ReactNode }} props
  */
-export default function DashboardLayout({ children, onLogout, className = "" }) {
+export default function DashboardLayout({ children, onLogout, className = "", bottomBar }) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     () => localStorage.getItem("revela_sidebar_collapsed") === "true",
@@ -894,6 +895,7 @@ export default function DashboardLayout({ children, onLogout, className = "" }) 
         <main className="saas-content">
           {children}
         </main>
+        {bottomBar}
       </div>
 
       {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}

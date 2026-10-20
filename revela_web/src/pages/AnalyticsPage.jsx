@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
   PolarAngleAxis, PolarRadiusAxis, LabelList, AreaChart, Area,
   ScatterChart, Scatter, ZAxis, ReferenceLine
@@ -8,6 +8,9 @@ import {
 import DashboardLayout from "../components/DashboardLayout";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
+import ResponsiveChart from "../components/ResponsiveChart";
+import WrappedAxisTick from "../components/WrappedAxisTick";
+import GeographicBarChart from "../components/GeographicBarChart";
 import { analyticsSnapshotStatus } from "../components/analyticsCachePolicy";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useAuth } from "../context/authContext";
@@ -87,7 +90,7 @@ const riskBadgeStyle = (level) => ({
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div style={{
+    <div className="analytics-chart-tooltip" style={{
       background: "#111827", border: "1px solid #374151", color: "#ffffff",
       borderRadius: 10, padding: "10px 14px", fontSize: 13, boxShadow: "0 4px 20px rgba(0,0,0,0.08)"
     }}>
@@ -147,10 +150,10 @@ function AnalyticsSkeleton({ tab }) {
         </div>
       )}
       <div className="analytics-skeleton-charts">
-        {[350, 260, 260].map((h, i) => (
-          <div key={i} className="saas-card analytics-skeleton-chart" aria-hidden="true">
+        {(tab === "descriptive" ? [424, 280, 240, 240, 240, 240, 260] : [280, 240, 240]).map((h, i) => (
+          <div key={i} className={`saas-card analytics-skeleton-chart${i === 0 || (tab === "descriptive" && (i === 1 || i === 6)) ? " analytics-skeleton-chart--wide" : ""}`} aria-hidden="true">
             <div className="analytics-skeleton analytics-skeleton-label" />
-            {tab === "descriptive" && i > 0 ? (
+            {tab === "descriptive" && [2, 3, 4].includes(i) ? (
               <div className="analytics-skeleton-pie-wrap" style={{ height: h }}><div className="analytics-skeleton analytics-skeleton-donut" /></div>
             ) : <div className="analytics-skeleton-plot" style={{ height: h }}>
               {[42, 65, 52, 82, 60, 93, 72, 58].map((height, j) => <div key={j} className="analytics-skeleton" style={{ height: `${height}%` }} />)}
@@ -164,7 +167,7 @@ function AnalyticsSkeleton({ tab }) {
 
 // ── Empty State ──────────────────────────────────────────────────────────────
 const EmptyState = ({ title = "No Data", message = "", h = 220, icon }) => (
-  <div style={{
+  <div className="analytics-empty-state" style={{
     height: h, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
     textAlign: "center", gap: 12
   }}>
@@ -175,6 +178,32 @@ const EmptyState = ({ title = "No Data", message = "", h = 220, icon }) => (
     </div>
   </div>
 );
+
+function DemographicDonut({ data }) {
+  return (
+    <div className="analytics-donut-layout">
+      <div className="analytics-donut-plot">
+        <ResponsiveChart>
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={60} outerRadius={88} paddingAngle={4} isAnimationActive={false}>
+              {data.map((entry, index) => <Cell key={index} fill={entry.fill} />)}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+          </PieChart>
+        </ResponsiveChart>
+      </div>
+      <div className="analytics-donut-legend">
+        {data.map((entry, index) => (
+          <div key={index}>
+            <span className="legend-dot" style={{ background: entry.fill }} />
+            <span className="legend-name">{entry.name}</span>
+            <strong>{entry.value}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 
 const createEmptyFilters = () => ({
@@ -616,7 +645,7 @@ const GlobalAIAssistant = memo(({ globalData }) => {
   };
 
   return (
-    <div style={{ position: "fixed", bottom: 32, right: 32, zIndex: 9999, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
+    <div className="analytics-assistant">
       <style>{`
         @keyframes aiChatSlideIn {
           from { opacity: 0; transform: translateY(20px) scale(0.95); }
@@ -650,33 +679,22 @@ const GlobalAIAssistant = memo(({ globalData }) => {
       {!isExpanded && (
         <button
           onClick={() => setIsExpanded(true)}
-          className="ai-fab"
-          style={{
-            width: 110, height: 110, border: "none", background: "transparent",
-            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-            transition: "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-            padding: 0, overflow: "visible", position: "relative"
-          }}
+          className="analytics-assistant-launcher"
+          aria-label="Open AI Analyst"
         >
-          <img src="/standing.png" alt="AI Analyst" style={{ width: "100%", height: "100%", objectFit: "contain", filter: "drop-shadow(0 0 2px rgba(255,255,255,0.9)) drop-shadow(0 10px 15px rgba(0,0,0,0.2))" }} />
-          <div style={{
-            position: "absolute", bottom: 0, right: 0, width: 28, height: 28,
-            background: "var(--color-primary)", borderRadius: "50%",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "#fff", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontSize: 14,
-            animation: "aiPulseGlow 3s ease-in-out infinite"
-          }}>✦</div>
+          <img src="/standing.png" alt="" />
+          Ask AI Analyst
         </button>
       )}
 
       {isExpanded && (
-        <div style={{
+        <div className="analytics-assistant-panel" style={{
           borderRadius: 20,
           background: "var(--color-surface)",
           border: "1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)",
           boxShadow: "0 12px 48px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)",
           display: "flex", flexDirection: "column",
-          width: 380, height: 500, overflow: "hidden",
+          overflow: "hidden",
           animation: "aiChatSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards",
           transformOrigin: "bottom right"
         }}>
@@ -705,6 +723,7 @@ const GlobalAIAssistant = memo(({ globalData }) => {
             </div>
             <button
               onClick={() => setIsExpanded(false)}
+              aria-label="Close AI Analyst"
               style={{
                 background: "transparent", border: "none", cursor: "pointer",
                 color: "var(--color-muted)", padding: 4, borderRadius: "50%",
@@ -860,13 +879,11 @@ export default function AnalyticsPage() {
   const { token, user } = useAuth();
   const canEditWlc = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const [activeTab, setActiveTab] = useState("descriptive"); // descriptive, diagnostic, prescriptive
-  const [leaderboardCardHeight, setLeaderboardCardHeight] = useState(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
   const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
 
   const tabMarkerRef = useRef(null);
-  const leaderboardCardRef = useRef(null);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -880,27 +897,6 @@ export default function AnalyticsPage() {
     }
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    const leaderboardCard = leaderboardCardRef.current;
-    if (activeTab !== "descriptive" || !leaderboardCard) return undefined;
-
-    const updateCardHeight = () => {
-      const nextHeight = leaderboardCard.getBoundingClientRect().height;
-      if (nextHeight > 0) {
-        setLeaderboardCardHeight((currentHeight) =>
-          currentHeight != null && Math.abs(currentHeight - nextHeight) < 0.5
-            ? currentHeight
-            : nextHeight
-        );
-      }
-    };
-
-    updateCardHeight();
-    const observer = new ResizeObserver(updateCardHeight);
-    observer.observe(leaderboardCard);
-    return () => observer.disconnect();
-  }, [activeTab]);
 
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
@@ -1307,8 +1303,24 @@ export default function AnalyticsPage() {
   }), [data]);
 
   return (
-    <DashboardLayout>
-      {!snapshotIsExpired && <GlobalAIAssistant globalData={globalData} />}
+    <DashboardLayout className="analytics-page" bottomBar={(
+      <div className="analytics-tools">
+        <nav className="analytics-quick-nav" aria-label="Analytics sections" style={{ visibility: isScrolled ? "visible" : "hidden" }}>
+          {[
+            { id: "descriptive", label: "Descriptive", dot: "var(--color-green)" },
+            { id: "diagnostic", label: "Diagnostic", dot: "var(--color-yellow)" },
+            { id: "prescriptive", label: "Prescriptive", dot: "#6366f1" },
+            { id: "operations", label: "Operations", dot: "var(--color-blue, #3b82f6)" },
+          ].map(tab => (
+            <button key={tab.id} type="button" aria-current={activeTab === tab.id ? "page" : undefined}
+              onClick={() => { setActiveTab(tab.id); tabMarkerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
+              <span style={{ background: tab.dot }} />{tab.label}
+            </button>
+          ))}
+        </nav>
+        {!snapshotIsExpired && <GlobalAIAssistant globalData={globalData} />}
+      </div>
+    )}>
       <style>{`
         /* shimmer keyframe now defined globally in global.css */
         .saas-card { position: relative; }
@@ -2093,63 +2105,6 @@ export default function AnalyticsPage() {
           })}
         </div>
 
-        {/* FLOATING PILL (Shows when scrolled) */}
-        <div style={{
-          position: "fixed",
-          bottom: 32,
-          left: "50%",
-          transform: `translateX(-50%) translateY(${isScrolled ? 0 : 20}px)`,
-          opacity: isScrolled ? 1 : 0,
-          pointerEvents: isScrolled ? "auto" : "none",
-          zIndex: 999,
-          display: "flex",
-          flexDirection: "row",
-          gap: 12,
-          padding: "8px",
-          borderRadius: 100,
-          background: "var(--glass-bg-pill)",
-          backdropFilter: "blur(16px)",
-          WebkitBackdropFilter: "blur(16px)",
-          boxShadow: "0 20px 40px rgba(0, 0, 0, 0.15)",
-          border: "1px solid rgba(255, 255, 255, 0.1)",
-          transition: "transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease"
-        }}>
-          {[
-            { id: "descriptive", label: "Descriptive", dot: "var(--color-green)" },
-            { id: "diagnostic", label: "Diagnostic", dot: "var(--color-yellow)" },
-            { id: "prescriptive", label: "Prescriptive", dot: "#6366f1" },
-            { id: "operations", label: "Operations", dot: "var(--color-blue, #3b82f6)" }
-          ].map(tab => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => {
-                  setActiveTab(tab.id);
-                  if (tabMarkerRef.current) {
-                    tabMarkerRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  }
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  padding: "10px 20px",
-                  borderRadius: 100,
-                  border: "1px solid transparent",
-                  background: isActive ? "var(--color-surface)" : "transparent",
-                  cursor: "pointer",
-                  transition: "all 0.2s ease"
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 13, color: isActive ? "var(--color-primary-dark)" : "var(--color-muted)" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: !isActive ? "var(--color-muted)" : tab.dot, opacity: (!isActive) ? 0.5 : 1 }} />
-                  {tab.label}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
         {(error || offline) && (
           <div role="status" style={{
             background: COLOR.redLight, border: `1px solid ${COLOR.red}`, borderRadius: 10,
@@ -2271,7 +2226,7 @@ export default function AnalyticsPage() {
                 {/* Executive FAQs */}
                 <div style={{ marginBottom: 32 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+                  <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
 
                     <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
                       <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Legal Structure</p>
@@ -2304,221 +2259,112 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
 
-                <div
-                  className="analytics-demographic-grid"
-                  style={leaderboardCardHeight == null ? undefined : {
-                    "--analytics-reference-card-height": `${leaderboardCardHeight}px`,
-                  }}
-                >
+                <div className="analytics-demographic-grid">
                   {/* Geographic & Sector Spread */}
-                  <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, gridColumn: "1 / -1", display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--geographic">
+                    <div className="analytics-card-heading">
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Geographic & Sector Spread</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Business distribution across barangays by sector</p>
                       </div>
                       <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(59, 130, 246, 0.1)", color: "var(--color-blue, #3b82f6)", borderRadius: 12 }}>Demographics</span>
                     </div>
-                    {loading ? <Skeleton h={350} /> : naturePerBarangayData.length === 0 ? (
-                      <EmptyState h={350} title="No Geographic Data" message="No data available for the selected filters." />
+                    <div className="analytics-chart-area analytics-chart-area--geographic">
+                    {loading ? <Skeleton h={424} /> : naturePerBarangayData.length === 0 ? (
+                      <EmptyState h={260} title="No Geographic Data" message="No data available for the selected filters." />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 350, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart
-                            data={naturePerBarangayData.map(r => ({
-                              barangayName: r.barangayName,
-                              total: natureKeys.reduce((sum, key) => sum + (r[key] || 0), 0)
-                            }))}
-                            margin={{ top: 10, right: 10, left: -20, bottom: 60 }}
-                          >
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
-                            <XAxis dataKey="barangayName" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} interval={0} angle={-45} textAnchor="end" />
-                            <YAxis tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                            <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }} />
-                            <Bar dataKey="total" name="Total Businesses" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
+                      <GeographicBarChart data={naturePerBarangayData.map(r => ({
+                        barangayName: r.barangayName,
+                        total: natureKeys.reduce((sum, key) => sum + (r[key] || 0), 0),
+                      }))} />
                     )}
+                    </div>
                   </div>
 
                   {/* Top Sectors Overall */}
-                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--top-sectors" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--top-sectors">
+                    <div className="analytics-card-heading">
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Top Sectors</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Highest volume business lines</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={260} /> : sectoralData.length === 0 ? (
-                      <EmptyState h={260} title="No Sector Data" />
+                    <div className="analytics-chart-area analytics-chart-area--sectors">
+                    {loading ? <Skeleton h={280} /> : sectoralData.length === 0 ? (
+                      <EmptyState h={280} title="No Sector Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                          <BarChart data={sectoralData.slice(0, 5)} layout="vertical" margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+                        <ResponsiveChart>
+                          {({ width }) => {
+                            const labelWidth = Math.min(360, Math.max(180, width * 0.34));
+                            return <BarChart data={sectoralData.slice(0, 5)} layout="vertical" margin={{ top: 8, right: 20, left: 0, bottom: 0 }} barSize={24}>
                             <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(226,232,240,0.4)" />
                             <XAxis type="number" tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                            <YAxis dataKey="name" type="category" width={160} tickFormatter={(v) => v.length > 25 ? v.substring(0, 25) + '...' : v} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                            <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }} />
+                            <YAxis dataKey="name" type="category" width={labelWidth} interval={0} tick={<WrappedAxisTick width={labelWidth - 12} />} axisLine={false} tickLine={false} />
+                            <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(255,255,255,0.05)' }} />
                             <Bar dataKey="value" name="Businesses" radius={[0, 4, 4, 0]}>
                               {sectoralData.slice(0, 5).map((entry, index) => (
                                 <Cell key={`cell-${index}`} fill={SECTOR_COLORS[index % SECTOR_COLORS.length]} />
                               ))}
                             </Bar>
-                          </BarChart>
-                        </ResponsiveContainer>
-                      </div>
+                          </BarChart>;
+                          }}
+                        </ResponsiveChart>
                     )}
+                    </div>
                   </div>
 
                   {/* Business Size Profile */}
-                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--business-size" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--business-size">
+                    <div className="analytics-card-heading">
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Business Size Profile</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Distribution by enterprise scale</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={260} /> : sizeData.length === 0 ? (
-                      <EmptyState h={260} title="No Size Data" />
-                    ) : (
-                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center" }}>
-                        <ResponsiveContainer width="50%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={sizeData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={65}
-                              outerRadius={95}
-                              paddingAngle={4}
-                              isAnimationActive={false}
-                            >
-                              {sizeData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.fill} />
-                              ))}
-                            </Pie>
-                            <Tooltip content={<CustomTooltip />} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, flex: 1, paddingLeft: 20 }}>
-                          {sizeData.map((s, i) => (
-                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                              <span style={{ width: 10, height: 10, borderRadius: "50%", background: s.fill, flexShrink: 0 }} />
-                              <span style={{ color: "var(--color-muted)", flex: 1 }}>{s.name}</span>
-                              <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    {loading ? <Skeleton h={240} /> : sizeData.length === 0 ? (
+                      <EmptyState h={240} title="No Size Data" />
+                    ) : <DemographicDonut data={sizeData} />}
                   </div>
 
                   {/* Business Legal Structure */}
-                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--legal-structure" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--legal-structure">
+                    <div className="analytics-card-heading">
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Business Legal Structure</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Distribution by business type</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={260} /> : typeData.length === 0 ? (
-                      <EmptyState h={260} title="No Type Data" />
-                    ) : (
-                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center" }}>
-                        <ResponsiveContainer width="50%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={typeData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={65}
-                              outerRadius={95}
-                              paddingAngle={4}
-                              isAnimationActive={false}
-                            >
-                              {typeData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.fill} />
-                              ))}
-                            </Pie>
-                            <Tooltip content={<CustomTooltip />} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, flex: 1, paddingLeft: 20 }}>
-                          {typeData.map((s, i) => (
-                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                              <span style={{ width: 10, height: 10, borderRadius: "50%", background: s.fill, flexShrink: 0 }} />
-                              <span style={{ color: "var(--color-muted)", flex: 1 }}>{s.name}</span>
-                              <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    {loading ? <Skeleton h={240} /> : typeData.length === 0 ? (
+                      <EmptyState h={240} title="No Type Data" />
+                    ) : <DemographicDonut data={typeData} />}
                   </div>
 
                   {/* Registration Lifecycle (New vs Renewal) */}
-                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--registration-lifecycle" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--registration-lifecycle">
+                    <div className="analytics-card-heading">
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registration Lifecycle</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>New businesses vs Renewals</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={260} /> : regTypeData.length === 0 ? (
-                      <EmptyState h={260} title="No Registration Type Data" />
-                    ) : (
-                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center" }}>
-                        <ResponsiveContainer width="50%" height="100%">
-                          <PieChart>
-                            <Pie
-                              data={regTypeData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={65}
-                              outerRadius={95}
-                              paddingAngle={4}
-                              isAnimationActive={false}
-                            >
-                              {regTypeData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.fill} />
-                              ))}
-                            </Pie>
-                            <Tooltip content={<CustomTooltip />} />
-                          </PieChart>
-                        </ResponsiveContainer>
-                        <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 10, flex: 1, paddingLeft: 20 }}>
-                          {regTypeData.map((s, i) => (
-                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                              <span style={{ width: 10, height: 10, borderRadius: "50%", background: s.fill, flexShrink: 0 }} />
-                              <span style={{ color: "var(--color-muted)", flex: 1 }}>{s.name}</span>
-                              <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                    {loading ? <Skeleton h={240} /> : regTypeData.length === 0 ? (
+                      <EmptyState h={240} title="No Registration Type Data" />
+                    ) : <DemographicDonut data={regTypeData} />}
                   </div>
 
                   {/* Compliance by Business Size */}
-                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--compliance-size" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--compliance-size">
+                    <div className="analytics-card-heading">
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Compliance by Business Size</h3>
                         <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Active vs Non-Active comparison</p>
                       </div>
                     </div>
-                    {loading ? <Skeleton h={260} /> : complianceBySizeData.length === 0 ? (
-                      <EmptyState h={260} title="No Compliance Data" />
+                    <div className="analytics-chart-area">
+                    {loading ? <Skeleton h={240} /> : complianceBySizeData.length === 0 ? (
+                      <EmptyState h={240} title="No Compliance Data" />
                     ) : (
-                      <div style={{ flexGrow: 1, minHeight: 0, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveChart>
                           <BarChart data={complianceBySizeData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                             <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
@@ -2528,20 +2374,20 @@ export default function AnalyticsPage() {
                             <Bar dataKey="Active" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
                             <Bar dataKey="Non-Active" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
                           </BarChart>
-                        </ResponsiveContainer>
-                      </div>
+                        </ResponsiveChart>
                     )}
+                    </div>
                   </div>
 
                 </div>
               </div>
 
               <div style={{ marginTop: 24 }}>
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12 }}>
+                <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--timeline">
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Compliance Timeline (12 Months)</h3>
                   <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>The gap between active vs non-active renewals over time.</p>
-                  <div style={{ height: 260 }}>
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="analytics-chart-area analytics-chart-area--timeline">
+                    {timelineData.length === 0 ? <EmptyState h={260} title="No Timeline Data" message="No data available for the selected filters." /> : <ResponsiveChart>
                       <AreaChart data={timelineData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                         <defs>
                           <linearGradient id="colorActive" x1="0" y1="0" x2="0" y2="1">
@@ -2561,7 +2407,7 @@ export default function AnalyticsPage() {
                         <Area type="monotone" dataKey="Active" stroke="#10b981" fillOpacity={1} fill="url(#colorActive)" />
                         <Area type="monotone" dataKey="Non-Active" stroke="#f43f5e" fillOpacity={1} fill="url(#colorNonActive)" />
                       </AreaChart>
-                    </ResponsiveContainer>
+                    </ResponsiveChart>}
                   </div>
                 </div>
               </div>
@@ -2588,7 +2434,7 @@ export default function AnalyticsPage() {
               {/* Field Inspections FAQs */}
               <div style={{ marginBottom: 32 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+                <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
 
                   <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
                     <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Inspection Outcome</p>
@@ -2628,7 +2474,7 @@ export default function AnalyticsPage() {
               </div>
 
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24, marginBottom: 24 }}>
-                <div ref={leaderboardCardRef} className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
+                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Barangay Compliance Leaderboard</h3>
                   <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Ranked compliance rates based on registered vs flagged entities.</p>
                   <div style={{ flexGrow: 1, minHeight: 260, overflowY: "auto" }}>
@@ -2674,8 +2520,8 @@ export default function AnalyticsPage() {
                   {loading ? <Skeleton h={220} /> : categoryData.length === 0 ? (
                     <EmptyState h={220} title="No Linked Status Data" />
                   ) : (
-                    <div style={{ flexGrow: 1, minHeight: 220, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div style={{ height: 260, width: "100%" }}>
+                      <ResponsiveChart>
                         <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 120, left: 10, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(226,232,240,0.4)" />
                           <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
@@ -2685,7 +2531,7 @@ export default function AnalyticsPage() {
                             <LabelList dataKey="label" position="right" fill="var(--color-ink)" fontSize={10} fontWeight={600} />
                           </Bar>
                         </BarChart>
-                      </ResponsiveContainer>
+                      </ResponsiveChart>
                     </div>
                   )}
                   {!loading && categoryData.length > 0 && (
@@ -2704,8 +2550,8 @@ export default function AnalyticsPage() {
                   {loading ? <Skeleton h={260} /> : auditData.length === 0 ? (
                     <EmptyState h={260} title="No Audit Data" />
                   ) : (
-                    <div style={{ flexGrow: 1, minHeight: 260, width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <ResponsiveContainer width="100%" height="100%">
+                    <div style={{ height: 260, width: "100%" }}>
+                      <ResponsiveChart>
                         <BarChart data={auditData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                           <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
@@ -2717,7 +2563,7 @@ export default function AnalyticsPage() {
                             ))}
                           </Bar>
                         </BarChart>
-                      </ResponsiveContainer>
+                      </ResponsiveChart>
                     </div>
                   )}
                 </div>
@@ -2805,7 +2651,7 @@ export default function AnalyticsPage() {
                           return (
                             <>
                               <div style={{ height: 260, width: "100%", marginTop: 16 }}>
-                                <ResponsiveContainer width="100%" height="100%">
+                                <ResponsiveChart>
                                   <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                                     <XAxis type="number" dataKey="lng" name="Longitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Longitude", position: "insideBottom", offset: -12, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
@@ -2885,7 +2731,7 @@ export default function AnalyticsPage() {
                                       }}
                                     />
                                   </ScatterChart>
-                                </ResponsiveContainer>
+                                </ResponsiveChart>
                               </div>
 
                               {selectedDbscanCluster === null ? (
@@ -2997,7 +2843,7 @@ export default function AnalyticsPage() {
 
                       {diag?.morans_data?.points && diag.morans_data.points.length > 0 && (
                         <div style={{ height: 260, width: "100%", marginTop: 16 }}>
-                          <ResponsiveContainer width="100%" height="100%">
+                          <ResponsiveChart>
                             <BarChart data={diag.morans_data.points} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                               <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
@@ -3010,7 +2856,7 @@ export default function AnalyticsPage() {
                                 ))}
                               </Bar>
                             </BarChart>
-                          </ResponsiveContainer>
+                          </ResponsiveChart>
                         </div>
                       )}
                     </div>
@@ -3282,7 +3128,7 @@ export default function AnalyticsPage() {
                 {loading ? <Skeleton h={280} /> : radarData.length === 0 ? (
                   <EmptyState h={280} title="Insufficient Data" message="Not enough data to compute OPS rankings." />
                 ) : (
-                  <ResponsiveContainer width="100%" height={280}>
+                  <ResponsiveChart height={280}>
                     <RadarChart data={radarData}>
                       <PolarGrid stroke="rgba(226,232,240,0.6)" />
                       <PolarAngleAxis dataKey="barangay" tick={{ fontSize: 10, fill: "var(--color-muted)" }} />
@@ -3292,7 +3138,7 @@ export default function AnalyticsPage() {
                       <Legend wrapperStyle={{ fontSize: 12 }} />
                       <Tooltip content={<CustomTooltip />} />
                     </RadarChart>
-                  </ResponsiveContainer>
+                  </ResponsiveChart>
                 )}
               </div>
 
@@ -3473,7 +3319,7 @@ export default function AnalyticsPage() {
                       <EmptyState h={260} title="No Status Data" message="No inspection status data available." />
                     ) : (
                       <div style={{ height: 260, width: "100%" }}>
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveChart>
                           <PieChart>
                             <Pie
                               data={data?.operations?.status_breakdown || []}
@@ -3495,7 +3341,7 @@ export default function AnalyticsPage() {
                             </Pie>
                             <Tooltip content={<CustomTooltip />} />
                           </PieChart>
-                        </ResponsiveContainer>
+                        </ResponsiveChart>
                       </div>
                     )}
                   </div>
@@ -3519,7 +3365,7 @@ export default function AnalyticsPage() {
                     <EmptyState h={300} title="No Timeline Data" message="Not enough timeline data available." />
                   ) : (
                     <div style={{ height: 300, width: "100%" }}>
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveChart>
                         <AreaChart data={data?.operations?.inspection_timeline || []} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                           <defs>
                             <linearGradient id="opsColor" x1="0" y1="0" x2="0" y2="1">
@@ -3533,7 +3379,7 @@ export default function AnalyticsPage() {
                           <Tooltip content={<CustomTooltip />} />
                           <Area type="monotone" dataKey="count" name="Inspections" stroke={COLOR.blue} strokeWidth={2} fillOpacity={1} fill="url(#opsColor)" activeDot={{ r: 6, strokeWidth: 0, fill: COLOR.blue }} />
                         </AreaChart>
-                      </ResponsiveContainer>
+                      </ResponsiveChart>
                     </div>
                   )}
                 </div>

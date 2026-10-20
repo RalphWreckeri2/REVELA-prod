@@ -1,3 +1,5 @@
+import { readDeviceAccessHints } from "../components/mobileDetection.js";
+
 export const API_ORIGIN =
   import.meta.env.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
 const BASE_URL = `${API_ORIGIN}/api`;
@@ -137,7 +139,7 @@ export async function loginRequest(email, password) {
     const res = await fetch(`${BASE_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password, source: "web" }),
+      body: JSON.stringify({ email, password, source: "web", device_access: readDeviceAccessHints() }),
     });
     return await handleResponse(res);
   } catch (err) {
