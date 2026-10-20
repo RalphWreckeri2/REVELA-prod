@@ -120,8 +120,8 @@ QUOTA_FIELDS = {
         "kind": "int", "baseline": API_QUOTA_CONFIG.legacy_nearby.daily,
         "minimum": 0, "ceiling_method": "nearby_search_legacy",
         "ceiling_field": "daily",
-        "help": "Shared Legacy Nearby budget across administrators. Separate "
-                "from Text Search, Details, Geocoding, and Nearby Search (New).",
+        "help": "Run Detection's active method. Cloud quota for this method "
+                "has never been confirmed — confirm before raising.",
     },
     "quota.legacy_nearby.monthly": {
         "label": "Nearby Search (legacy) — monthly",
@@ -398,7 +398,7 @@ def validate_patch(patch):
         max_requests = clean.get(
             "run_detection.max_requests", cap("run_detection.max_requests")
         )
-        if BASELINE_API_MODE == "new":
+        if cap("quota.nearby_new.daily") > 0:
             nearby_monthly = clean.get(
                 "quota.nearby_new.monthly", cap("quota.nearby_new.monthly")
             )

@@ -88,12 +88,6 @@ def cancel_detection_route():
 
 # ── POST /api/flags/run-detection ─────────────────────────────────────────────
 
-@flags_bp.route("/detection-preflight", methods=["GET"])
-@admin_required()
-def detection_preflight_route():
-    from api.flags.service import get_detection_preflight
-    return jsonify(get_detection_preflight(request.args.get("mode", "quick"))), 200
-
 
 @flags_bp.route("/run-detection", methods=["POST"])
 @admin_required()
@@ -112,20 +106,14 @@ def run_detection_route():
 
     result, error = run_detection(user_id=user_id, mode=mode)
     if error:
-        if result and result.get("status") == "preflight_blocked":
-            return jsonify({"error": error, "code": "application_scan_budget", **result}), 409
         if error == "A detection scan is already in progress.":
             return jsonify({"error": error}), 409
         if result and result.get("status") in (
             "skipped_quota", "daily_quota_exceeded", "monthly_quota_exceeded"
         ):
-            return jsonify({"error": error, "code": (
-                "google_quota" if result.get("limit_source") == "google" else "application_api_cap"
-            ), **result}), 429
-        if error == "Detection cancelled by user." or error.startswith("Detection cancelled."):
+            return jsonify({"error": error, **result}), 429
+        if error == "Detection cancelled by user.":
             return jsonify({"message": error}), 200
-        if "Monthly detection limit reached" in error:
-            return jsonify({"error": error, "code": "application_scan_budget", "limit_source": "application"}), 429
         if "Monthly detection limit reached" in error or ("Places API" in error and "limit reached" in error) or "budget" in error.lower():
             return jsonify({"error": error}), 429
         if "official business registry is empty" in error.lower():

@@ -709,13 +709,6 @@ export async function runDetectionRequest(token, mode = "quick") {
   }
 }
 
-export async function getDetectionPreflightRequest(token, mode = "quick") {
-  const response = await fetch(`${BASE_URL}/flags/detection-preflight?mode=${encodeURIComponent(mode)}`, {
-    headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
-  });
-  return handleResponse(response);
-}
-
 export async function cancelRunDetection(token) {
   if (!token) throw new Error("Missing authentication token.");
   try {

@@ -78,6 +78,7 @@ _analytics_cache: dict = {}
 # Section snapshots share the SAME pipeline/flight as /all. A cold descriptive
 # read must not wait for DBSCAN, rankings, and operations to finish.
 _ANALYTICS_SECTIONS = ("descriptive", "diagnostic", "prescriptive", "operations")
+_ANALYTICS_READ_SECTIONS = ("summary",) + _ANALYTICS_SECTIONS
 _analytics_sections: dict = {}
 _analytics_failures: dict = {}
 _ANALYTICS_CACHE_TTL = 60  # seconds
@@ -317,6 +318,14 @@ def init_analytics_cache_invalidation(app):
         return response
 
 
+def _analytics_section_payload(data, section):
+    # Summary is a projection of the SAME KPI work, never a second SQL path.
+    if section == "summary":
+        kpis = data.get("descriptive", {}).get("kpis")
+        return {"kpis": kpis} if kpis is not None else None
+    return data.get(section)
+
+
 def _finish_analytics_refresh(key, flight, entry=None, error=None):
     future, generation = flight
     with _analytics_cache_lock:
@@ -327,11 +336,12 @@ def _finish_analytics_refresh(key, flight, entry=None, error=None):
                 # Also supports callers/tests that supply a complete snapshot
                 # without the pipeline's intermediate publication hooks.
                 sections = _analytics_sections.setdefault(key, {})
-                for section in _ANALYTICS_SECTIONS:
-                    if section in entry["data"]:
+                for section in _ANALYTICS_READ_SECTIONS:
+                    payload = _analytics_section_payload(entry["data"], section)
+                    if payload is not None:
                         published = sections.get(section, {})
                         sections[section] = {
-                            **entry, "data": {section: entry["data"][section]},
+                            **entry, "data": {section: payload},
                             **({"computed_at": published["computed_at"]}
                                if published.get("flight") is flight else {}),
                         }
@@ -413,8 +423,10 @@ def _get_analytics_section(F, section):
     with _analytics_cache_lock:
         full = _analytics_cache.get(key)
         entry = _analytics_sections.get(key, {}).get(section)
-        if entry is None and full and section in full["data"]:
-            entry = {**full, "data": {section: full["data"][section]}}
+        if entry is None and full:
+            payload = _analytics_section_payload(full["data"], section)
+            if payload is not None:
+                entry = {**full, "data": {section: payload}}
         fresh = entry and not _analytics_snapshot_metadata(entry)["stale"]
         flight = _analytics_refreshes.get(key)
         retry_after = _analytics_failures.get(key, 0)
@@ -636,17 +648,28 @@ def get_all_analytics():
         F = parse_analytics_filters(request.args)
         section = request.args.get("section")
         if section:
-            if section not in _ANALYTICS_SECTIONS:
+            if section not in _ANALYTICS_READ_SECTIONS:
                 return jsonify({"error": "Unknown analytics section."}), 400
             data, status_code = _get_analytics_section(F, section)
+            if section == "summary" and status_code == 200:
+                # Unread rollover state belongs to this user, outside the cache.
+                data["summary"] = {**data["summary"], "new_year_rollover": _new_year_rollover_info()}
             return jsonify(data), status_code
         data, status_code = _get_cached_analytics(
             F, allow_stale=request.args.get("stale_while_revalidate") == "1")
 
-        # Rollover notification is user-specific (unread flag) so it lives
-        # outside the shared cache and is fetched per-request.
-        uid = int(get_jwt_identity())
-        cursor = mysql.connection.cursor()
+        data["new_year_rollover"] = _new_year_rollover_info()
+        return jsonify(data), status_code
+    except Exception:
+        current_app.logger.exception("Failed to load analytics")
+        return jsonify({"error": "Failed to load analytics"}), 500
+
+
+def _new_year_rollover_info():
+    """Per-user unread notification; never stored in a shared snapshot."""
+    uid = int(get_jwt_identity())
+    cursor = mysql.connection.cursor()
+    try:
         cursor.execute(
             """
             SELECT id, body FROM revela_notifications
@@ -656,28 +679,17 @@ def get_all_analytics():
             (uid,)
         )
         notif = cursor.fetchone()
+    finally:
         cursor.close()
-
-        rollover_info = None
-        if notif:
-            body = notif["body"]
-            m = re.search(
-                r"Welcome to (\d+)!.*?marked (\d+) active", body, re.DOTALL)
-            year = int(m.group(1)) if m else __import__(
-                'datetime').date.today().year
-            count = int(m.group(2)) if m else 0
-            rollover_info = {
-                "detected": True,
-                "count": count,
-                "year": year,
-                "notification_id": notif["id"]
-            }
-
-        data["new_year_rollover"] = rollover_info
-        return jsonify(data), status_code
-    except Exception:
-        current_app.logger.exception("Failed to load analytics")
-        return jsonify({"error": "Failed to load analytics"}), 500
+    if not notif:
+        return None
+    m = re.search(r"Welcome to (\d+)!.*?marked (\d+) active", notif["body"], re.DOTALL)
+    return {
+        "detected": True,
+        "count": int(m.group(2)) if m else 0,
+        "year": int(m.group(1)) if m else datetime.now().year,
+        "notification_id": notif["id"],
+    }
 
 
 def _rankings_split_enabled():
@@ -915,11 +927,12 @@ def _get_all_analytics_inner(F=None):
     _execute(
         cur,
         "kpi.current_year_registered",
-        "SELECT COUNT(*) AS n FROM official_registry WHERE YEAR(lastRenewalDate) = YEAR(CURDATE())"
+        "SELECT COUNT(*) AS n, YEAR(CURDATE()) AS reporting_year FROM official_registry WHERE YEAR(lastRenewalDate) = YEAR(CURDATE())"
         + reg_all,
         reg_all_p,
     )
-    current_year_registered_count = cur.fetchone()["n"]
+    current_year_row = cur.fetchone()
+    current_year_registered_count = current_year_row["n"]
 
     _execute(
         cur,
@@ -953,6 +966,25 @@ def _get_all_analytics_inner(F=None):
 
     current_year_count = current_year_registered_count
 
+    compliance_rate = round(
+        (active_count / total_businesses * 100), 1) if total_businesses else 0
+
+    kpis = {
+        "total_businesses": total_businesses, "active_count": active_count,
+        "expired_count": expired_count, "closed_count": closed_count,
+        "pending_count": pending_count, "revoked_count": revoked_count,
+        "new_registration_count": new_registration_count,
+        "renewal_registration_count": renewal_registration_count,
+        "current_year_count": current_year_registered_count,
+        "current_year_registered_count": current_year_registered_count,
+        "upcoming_year_renewal_count": upcoming_year_renewal_count,
+        "compliance_rate": compliance_rate,
+        "reporting_year": current_year_row.get("reporting_year"),
+    }
+    # The registry aggregates are ready before the map/registry reconciliation
+    # below. Publish them now so Overview does not wait on total_flagged.
+    _publish_analytics_section("summary", {"kpis": kpis})
+
     _execute(
         cur,
         "kpi.total_flagged",
@@ -979,9 +1011,10 @@ def _get_all_analytics_inner(F=None):
         geo_g_p + reg_r_p,
     )
     total_flagged = cur.fetchone()["n"]
-
-    compliance_rate = round(
-        (active_count / total_businesses * 100), 1) if total_businesses else 0
+    kpis["total_flagged"] = total_flagged
+    # The map-location count completes the summary; readers still share the
+    # same filter-scoped pipeline, cache flight, and invalidation.
+    _publish_analytics_section("summary", {"kpis": kpis})
 
     # Enforcement progress — unified across official_registry and geospatial_logs
     _execute(cur, "descriptive.enforcement_progress", f"""
@@ -1177,17 +1210,7 @@ def _get_all_analytics_inner(F=None):
     ]
 
     descriptive = {
-        "kpis": {
-            "total_businesses": total_businesses, "active_count": active_count,
-            "expired_count": expired_count, "closed_count": closed_count,
-            "pending_count": pending_count, "revoked_count": revoked_count,
-            "new_registration_count": new_registration_count,
-            "renewal_registration_count": renewal_registration_count,
-            "current_year_count": current_year_registered_count,
-            "current_year_registered_count": current_year_registered_count,
-            "upcoming_year_renewal_count": upcoming_year_renewal_count,
-            "total_flagged": total_flagged, "compliance_rate": compliance_rate,
-        },
+        "kpis": kpis,
         "enforcement_progress": enforcement_progress,
         "nature_per_barangay": nature_per_barangay,
         "sectoral_distribution": sectoral_distribution,

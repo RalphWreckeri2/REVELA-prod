@@ -1,5 +1,12 @@
 # Analytics loading and scan budget review
 
+> **Rollback status (2026-10-20):** The scan-budget and API Usage & Limits
+> changes from `9ae7de0` have been restored to their `0e79712` implementation.
+> The analytics improvements remain. The scan-planning, migration, and repair
+> instructions below are historical evidence, not current deployment steps.
+> See [scan_budget_rollback.md](scan_budget_rollback.md) for the rollback boundary,
+> database/configuration evidence, and deployment follow-up.
+
 ## Findings and scope of evidence
 
 Repository code, the local non-secret quota configuration, synthetic HTTP responses,

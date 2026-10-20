@@ -181,3 +181,33 @@ test("focus recovery clears a stale offline state when a suspended tab missed on
   assert.equal(loader.getSnapshot().offline, false);
   assert.equal(loader.getSnapshot().sections.descriptive.status, "ready");
 });
+
+test("Overview summary finishes independently while rankings remain pending", async (t) => {
+  const rankings = deferred();
+  const calls = [];
+  const loader = setup(t, {
+    sectionNames: ["summary", "prescriptive"],
+    request: async (section) => {
+      calls.push(section);
+      if (section === "prescriptive") await rankings.promise;
+      return response(section, 17);
+    },
+  });
+  const flight = loader.refresh();
+  void loader.refresh(true);
+  await tick();
+  assert.deepEqual(calls, ["summary", "prescriptive"]);
+  assert.equal(loader.getSnapshot().sections.summary.data.value, 17);
+  assert.equal(loader.getSnapshot().sections.summary.updating, false);
+  assert.equal(loader.getSnapshot().sections.prescriptive.status, "loading");
+  rankings.resolve();
+  await flight;
+});
+
+test("a missing section is an error rather than an endless loading state or a fake zero", async (t) => {
+  const loader = setup(t, { sectionNames: ["summary"], request: async () => ({}) });
+  await loader.refresh();
+  assert.equal(loader.getSnapshot().sections.summary.status, "error");
+  assert.equal(loader.getSnapshot().sections.summary.updating, false);
+  assert.equal(loader.getSnapshot().sections.summary.data, null);
+});

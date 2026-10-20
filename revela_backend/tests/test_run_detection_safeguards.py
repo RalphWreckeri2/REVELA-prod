@@ -252,7 +252,7 @@ class CheckpointConfigurationTests(unittest.TestCase):
         self.assertTrue(state["done_keys"][0].startswith("v2:"))
         mark.assert_called_once_with(state["done_keys"][0])
 
-    def test_increasing_test_request_budget_preserves_geographic_progress(self):
+    def test_test_request_budget_changes_use_the_previous_configuration_identity(self):
         config = {
             "test_mode.enabled": True, "test_mode.max_requests": 5,
             "test_mode.grid_step_degrees": 0.009, "test_mode.radius_m": 850,
@@ -262,8 +262,8 @@ class CheckpointConfigurationTests(unittest.TestCase):
         resumed, fetch, _ = self._scan(first["done_keys"], test_config={
             **config, "test_mode.max_requests": 24,
         })
-        self.assertEqual(resumed["skipped_points"], 1)
-        fetch.assert_not_called()
+        self.assertEqual(resumed["skipped_points"], 0)
+        fetch.assert_called_once()
 
     def test_incomplete_and_cancelled_points_remain_retryable(self):
         incomplete, _, mark = self._scan(complete=False)

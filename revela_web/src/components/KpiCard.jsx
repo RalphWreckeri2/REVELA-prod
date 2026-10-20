@@ -6,17 +6,20 @@
  *
  * Props:
  *   icon     — SVG element
- *   iconVariant — "gold" | "red" | "green" (controls icon background/color)
+ *   iconVariant — "gold" | "red" | "green" | "plain" (controls icon background/color)
  *   value    — string | number  (the big headline number)
  *   label    — string           (descriptive caption below the value)
  *   delta    — string           (optional: "+2.3% vs last month")
  *   trend    — "up" | "down"    (optional: controls color and arrow)
  */
 
+import "../styles/KpiCard.css";
+
 const VARIANT_CLASSES = {
   gold:  "kpi-icon--gold",
   red:   "kpi-icon--red",
   green: "kpi-icon--green",
+  plain: "kpi-icon--plain",
 };
 
 export default function KpiCard({ icon, iconVariant = "green", value, label, delta, trend, style }) {
@@ -26,7 +29,7 @@ export default function KpiCard({ icon, iconVariant = "green", value, label, del
 
   return (
     <div className="kpi-card frosted-glass saas-card" style={style}>
-      <div className={`kpi-icon ${VARIANT_CLASSES[iconVariant]}`}>
+      <div className={`kpi-icon ${VARIANT_CLASSES[iconVariant] || VARIANT_CLASSES.plain}`} aria-hidden="true">
         {icon}
       </div>
       <div className="kpi-info">

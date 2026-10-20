@@ -679,11 +679,12 @@ const GlobalAIAssistant = memo(({ globalData }) => {
       {!isExpanded && (
         <button
           onClick={() => setIsExpanded(true)}
-          className="analytics-assistant-launcher"
+          className="analytics-assistant-launcher analytics-mascot-launcher"
           aria-label="Open AI Analyst"
+          title="Open AI Analyst"
         >
           <img src="/standing.png" alt="" />
-          Ask AI Analyst
+          <span className="analytics-mascot-status" aria-hidden="true" />
         </button>
       )}
 
@@ -878,25 +879,11 @@ const GlobalAIAssistant = memo(({ globalData }) => {
 export default function AnalyticsPage() {
   const { token, user } = useAuth();
   const canEditWlc = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
-  const [activeTab, setActiveTab] = useState("descriptive"); // descriptive, diagnostic, prescriptive
-  const [isScrolled, setIsScrolled] = useState(false);
+  const [activeTab, setActiveTab] = useState("descriptive");
+  const [showFloatingNav, setShowFloatingNav] = useState(false);
+  const sectionNavRef = useRef(null);
   const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
   const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
-
-  const tabMarkerRef = useRef(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setIsScrolled(!entry.isIntersecting && entry.boundingClientRect.top < 300);
-      },
-      { threshold: 0, rootMargin: "0px 0px 0px 0px" }
-    );
-    if (tabMarkerRef.current) {
-      observer.observe(tabMarkerRef.current);
-    }
-    return () => observer.disconnect();
-  }, []);
 
   const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
@@ -925,6 +912,18 @@ export default function AnalyticsPage() {
   const [barangaysList, setBarangaysList] = useState([]);
   const [filterMetaError, setFilterMetaError] = useState(false);
   const [filterRetry, setFilterRetry] = useState(0);
+
+  useEffect(() => {
+    const nav = sectionNavRef.current;
+    const scrollRoot = nav?.closest(".saas-content");
+    if (!nav || !scrollRoot) return undefined;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      setShowFloatingNav(!entry.isIntersecting || entry.intersectionRatio < 0.99);
+    }, { root: scrollRoot, threshold: [0, 0.99, 1] });
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, []);
 
   const fetchWlcConfig = useCallback(async () => {
     if (!token) return;
@@ -1013,6 +1012,7 @@ export default function AnalyticsPage() {
   const diag = data?.diagnostic;
   const presc = data?.prescriptive;
   const kpis = desc?.kpis;
+  const reportingYear = kpis?.reporting_year ?? Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila", year: "numeric" }));
 
 
 
@@ -1305,19 +1305,26 @@ export default function AnalyticsPage() {
   return (
     <DashboardLayout className="analytics-page" bottomBar={(
       <div className="analytics-tools">
-        <nav className="analytics-quick-nav" aria-label="Analytics sections" style={{ visibility: isScrolled ? "visible" : "hidden" }}>
-          {[
-            { id: "descriptive", label: "Descriptive", dot: "var(--color-green)" },
-            { id: "diagnostic", label: "Diagnostic", dot: "var(--color-yellow)" },
-            { id: "prescriptive", label: "Prescriptive", dot: "#6366f1" },
-            { id: "operations", label: "Operations", dot: "var(--color-blue, #3b82f6)" },
-          ].map(tab => (
-            <button key={tab.id} type="button" aria-current={activeTab === tab.id ? "page" : undefined}
-              onClick={() => { setActiveTab(tab.id); tabMarkerRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>
-              <span style={{ background: tab.dot }} />{tab.label}
-            </button>
-          ))}
-        </nav>
+        {showFloatingNav && !snapshotIsExpired && (
+          <nav className="analytics-quick-nav" aria-label="Analytics quick navigation">
+            {[
+              { id: "descriptive", label: "Descriptive" },
+              { id: "diagnostic", label: "Diagnostic" },
+              { id: "prescriptive", label: "Prescriptive" },
+              { id: "operations", label: "Operations" },
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`analytics-quick-nav-btn${activeTab === tab.id ? " active" : ""}`}
+                aria-pressed={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        )}
         {!snapshotIsExpired && <GlobalAIAssistant globalData={globalData} />}
       </div>
     )}>
@@ -1341,36 +1348,6 @@ export default function AnalyticsPage() {
           box-shadow: none;
         }
 
-        .sticky-tabs {
-          position: sticky;
-          top: 0;
-          z-index: 100;
-          background: var(--color-surface);
-          padding: 16px 0;
-          margin-bottom: 24px;
-          border-bottom: 1px solid var(--color-border);
-        }
-
-        .analytics-tab-btn {
-          padding: 8px 18px;
-          border-radius: 8px;
-          border: 1px solid var(--color-border);
-          background: var(--color-input-bg);
-          color: var(--color-muted);
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all var(--duration-fast);
-        }
-        .analytics-tab-btn.active {
-          background: var(--color-ink);
-          color: var(--color-surface);
-          border-color: var(--color-ink);
-        }
-        .analytics-tab-btn:hover:not(.active) {
-          background: var(--color-hover);
-          color: var(--color-ink);
-        }
         .ops-row:hover { background: "var(--color-modal-bg)" !important; }
         .ops-score-bar {
           height: 6px;
@@ -2051,25 +2028,7 @@ export default function AnalyticsPage() {
           )}
         </div>
 
-        {/* Scroll Marker */}
-        <div ref={tabMarkerRef} style={{ width: "100%", height: 1, marginBottom: -1 }} />
-
-        {/* MAIN TABS (Normal Flow) */}
-        <div className="tier-1-card saas-card frosted-glass" style={{
-          display: "flex",
-          gap: 12,
-          flexWrap: "wrap",
-          flexDirection: "row",
-          position: "relative",
-          background: "var(--glass-bg)",
-          backdropFilter: "var(--glass-blur)",
-          WebkitBackdropFilter: "var(--glass-blur)",
-          boxShadow: "none",
-          padding: "24px",
-          margin: "0 0 32px 0",
-          borderRadius: 12,
-          border: "1px solid var(--color-border)"
-        }}>
+        <nav ref={sectionNavRef} className="analytics-section-nav saas-card frosted-glass" aria-label="Analytics sections">
           {[
             { id: "descriptive", label: "Descriptive", sub: "What is happening?", dot: "var(--color-green)" },
             { id: "diagnostic", label: "Diagnostic", sub: "Why is it happening?", dot: "var(--color-yellow)" },
@@ -2080,30 +2039,20 @@ export default function AnalyticsPage() {
             return (
               <button
                 key={tab.id}
+                type="button"
                 className={`analytics-tab-btn ${isActive ? "active" : ""}`}
+                aria-current={isActive ? "page" : undefined}
                 onClick={() => setActiveTab(tab.id)}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  padding: "12px 20px",
-                  borderRadius: 8,
-                  border: "1px solid var(--color-border)",
-                  background: isActive ? "var(--color-surface)" : "transparent",
-                  cursor: "pointer",
-                  minWidth: 160,
-                  transition: "all 0.2s ease"
-                }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 14, color: isActive ? "var(--color-primary-dark)" : "var(--color-muted)" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: tab.dot }} />
+                <span className="analytics-tab-label">
+                  <span className="analytics-tab-dot" style={{ background: tab.dot }} aria-hidden="true" />
                   {tab.label}
-                </div>
-                <div style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 4, marginLeft: 16 }}>{tab.sub}</div>
+                </span>
+                <span className="analytics-tab-subtitle">{tab.sub}</span>
               </button>
             );
           })}
-        </div>
+        </nav>
 
         {(error || offline) && (
           <div role="status" style={{
@@ -2199,13 +2148,11 @@ export default function AnalyticsPage() {
               </div>
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
-              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 12 }}>
-                <KpiCard iconVariant="gold" value={kpis?.current_year_registered_count ?? kpis?.current_year_count ?? "—"} label="Registered Current Year (2026)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="green" value={kpis?.upcoming_year_renewal_count ?? "—"} label="Scheduled Renewal (2027)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="blue" value={kpis?.new_registration_count ?? "—"} label="New Registrations" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>} style={{ padding: "14px 12px" }} />
+              <div className="analytics-census-grid">
+                <KpiCard iconVariant="gold" value={kpis?.current_year_registered_count ?? kpis?.current_year_count ?? "—"} label={`Registered Current Year (${reportingYear})`} icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>} style={{ padding: "14px 12px" }} />
+                <KpiCard iconVariant="green" value={kpis?.upcoming_year_renewal_count ?? "—"} label={`Scheduled Renewal (${reportingYear + 1})`} icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>} style={{ padding: "14px 12px" }} />
+                <KpiCard iconVariant="plain" value={kpis?.new_registration_count ?? "—"} label="New Registrations" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>} style={{ padding: "14px 12px" }} />
                 <KpiCard iconVariant="gold" value={kpis?.renewal_registration_count ?? "—"} label="Renewals" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>} style={{ padding: "14px 12px" }} />
-              </div>
-              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 24 }}>
                 <KpiCard iconVariant="green" value={kpis?.active_count ?? "—"} label="Active Permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="red" value={kpis?.expired_count ?? "—"} label="Expired" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="gold" value={kpis?.pending_count ?? "—"} label="Pending" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>} style={{ padding: "12px 10px" }} />

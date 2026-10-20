@@ -7,7 +7,8 @@ import { createServer } from "vite";
 
 const edge = process.env.EDGE_BINARY || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
 const tempRoot = "C:\\Users\\RUFFAA~1\\AppData\\Local\\Temp\\opencode";
-const output = resolve("artifacts/layout-review");
+const focusedAnalytics = process.argv.includes("--analytics-fixes-only");
+const output = focusedAnalytics ? tempRoot : resolve("artifacts/layout-review");
 if (!existsSync(edge) || !existsSync(tempRoot) || !existsSync(output)) throw new Error("Edge, the approved temporary directory, and artifacts/layout-review are required.");
 const profile = mkdtempSync(join(tempRoot, "revela-layout-browser-"));
 const server = await createServer({ server: { host: "127.0.0.1", port: 0, open: false } });
@@ -122,6 +123,77 @@ try {
       })) };
   })()`);
 
+  if (focusedAnalytics) {
+    for (const [width, height] of [[1920, 1080], [1280, 900], [1024, 900]]) {
+      for (const sidebar of ["expanded", "collapsed"]) {
+        await metrics(width, height);
+        await navigate("analytics", "populated", sidebar);
+        const ui = await evaluate(`(() => {
+          const nav = document.querySelector('.analytics-section-nav');
+          const r = nav.getBoundingClientRect();
+          const filters = [...document.querySelectorAll('.saas-card')].find(card => card.querySelector('h3')?.textContent.includes('Data filters'));
+          const section = [...document.querySelectorAll('h2')].find(node => node.textContent === 'Descriptive Analytics');
+          const grid = document.querySelector('.analytics-census-grid');
+          const cards = [...grid.children];
+          return {
+            navCount: document.querySelectorAll('nav[aria-label="Analytics sections"]').length,
+            floatingNavVisibleAtTop: Boolean(document.querySelector('.analytics-quick-nav')),
+            inFlow: getComputedStyle(nav).position === 'relative' || getComputedStyle(nav).position === 'static',
+            order: filters.getBoundingClientRect().bottom <= r.top && r.bottom < section.getBoundingClientRect().top,
+            subtitles: [...nav.querySelectorAll('.analytics-tab-subtitle')].map(node => node.textContent),
+            navFits: [...nav.querySelectorAll('button')].every(node => { const b = node.getBoundingClientRect(); return b.left >= r.left && b.right <= r.right && b.top >= r.top && b.bottom <= r.bottom; }),
+            columns: getComputedStyle(grid).gridTemplateColumns.split(' ').length,
+            contentWidth: grid.getBoundingClientRect().width,
+            cardCount: cards.length,
+            iconVariants: cards.map(card => card.querySelector('.kpi-icon').className),
+            iconsFit: cards.every(card => { const icon = card.querySelector('.kpi-icon').getBoundingClientRect(); const info = card.querySelector('.kpi-info').getBoundingClientRect(); return icon.width === 32 && icon.height === 32 && icon.right <= info.left && card.scrollWidth <= card.clientWidth + 1; }),
+            compact: cards.every(card => card.getBoundingClientRect().height <= 72),
+            colors: cards.map(card => getComputedStyle(card.querySelector('.kpi-icon')).color),
+            backgrounds: cards.map(card => getComputedStyle(card.querySelector('.kpi-icon')).backgroundColor),
+            overflow: document.documentElement.scrollWidth > innerWidth,
+          };
+        })()`);
+        assert.equal(ui.navCount, 1);
+        assert.equal(ui.floatingNavVisibleAtTop, false);
+        assert.ok(ui.inFlow && ui.order && ui.navFits, "rectangular tabs fit between filters and active section");
+        assert.deepEqual(ui.subtitles, ["What is happening?", "Why is it happening?", "What should we do?", "Inspector performance"]);
+        assert.equal(ui.cardCount, 8);
+        assert.equal(ui.columns, ui.contentWidth > 859 ? 4 : 2);
+        assert.deepEqual(ui.iconVariants, ["gold", "green", "plain", "gold", "green", "red", "gold", "red"].map(variant => `kpi-icon kpi-icon--${variant}`));
+        assert.deepEqual(ui.colors, ["rgb(202, 138, 4)", "rgb(86, 171, 47)", "rgb(26, 32, 44)", "rgb(202, 138, 4)", "rgb(86, 171, 47)", "rgb(239, 68, 68)", "rgb(202, 138, 4)", "rgb(239, 68, 68)"]);
+        assert.ok(ui.iconsFit && ui.compact, "all compact cards have aligned left-side icons");
+        assert.equal(ui.backgrounds[2], "rgba(0, 0, 0, 0)", "outlined star has no colored container");
+        assert.equal(ui.overflow, false);
+        const data = await measure("analytics");
+        assert.ok(data.cards.every(card => !card.overflow && card.chart?.width > 0), "existing charts keep their dimensions");
+        await screenshot(`revela-analytics-fixes-${width}-${sidebar}.png`);
+        await scrollTo(".analytics-census-grid");
+        await wait(`document.querySelector('.analytics-quick-nav')`, "floating navigation after main tabs leave view");
+        const dock = await evaluate(`(() => {
+          const bounds = element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+          const main = bounds(document.querySelector('.saas-main'));
+          const nav = bounds(document.querySelector('.analytics-quick-nav'));
+          return { main, nav, active: document.querySelector('.analytics-quick-nav-btn.active')?.textContent.trim() };
+        })()`);
+        assert.ok(dock.nav.left >= dock.main.left && dock.nav.right <= dock.main.right, "floating navigation remains centered in content area");
+        assert.ok(Math.abs((dock.nav.left + dock.nav.right) / 2 - (dock.main.left + dock.main.right) / 2) < 2, "floating navigation is bottom-center in content area");
+        await evaluate(`[...document.querySelectorAll('.analytics-quick-nav-btn')].find(button => button.textContent.includes('Operations')).click()`);
+        assert.equal(await evaluate(`document.querySelector('.analytics-tab-btn[aria-current="page"]')?.textContent.includes('Operations')`), true, "floating tab updates the main tab");
+        assert.equal(await evaluate(`document.querySelector('.analytics-quick-nav-btn.active')?.textContent.trim()`), "Operations", "main and floating tab states stay synchronized");
+        await evaluate(`document.querySelector('.saas-content').scrollTop = 0`);
+        await wait(`!document.querySelector('.analytics-quick-nav')`, "floating navigation hides when main tabs return");
+        await screenshot(`revela-analytics-census-${width}-${sidebar}.png`);
+        await evaluate(`document.querySelector('[aria-label="Open AI Analyst"]').click()`);
+        assert.ok(await evaluate(`(() => { const main = document.querySelector('.saas-main').getBoundingClientRect(); const panel = document.querySelector('.analytics-assistant-panel').getBoundingClientRect(); return panel.left >= main.left && panel.right <= main.right && panel.bottom <= main.bottom; })()`), "chat panel stays inside the content area");
+        await evaluate(`document.querySelector('[aria-label="Close AI Analyst"]').click(); document.querySelector('.sidebar-collapse-toggle').click()`);
+        assert.ok(await evaluate(`Boolean(document.querySelector('[aria-label="Open AI Analyst"]'))`), "closing chat restores the standalone mascot");
+        await sleep(350);
+        assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false, "live sidebar toggle does not overflow");
+        results.push({ width, height, sidebar, ...ui });
+        console.log(`Analytics restoration passed: ${width} × ${height}, ${sidebar} sidebar, ${ui.columns} census columns`);
+      }
+    }
+  } else {
   for (const [width, height] of (process.argv.includes("--details-only") ? [] : [[768, 1024], [1024, 768], [1280, 800], [1440, 1000]])) {
     for (const page of ["analytics", "reports"]) {
       for (const sidebar of ["expanded", "collapsed"]) {
@@ -269,14 +341,15 @@ try {
     results.push({ device: label, width, height, normalLogin: login });
   }
 
+  }
   assert.deepEqual(consoleIssues, [], "no Recharts dimension warnings or browser exceptions");
-  await writeFile(join(output, "results.json"), JSON.stringify({ zoom: "100%", browser: "Microsoft Edge (Chromium), fresh profile", consoleIssues, results }, null, 2));
-  await rm(join(output, "failure.png"), { force: true });
+  await writeFile(join(output, focusedAnalytics ? "revela-analytics-fixes-results.json" : "results.json"), JSON.stringify({ zoom: "100%", browser: "Microsoft Edge (Chromium), fresh profile", consoleIssues, results }, null, 2));
+  await rm(join(output, focusedAnalytics ? "revela-analytics-fixes-failure.png" : "failure.png"), { force: true });
   console.log(`Passed ${results.length} layout/state/device scenarios at 100% zoom. Screenshots: ${output}`);
   await Promise.race([call("Browser.close").catch(() => {}), sleep(2000)]);
 } catch (error) {
   if (call && session) {
-    try { const { data } = await call("Page.captureScreenshot", { format: "png" }); await writeFile(join(output, "failure.png"), Buffer.from(data, "base64")); } catch { /* browser may have closed */ }
+    try { const { data } = await call("Page.captureScreenshot", { format: "png" }); await writeFile(join(output, focusedAnalytics ? "revela-analytics-fixes-failure.png" : "failure.png"), Buffer.from(data, "base64")); } catch { /* browser may have closed */ }
   }
   console.error(error);
   if (consoleIssues.length) console.error(consoleIssues);

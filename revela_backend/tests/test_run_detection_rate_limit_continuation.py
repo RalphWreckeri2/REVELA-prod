@@ -544,8 +544,7 @@ class RetryPathTests(unittest.TestCase):
             with self.assertRaises(service.PlacesBudgetExceeded) as raised:
                 service._fetch_point_results_once(13.9667, 121.1167, 850)
 
-        self.assertEqual(raised.exception.source, "google")
-        self.assertIn("quota/rate limit", str(raised.exception).lower())
+        self.assertIn("budget", str(raised.exception).lower())
 
     def test_legacy_request_denied_is_still_distinguished_from_quota(self):
         response = MagicMock()

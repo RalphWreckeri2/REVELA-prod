@@ -18,6 +18,7 @@ const wait = async (predicate, label) => {
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent.trim() === text);
 const activeCount = () => [...document.querySelectorAll(".kpi-card")].find((node) => node.textContent.includes("Active Permits"))?.querySelector("h3")?.textContent;
 const calls = [];
+localStorage.setItem("revela_sidebar_collapsed", "false");
 const pending = [];
 let online = true;
 let mode = "hold";
@@ -26,7 +27,7 @@ Object.defineProperty(navigator, "onLine", { configurable: true, get: () => onli
 
 function payload(section, count = value) {
   const sections = {
-    descriptive: { kpis: { active_count: count, total_businesses: count }, audit_summary: { total_inspections: 0, result_breakdown: [] } },
+    descriptive: { kpis: { active_count: count, total_businesses: count, reporting_year: 2031 }, audit_summary: { total_inspections: 0, result_breakdown: [] } },
     diagnostic: { scan_history: [], category_risk_drivers: [], dbscan_clusters: [], morans_data: { points: [] } },
     prescriptive: { rankings: [], dispatch_recommendations: [], wlc_config: {} },
     operations: { inspector_stats: [], status_breakdown: [], inspection_timeline: [] },
@@ -38,7 +39,7 @@ window.fetch = async (url) => {
   const parsed = new URL(url, location.href);
   if (parsed.pathname.endsWith("/analytics/all")) {
     const section = parsed.searchParams.get("section");
-    calls.push({ section, filter: parsed.searchParams.get("barangay_ids") });
+    calls.push({ section, filter: parsed.searchParams.get("barangay_ids"), query: Object.fromEntries(parsed.searchParams) });
     if (mode === "fail") return Response.json({ error: "Synthetic backend failure" }, { status: 503 });
     if (mode === "hold" || (mode === "filters" && parsed.searchParams.get("barangay_ids") === "1")) {
       // Deliberately ignore AbortSignal: stale-response rejection must still work.
@@ -76,6 +77,32 @@ try {
   mode = "ready";
   [...document.querySelectorAll("button")].find((node) => node.textContent.trim().startsWith("Descriptive")).click();
   await wait(() => button("Refresh") && !button("Refresh").disabled, "completed load");
+  check(document.querySelectorAll('nav[aria-label="Analytics sections"]').length === 1 && !document.querySelector(".analytics-quick-nav"), "Floating navigation stays hidden while the main tabs are visible");
+  check(document.querySelector(".analytics-tab-subtitle").textContent === "What is happening?", "Navigation subtitles are restored");
+  check(document.querySelector(".analytics-census-grid").textContent.includes("Registered Current Year (2031)") && document.querySelector(".analytics-census-grid").textContent.includes("Scheduled Renewal (2032)"), "Census years follow the backend reporting year");
+  const content = document.querySelector(".saas-content");
+  const mainNav = document.querySelector(".analytics-section-nav");
+  content.scrollTop = mainNav.offsetTop + mainNav.offsetHeight + 32;
+  await wait(() => document.querySelector(".analytics-quick-nav"), "floating navigation after tabs scroll away");
+  const floatingOperations = [...document.querySelectorAll(".analytics-quick-nav-btn")].find(node => node.textContent === "Operations");
+  floatingOperations.click();
+  await wait(() => document.querySelector('.analytics-tab-btn[aria-current="page"]')?.textContent.includes("Operations"), "floating tab synchronizes main navigation");
+  check(document.querySelector('.analytics-quick-nav-btn[aria-pressed="true"]')?.textContent === "Operations", "Floating and main tab selection stay synchronized");
+  content.scrollTop = 0;
+  await wait(() => !document.querySelector(".analytics-quick-nav"), "floating navigation hides when main tabs return");
+  const mascot = document.querySelector('[aria-label="Open AI Analyst"]');
+  mascot.click();
+  await wait(() => document.querySelector('[aria-label="Close AI Analyst"]'), "open existing AI chat from mascot");
+  check(!document.querySelector('[aria-label="Open AI Analyst"]'), "Standalone mascot hides while chat is open");
+  document.querySelector('[aria-label="Close AI Analyst"]').click();
+  await wait(() => document.querySelector('[aria-label="Open AI Analyst"]'), "mascot returns when chat closes");
+  check(true, "Closing AI chat restores the standalone mascot");
+  for (const [label, heading] of [["Diagnostic", "Diagnostic"], ["Prescriptive", "Prescriptive Analytics"], ["Operations", "Inspector Operations"], ["Descriptive", "Descriptive Analytics"]]) {
+    const tab = [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.startsWith(label));
+    tab.click();
+    await wait(() => tab.getAttribute("aria-current") === "page" && [...document.querySelectorAll("h2")].some(node => node.textContent.includes(heading)), `${label} tab`);
+    check(true, `${label} tab switches to its existing section`);
+  }
 
   mode = "hold";
   button("Refresh").click();
@@ -122,6 +149,28 @@ try {
   release(111);
   await sleep(50);
   check(activeCount() === "222", "Late responses from an older filter scope cannot overwrite newer results");
+  for (const label of ["Descriptive", "Diagnostic", "Prescriptive", "Operations"]) {
+    const tab = [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.startsWith(label));
+    tab.click();
+    await wait(() => tab.getAttribute("aria-current") === "page", `filtered ${label} tab`);
+    check(calls.some(call => call.section === label.toLowerCase() && call.filter === "2") && barangay.value === "2", `${label} receives and retains the selected filter`);
+  }
+  mode = "ready";
+  const registryStatus = [...document.querySelectorAll("select")].find(node => [...node.options].some(option => option.value === "Active"));
+  const flagStatus = [...document.querySelectorAll("select")].find(node => [...node.options].some(option => option.value === "Green"));
+  registryStatus.value = "Expired";
+  registryStatus.dispatchEvent(new Event("change", { bubbles: true }));
+  flagStatus.value = "Red";
+  flagStatus.dispatchEvent(new Event("change", { bubbles: true }));
+  await sleep(20);
+  const beforeApply = calls.length;
+  button("Apply filters").click();
+  await wait(() => calls.length >= beforeApply + 4, "apply shared registry and flag filters");
+  check(calls.slice(beforeApply).every(call => call.query.application_status === "Expired" && call.query.flag_color === "Red" && call.filter === "2"), "Apply filters sends registry, flag and barangay criteria to all four sections");
+  const beforeClear = calls.length;
+  button("Clear all").click();
+  await wait(() => calls.length >= beforeClear + 4, "clear all shared filters");
+  check(calls.slice(beforeClear).every(call => !call.query.application_status && !call.query.flag_color && !call.filter), "Clear all resets the filters across all four sections");
   document.getElementById("analytics-smoke-results").textContent = JSON.stringify({ passed: results.length, failed: 0, checks: results });
 } catch (error) {
   document.getElementById("analytics-smoke-results").textContent = JSON.stringify({ passed: results.length, failed: 1, error: error.stack, checks: results });

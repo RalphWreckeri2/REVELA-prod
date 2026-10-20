@@ -1,5 +1,4 @@
-/* Overview-only refinements. HomePage.css retains the existing shared KPI-card
-   rules used by Analytics; this dashboard uses its own summary and surfaces. */
+/* Overview-only refinements; shared metric cards live in KpiCard.css. */
 .overview-page {
   --overview-surface: var(--color-modal-bg);
   --overview-muted: #526476;

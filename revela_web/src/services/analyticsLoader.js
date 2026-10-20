@@ -17,10 +17,11 @@ function abortableDelay(ms, signal) {
 export function createAnalyticsLoader({
   request, isOnline = () => navigator.onLine, now = () => performance.now(),
   delay = abortableDelay, timeoutMs = 20000, maxRetries = 2, maxPendingPolls = 45,
+  sectionNames = ANALYTICS_SECTIONS,
 }) {
   let state = {
     offline: !isOnline(),
-    sections: Object.fromEntries(ANALYTICS_SECTIONS.map((name) => [name, {
+    sections: Object.fromEntries(sectionNames.map((name) => [name, {
       data: null, status: isOnline() ? "loading" : "offline", updating: false, error: null, metadata: null,
     }])),
   };
@@ -93,6 +94,9 @@ export function createAnalyticsLoader({
           // Abort is advisory; some mocked/cached transports can resolve after it.
           if (lifetime.signal.aborted || scope !== generation) return;
           const metadata = json.analytics_cache;
+          if (!json[name] && !metadata?.loading && !analyticsRefreshPending(metadata)) {
+            throw new Error("The server returned no data for this section. Please retry.");
+          }
           if (json[name]) {
             const snapshot = {
               expiresAt: analyticsSnapshotDeadline(metadata, started),
@@ -129,7 +133,7 @@ export function createAnalyticsLoader({
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     getSnapshot: () => state,
     refresh(force = false) {
-      ANALYTICS_SECTIONS.forEach(expire);
+      sectionNames.forEach(expire);
       if (!isOnline()) { this.connectionChanged(); return Promise.resolve(); }
       // Focus/visibility can be the first signal after a suspended tab missed
       // the browser's online event. Clear the offline state and retry once.
@@ -138,7 +142,7 @@ export function createAnalyticsLoader({
         force = true;
         listeners.forEach((listener) => listener());
       }
-      return Promise.all(ANALYTICS_SECTIONS.map((name) => load(name, force)));
+      return Promise.all(sectionNames.map((name) => load(name, force)));
     },
     connectionChanged() {
       const offline = !isOnline();
@@ -146,7 +150,7 @@ export function createAnalyticsLoader({
       state = { ...state, offline };
       if (offline) {
         this.stop(false);
-        ANALYTICS_SECTIONS.forEach((name) => emit(name, { status: "offline", updating: false }));
+        sectionNames.forEach((name) => emit(name, { status: "offline", updating: false }));
       } else if (wasOffline) {
         void this.refresh(true);
       }

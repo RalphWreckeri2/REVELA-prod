@@ -44,7 +44,6 @@ import {
   getAllFlagsRequest,
   escalateFlagToBlackRequest,
   runDetectionRequest,
-  getDetectionPreflightRequest,
   createYellowFlagRequest,
   getBarangaysRequest,
   assignInspectionRequest,
@@ -2830,17 +2829,6 @@ export default function MapPage() {
     const placesMonthlyCap = activeDetectionPlacesQuota?.monthly_cap ?? 0;
 
     const modeLabel = runDetectionMode === "quick" ? "Quick Discovery" : "Full Coverage";
-    let preflight;
-    try {
-      preflight = await getDetectionPreflightRequest(token, runDetectionMode);
-    } catch (error) {
-      await Swal.fire({ icon: "error", title: "Could not check scan budget", text: error.message });
-      return;
-    }
-    if (!preflight.can_start) {
-      await Swal.fire({ icon: "warning", title: "REVELA scan budget is insufficient", text: preflight.blockers.join(" ") });
-      return;
-    }
     const confirmRes = await Swal.fire({
       title: 'Run Detection Scan?',
       html: `
@@ -2859,9 +2847,6 @@ export default function MapPage() {
               <li><strong>Monthly Scan Quota:</strong> <b>${remaining} of ${monthlyScanLimit}</b> scans remaining this month (resets on <b>${detectionQuota?.resets_on || '1st of next month'}</b>).</li>
               <li><strong>${placesUsage?.nearby_search_mode === "new" ? "Nearby Search (New)" : "Legacy Nearby Search"} daily app cap:</strong> <b>${placesTodayLeft} of ${placesDailyCap}</b> requests left today.</li>
               <li><strong>Monthly app cap:</strong> <b>${placesMonthLeft} of ${placesMonthlyCap}</b> requests left for this method.</li>
-              <li><strong>Saved progress:</strong> ${preflight.saved_points} of ${preflight.total_points} centers completed; ${preflight.remaining_points} remain.</li>
-              <li><strong>Remaining request estimate:</strong> ${preflight.minimum_requests}–${preflight.maximum_requests}, including pagination, adaptive searches and bounded retries applicable to this mode.</li>
-              <li><strong>This execution:</strong> up to ${preflight.planned_requests} paid requests / ${preflight.work_slice_seconds} seconds (configured request cap: ${preflight.work_slice_requests}). ${preflight.budget_covers_complete_run ? "Request allowance covers the remaining scope; a timeout can still pause it." : "Budget covers a resumable slice only; a complete run may require more allowance."}</li>
             </ul>
           </div>
 
@@ -2930,9 +2915,7 @@ export default function MapPage() {
       const runSummary = result.run_summary ?? {};
       const initialRequests = Number(runSummary.initial_requests ?? 0);
       const adaptiveRequests = Number(runSummary.adaptive_requests ?? 0);
-      const requestCount = Number(runSummary.api_requests_consumed ?? initialRequests + adaptiveRequests);
-      const savedPoints = Number(result.saved_points ?? 0);
-      const processedPoints = Number(result.processed_points ?? result.completed_points ?? 0);
+      const requestCount = initialRequests + adaptiveRequests;
       const partialStopDetails = runSummary.work_budget_reason === "time_limit"
         ? `The ${runSummary.work_budget_max_seconds}-second scan limit was reached after ${runSummary.scan_elapsed_seconds} seconds and ${requestCount} Nearby requests.`
         : runSummary.work_budget_reason === "request_limit"
@@ -2955,7 +2938,7 @@ export default function MapPage() {
           <div style="text-align: left; font-size: 13.5px; line-height: 1.55; color: var(--color-ink, #0f172a);">
             <div style="background: ${showWarning ? "rgba(245, 158, 11, 0.10)" : count > 0 ? "rgba(239, 68, 68, 0.08)" : "rgba(16, 185, 129, 0.08)"}; border: 1px solid ${showWarning ? "rgba(245, 158, 11, 0.35)" : count > 0 ? "rgba(239, 68, 68, 0.25)" : "rgba(16, 185, 129, 0.25)"}; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;">
               <div style="font-size: 20px; font-weight: 800; color: ${showWarning ? "#b45309" : count > 0 ? "#dc2626" : "#059669"}; margin-bottom: 3px;">
-                ${showGridProgress ? `${processedPoints} of ${totalPoints} grid points processed` : `${count} Unregistered Business${count !== 1 ? "es" : ""} Detected`}
+                ${showGridProgress ? `${attemptedPoints} of ${totalPoints} grid points attempted` : `${count} Unregistered Business${count !== 1 ? "es" : ""} Detected`}
               </div>
               <div style="font-size: 12.5px; color: ${showWarning ? "#92400e" : count > 0 ? "#7f1d1d" : "#065f46"};">
                 ${hasCoverageGaps
@@ -2967,7 +2950,6 @@ export default function MapPage() {
               : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
               </div>
             </div>
-            <p style="font-size:12.5px; margin-bottom:14px;">${attemptedPoints} centers attempted this execution; ${savedPoints} already saved before it. ${requestCount} paid API requests consumed${runSummary.fixture_requests_replayed ? `; ${runSummary.fixture_requests_replayed} fixture responses replayed` : ""}. Partial runs still count toward daily and monthly API request usage.</p>
             ${showWarning ? `
               <div style="font-size: 12.5px; color: #92400e; background: rgba(245, 158, 11, 0.10); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px; padding: 8px 12px; margin-bottom: 14px;">
                 ${hasCoverageGaps
@@ -3002,15 +2984,13 @@ export default function MapPage() {
     } catch (err) {
       console.error("Detection scan error:", err);
       const errorMessage = err.message || "An error occurred during the geospatial scan.";
-      const isGoogleQuota = err.code === "google_quota";
-      const isAppCap = ["application_scan_budget", "application_api_cap"].includes(err.code);
-      const isQuotaError = isGoogleQuota || isAppCap || (!errorMessage.includes("REQUEST_DENIED")
-        && /429|quota exceeded|daily budget reached|daily limit reached|monthly limit reached/i.test(errorMessage));
+      const isQuotaError = !errorMessage.includes("REQUEST_DENIED")
+        && /429|quota exceeded|daily budget reached|daily limit reached|monthly limit reached/i.test(errorMessage);
       await fetchFlags(true);
       if (isQuotaError) {
         Swal.fire({
           icon: "warning",
-          title: isGoogleQuota ? "Google API Quota Reached" : "REVELA Application Limit Reached",
+          title: "Detection Budget Reached",
           text: errorMessage,
           confirmButtonColor: "#6366f1"
         });

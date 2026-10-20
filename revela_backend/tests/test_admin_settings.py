@@ -926,7 +926,6 @@ class UsageReportTests(unittest.TestCase):
             quota_settings.invalidate()
             from api.utils import usage_report
             with patch.object(usage_report, "mysql", MagicMock()), \
-                    patch("api.flags.service.get_detection_preflight", return_value={"can_start": True}), \
                     patch.object(usage_report, "cloud_quota_for", return_value=CloudMethodQuota(
                         500, 600, False, "Unverified test fixture; confirm in Cloud Console")):
                 self.report = usage_report.build_usage_report()
@@ -976,6 +975,12 @@ class UsageReportTests(unittest.TestCase):
 
     def test_totals_are_labelled_as_estimates(self):
         self.assertTrue(self.report["totals"]["pricing_is_estimate"])
+
+    def test_run_detection_report_has_the_previous_configured_slice_contract(self):
+        self.assertEqual(set(self.report["run_detection"]), {
+            "monthly_scan_limit", "work_slice_seconds", "work_slice_requests",
+            "grid_step_degrees", "nearby_api_mode", "note",
+        })
 
     def test_unverified_pricing_never_reports_a_zero_cost(self):
         self.assertIsNone(

@@ -666,23 +666,6 @@ export default function ApiUsageSettingsPanel({
                 </div>
               </div>
 
-              {usage?.run_detection?.preflight && (
-                <Section title="Can the next scan finish?" description="Request budgets are shared across accounts, separately for each API method. Completed monthly scans and API requests are independent counters.">
-                  <div className="api-usage-methods">
-                    {Object.entries(usage.run_detection.preflight).map(([mode, plan]) => (
-                      <div key={mode} className="api-usage-method-card">
-                        <strong>{mode === "quick" ? "Quick Discovery" : "Full Coverage"}</strong>
-                        <p>{plan.saved_points} of {plan.total_points} centers saved. Remaining request estimate: <b>{formatNumber(plan.minimum_requests)}–{formatNumber(plan.maximum_requests)}</b>.</p>
-                        <p>Execution cap: <b>{formatNumber(plan.work_slice_requests)} requests / {plan.work_slice_seconds}s</b> ({plan.request_cap_source}). Daily allowance remaining: {formatNumber(plan.daily_remaining)}; minimum to start: {formatNumber(plan.required_remaining_allowance)}. This execution is bounded to {formatNumber(plan.planned_requests)} paid requests.</p>
-                        <p>{plan.can_start ? (plan.budget_covers_complete_run ? "Request allowance covers the remaining scope; time limits can still pause it." : "Allowance covers a resumable slice only.") : plan.blockers.join(" ")}</p>
-                        {mode === "full" && <p>A fully bounded dense cell may need {formatNumber(plan.maximum_requests_per_point)} requests. A smaller execution cap can repeatedly pause inside that cell.</p>}
-                        <small>Includes applicable pagination, adaptive queries and retries. Partial scans consume API requests even when no monthly scan is deducted.</small>
-                      </div>
-                    ))}
-                  </div>
-                </Section>
-              )}
-
               {/* ── Warnings ───────────────────────────────────────────── */}
               {warnings.length > 0 && (
                 <div className="api-usage-warnings" role="status">

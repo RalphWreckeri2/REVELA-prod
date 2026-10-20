@@ -1,6 +1,6 @@
 /**
  * HomePage.jsx — Overview Dashboard
- * Live KPIs from /api/analytics/all
+ * Progressive KPIs and priorities from /api/analytics/all section reads
  * Assignment deadlines and backend-ranked barangay priorities
  * Google Map preview with the existing flag population and marker behavior
  */
@@ -12,7 +12,8 @@ import DashboardLayout from "../components/DashboardLayout";
 import Footer from "../components/Footer";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
-import { getAnalyticsOverviewRequest, getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
+import { useAnalyticsData } from "../components/useAnalyticsData";
+import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
@@ -23,6 +24,7 @@ import "../styles/OverviewDashboard.css";
 
 const DEFAULT_CENTER = { lat: 13.9667, lng: 121.1167 };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+const OVERVIEW_ANALYTICS_SECTIONS = ["summary", "prescriptive"];
 
 const FLAG_COLORS = {
   Red: { marker: "#ef4444", bg: "var(--flag-red-bg)", text: "var(--flag-red-text)", label: "Detected Unregistered" },
@@ -228,7 +230,7 @@ function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh
   );
 }
 
-function KpiSummary({ kpis, state }) {
+function KpiSummary({ kpis, state, onRetry }) {
   const measures = [
     { label: "Total registry records", value: kpis?.total_businesses, note: "All records in the official registry." },
     { label: "Active share of registry", value: kpis?.compliance_rate, suffix: "%", note: "Active records as a share of all registry records." },
@@ -251,13 +253,14 @@ function KpiSummary({ kpis, state }) {
         <span className="overview-section-kicker">Overview</span>
       </div>
       <RequestFeedback state={state} label="summary metrics" />
+      {state.error && !state.loading && <button type="button" className="overview-inline-action" onClick={onRetry}>Retry summary</button>}
       {partial && !state.error && <p className="overview-feedback" role="status">Some metric values are unavailable.</p>}
       <dl className="overview-kpis-primary">{measures.slice(0, 2).map(metric)}</dl>
       <dl className="overview-kpis-supporting">{measures.slice(2).map((measure, index) => metric(measure, index + 2))}</dl>
       <details className="overview-explanation">
         <summary>About these measures</summary>
         <p>Active share describes registry status, not municipality-wide compliance. The next-year basis is a derived count, not a renewal schedule.</p>
-        <p>Reporting-year metadata is not supplied. Current-year and next-year wording follows the backend’s reporting period, using each record’s renewal/issue date.</p>
+        <p>Current-year and next-year wording follows the backend’s reporting period{kpis?.reporting_year ? ` (${kpis.reporting_year})` : ""}, using each record’s renewal/issue date.</p>
         <p>This count includes non-green logs and non-green registry locations without a matching log, using the same population as the Map. Missing values appear as —; zero is a reported value.</p>
       </details>
     </section>
@@ -795,8 +798,12 @@ export default function HomePage() {
   const { isLoaded, loadError } = useGoogleMapsScript();
 
 
-  // KPIs
-  const [kpis, setKpis] = useState(null);
+  const { sections, refresh: refreshAnalytics } = useAnalyticsData(token, undefined, OVERVIEW_ANALYTICS_SECTIONS, 20000);
+  const summary = sections.summary;
+  const priorities = sections.prescriptive;
+  const kpis = summary.data?.kpis;
+  const opsRankings = priorities.data?.rankings ?? [];
+  const rollover = summary.data?.new_year_rollover;
 
   // Flags
   const [allFlags, setAllFlags] = useState([]);
@@ -804,11 +811,21 @@ export default function HomePage() {
   const [inspections, setInspections] = useState([]);
   const [inspectors, setInspectors] = useState([]);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
-  const [opsRankings, setOpsRankings] = useState([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [requestStates, setRequestStates] = useState(() => Object.fromEntries(
-    ["kpis", "flags", "inspections", "inspectors", "ops"].map(key => [key, { loading: true, error: false, hasResult: false }]),
+  const [auxiliaryRefreshing, setAuxiliaryRefreshing] = useState(false);
+  const [auxiliaryStates, setAuxiliaryStates] = useState(() => Object.fromEntries(
+    ["flags", "inspections", "inspectors"].map(key => [key, { loading: true, error: false, hasResult: false }]),
   ));
+  const sectionState = (section, valid) => ({
+    loading: section.status === "loading" || section.updating,
+    error: Boolean(section.error) || (!section.updating && section.status !== "loading" && !valid),
+    hasResult: valid,
+  });
+  const requestStates = {
+    ...auxiliaryStates,
+    kpis: sectionState(summary, Boolean(kpis && typeof kpis === "object" && !Array.isArray(kpis))),
+    ops: sectionState(priorities, Array.isArray(priorities.data?.rankings)),
+  };
+  const isRefreshing = auxiliaryRefreshing || Object.values(sections).some(section => section.updating);
   const dashboardRequestRef = useRef(null);
 
   useEffect(() => {
@@ -828,108 +845,80 @@ export default function HomePage() {
 
   const fetchDashboardData = useCallback(async (isSilent = false) => {
     if (!token) return;
-    if (dashboardRequestRef.current && !dashboardRequestRef.current.signal.aborted) {
-      if (isSilent) return;
-      dashboardRequestRef.current.abort();
-    }
+    // Manual refresh, polling and focus share active work rather than restarting it.
+    if (dashboardRequestRef.current) return dashboardRequestRef.current.promise;
     const controller = new AbortController();
     dashboardRequestRef.current = controller;
     if (!isSilent) {
-      setIsRefreshing(true);
+      setAuxiliaryRefreshing(true);
     }
-    setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: true }])));
+    setAuxiliaryStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: true, error: false }])));
 
-    try {
-      const [analyticsRes, flagsRes, inspRes, inspectorsRes] = await Promise.allSettled([
-        getAnalyticsOverviewRequest(token, undefined, { signal: controller.signal }),
-        getFlagsRequest({ limit: 200, signal: controller.signal }, token),
-        getInspectionsRequest({ limit: 1000, signal: controller.signal }, token),
-        getInspectorsRequest(token, { signal: controller.signal }),
-      ]);
-      if (controller.signal.aborted) return;
-      const analyticsKpis = analyticsRes.status === "fulfilled" ? analyticsRes.value?.descriptive?.kpis : null;
-      const analyticsRankings = analyticsRes.status === "fulfilled"
-        ? analyticsRes.value?.prescriptive?.rankings
-        : null;
-      const inspectorData = inspectorsRes.status === "fulfilled" ? (inspectorsRes.value?.data ?? inspectorsRes.value) : null;
-      const successful = {
-        kpis: Boolean(analyticsKpis && typeof analyticsKpis === "object" && !Array.isArray(analyticsKpis)),
-        flags: flagsRes.status === "fulfilled" && Array.isArray(flagsRes.value?.data),
-        inspections: inspRes.status === "fulfilled" && Array.isArray(inspRes.value?.data),
-        inspectors: Array.isArray(inspectorData),
-        ops: Array.isArray(analyticsRankings),
-      };
-
-      // KPIs & Rollover
-      if (analyticsRes.status === "fulfilled" && analyticsRes.value) {
-        const data = analyticsRes.value;
-        if (successful.kpis) setKpis(analyticsKpis);
-
-        if (data?.new_year_rollover?.detected) {
-          Swal.fire({
-            title: "Happy New Year!",
-            html: `<div style="text-align: left; font-size: 13.5px; line-height: 1.6; color: var(--color-ink);">` +
-              `Welcome to <b>${data.new_year_rollover.year}</b>!<br/><br/>` +
-              `The system has automatically marked <b>${data.new_year_rollover.count}</b> active business permits from previous years as <span style="color: var(--color-danger); font-weight: 700;">Expired</span> and their map flags as <span style="color: var(--color-danger); font-weight: 700;">Red</span>.<br/><br/>` +
-              `Let's upload/sync the new BPLO registry to update their statuses.</div>`,
-            icon: "info",
-            confirmButtonText: "Upload Registry Now",
-            showCancelButton: true,
-            cancelButtonText: "Later",
-            confirmButtonColor: "var(--color-primary-dark)",
-            cancelButtonColor: "var(--color-muted)",
-            background: "var(--color-surface)",
-            color: "var(--color-ink)",
-            customClass: {
-              popup: 'frosted-glass saas-card',
-              confirmButton: 'primary-btn',
-              cancelButton: 'ghost-btn'
-            }
-          }).then((result) => {
-            if (data.new_year_rollover.notification_id) {
-              markNotificationsReadRequest(token, [data.new_year_rollover.notification_id]).catch(() => { });
-            }
-            if (result.isConfirmed) {
-              navigate("/registry");
-            }
-          });
+    const load = async (key, request, select, commit) => {
+      const attempt = new AbortController();
+      const abort = () => attempt.abort();
+      controller.signal.addEventListener("abort", abort, { once: true });
+      const timer = window.setTimeout(abort, 20000);
+      try {
+        const result = select(await request(attempt.signal));
+        if (controller.signal.aborted) return;
+        if (attempt.signal.aborted) throw new Error("Dashboard request timed out");
+        if (!Array.isArray(result)) throw new Error("Invalid dashboard response");
+        commit(result);
+        setAuxiliaryStates(previous => ({ ...previous, [key]: { loading: false, error: false, hasResult: true } }));
+      } catch {
+        if (!controller.signal.aborted) {
+          setAuxiliaryStates(previous => ({ ...previous, [key]: { ...previous[key], loading: false, error: true } }));
         }
+      } finally {
+        window.clearTimeout(timer);
+        controller.signal.removeEventListener("abort", abort);
       }
-
-      // Flags
-      if (successful.flags) {
-        setAllFlags(flagsRes.value.data);
-      }
-
-      // Inspections
-      if (successful.inspections) {
-        setInspections(inspRes.value.data);
-      }
-
-      // Inspectors
-      if (successful.inspectors) {
-        setInspectors(inspectorData);
-      }
-
-      // OPS Rankings
-      if (successful.ops) {
-        setOpsRankings(analyticsRankings);
-      }
-      setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, {
-        loading: false, error: !successful[key], hasResult: state.hasResult || successful[key],
-      }])));
-    } catch {
-      if (controller.signal.aborted) return;
-      setRequestStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, {
-        ...state, loading: false, error: true,
-      }])));
-    } finally {
+    };
+    controller.promise = Promise.all([
+      load("flags", signal => getFlagsRequest({ limit: 200, signal }, token), result => result?.data, setAllFlags),
+      load("inspections", signal => getInspectionsRequest({ limit: 1000, signal }, token), result => result?.data, setInspections),
+      load("inspectors", signal => getInspectorsRequest(token, { signal }), result => result?.data ?? result, setInspectors),
+    ]).finally(() => {
       if (dashboardRequestRef.current === controller) {
         dashboardRequestRef.current = null;
-        setIsRefreshing(false);
+        setAuxiliaryRefreshing(false);
       }
+    });
+    return controller.promise;
+  }, [token]);
+
+  useEffect(() => {
+    if (rollover?.detected) {
+      Swal.fire({
+        title: "Happy New Year!",
+        html: `<div style="text-align: left; font-size: 13.5px; line-height: 1.6; color: var(--color-ink);">` +
+          `Welcome to <b>${rollover.year}</b>!<br/><br/>` +
+          `The system has automatically marked <b>${rollover.count}</b> active business permits from previous years as <span style="color: var(--color-danger); font-weight: 700;">Expired</span> and their map flags as <span style="color: var(--color-danger); font-weight: 700;">Red</span>.<br/><br/>` +
+          `Let's upload/sync the new BPLO registry to update their statuses.</div>`,
+        icon: "info",
+        confirmButtonText: "Upload Registry Now",
+        showCancelButton: true,
+        cancelButtonText: "Later",
+        confirmButtonColor: "var(--color-primary-dark)",
+        cancelButtonColor: "var(--color-muted)",
+        background: "var(--color-surface)",
+        color: "var(--color-ink)",
+        customClass: {
+          popup: 'frosted-glass saas-card',
+          confirmButton: 'primary-btn',
+          cancelButton: 'ghost-btn'
+        }
+      }).then((result) => {
+        if (rollover.notification_id) {
+          markNotificationsReadRequest(token, [rollover.notification_id]).catch(() => { });
+        }
+        if (result.isConfirmed) {
+          navigate("/registry");
+        }
+      });
     }
-  }, [token, navigate]);
+  }, [rollover, token, navigate]);
 
   useEffect(() => () => {
     dashboardRequestRef.current?.abort();
@@ -937,7 +926,9 @@ export default function HomePage() {
   }, [fetchDashboardData]);
 
   useEffect(() => {
-    fetchDashboardData(false);
+    // Discarded StrictMode effects never issue duplicate dashboard requests.
+    let current = true;
+    queueMicrotask(() => { if (current) void fetchDashboardData(false); });
 
     let eventTimer;
     const handleEventUpdate = () => {
@@ -968,6 +959,7 @@ export default function HomePage() {
     window.addEventListener("focus", handleVisibilityChange);
 
     return () => {
+      current = false;
       window.removeEventListener("revela:inspection-update", handleEventUpdate);
       window.removeEventListener("revela:yellow-flag", handleEventUpdate);
       window.removeEventListener("revela:flag-update", handleEventUpdate);
@@ -994,11 +986,11 @@ export default function HomePage() {
             requestStates={requestStates}
             mapsReady={isLoaded}
             mapsError={loadError}
-            onRefresh={() => fetchDashboardData(false)}
+            onRefresh={() => { void refreshAnalytics(); void fetchDashboardData(false); }}
             isRefreshing={isRefreshing}
           />
 
-          <KpiSummary kpis={kpis} state={requestStates.kpis} />
+          <KpiSummary kpis={kpis} state={requestStates.kpis} onRetry={refreshAnalytics} />
 
           {/* Map */}
           <MiniMapWidget

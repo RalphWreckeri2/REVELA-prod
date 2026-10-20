@@ -1138,7 +1138,7 @@ class RunDetectionGridTests(unittest.TestCase):
     @patch("api.flags.service._mark_point_done")
     @patch("api.flags.service._completed_points_this_cycle", return_value=set())
     @patch("api.flags.service._fetch_point_results_once")
-    def test_still_saturated_grid_point_is_saved_as_a_gap_not_complete_coverage(
+    def test_still_saturated_grid_point_is_incomplete_and_not_checkpointed(
         self, fetch_once, _completed, mark_done
     ):
         fetch_once.return_value = ([{}] * service.NEARBY_RESULT_LIMIT, True)
@@ -1154,10 +1154,7 @@ class RunDetectionGridTests(unittest.TestCase):
             service._scan_grid(lambda _places: None, None, state)
 
         self.assertEqual(state["incomplete_points"], 1)
-        mark_done.assert_called_once()
-        self.assertTrue(mark_done.call_args.args[0].startswith("gap:v2:"))
-        self.assertEqual(state["done_keys"], [])
-        self.assertTrue(service._grid_scan_has_terminal_gaps(state))
+        mark_done.assert_not_called()
 
     @patch("api.flags.service._mark_point_done")
     @patch("api.flags.service._completed_points_this_cycle", return_value=set())
@@ -1349,7 +1346,6 @@ class RunDetectionGridTests(unittest.TestCase):
                 "registry_count": len(registry),
             }
             with contextlib.ExitStack() as patches:
-                patches.enter_context(patch.object(service, "get_detection_preflight", return_value={"can_start": True}))
                 patches.enter_context(patch.object(service, "mysql", database))
                 patches.enter_context(patch.object(
                     service, "get_detection_quota_info", return_value=quota_info
@@ -1371,7 +1367,6 @@ class RunDetectionGridTests(unittest.TestCase):
                 ))
                 patches.enter_context(patch.object(
                     service, "_mark_point_done"))
-                patches.enter_context(patch.object(service, "_finish_scan_plan"))
                 patches.enter_context(patch.object(
                     service, "_get_barangay_id_by_coords", return_value=1
                 ))

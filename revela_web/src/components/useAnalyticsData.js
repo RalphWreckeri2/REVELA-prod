@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { getAnalyticsOverviewRequest } from "../services/api";
-import { createAnalyticsLoader } from "../services/analyticsLoader";
+import { ANALYTICS_SECTIONS, createAnalyticsLoader } from "../services/analyticsLoader";
 
-export function useAnalyticsData(token, filters) {
+export function useAnalyticsData(token, filters, sectionNames = ANALYTICS_SECTIONS, pollIntervalMs = 30000) {
   const loader = useMemo(() => createAnalyticsLoader({
+    sectionNames,
     request: (section, signal) => getAnalyticsOverviewRequest(token, filters, {
       section, signal, staleWhileRevalidate: true,
     }),
-  }), [token, filters]);
+  }), [token, filters, sectionNames]);
   const state = useSyncExternalStore(loader.subscribe, loader.getSnapshot);
   useEffect(() => {
     if (!token) return undefined;
@@ -23,7 +24,7 @@ export function useAnalyticsData(token, filters) {
     window.addEventListener("offline", connection);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
-    const timer = setInterval(refresh, 30000);
+    const timer = setInterval(refresh, pollIntervalMs);
     return () => {
       current = false;
       loader.stop();
@@ -34,6 +35,7 @@ export function useAnalyticsData(token, filters) {
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [loader, token]);
-  return { ...state, refresh: () => loader.refresh(true) };
+  }, [loader, token, pollIntervalMs]);
+  const refresh = useCallback(() => loader.refresh(true), [loader]);
+  return { ...state, refresh };
 }

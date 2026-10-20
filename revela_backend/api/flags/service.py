@@ -143,10 +143,9 @@ _places_run_state = threading.local()
 
 
 class PlacesBudgetExceeded(Exception):
-    def __init__(self, message, reason="skipped_quota", source="application"):
+    def __init__(self, message, reason="skipped_quota"):
         super().__init__(message)
         self.reason = reason
-        self.source = source
 
 
 _budget_tables_ready = False
@@ -174,15 +173,6 @@ def _ensure_budget_tables():
             CREATE TABLE IF NOT EXISTS scan_point_log (
                 pointKey    VARCHAR(64) NOT NULL PRIMARY KEY,
                 completedAt DATETIME    NOT NULL
-            ) ENGINE=InnoDB
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS detection_scan_plans (
-                scopeKey VARCHAR(16) NOT NULL PRIMARY KEY,
-                cycleID VARCHAR(16) NOT NULL,
-                points LONGTEXT NOT NULL,
-                status VARCHAR(20) NOT NULL DEFAULT 'running',
-                updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
             ) ENGINE=InnoDB
         """)
         mysql.connection.commit()
@@ -219,7 +209,7 @@ def _reserve_places_call(kind):
         ) from exc
     if not allowed:
         raise PlacesBudgetExceeded(
-            f"REVELA application cap reached for Legacy Nearby Search: {reason.replace('_', ' ')} "
+            f"Legacy Nearby Search {reason.replace('_', ' ')} "
             f"(daily {daily_cap}, monthly {monthly_cap}).",
             reason=reason,
         )
@@ -484,16 +474,6 @@ def _completed_points_this_cycle():
     statuses = ", ".join(f"'{s}'" for s in RESUME_RESET_STATUSES)
     cur = mysql.connection.cursor()
     try:
-        # A Full Coverage completion must not discard a partial Quick plan (or
-        # vice versa). New plans use their own persisted cycle id; the old query
-        # remains a compatibility path for pre-plan checkpoints.
-        cycle = getattr(_places_run_state, "cycle_id", None)
-        if cycle:
-            cur.execute(
-                "SELECT pointKey FROM scan_point_log WHERE pointKey LIKE %s OR pointKey LIKE %s",
-                (f"v2:{cycle}:%", f"gap:v2:{cycle}:%"),
-            )
-            return {(r["pointKey"] if isinstance(r, dict) else r[0]) for r in cur.fetchall()}
         cur.execute(f"""
             SELECT pointKey FROM scan_point_log
             WHERE completedAt > COALESCE(
@@ -1350,10 +1330,8 @@ DETECTION_GRID_STEP_DEGREES = _env_positive_float(
 )
 NEARBY_RESULT_LIMIT = 60
 NEW_NEARBY_RESULT_LIMIT = 20
-from api.flags.scan_budget import (
-    LEGACY_MAX_PAGES, NEW_NEARBY_MAX_ATTEMPTS, MAX_ADAPTIVE_DEPTH,
-    MAX_ADAPTIVE_QUERIES_PER_POINT, estimate_requests,
-)
+MAX_ADAPTIVE_DEPTH = 2
+MAX_ADAPTIVE_QUERIES_PER_POINT = 12
 ADAPTIVE_QUERY_RADIUS_RATIO = 0.72
 ADAPTIVE_CENTER_OFFSET_RATIO = 0.5
 RUN_DETECTION_MODES = ("quick", "full")
@@ -1505,10 +1483,7 @@ def _checkpoint_configuration_fingerprint(detection_mode):
         {
             key: value
             for key, value in test_config.items()
-            if key in (
-                "test_mode.enabled", "test_mode.grid_step_degrees",
-                "test_mode.radius_m", "test_mode.max_grid_points",
-            )
+            if key.startswith("test_mode.")
         }
         if test_mode_enabled else {}
     )
@@ -1539,149 +1514,6 @@ def _detection_points_for_mode(mode, barangay_rows=None):
         if test_config["test_mode.enabled"] else 24
     )
     return _quick_discovery_points(barangay_rows, max_points=max_points)
-
-
-def _scan_plan(mode, barangay_rows, *, create=False):
-    """Freeze this cycle's own grid coordinates across threads/restarts/resumes."""
-    _ensure_budget_tables()
-    scope = _checkpoint_configuration_fingerprint(mode)
-    cursor = mysql.connection.cursor()
-    try:
-        cursor.execute(
-            "SELECT cycleID, points, status FROM detection_scan_plans WHERE scopeKey = %s",
-            (scope,),
-        )
-        row = cursor.fetchone()
-        if row and row["status"] == "running":
-            return row["cycleID"], [tuple(point) for point in json.loads(row["points"])]
-        points = _detection_points_for_mode(mode, barangay_rows)
-        legacy_done = _completed_points_this_cycle() if not row else set()
-        if not row and mode == "quick":
-            # The old thread-local rotation could choose a different 24-center
-            # set on resume. Keep every compatible saved center in the adopted
-            # plan before filling its remaining positions from new candidates.
-            saved_points = []
-            for key in sorted(legacy_done):
-                if key.startswith(f"v2:{scope}:"):
-                    try:
-                        point = tuple(float(part) for part in key.rsplit(":", 1)[1].split(","))
-                        if len(point) == 2 and all(math.isfinite(part) for part in point):
-                            saved_points.append(point)
-                    except ValueError:
-                        continue
-            if saved_points:
-                saved_coordinates = {(round(lat, 5), round(lng, 5)) for lat, lng in saved_points}
-                points = (saved_points + [
-                    point for point in points
-                    if (round(point[0], 5), round(point[1], 5)) not in saved_coordinates
-                ])[:max(len(points), min(24, len(saved_points)))]
-        # Adopt compatible pre-upgrade point checkpoints the first time, rather
-        # than charging again for cells completed before this table existed.
-        if not create and not row:
-            return None, points
-        cycle = hashlib.sha256(os.urandom(32)).hexdigest()[:16]
-        if create:
-            cursor.execute("""
-                INSERT INTO detection_scan_plans (scopeKey, cycleID, points, status, updatedAt)
-                VALUES (%s, %s, %s, 'running', NOW())
-                ON DUPLICATE KEY UPDATE cycleID = VALUES(cycleID), points = VALUES(points),
-                    status = 'running', updatedAt = NOW()
-            """, (scope, cycle, json.dumps(points)))
-            mysql.connection.commit()
-            for lat, lng in points:
-                if _checkpoint_point_key(lat, lng, scope) in legacy_done:
-                    _mark_point_done(_checkpoint_point_key(lat, lng, cycle))
-        return cycle, points
-    finally:
-        cursor.close()
-
-
-def _finish_scan_plan(mode):
-    cursor = mysql.connection.cursor()
-    try:
-        cursor.execute(
-            "UPDATE detection_scan_plans SET status = 'completed', updatedAt = NOW() "
-            "WHERE scopeKey = %s AND cycleID = %s",
-            (_checkpoint_configuration_fingerprint(mode), _places_run_state.cycle_id),
-        )
-        mysql.connection.commit()
-    finally:
-        cursor.close()
-
-
-def get_detection_preflight(mode="quick", *, points=None, cycle_id=None):
-    """Estimate before paid calls or scan-result writes; reservations remain authoritative."""
-    if mode not in RUN_DETECTION_MODES:
-        mode = "quick"
-    if points is None:
-        cursor = mysql.connection.cursor()
-        try:
-            cursor.execute("SELECT barangayID, barangayName FROM barangays")
-            barangays = cursor.fetchall()
-        finally:
-            cursor.close()
-        cycle_id, points = _scan_plan(mode, barangays)
-    previous_cycle = getattr(_places_run_state, "cycle_id", None)
-    _places_run_state.cycle_id = cycle_id
-    try:
-        done = _completed_points_this_cycle()
-    finally:
-        _places_run_state.cycle_id = previous_cycle
-    fingerprint = cycle_id or _checkpoint_configuration_fingerprint(mode)
-    saved = sum(
-        _checkpoint_point_key(lat, lng, fingerprint) in done
-        or f"gap:{_checkpoint_point_key(lat, lng, fingerprint)}" in done
-        for lat, lng in points
-    )
-    saved_gaps = sum(f"gap:{_checkpoint_point_key(lat, lng, fingerprint)}" in done for lat, lng in points)
-    api_mode = _nearby_api_mode()
-    estimate = estimate_requests(mode, api_mode, len(points), saved)
-    prefix = "nearby_new" if api_mode == "new" else "legacy_nearby"
-    kinds = ("new_nearby_month", "new_nearby_day") if api_mode == "new" else ("month", "day")
-    usage = read_usage(mysql.connection, *kinds)
-    daily_cap = quota_settings.cap(f"quota.{prefix}.daily")
-    monthly_cap = quota_settings.cap(f"quota.{prefix}.monthly")
-    seconds, request_cap = _detection_work_limits()
-    required = estimate["maximum_requests"] if mode == "quick" else min(request_cap, estimate["minimum_requests"])
-    cache_only = test_mode.is_enabled() and test_mode.get_config()["test_mode.fixture_policy"] == "cache_only"
-    if cache_only:
-        required = 0
-    daily_remaining = max(0, daily_cap - usage["day"])
-    monthly_remaining = max(0, monthly_cap - usage["month"])
-    planned_requests = min(request_cap, estimate["maximum_requests"], daily_remaining, monthly_remaining)
-    blockers = []
-    if not cache_only and mode == "quick" and request_cap < required:
-        blockers.append(f"REVELA's per-scan request cap is {request_cap}; {required} requests are needed for the remaining Quick Discovery scope.")
-    if daily_remaining < required:
-        blockers.append(f"REVELA's daily application allowance has {daily_remaining} requests remaining; this run needs {required}.")
-    if monthly_remaining < required:
-        blockers.append(f"REVELA's monthly application allowance has {monthly_remaining} requests remaining; this run needs {required}.")
-    quota = get_detection_quota_info()
-    if quota["is_limit_reached"]:
-        blockers.append("REVELA's completed monthly scan allowance is exhausted.")
-    return {
-        **estimate, "required_remaining_allowance": required,
-        "saved_coverage_gap_points": saved_gaps,
-        "planned_requests": planned_requests,
-        "daily_cap": daily_cap, "monthly_cap": monthly_cap,
-        "daily_remaining": daily_remaining, "monthly_remaining": monthly_remaining,
-        "work_slice_requests": request_cap, "work_slice_seconds": seconds,
-        "configured_work_slice_requests": quota_settings.cap("run_detection.max_requests"),
-        "test_mode_request_cap": test_mode.get_config().get("test_mode.max_requests") if test_mode.is_enabled() else None,
-        "request_cap_source": (
-            "test_mode" if test_mode.is_enabled() and request_cap < quota_settings.cap("run_detection.max_requests")
-            else quota_settings.snapshot()["run_detection.max_requests"]["source"]
-        ),
-        "budget_covers_complete_run": cache_only or (
-            request_cap >= estimate["maximum_requests"]
-            and daily_remaining >= estimate["maximum_requests"]
-            and monthly_remaining >= estimate["maximum_requests"]
-        ),
-        "cache_only": cache_only, "can_start": not blockers, "blockers": blockers,
-        "limit_source": "application", "monthly_scan_limit": quota["monthly_limit"],
-        "remaining_this_month": quota["remaining_this_month"],
-        "note": "Full Coverage is budgeted as a resumable slice, not a promise of complete coverage. Saturated cells can still have result gaps. Timeouts can pause either mode; completed cells are saved.",
-    }
 
 
 def _detection_radius_m():
@@ -1741,9 +1573,6 @@ def _detection_work_limits():
         max_requests = min(
             max_requests, test_mode.get_config()["test_mode.max_requests"]
         )
-    planned_budget = getattr(_places_run_state, "request_budget", None)
-    if planned_budget is not None:
-        max_requests = min(max_requests, planned_budget)
     return max_seconds, max_requests
 
 
@@ -1887,6 +1716,13 @@ def _new_nearby_request(lat, lng, radius_m):
             "GOOGLE_MAPS_API_KEY or GOOGLE_PLACES_API_KEY must be configured "
             "on the backend."
         )
+    if (quota_settings.cap("quota.nearby_new.daily") <= 0
+            or quota_settings.cap("quota.nearby_new.monthly") <= 0):
+        raise PlacesBudgetExceeded(
+            "Nearby Search (New) is disabled until positive "
+            "NEW_NEARBY_DAILY_CAP and NEW_NEARBY_MONTHLY_CAP limits are configured."
+        )
+
     payload = {
         "excludedTypes": list(NEW_NEARBY_EXCLUDED_TYPES),
         "maxResultCount": NEW_NEARBY_RESULT_LIMIT,
@@ -1905,13 +1741,8 @@ def _new_nearby_request(lat, lng, radius_m):
 
     monthly_cap = quota_settings.cap("quota.nearby_new.monthly")
     daily_cap = quota_settings.cap("quota.nearby_new.daily")
-    if (daily_cap <= 0 or monthly_cap <= 0) and not test_mode.is_enabled():
-        raise PlacesBudgetExceeded(
-            "Nearby Search (New) is disabled until positive "
-            "NEARBY_NEW_DAILY_CAP and NEARBY_NEW_MONTHLY_CAP limits are configured."
-        )
 
-    for attempt in range(NEW_NEARBY_MAX_ATTEMPTS):
+    for attempt in range(4):
         if _detection_work_budget_reached():
             return [], False
 
@@ -1929,11 +1760,6 @@ def _new_nearby_request(lat, lng, radius_m):
                 return _normalize_new_nearby_results(cached.json()), True
 
         with _nearby_request_lock:
-            if daily_cap <= 0 or monthly_cap <= 0:
-                raise PlacesBudgetExceeded(
-                    "Nearby Search (New) is disabled until positive "
-                    "NEARBY_NEW_DAILY_CAP and NEARBY_NEW_MONTHLY_CAP limits are configured."
-                )
             elapsed = time.monotonic() - _nearby_last_request_at
             if _nearby_last_request_at and elapsed < 0.3:
                 time.sleep(max(0.0, random.uniform(0.3, 0.5) - elapsed))
@@ -1953,7 +1779,7 @@ def _new_nearby_request(lat, lng, radius_m):
                 ) from exc
             if not allowed:
                 raise PlacesBudgetExceeded(
-                    f"REVELA application cap reached for Nearby Search (New): {reason.replace('_', ' ')} "
+                    f"Nearby Search (New) {reason.replace('_', ' ')} "
                     f"(daily {daily_cap}, monthly {monthly_cap}).",
                     reason=reason,
                 )
@@ -1992,21 +1818,16 @@ def _new_nearby_request(lat, lng, radius_m):
                 "resource_exhausted", "requestsperday", "per_day", "per day",
                 "daily quota", "quota exceeded",
             ))
-            if per_minute:
-                if attempt < NEW_NEARBY_MAX_ATTEMPTS - 1:
-                    if _detection_work_budget_reached():
-                        return [], False
-                    delay = (2 ** (attempt + 1)) * random.uniform(0.8, 1.2)
-                    print(
-                        f"[Run Detection] New Nearby per-minute throttle; "
-                        f"retry {attempt + 1}/3 after {delay:.2f}s"
-                    )
-                    time.sleep(delay)
-                    continue
-                raise PlacesBudgetExceeded(
-                    "Google Nearby Search (New) per-minute rate limit persisted after four attempts.",
-                    source="google",
+            if per_minute and attempt < 3:
+                if _detection_work_budget_reached():
+                    return [], False
+                delay = (2 ** (attempt + 1)) * random.uniform(0.8, 1.2)
+                print(
+                    f"[Run Detection] New Nearby per-minute throttle; "
+                    f"retry {attempt + 1}/3 after {delay:.2f}s"
                 )
+                time.sleep(delay)
+                continue
             if daily_quota or not per_minute:
                 raise PlacesBudgetExceeded(
                     "Nearby Search (New) quota exhausted by Google (HTTP 429); "
@@ -2015,7 +1836,6 @@ def _new_nearby_request(lat, lng, radius_m):
                         "daily_quota_exceeded"
                         if daily_quota else "skipped_quota"
                     ),
-                    source="google",
                 )
             _record_nearby_api_error()
             print("[Run Detection] New Nearby per-minute retries exhausted.")
@@ -2069,17 +1889,12 @@ def _fetch_legacy_point_results_once(lat, lng, radius_m):
     results, complete = [], True
     quick_mode = getattr(_places_run_state, "mode", "full") == "quick"
 
-    for page in range(LEGACY_MAX_PAGES):
+    while True:
         if _detection_work_budget_reached():
             return results, False
         try:
             resp = _places_get("nearby", url, params=params,
                                headers=headers, timeout=10)
-            if resp.status_code == 429:
-                raise PlacesBudgetExceeded(
-                    "Google Places returned HTTP 429 (quota/rate limit). REVELA's application cap was not the cause.",
-                    source="google",
-                )
             data = resp.json()
         except PlacesBudgetExceeded:
             raise
@@ -2095,9 +1910,7 @@ def _fetch_legacy_point_results_once(lat, lng, radius_m):
         err_msg = data.get("error_message") or ""
         if status == "OVER_QUERY_LIMIT":
             raise PlacesBudgetExceeded(
-                f"Google Places quota/rate limit reached (OVER_QUERY_LIMIT). REVELA's application cap was not the cause.",
-                source="google",
-            )
+                f"Places API daily budget reached (Google returned {status}). Try again tomorrow.")
         if status == "REQUEST_DENIED":
             details = f": {err_msg}" if err_msg else ""
             raise RuntimeError(
@@ -2114,10 +1927,6 @@ def _fetch_legacy_point_results_once(lat, lng, radius_m):
         results.extend(data.get("results", []))
         next_token = data.get("next_page_token")
         if not next_token or quick_mode:
-            return results, complete
-        if page == LEGACY_MAX_PAGES - 1:
-            # Google exposes at most three Legacy pages; never follow an
-            # unbounded token chain from a malformed response.
             return results, complete
         time.sleep(2)
         params = {"pagetoken": next_token, "key": api_key}
@@ -2150,19 +1959,11 @@ def _nearby_circle_intersects_municipality(lat, lng, radius_m):
 def _fetch_point_results(lat, lng, radius_m):
     """
     Fetch one grid cell and deduplicate overlapping parent/child results by place ID.
-    Refinement is bounded. A finished-but-saturated area receives a gap checkpoint;
-    work/API interruptions leave the cell retryable.
+    Refinement is bounded; a still-saturated area is left uncheckpointed for a later scan.
     """
     query_budget = {"remaining": MAX_ADAPTIVE_QUERIES_PER_POINT}
-    errors_before = getattr(_places_run_state, "api_errors", 0)
-    _places_run_state.saturation_seen = False
     results, complete = _fetch_point_results_adaptive(
         lat, lng, radius_m, depth=0, query_budget=query_budget
-    )
-    _places_run_state.terminal_coverage_gap = (
-        not complete and _places_run_state.saturation_seen
-        and not getattr(_places_run_state, "work_budget_exhausted", False)
-        and getattr(_places_run_state, "api_errors", 0) == errors_before
     )
     return _deduplicate_nearby_results(results), complete
 
@@ -2196,7 +1997,6 @@ def _fetch_point_results_adaptive(lat, lng, radius_m, depth, query_budget):
         return results, False
     if len(results) < result_limit:
         return results, True
-    _places_run_state.saturation_seen = True
 
     print(
         f"[Run Detection] Nearby Search saturated at {len(results)} results "
@@ -2291,33 +2091,20 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
     done_before = _completed_points_this_cycle()
     if points is None:
         points = _detection_points_for_mode(detection_mode)
-    fingerprint = getattr(_places_run_state, "cycle_id", None) or _checkpoint_configuration_fingerprint(detection_mode)
+    fingerprint = _checkpoint_configuration_fingerprint(detection_mode)
     state["total_points"] = len(points)
     state["detection_mode"] = detection_mode
-    state["attempted_this_run"] = 0
-    state["saved_points"] = sum(
-        _checkpoint_point_key(lat, lng, fingerprint) in done_before
-        or f"gap:{_checkpoint_point_key(lat, lng, fingerprint)}" in done_before
-        for lat, lng in points
-    )
-    state["saved_gap_points"] = sum(
-        f"gap:{_checkpoint_point_key(lat, lng, fingerprint)}" in done_before for lat, lng in points
-    )
-    state["gap_keys"] = []
-    state["incomplete_points"] += state["saved_gap_points"]
 
     for idx, (lat, lng) in enumerate(points):
         if is_cancelled("run_detection"):
+            break
+        if _detection_work_budget_reached():
+            state["work_budget_stop"] = True
             break
         key = _checkpoint_point_key(lat, lng, fingerprint)
         if key in done_before:
             state["skipped_points"] += 1
             continue
-        if f"gap:{key}" in done_before:
-            continue
-        if _detection_work_budget_reached():
-            state["work_budget_stop"] = True
-            break
 
         if progress_cb:
             progress_cb(
@@ -2329,8 +2116,6 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
             )
 
         errors_before_query = getattr(_places_run_state, "api_errors", 0)
-        _places_run_state.terminal_coverage_gap = False
-        state["attempted_this_run"] += 1
         results, complete = _fetch_point_results_for_mode(
             lat, lng, _detection_radius_m(), detection_mode
         )
@@ -2368,13 +2153,7 @@ def _scan_grid(process_places, progress_cb, state, detection_mode="full", points
         if complete:
             _mark_point_done(key)
             state["done_keys"].append(key)
-        elif getattr(_places_run_state, "terminal_coverage_gap", False):
-            # This cell finished its bounded search, with a known result-cap
-            # gap. Persist that outcome so a later slice advances past it.
-            gap_key = f"gap:{key}"
-            _mark_point_done(gap_key)
-            state["gap_keys"].append(gap_key)
-        elif getattr(_places_run_state, "work_budget_exhausted", False):
+        if _detection_work_budget_reached():
             state["work_budget_stop"] = True
             break
 
@@ -2385,11 +2164,6 @@ def _grid_scan_has_terminal_gaps(state):
         + len(state["done_keys"])
         + state["incomplete_points"]
     )
-    if "gap_keys" in state:
-        attempted_points = (
-            state["skipped_points"] + len(state["done_keys"])
-            + state["saved_gap_points"] + len(state["gap_keys"])
-        )
     return (
         attempted_points >= state["total_points"]
         and state["incomplete_points"] > 0
@@ -2719,12 +2493,7 @@ def run_detection(user_id=None, mode="quick"):
         return None, "A detection scan is already in progress."
     try:
         return _run_detection_cycle(user_id=user_id, mode=mode)
-    except Exception:
-        traceback.print_exc()
-        return None, "Could not prepare the scan or read its usage limits. Please retry."
     finally:
-        _places_run_state.cycle_id = None
-        _places_run_state.request_budget = None
         _run_detection_lock.release()
 
 
@@ -2741,8 +2510,6 @@ def _run_detection_cycle(user_id=None, mode="quick"):
     request_started_at = time.monotonic()
     set_cancel("run_detection", False)
     _places_run_state.mode = mode
-    _places_run_state.cycle_id = None
-    _places_run_state.request_budget = None
     _places_run_state.quick_scan_history = getattr(
         _places_run_state, "quick_scan_history", {})
     _places_run_state.calls = {
@@ -2784,23 +2551,6 @@ def _run_detection_cycle(user_id=None, mode="quick"):
     finally:
         cursor.close()
 
-    # Recheck server-side immediately before execution, even if the browser
-    # already displayed a preflight. No paid call occurs on a rejected plan.
-    cursor = mysql.connection.cursor()
-    try:
-        cursor.execute("SELECT barangayID, barangayName FROM barangays")
-        plan_barangays = cursor.fetchall()
-    finally:
-        cursor.close()
-    cycle_id, points = _scan_plan(mode, plan_barangays)
-    preflight = get_detection_preflight(mode, points=points, cycle_id=cycle_id)
-    if not preflight["can_start"]:
-        return {"status": "preflight_blocked", "limit_source": "application",
-                "preflight": preflight}, " ".join(preflight["blockers"])
-    cycle_id, points = _scan_plan(mode, plan_barangays, create=True)
-    _places_run_state.cycle_id = cycle_id
-    if not preflight.get("cache_only"):
-        _places_run_state.request_budget = preflight.get("planned_requests")
     run_id = create_detection_run(user_id)
     state = {
         "done_keys": [], "total_points": 0, "skipped_points": 0,
@@ -3002,6 +2752,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             return processing_complete
 
         _places_run_state.started_at = time.monotonic()
+        points = _detection_points_for_mode(mode, barangay_rows)
         _places_run_state.db_metrics_active = True
         try:
             _scan_grid(process_places, progress_callback, state,
@@ -3012,7 +2763,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         if is_cancelled("run_detection"):
             # Keep newly inserted Red flags and checkpoints in sync on cancellation.
             _cleanup_cancelled_detection(
-                inserted_flag_ids, state["done_keys"] + state.get("gap_keys", []))
+                inserted_flag_ids, state["done_keys"])
             update_detection_run_status(run_id, "cancelled")
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
@@ -3046,7 +2797,6 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             update_detection_run_status(
                 run_id, "completed_with_gaps",
                 new_flags=new_flags, total_checked=total_checked)
-            _finish_scan_plan(mode)
             msg = (
                 f"Scan reached all {state['total_points']} grid points, but "
                 f"{state['incomplete_points']} dense cells remained saturated. "
@@ -3083,7 +2833,6 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         else:
             update_detection_run_status(
                 run_id, "completed", new_flags=new_flags, total_checked=total_checked)
-            _finish_scan_plan(mode)
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
@@ -3097,10 +2846,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             "new_flags":        new_flags,
             "total_checked":    total_checked,
             "completed_points": done_total,
-            "processed_points": done_total + state.get("saved_gap_points", 0) + len(state.get("gap_keys", [])),
-            "attempted_points": state.get("attempted_this_run", 0),
-            "saved_points": state.get("saved_points", 0),
-            "preflight": preflight,
+            "attempted_points": (
+                done_total + state["incomplete_points"]
+            ),
             "total_points":     state["total_points"],
             "outside_boundary": state["outside"],
             "incomplete_points": state["incomplete_points"],
@@ -3132,10 +2880,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "work_budget_reason": getattr(
                     _places_run_state, "work_budget_reason", None
                 ),
-                "work_budget_max_seconds": _detection_work_limits()[0],
-                "work_budget_max_requests": _detection_work_limits()[1],
-                "saved_points": state.get("saved_points", 0),
-                "attempted_this_run": state.get("attempted_this_run", 0),
+                "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
+                "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
                 **elapsed,
                 **_detection_performance_metrics(
                     counters, registry, registry_match_index
@@ -3166,10 +2912,6 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         return {
             "status": be.reason,
             "quota_reason": be.reason,
-            "limit_source": be.source,
-            "new_flags": counters["new_flags"],
-            "total_checked": counters["total_checked"],
-            "quota": get_detection_quota_info(),
             "run_summary": {
                 "detection_mode": mode,
                 "results_received": getattr(_places_run_state, "results_received", 0),
@@ -3197,8 +2939,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "work_budget_reason": getattr(
                     _places_run_state, "work_budget_reason", None
                 ),
-                "work_budget_max_seconds": _detection_work_limits()[0],
-                "work_budget_max_requests": _detection_work_limits()[1],
+                "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
+                "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
                 **_detection_elapsed_metrics(request_started_at),
                 **_detection_performance_metrics(
                     counters, registry, registry_match_index
@@ -3207,9 +2949,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             },
             "places_usage": places_usage,
             "completed_points": done_total,
-            "processed_points": done_total + state.get("saved_gap_points", 0) + len(state.get("gap_keys", [])),
-            "attempted_points": state.get("attempted_this_run", 0),
-            "saved_points": state.get("saved_points", 0),
+            "attempted_points": (
+                done_total + state["incomplete_points"]
+            ),
             "total_points": state["total_points"],
         }, msg
 
