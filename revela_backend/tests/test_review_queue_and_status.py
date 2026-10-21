@@ -1127,7 +1127,7 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
 
     @patch("api.registry.places_resolver._update_pin")
     @patch("api.registry.places_resolver.mysql")
-    def test_rejecting_reverify_proposal_keeps_original_pin(self, mock_mysql, update_pin):
+    def test_rejecting_reverify_proposal_restores_original_pin(self, mock_mysql, update_pin):
         cursor = MagicMock()
         cursor.fetchone.side_effect = [
             {
@@ -1144,6 +1144,13 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
                 "newLng": 121.115,
                 "placeID": "proposed_place",
                 "score": 0.68,
+                "oldLat": 13.962,
+                "oldLng": 121.112,
+                "oldCoordSource": "places",
+                "oldPlaceID": "existing_place",
+                "oldPlaceIDKind": "poi",
+                "oldMatchScore": 0.91,
+                "oldMatchStatus": None,
             },
         ]
         mock_mysql.connection.cursor.return_value = cursor
@@ -1152,7 +1159,19 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIsNone(error)
-        update_pin.assert_not_called()
+        update_pin.assert_called_once_with(
+            cursor, 1, "Candidate Store", 13.965, 121.115, 13.962, 121.112,
+            business_id="BIZ-REV-03",
+        )
+        restore_registry = next(
+            call for call in cursor.execute.call_args_list
+            if "SET latitude=%s, longitude=%s, coordSource=%s" in call.args[0]
+        )
+        self.assertEqual(
+            restore_registry.args[1],
+            (13.962, 121.112, "places", "existing_place", "poi", None, 0.91,
+             "BIZ-REV-03"),
+        )
         self.assertNotIn(
             "latitude=NULL",
             "\n".join(call.args[0] for call in cursor.execute.call_args_list),

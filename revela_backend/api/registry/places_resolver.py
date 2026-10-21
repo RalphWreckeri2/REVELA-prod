@@ -1420,7 +1420,9 @@ def decide_review(
             return True, None
 
         cur.execute(
-            """SELECT id AS reviewHistoryID, newLat, newLng, placeID, score
+            """SELECT id AS reviewHistoryID, newLat, newLng, placeID, score,
+                      oldLat, oldLng, oldCoordSource, oldPlaceID,
+                      oldPlaceIDKind, oldMatchScore, oldMatchStatus
                FROM registry_pin_history
                WHERE businessID=%s AND outcome='review'
                  AND (reviewType='reverify' OR reviewType IS NULL)
@@ -1449,6 +1451,13 @@ def decide_review(
             proposal.get("score") if isinstance(proposal, dict)
             else proposal[4] if proposal else None
         )
+        proposal_old_lat = _g(proposal, "oldLat", 5)
+        proposal_old_lng = _g(proposal, "oldLng", 6)
+        proposal_old_coord_source = _g(proposal, "oldCoordSource", 7)
+        proposal_old_place_id = _g(proposal, "oldPlaceID", 8)
+        proposal_old_place_id_kind = _g(proposal, "oldPlaceIDKind", 9)
+        proposal_old_match_score = _g(proposal, "oldMatchScore", 10)
+        proposal_old_match_status = _g(proposal, "oldMatchStatus", 11)
         has_reverify_proposal = (
             proposal_id is not None
             and proposal_lat is not None
@@ -1515,10 +1524,40 @@ def decide_review(
                     (business_id, pid)
                 )
             if has_reverify_proposal:
-                cur.execute(
-                    "UPDATE official_registry SET matchStatus=NULL, matchScore=NULL WHERE businessID=%s",
-                    (business_id,),
-                )
+                if (
+                    proposal_old_lat is not None
+                    and proposal_old_lng is not None
+                ):
+                    cur.execute(
+                        """UPDATE official_registry
+                           SET latitude=%s, longitude=%s, coordSource=%s,
+                               placeID=%s, placeIDKind=%s, matchStatus=%s,
+                               matchScore=%s
+                           WHERE businessID=%s AND matchStatus='review'""",
+                        (
+                            proposal_old_lat, proposal_old_lng,
+                            proposal_old_coord_source, proposal_old_place_id,
+                            proposal_old_place_id_kind, proposal_old_match_status,
+                            proposal_old_match_score, business_id,
+                        ),
+                    )
+                    if (
+                        (float(proposal_old_lat), float(proposal_old_lng))
+                        != (float(proposal_lat), float(proposal_lng))
+                    ):
+                        _update_pin(
+                            cur, _g(r, "barangayID", 1), _g(r, "businessName", 2),
+                            proposal_lat, proposal_lng,
+                            proposal_old_lat, proposal_old_lng,
+                            business_id=business_id,
+                        )
+                else:
+                    cur.execute(
+                        """UPDATE official_registry
+                           SET matchStatus=NULL, matchScore=NULL
+                           WHERE businessID=%s AND matchStatus='review'""",
+                        (business_id,),
+                    )
                 cur.execute(
                     "UPDATE registry_pin_history SET outcome='review_rejected' WHERE id=%s",
                     (proposal_id,),
