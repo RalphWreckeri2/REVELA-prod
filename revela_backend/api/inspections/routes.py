@@ -21,6 +21,7 @@ from api.inspections.service import (
     InspectionVerificationConflict,
     reassign_submitted_report,
     verify_inspection,
+    preview_green_registry_link,
     get_all_inspections,
     get_inspection_calendar,
     user_can_access_inspection_evidence,
@@ -30,6 +31,7 @@ from api.inspections.service import (
 )
 from api.middleware.decorators import jwt_required, admin_required
 from api.models.user import find_user_by_id
+from api.registry.inspection_link import GreenRegistryLinkError
 from api.notifications.service import (
     notify_inspection_assigned,
     notify_inspection_submitted,
@@ -400,6 +402,15 @@ def reassign_submitted(report_id):
 
 
 # ── POST /api/inspections/<id>/verify ─────────────────────────────────────────
+@inspections_bp.route("/<int:report_id>/green-registry-link", methods=["GET"])
+@admin_required()
+def green_registry_link_preview(report_id):
+    result, error = preview_green_registry_link(report_id, request.args.get("businessID"))
+    if error:
+        return jsonify({"error": str(error), "code": "green_registry_link_conflict" if error.conflict else "green_registry_link_invalid"}), 409 if error.conflict else 400
+    return jsonify(result), 200
+
+
 @inspections_bp.route("/<int:report_id>/verify", methods=["POST", "OPTIONS"])
 @admin_required()
 def verify(report_id):
@@ -407,6 +418,8 @@ def verify(report_id):
         return "", 204
     """Admin confirms inspection result → updates geospatial_logs flagColor."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required"}), 400
     update_location = data.get("updateLocation", False)
     if not isinstance(update_location, bool):
         return jsonify({"error": "updateLocation must be a boolean"}), 400
@@ -414,8 +427,14 @@ def verify(report_id):
         report_id=report_id,
         verified_by_user_id=get_jwt_identity(),
         update_location=update_location,
+        business_id=data.get("businessID"),
+        confirm_establishment=data.get("confirmEstablishment", False),
+        registry_review_token=data.get("registryReviewToken"),
+        registry_fields=data.get("registryFields"),
     )
     if error:
+        if isinstance(error, GreenRegistryLinkError):
+            return jsonify({"error": str(error), "code": "green_registry_link_conflict" if error.conflict else "green_registry_link_invalid"}), 409 if error.conflict else 400
         if isinstance(error, InspectionVerificationConflict):
             return jsonify({
                 "error": str(error),

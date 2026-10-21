@@ -37,20 +37,15 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
         # Model the SQL semantics of the _sync_flag_color lookup instead of
         # blindly returning a row:
         #   WHERE (g.businessID IS NOT NULL AND g.businessID = %s)
-        #      OR (g.businessID IS NULL AND g.barangayID = %s AND g.detectedName = %s)
-        # A NULL business_id therefore matches nothing, and the pin is only
-        # found through the name+barangay branch when businessID IS NULL.
+        # A NULL business_id matches nothing: name-only adoption is forbidden.
         def fetchone():
             last_sql, last_params = cursor.execute.call_args.args
             if "FROM official_registry" in last_sql:
                 return registry_row
             if "SELECT g.logID" in last_sql:
-                wanted_id, brgy, name = last_params[0], last_params[1], last_params[2]
+                wanted_id = last_params[0]
                 if wanted_id:
                     return pin
-                if name == registry_row["businessName"] and brgy == registry_row["barangayID"]:
-                    # name+barangay branch, but only for unlinked pins
-                    return None
                 return None
             return None
 
@@ -79,7 +74,7 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
         # already carry businessID, so the name+barangay fallback branch
         # ("g.businessID IS NULL AND ...") can never match them.
         self.assertEqual(pin_lookups[0].args[1][0], "BIZ-1")
-        self.assertEqual(pin_lookups[0].args[1][3], "BIZ-1")
+        self.assertEqual(pin_lookups[0].args[1][1], "BIZ-1")
 
         pin_updates = [
             call for call in cursor.execute.call_args_list
@@ -190,9 +185,8 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
             if "SELECT g.logID" in call.args[0]
         ]
         params = pin_lookups[0].args[1]
-        self.assertEqual(params[1], 7, "barangay of the edited row is used")
-        self.assertEqual(params[2], "ACME STORE")
-        self.assertEqual(params[3], "BIZ-1",
+        self.assertEqual(params[0], "BIZ-1", "only the explicit ID identifies the edited row")
+        self.assertEqual(params[1], "BIZ-1",
                          "ORDER BY must prefer the exact businessID match")
 
     @patch("api.registry.service.mysql")

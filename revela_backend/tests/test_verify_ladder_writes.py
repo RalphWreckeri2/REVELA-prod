@@ -16,6 +16,7 @@ from api.registry.locks import reset_lock_column_cache
 from api.registry.colors import reset_ladder_column_cache
 from api.inspections.service import InspectionVerificationConflict
 from api.inspections import service as inspection_service
+from api.registry.inspection_link import GreenRegistryLinkError, prepare_green_link
 import os
 import sys
 import unittest
@@ -47,6 +48,16 @@ class LadderVerifyHarness(unittest.TestCase):
 
         def classify(sql):
             flat = " ".join(sql.split())
+            if flat.startswith("SHOW COLUMNS FROM official_registry"):
+                return "confirmed_pin_probe"
+            if flat.startswith("SELECT * FROM geospatial_logs"):
+                return "link_pin"
+            if flat.startswith("SELECT * FROM official_registry"):
+                return "link_registry"
+            if "WHERE confirmedLogID =" in flat:
+                return "link_owner"
+            if flat.startswith("SELECT g.logID, g.source"):
+                return "link_others"
             if "information_schema.COLUMNS" in flat:
                 return "probe"
             if "information_schema.TABLES" in flat:
@@ -70,6 +81,12 @@ class LadderVerifyHarness(unittest.TestCase):
         def execute(sql, params=()):
             kind = classify(sql)
             matched["has_row"] = False
+            if kind == "confirmed_pin_probe":
+                cursor.fetchall.return_value = [{"Field": "confirmedLogID"}]
+                return
+            if kind == "link_others":
+                cursor.fetchall.return_value = []
+                return
             if kind == "probe":
                 cursor.fetchall.return_value = (
                     [("warningLevel",), ("blackLocked",),
@@ -93,6 +110,12 @@ class LadderVerifyHarness(unittest.TestCase):
         def fetchone():
             kind = classify(cursor.execute.call_args.args[0])
             has_row = registry_business_id == pin_business_id
+            if kind == "link_pin":
+                return {"logID": 22, "businessID": pin_business_id, "detectedName": "Warned Shop",
+                        "barangayID": 1, "latitude": 13.9667, "longitude": 121.1167, "source": "registry"}
+            if kind == "link_registry":
+                return {"businessID": registry_business_id, "businessName": "Warned Shop",
+                        "barangayID": 1, "applicationStatus": application_status, "confirmedLogID": None} if has_row else None
             if kind == "probe":
                 # locks.lock_column_available() probes information_schema with
                 # fetchone(). If this returns None the guard reads the column
@@ -145,8 +168,12 @@ class LadderVerifyHarness(unittest.TestCase):
             patch("api.notifications.hub.publish_to_admins"),
         ):
             mock_mysql.connection.cursor.return_value = cursor
+            args = {}
+            if result == "Green" and pin_business_id:
+                plan = prepare_green_link(cursor, {"targetID": 22}, pin_business_id)
+                args = dict(business_id=pin_business_id, confirm_establishment=True, registry_review_token=plan["reviewToken"])
             outcome = inspection_service.verify_inspection(
-                4, verified_by_user_id=admin_user_id)
+                4, verified_by_user_id=admin_user_id, **args)
         return outcome, cursor
 
     # ── helpers over the recorded statements ─────────────────────────────────
@@ -335,7 +362,7 @@ class StatusWriteTests(LadderVerifyHarness):
             with self.subTest(result=result):
                 (out, error), cursor = self._run(result=result)
                 self.assertIsNone(error)
-                updates = self._statements(cursor, "UPDATE official_registry")
+                updates = [s for s in self._statements(cursor, "UPDATE official_registry") if "applicationStatus = %s" in s[0]]
                 self.assertTrue(updates)
                 self.assertIn("applicationStatus = %s", updates[0][0])
                 self.assertIn(expected, updates[0][1])
@@ -349,14 +376,15 @@ class StatusWriteTests(LadderVerifyHarness):
         self.assertEqual(len(closed), 1)
         self.assertTrue(result["registryClosed"])
 
-    def test_an_unregistered_pin_writes_only_to_the_pin(self):
+    def test_unregistered_green_requires_an_explicit_registry_review(self):
         (result, error), cursor = self._run(
             result="Green", pin_business_id=None, registry_business_id=None)
-        self.assertIsNone(error)
+        self.assertIsInstance(error, GreenRegistryLinkError)
+        self.assertIsNone(result)
         self.assertEqual(self._statements(
             cursor, "UPDATE official_registry"), [])
         self.assertEqual(self._events(cursor), [])
-        self.assertEqual(self._pin_update(cursor)[1], ("Green", 0, 22))
+        self.assertEqual(self._statements(cursor, "UPDATE geospatial_logs"), [])
 
     def test_an_unregistered_orange_pin_still_verifies(self):
         """No registry row means no ladder, so there is no level to check."""
@@ -401,11 +429,16 @@ class UnmigratedDatabaseTests(LadderVerifyHarness):
             cursor, "UPDATE geospatial_logs"), [])
 
     def test_the_other_results_still_verify(self):
-        for result in ("Red", "Yellow", "Green", "Purple"):
+        for result in ("Red", "Yellow", "Purple"):
             with self.subTest(result=result):
                 (out, error), _ = self._run(result=result, ladder=False)
                 self.assertIsNone(error)
                 self.assertEqual(out["newFlagColor"], result)
+
+    def test_green_linking_requires_the_enforcement_migration(self):
+        (out, error), _ = self._run(result="Green", ladder=False)
+        self.assertIsNone(out)
+        self.assertIsInstance(error, GreenRegistryLinkError)
 
     def test_an_unregistered_orange_pin_is_still_refused(self):
         """The lock has nowhere to go even for a pin with no registry row."""

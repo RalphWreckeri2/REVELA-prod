@@ -1014,6 +1014,7 @@ export async function verifyInspectionRequest(
   reportId,
   token,
   updateLocation = false,
+  registryLink = {},
 ) {
   try {
     const res = await fetch(`${BASE_URL}/inspections/${reportId}/verify`, {
@@ -1022,7 +1023,19 @@ export async function verifyInspectionRequest(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ updateLocation }),
+      body: JSON.stringify({ ...registryLink, updateLocation }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function previewGreenRegistryLinkRequest(reportId, businessID, token) {
+  try {
+    const qs = new URLSearchParams({ businessID });
+    const res = await fetch(`${BASE_URL}/inspections/${reportId}/green-registry-link?${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
     return await handleResponse(res);
   } catch (err) {

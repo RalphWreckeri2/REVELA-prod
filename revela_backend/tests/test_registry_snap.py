@@ -152,7 +152,8 @@ class RegistrySnapTests(unittest.TestCase):
         self.assertEqual(summary["skipped_quota"], 0)
         update_pin.assert_not_called()
         mock_mysql.connection.commit.assert_not_called()
-        select_cursor.execute.assert_called_once()
+        self.assertFalse([call for call in select_cursor.execute.call_args_list
+                          if call.args[0].lstrip().startswith(("UPDATE", "INSERT", "DELETE"))])
         self.assertTrue(select_cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
         select_cursor.close.assert_called_once()
 

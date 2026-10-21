@@ -785,12 +785,18 @@ def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, b
     """Update the map pin only if it is still a copy of the registry coordinate being replaced."""
     if old_lat is None or old_lng is None:
         return
+    from api.registry.inspection_link import confirmed_pin_column_available
+    if business_id and confirmed_pin_column_available(cursor):
+        cursor.execute("SELECT confirmedLogID FROM official_registry WHERE businessID = %s FOR UPDATE", (business_id,))
+        confirmed = cursor.fetchone()
+        if confirmed and confirmed.get("confirmedLogID") is not None:
+            return
     if business_id:
         cursor.execute(
             """UPDATE geospatial_logs SET latitude=%s, longitude=%s
-               WHERE ((businessID = %s) OR (businessID IS NULL AND barangayID=%s AND detectedName=%s))
-                 AND ABS(latitude-%s) < 0.000001 AND ABS(longitude-%s) < 0.000001""",
-            (new_lat, new_lng, business_id, barangay_id, name, float(old_lat), float(old_lng)))
+               WHERE businessID = %s
+                  AND ABS(latitude-%s) < 0.000001 AND ABS(longitude-%s) < 0.000001""",
+            (new_lat, new_lng, business_id, float(old_lat), float(old_lng)))
     else:
         cursor.execute(
             """UPDATE geospatial_logs SET latitude=%s, longitude=%s
@@ -814,11 +820,14 @@ def refresh_expired_coords(limit=500):
         return {"refreshed": 0, "skipped": "no key or halted"}
     reset_run_state()
     cur = mysql.connection.cursor()
+    from api.registry.inspection_link import confirmed_pin_column_available
+    confirmed_guard = "AND confirmedLogID IS NULL" if confirmed_pin_column_available(cur) else ""
     cur.execute(
-        """SELECT businessID, barangayID, businessName, latitude, longitude, placeID
+        f"""SELECT businessID, barangayID, businessName, latitude, longitude, placeID
            FROM official_registry
            WHERE coordSource IN ('places','geocode') AND placeID IS NOT NULL
-             AND matchStatus IS NOT NULL AND matchStatus NOT IN ('rejected', 'approved')
+              AND matchStatus IS NOT NULL AND matchStatus NOT IN ('rejected', 'approved')
+              {confirmed_guard}
              AND (coordFetchedAt IS NULL OR coordFetchedAt < NOW() - INTERVAL %s DAY)
            ORDER BY coordFetchedAt IS NULL DESC, coordFetchedAt ASC LIMIT %s""",
         (REFRESH_AFTER_DAYS, int(limit)))
@@ -852,7 +861,7 @@ def refresh_expired_coords(limit=500):
             failed += 1
             continue
         cur.execute("UPDATE official_registry SET latitude=%s, longitude=%s, coordFetchedAt=NOW() "
-                    "WHERE businessID=%s", (loc["latitude"], loc["longitude"], bid))
+                    "WHERE businessID=%s " + confirmed_guard, (loc["latitude"], loc["longitude"], bid))
         _update_pin(cur, brgy, name, olat, olng,
                     loc["latitude"], loc["longitude"], business_id=bid)
         mysql.connection.commit()
@@ -865,9 +874,12 @@ def purge_expired_coords(dry_run=True):
     """Safety net: clear Google-derived coordinates that were not refreshed in time (>= PURGE_AFTER_DAYS).
     Defaults to dry_run so nothing is deleted until you choose to."""
     cur = mysql.connection.cursor()
+    from api.registry.inspection_link import confirmed_pin_column_available
+    confirmed_guard = "AND confirmedLogID IS NULL" if confirmed_pin_column_available(cur) else ""
     cur.execute(
-        """SELECT businessID, barangayID, businessName, latitude, longitude FROM official_registry
-           WHERE coordSource IN ('places','geocode') AND latitude IS NOT NULL
+        f"""SELECT businessID, barangayID, businessName, latitude, longitude FROM official_registry
+            WHERE coordSource IN ('places','geocode') AND latitude IS NOT NULL
+              {confirmed_guard}
              AND coordFetchedAt < NOW() - INTERVAL %s DAY""", (PURGE_AFTER_DAYS,))
     rows = cur.fetchall()
     if not dry_run:
@@ -877,7 +889,7 @@ def purge_expired_coords(dry_run=True):
             _update_pin(cur, brgy, name, _g(r, "latitude", 3), _g(
                 r, "longitude", 4), None, None, business_id=bid)
             cur.execute(
-                "UPDATE official_registry SET latitude=NULL, longitude=NULL WHERE businessID=%s", (bid,))
+                "UPDATE official_registry SET latitude=NULL, longitude=NULL WHERE businessID=%s " + confirmed_guard, (bid,))
         mysql.connection.commit()
     cur.close()
     return {"expired": len(rows), "dry_run": dry_run}

@@ -325,7 +325,7 @@ class VerifyOnUnlockedBlackTests(Harness):
         (result, error), cursor = self._verify(unlocked=1, migrated=False)
         self.assertIsNone(result)
         self.assertIsInstance(
-            error, inspection_service.InspectionVerificationConflict)
+            error, (inspection_service.InspectionVerificationConflict, inspection_service.GreenRegistryLinkError))
         self.assertEqual([c for c in cursor.execute.call_args_list
                           if c.args[0].lstrip().upper().startswith(
                               ("UPDATE", "INSERT", "DELETE"))], [])

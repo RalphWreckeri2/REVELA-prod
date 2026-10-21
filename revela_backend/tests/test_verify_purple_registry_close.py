@@ -36,8 +36,8 @@ class PurpleRegistryWriteTests(unittest.TestCase):
 
     def _verify(self, *, pin_business_id, registry_match_business_id=None,
                 result="Purple", pin_name="ACME STORE", pin_barangay=7,
-                geospatial_exists=True, ladder=True, warning_level=0,
-                black_locked=0, notice_level=1):
+                 geospatial_exists=True, ladder=True, warning_level=0,
+                 black_locked=0, notice_level=1, expects_registry_link_error=False):
         """rowcount of the registry UPDATE is decided by registry_match_business_id.
 
         ladder=False makes the cursor answer the information_schema probe the
@@ -109,7 +109,10 @@ class PurpleRegistryWriteTests(unittest.TestCase):
             mock_mysql.connection.cursor.return_value = cursor
             result, error = inspection_service.verify_inspection(
                 4, verified_by_user_id=2)
-        self.assertIsNone(error)
+        if expects_registry_link_error:
+            self.assertIsInstance(error, inspection_service.GreenRegistryLinkError)
+        else:
+            self.assertIsNone(error)
         return result, cursor
 
     @staticmethod
@@ -177,7 +180,7 @@ class PurpleRegistryWriteTests(unittest.TestCase):
         status - never to Closed. Orange and Black leave applicationStatus
         alone entirely and touch only the ladder columns.
         """
-        for colour in ("Green", "Red", "Yellow"):
+        for colour in ("Red", "Yellow"):
             with self.subTest(result=colour):
                 result, cursor = self._verify(pin_business_id="BIZ-7",
                                               registry_match_business_id="BIZ-7",
@@ -203,6 +206,13 @@ class PurpleRegistryWriteTests(unittest.TestCase):
                     "applicationStatus", sql or "",
                     f"{colour} must not touch applicationStatus at all")
                 self.assertFalse(result["registryClosed"])
+
+    def test_green_without_business_id_never_verifies_or_closes_a_registry(self):
+        result, cursor = self._verify(pin_business_id="BIZ-7", registry_match_business_id="BIZ-7",
+                                      result="Green", expects_registry_link_error=True)
+        self.assertIsNone(result)
+        self.assertFalse([call for call in cursor.execute.call_args_list
+                          if call.args[0].lstrip().startswith(("UPDATE", "INSERT"))])
 
     def test_pin_colour_is_still_updated_for_purple(self):
         result, cursor = self._verify(pin_business_id="BIZ-7",

@@ -941,6 +941,15 @@ def _match_registry_to_google(
     registry_place_id = None
     registry_match_status = None
     if business_id:
+        from api.registry.inspection_link import confirmed_pin_column_available
+        if confirmed_pin_column_available(cursor):
+            _detection_execute(cursor, "SELECT confirmedLogID FROM official_registry WHERE businessID = %s FOR UPDATE", (business_id,))
+            confirmed = cursor.fetchone()
+            if confirmed and confirmed.get("confirmedLogID") is not None:
+                # Detection must not replace the admin-confirmed pin, merge its
+                # history into a generated marker, or change its original source.
+                cursor.close()
+                return
         _detection_execute(cursor, """
             SELECT coordSource, matchStatus, latitude, longitude, placeID
             FROM official_registry
@@ -3039,6 +3048,13 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         # Filters that apply to the geospatial_logs branch
         geo_conditions = []
         geo_params = []
+        from api.registry.inspection_link import confirmed_pin_column_available
+        if confirmed_pin_column_available(cursor):
+            geo_conditions.append("""NOT EXISTS (
+                SELECT 1 FROM official_registry canonical
+                WHERE canonical.businessID = g.businessID
+                  AND canonical.confirmedLogID IS NOT NULL
+                  AND canonical.confirmedLogID <> g.logID)""")
 
         # Filters that apply to the registry-only branch
         reg_conditions = [

@@ -37,7 +37,8 @@ class RegistryDB:
                 warningClearedAt TEXT, warningClearedBy INTEGER, warningClearReason TEXT,
                 lastInspectionResult TEXT, lastInspectedAt TEXT,
                 blackDispatchUnlocked INTEGER DEFAULT 0, blackUnlockedAt TEXT,
-                blackUnlockedBy INTEGER, blackUnlockReason TEXT);
+                blackUnlockedBy INTEGER, blackUnlockReason TEXT,
+                confirmedLogID INTEGER UNIQUE);
             CREATE TABLE geospatial_logs (
                 logID INTEGER PRIMARY KEY AUTOINCREMENT, businessID TEXT, barangayID INTEGER,
                 detectedName TEXT, flagColor TEXT, noticeLevel INTEGER DEFAULT 0,

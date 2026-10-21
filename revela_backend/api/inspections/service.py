@@ -27,6 +27,9 @@ from api.models.inspection_lifecycle_events import (
     get_latest_inspection_cycle_id,
     log_inspection_event,
 )
+from api.registry.inspection_link import (
+    GreenRegistryLinkError, prepare_green_link, save_green_link,
+)
 
 
 # ── Inspector task list ───────────────────────────────────────────────────────
@@ -962,31 +965,85 @@ def reassign_submitted_report(report_id, inspector_user_id, deadline, assigned_b
 
 # ── Verify inspection ─────────────────────────────────────────────────────────
 
-def verify_inspection(report_id, verified_by_user_id=None, update_location=False):
+def preview_green_registry_link(report_id, business_id):
+    """Read-only identity review; entering a Business ID changes no state."""
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute("""SELECT reportID, targetID, targetType, inspectionResult, verificationStatus
+                          FROM inspection_reports WHERE reportID = %s""", (report_id,))
+        report = cursor.fetchone()
+        if not report or report["inspectionResult"] != "Green" or report["verificationStatus"] != "Submitted":
+            raise GreenRegistryLinkError("Only a Submitted Green inspection can be reviewed.")
+        plan = prepare_green_link(cursor, report, business_id)
+        pin, registry = plan["pin"], plan["registry"]
+        cursor.execute("SELECT barangayID, barangayName FROM barangays ORDER BY barangayName")
+        barangays = cursor.fetchall()
+        return {
+            "businessID": plan["businessID"], "reviewToken": plan["reviewToken"],
+            "registryExists": registry is not None,
+            "registry": ({key: registry.get(key) for key in (
+                "businessID", "businessName", "businessAddress", "barangayID", "applicationStatus")}
+                if registry else plan["newFields"]),
+            "pin": {key: pin.get(key) for key in (
+                "logID", "businessID", "detectedName", "barangayID", "latitude", "longitude", "source")},
+            "missingRequiredFields": plan["missingRequiredFields"],
+            "barangays": barangays,
+        }, None
+    except GreenRegistryLinkError as exc:
+        return None, exc
+    finally:
+        mysql.connection.rollback()
+        cursor.close()
+
+
+def verify_inspection(report_id, verified_by_user_id=None, update_location=False,
+                      business_id=None, confirm_establishment=False,
+                      registry_review_token=None, registry_fields=None):
     """
     Admin confirms the inspection result.
     1. Set verificationStatus → 'Verified'
     2. Update geospatial_logs.flagColor to match inspectionResult
     3. Optionally apply the inspector GPS after explicit admin confirmation.
     """
+    cursor = None
+    committed = False
+    report = None
     try:
         cursor = mysql.connection.cursor()
         _ensure_gps_columns(cursor)
 
         cursor.execute("""
-                 SELECT ir.reportID, ir.targetID, ir.userID, ir.inspectionResult,
+                 SELECT ir.reportID, ir.targetID, ir.targetType, ir.userID, ir.inspectionResult,
                      ir.noticeLevel, ir.verificationStatus, ir.verifiedLatitude,
                      ir.verifiedLongitude, ir.verifiedAccuracy, ir.nearestLandmark,
                      g.detectedName, g.barangayID, g.businessID
                  FROM inspection_reports ir
                  LEFT JOIN geospatial_logs g ON g.logID = ir.targetID
-            WHERE ir.reportID = %s
+            WHERE ir.reportID = %s FOR UPDATE
         """, (report_id,))
         report = cursor.fetchone()
 
         if not report:
             cursor.close()
             return None, f"Report #{report_id} not found"
+
+        green_link = None
+        if report["inspectionResult"] == "Green":
+            if update_location:
+                raise GreenRegistryLinkError("Green confirmation preserves the original pin location. Leave updateLocation disabled.")
+            if confirm_establishment is not True:
+                raise GreenRegistryLinkError("Review the Business ID and confirm it represents the inspected establishment.")
+            green_link = prepare_green_link(cursor, report, business_id, lock=True,
+                                            required_fields=registry_fields if report["verificationStatus"] == "Submitted" else None)
+            if (report["verificationStatus"] == "Verified"
+                    and green_link["registry"]
+                    and green_link["registry"].get("confirmedLogID") == report["targetID"]
+                    and green_link["pin"].get("businessID") == green_link["businessID"]):
+                return {"reportID": report_id, "logID": report["targetID"],
+                        "businessID": green_link["businessID"], "status": "Verified",
+                        "alreadyVerified": True, "locationUpdated": False}, None
+            if registry_review_token != green_link["reviewToken"]:
+                raise GreenRegistryLinkError("Registry or pin details changed. Review the Business ID again before confirming.", conflict=True)
 
         if report["verificationStatus"] != "Submitted":
             cursor.close()
@@ -1008,6 +1065,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
         result_color = report["inspectionResult"]
         notice_level = _coerce_notice_level(report.get("noticeLevel"))
         pin_business_id = report.get("businessID")
+        if green_link:
+            pin_business_id = green_link["businessID"]
         uses_ladder = result_color in ("Orange", "Black")
 
         ladder_available = ladder_columns_available(cursor)
@@ -1065,6 +1124,29 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 )
                 pin_enforcement_state = cursor.fetchone()
 
+        # A newly linked pin can already carry enforcement. Keep its original
+        # state/history and mirror its warning onto the business; entering an ID
+        # must not bypass a pin lock or clear an unregistered pin's warning.
+        linked_pin_warning = False
+        if green_link:
+            if not ladder_available:
+                raise GreenRegistryLinkError("Apply the enforcement-state migration before linking a Green inspection.", conflict=True)
+            cursor.execute("""SELECT warningLevel, blackLocked, warningBaseColor
+                              FROM enforcement_state
+                              WHERE subjectType = 'geospatial_log' AND subjectID = %s FOR UPDATE""",
+                           (str(report["targetID"]),))
+            pin_enforcement_state = cursor.fetchone()
+            if (pin_enforcement_state and _coerce_notice_level(pin_enforcement_state.get("blackLocked"))
+                    or geo_flag and geo_flag.get("flagColor") == "Black" and not report.get("businessID")):
+                raise GreenRegistryLinkError("The original pin is Black locked and cannot be linked by a Green confirmation.", conflict=True)
+            linked_pin_warning = bool(
+                pin_enforcement_state
+                and _coerce_notice_level(pin_enforcement_state.get("warningLevel"))
+                and not (green_link["registry"] and green_link["registry"].get("confirmedLogID") == report["targetID"]))
+            if registry_row is None:
+                registry_row = {"applicationStatus": "Pending"}
+                registry_enforcement_state = {}
+
         # A SUPER_ADMIN granted exactly one inspection of this Black business.
         # The grant opens this verify and nothing else: the business stays
         # Black and blackLocked is never touched.
@@ -1083,6 +1165,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             _coerce_notice_level(geo_flag.get("noticeLevel"))
             if geo_flag else 0
         )
+        if linked_pin_warning:
+            previous_level = max(previous_level, _coerce_notice_level(pin_enforcement_state.get("warningLevel")))
 
         if result_color == "Orange":
             if pin_enforcement_state and _coerce_notice_level(
@@ -1147,6 +1231,18 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 cursor.close()
                 return None, InspectionVerificationConflict(str(exc))
 
+        if green_link:
+            if dispatch_unlocked:
+                if not report.get("businessID"):
+                    raise GreenRegistryLinkError("A Black dispatch grant cannot adopt an unlinked field pin.", conflict=True)
+                # A legacy single-use grant records the finding only. Confirm
+                # its existing pin reference without moving/recolouring it or
+                # rewriting the locked business's location/provenance.
+                cursor.execute("UPDATE official_registry SET confirmedLogID = %s WHERE businessID = %s",
+                               (report["targetID"], pin_business_id))
+            else:
+                save_green_link(cursor, green_link)
+
         location_updated = False
         if update_location:
             latitude, longitude, _ = _inspection_report_gps(report)
@@ -1176,13 +1272,13 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 cursor.close()
                 return None, "The target map pin could not be updated"
 
-            if report.get("detectedName") and report.get("barangayID") is not None:
+            if pin_business_id:
                 cursor.execute(
                     """UPDATE official_registry
                        SET latitude = %s, longitude = %s, barangayID = %s
-                       WHERE LOWER(businessName) = LOWER(%s) AND barangayID = %s""",
+                       WHERE businessID = %s""",
                     (latitude, longitude, new_barangay_id,
-                     report["detectedName"], report["barangayID"]),
+                     pin_business_id),
                 )
             location_updated = True
 
@@ -1200,6 +1296,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
         # a Black business briefly rendering Green on the map is exactly the
         # drift this ladder exists to prevent.
         pin_result_color = result_color
+        if linked_pin_warning:
+            pin_result_color = "Orange"
         if (pin_business_id is None and registry_row is None
                 and pin_enforcement_state
                 and _coerce_notice_level(pin_enforcement_state.get("warningLevel")) > 0
@@ -1313,6 +1411,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             clears_warning = (
                 result_color not in ("Orange", "Black")
                 and previous_level > 0
+                and not linked_pin_warning
             )
             clear_reason = (
                 f"Cleared by verified {result_color} inspection"
@@ -1343,6 +1442,8 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 registry_enforcement_state.get("warningBaseColor")
                 if registry_enforcement_state else None
             )
+            if linked_pin_warning and not state_warning_base:
+                state_warning_base = pin_enforcement_state.get("warningBaseColor")
             state_updates = [
                 "lastInspectionResult = VALUES(lastInspectionResult)",
                 "lastInspectedAt = NOW()",
@@ -1365,6 +1466,11 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                     "blackLocked = 1",
                     "blackLockedAt = NOW()",
                     "blackLockedBy = VALUES(blackLockedBy)",
+                ])
+            if linked_pin_warning:
+                state_updates.extend([
+                    "warningLevel = VALUES(warningLevel)",
+                    "warningBaseColor = COALESCE(warningBaseColor, VALUES(warningBaseColor))",
                 ])
             clear_metadata_values = (
                 "NOW(), %s, %s" if clears_warning else "NULL, NULL, NULL")
@@ -1484,12 +1590,14 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             assigned_to_user_id=report["userID"],
             flag_color_at_event=geo_flag["flagColor"] if geo_flag else None,
             inspection_result=report["inspectionResult"],
-            remarks=("Map location updated to inspector GPS" if location_updated
+            remarks=(f"Business ID {pin_business_id} confirmed and linked to original pin" if green_link else
+                     "Map location updated to inspector GPS" if location_updated
                      else registry_warning),
             cycle_id=cycle_id,
         )
 
         mysql.connection.commit()
+        committed = True
         cursor.close()
 
         try:
@@ -1518,6 +1626,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             "newFlagColor":     report["inspectionResult"],
             "status":           "Verified",
             "locationUpdated":  location_updated,
+            **({"businessID": pin_business_id} if green_link else {}),
             # registryClosed is True only when an official_registry row was
             # actually updated. registryWarning explains a verified Purple whose
             # registry row could not be reached, so the admin is not misled.
@@ -1532,9 +1641,23 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             "blackDispatchUnlockSpent": bool(unlock_spent),
         }, None
 
+    except GreenRegistryLinkError as e:
+        return None, e
     except Exception as e:
         mysql.connection.rollback()
+        if ((report or {}).get("inspectionResult") == "Green"
+                and e.args and e.args[0] in (1062, 1205, 1213)):
+            return None, GreenRegistryLinkError(
+                "The Business ID or pin was changed by another request. Review the link and retry.", conflict=True)
         return None, str(e)
+    finally:
+        if not committed:
+            mysql.connection.rollback()
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
 
 # ── Get all inspections (admin) ───────────────────────────────────────────────
@@ -1648,6 +1771,7 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
                 ir.verifiedLongitude,
                 ir.verifiedAccuracy,
                 g.detectedName,
+                g.businessID AS linkedBusinessID,
                 {effective_color} AS flagColor,
                 COALESCE({_registry_column_sql('g', 'businessID')}, g.businessID) AS businessID,
                 {_registry_column_sql('g', 'applicationStatus')} AS applicationStatus,

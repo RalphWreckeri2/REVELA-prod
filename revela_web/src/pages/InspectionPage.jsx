@@ -17,6 +17,7 @@ import {
   assignInspectionRequest,
   reassignSubmittedInspectionRequest,
   verifyInspectionRequest,
+  previewGreenRegistryLinkRequest,
   getInspectorsRequest,
   parseInspectionEvidence,
   clearWarningRequest,
@@ -337,6 +338,12 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
+  const isGreen = report.inspectionResult === "Green";
+  const [businessID, setBusinessID] = useState(report.linkedBusinessID || "");
+  const [linkReview, setLinkReview] = useState(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [confirmEstablishment, setConfirmEstablishment] = useState(false);
+  const [registryFields, setRegistryFields] = useState({});
   const gpsLat = finiteNumberOrNaN(report.verifiedLatitude);
   const gpsLng = finiteNumberOrNaN(report.verifiedLongitude);
   const pinLat = finiteNumberOrNaN(report.latitude);
@@ -350,7 +357,22 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
     && (!hasPin || distance <= 500)
     && hasAccuracy
     && accuracy <= 100;
-  const [updateLocation, setUpdateLocation] = useState(shouldSuggestLocationUpdate);
+  const [updateLocation, setUpdateLocation] = useState(!isGreen && shouldSuggestLocationUpdate);
+
+  const reviewBusinessID = async () => {
+    setReviewing(true);
+    setError("");
+    setLinkReview(null);
+    setConfirmEstablishment(false);
+    setRegistryFields({});
+    try {
+      setLinkReview(await previewGreenRegistryLinkRequest(report.reportID, businessID, token));
+    } catch (err) {
+      setError(err.message || "Could not review the Business ID.");
+    } finally {
+      setReviewing(false);
+    }
+  };
 
   const distanceLabel = distance == null
     ? null
@@ -366,10 +388,16 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
         : { text: "Far from pin", color: "#b91c1c", background: "#fef2f2" };
 
   const handleVerify = async () => {
+    if (isGreen && (!linkReview || !confirmEstablishment)) return;
     setLoading(true);
     setError("");
     try {
-      await verifyInspectionRequest(report.reportID, token, updateLocation);
+      await verifyInspectionRequest(report.reportID, token, updateLocation, isGreen ? {
+        businessID: linkReview.businessID,
+        confirmEstablishment,
+        registryReviewToken: linkReview.reviewToken,
+        registryFields,
+      } : {});
       onSuccess();
       onClose();
     } catch (err) {
@@ -381,7 +409,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 
   return (
     <InspectionDialog
-      title="Verify Inspection" onClose={onClose} busy={loading} isClosing={isClosing} layer={10001}
+      title="Verify Inspection" onClose={onClose} busy={loading || reviewing} isClosing={isClosing} layer={10001}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
 
@@ -400,6 +428,61 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
             </p>
           </div>
         </div>
+
+        {isGreen && (
+          <section style={{ ...s.remarksBox, marginBottom: 16 }} aria-label="Official registry link">
+            <label htmlFor="green-business-id" style={s.fieldLabel}>Official Business ID (required)</label>
+            <input id="green-business-id" value={businessID} maxLength={50} required
+              readOnly={Boolean(report.linkedBusinessID)} disabled={loading || reviewing}
+              style={{ ...s.fieldSelect, boxSizing: "border-box", marginBottom: 8 }}
+              onChange={event => {
+                setBusinessID(event.target.value);
+                setLinkReview(null);
+                setConfirmEstablishment(false);
+              }} />
+            {report.linkedBusinessID && <p style={{ fontSize: 12 }}>This pin is already linked. Review the existing Business ID to confirm it.</p>}
+            <button type="button" className="ghost-btn" onClick={reviewBusinessID}
+              disabled={!businessID.trim() || loading || reviewing}>
+              {reviewing ? "Reviewing…" : "Review Business ID"}
+            </button>
+            {linkReview && (
+              <div style={{ fontSize: 13, lineHeight: 1.6, marginTop: 12 }}>
+                <strong>{linkReview.registryExists ? "Existing official registry record" : "New official registry record"}</strong>
+                <p style={{ margin: "6px 0" }}>Business ID: {linkReview.businessID}<br />
+                  Name: {linkReview.registry.businessName || "Required below"}<br />
+                  Barangay: {linkReview.barangays.find(b => b.barangayID === linkReview.registry.barangayID)?.barangayName || "Required below"}<br />
+                  Address: {linkReview.registry.businessAddress || "Not recorded"}
+                </p>
+                <p style={{ margin: "6px 0" }}>Inspected pin #{linkReview.pin.logID}: {linkReview.pin.detectedName || "Name not recorded"}<br />
+                  Original location: {Number(linkReview.pin.latitude).toFixed(6)}, {Number(linkReview.pin.longitude).toFixed(6)}<br />
+                  Source: {linkReview.pin.source || "unknown"}
+                </p>
+                {!linkReview.registryExists && <p>Available pin details will be reused. Optional registry details can be added later.</p>}
+                {linkReview.missingRequiredFields.map(field => (
+                  <label key={field} style={{ display: "block", marginTop: 10 }}>
+                    {field === "businessName" ? "Official business name" : "Barangay"} (required)
+                    {field === "barangayID" ? (
+                      <select style={s.fieldSelect} value={registryFields[field] || ""} disabled={loading}
+                        onChange={event => { setRegistryFields({ ...registryFields, [field]: Number(event.target.value) }); setConfirmEstablishment(false); }}>
+                        <option value="">Select barangay…</option>
+                        {linkReview.barangays.map(b => <option key={b.barangayID} value={b.barangayID}>{b.barangayName}</option>)}
+                      </select>
+                    ) : (
+                      <input style={s.fieldSelect} maxLength={255} value={registryFields[field] || ""} disabled={loading}
+                        onChange={event => { setRegistryFields({ ...registryFields, [field]: event.target.value }); setConfirmEstablishment(false); }} />
+                    )}
+                  </label>
+                ))}
+                <label style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "flex-start" }}>
+                  <input type="checkbox" checked={confirmEstablishment} disabled={loading}
+                    onChange={event => setConfirmEstablishment(event.target.checked)} style={{ marginTop: 5 }} />
+                  I checked the official Business ID and establishment details against the inspection evidence. They represent this same establishment.
+                </label>
+              </div>
+            )}
+            <p style={{ fontSize: 12, marginBottom: 0 }}>Green confirmation saves the verification and registry link together, keeping the original pin, coordinates, source, and inspection history.</p>
+          </section>
+        )}
 
         {report.remarks && (
           <div style={s.remarksBox}>
@@ -436,7 +519,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
                   GPS accuracy is low; review the position before applying it.
                 </p>
               )}
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, lineHeight: 1.5, color: "var(--color-ink)", cursor: "pointer" }}>
+              {!isGreen && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, lineHeight: 1.5, color: "var(--color-ink)", cursor: "pointer" }}>
                 <input
                   type="checkbox"
                   checked={updateLocation}
@@ -444,7 +527,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
                   style={{ marginTop: 2 }}
                 />
                 Update the map pin and registry location to this GPS position
-              </label>
+              </label>}
             </>
           ) : (
             <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
@@ -528,12 +611,14 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
         <p style={{ fontSize: 13, color: "var(--color-ink)", marginBottom: 20, lineHeight: 1.6 }}>
           Review the evidence and notes above. Confirming will update the flag color to&nbsp;
           <strong>{report.inspectionResult}</strong> on the map.
-          The location changes only if the GPS update option is selected.
+          {isGreen ? " The original pin location will be preserved. Existing enforcement protections still apply." : " The location changes only if the GPS update option is selected."}
         </p>
 
         <div style={s.modalFooter}>
-          <button className="ghost-btn" onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="primary-btn" onClick={handleVerify} disabled={loading}>
+          <button className="ghost-btn" onClick={onClose} disabled={loading || reviewing}>Cancel</button>
+          <button className="primary-btn" onClick={handleVerify} disabled={loading || reviewing || (isGreen && (
+            !linkReview || !confirmEstablishment || linkReview.missingRequiredFields.some(field => !String(registryFields[field] || "").trim())
+          ))}>
             {loading ? "Verifying…" : <><Icon.Check /> Confirm & Verify</>}
           </button>
         </div>

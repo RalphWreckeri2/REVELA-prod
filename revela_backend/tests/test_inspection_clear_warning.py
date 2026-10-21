@@ -76,7 +76,14 @@ def test_unregistered_pin_warning_survives_later_green_and_clears_to_base(db):
         (reportID, targetID, targetType, userID, verificationStatus, inspectionResult, noticeLevel)
         VALUES (21, 20, 'geospatial_log', 9, 'Submitted', 'Green', 1)""")
     db.commit()
-    result, error = inspections.verify_inspection(21, verified_by_user_id=2)
+    # A Green finding alone no longer verifies an unregistered pin. It needs
+    # an explicit official ID review, then retains its existing warning.
+    db.db.execute("UPDATE geospatial_logs SET latitude=13.9667, longitude=121.1167 WHERE logID=20")
+    db.commit()
+    review, error = inspections.preview_green_registry_link(21, "FIELD-20")
+    assert error is None
+    result, error = inspections.verify_inspection(21, verified_by_user_id=2,
+        business_id="FIELD-20", confirm_establishment=True, registry_review_token=review["reviewToken"])
     assert error is None
     payload, error = inspections.get_all_inspections()
     assert error is None
@@ -85,11 +92,11 @@ def test_unregistered_pin_warning_survives_later_green_and_clears_to_base(db):
     assert latest["warningLevel"] == 1
     assert latest["warningBaseColor"] == "Yellow"
 
-    result, error = registry.clear_pin_warning(20, 2, "Complied")
+    result, error = registry.clear_warning("FIELD-20", 2, "Complied")
     assert error is None
-    assert result["flagColor"] == "Yellow"
+    assert result["warningCleared"]
     assert db.rows("SELECT flagColor, noticeLevel FROM geospatial_logs WHERE logID = 20") == [
-        {"flagColor": "Yellow", "noticeLevel": 0}]
+        {"flagColor": "Green", "noticeLevel": 0}]
 
 
 def test_unregistered_pin_clear_resets_warning_restores_base_and_audits_reason(db):
@@ -117,8 +124,8 @@ def test_unregistered_pin_clear_resets_warning_restores_base_and_audits_reason(d
 
 
 @pytest.mark.parametrize("changes, message", [
-    ({"warningBaseColor": None}, "pre-warning color is unknown"),
-    ({"blackLocked": 1}, "Black-locked"),
+    ({"base_color": None}, "pre-warning color is unknown"),
+    ({"locked": 1}, "Black-locked"),
 ])
 def test_unregistered_pin_clear_refuses_unsafe_state_without_writes(db, changes, message):
     db.seed()
@@ -205,14 +212,13 @@ def test_existing_clear_route_enforces_role_and_maps_returned_typed_conflicts(db
         0]["applicationStatus"] == status
 
 
-def test_revoked_without_lock_can_receive_the_existing_single_use_dispatch_grant(db):
+def test_revoked_without_lock_cannot_receive_a_dispatch_grant(db):
     db.seed(status="Revoked", locked=0)
     result, error = registry.unlock_black_dispatch("B-1", 2)
-    assert error is None
-    assert result["blackDispatchUnlocked"] is True
-    assert result["blackLocked"] is False
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
     assert db.rows("SELECT applicationStatus, blackLocked, blackDispatchUnlocked FROM official_registry") == [
-        {"applicationStatus": "Revoked", "blackLocked": 0, "blackDispatchUnlocked": 1}]
+        {"applicationStatus": "Revoked", "blackLocked": 0, "blackDispatchUnlocked": 0}]
 
 
 @pytest.mark.parametrize("initial_status", ["Pending", "Expired", "Closed"])
@@ -223,12 +229,18 @@ def test_verified_yellow_red_or_purple_can_end_in_any_color(db, initial_status, 
     db.db.execute(
         "UPDATE inspection_reports SET verificationStatus = 'Submitted', inspectionResult = ?, noticeLevel = ?", (result_color, notice))
     db.commit()
-    result, error = inspections.verify_inspection(1, verified_by_user_id=2)
+    args = {}
+    if result_color == "Green":
+        review, error = inspections.preview_green_registry_link(1, "B-1")
+        assert error is None
+        args = dict(business_id="B-1", confirm_establishment=True, registry_review_token=review["reviewToken"])
+    result, error = inspections.verify_inspection(1, verified_by_user_id=2, **args)
     assert error is None
     assert result["status"] == "Verified"
     assert report_one()["flagColor"] == result_color
     if result_color == "Black":
         # Existing verified-Black semantics: lock it, preserve permit status.
-        row = db.rows(
-            "SELECT applicationStatus, blackLocked FROM official_registry")[0]
+        row = db.rows("""SELECT r.applicationStatus, es.blackLocked
+                         FROM official_registry r JOIN enforcement_state es
+                         ON es.subjectType='business' AND es.subjectID=r.businessID""")[0]
         assert row == {"applicationStatus": initial_status, "blackLocked": 1}

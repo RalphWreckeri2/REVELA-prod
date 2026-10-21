@@ -41,6 +41,9 @@ from api.utils.places_quota import (
 )
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
+from api.registry.inspection_link import (
+    GreenRegistryLinkError, confirmed_pin_column_available, normalize_business_id,
+)
 
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -1034,7 +1037,7 @@ def _registry_sync_business_fields_changed(existing, incoming):
 def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None, *, skip_open_unlinked=False):
     """
     Propagate a registry permit-status change to the business's map pin
-    (preferring exact businessID match, then name + barangay).
+    using the explicit businessID link.
     If no map pin exists yet and coordinates are provided, auto-seed a new pin.
     """
     flag_color = _status_to_flag_color(status)
@@ -1047,15 +1050,15 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     )"""
     color_sql = _effective_flag_color_sql(
         "g", ladder=True) if ladder else "NULL"
-    # New import seed paths may reuse a detected pin, but must not adopt or
-    # recolour an unlinked pin while an inspection is still in flight. Existing
-    # callers retain their current guards and semantics through the default.
-    open_guard = """AND NOT EXISTS (
-        SELECT 1 FROM inspection_reports pending
-        WHERE pending.targetType = 'geospatial_log' AND pending.targetID = g.logID
-          AND (pending.verificationStatus IS NULL OR pending.verificationStatus <> 'Verified')
-    )""" if skip_open_unlinked else ""
-
+    # Unlinked detections need an explicit admin identity review. Imports must
+    # never adopt/recolour them merely because a name and barangay agree.
+    canonical_guard = ""
+    if confirmed_pin_column_available(cursor):
+        canonical_guard = """AND NOT EXISTS (
+            SELECT 1 FROM official_registry canonical
+            WHERE canonical.businessID = g.businessID
+              AND canonical.confirmedLogID IS NOT NULL
+              AND canonical.confirmedLogID <> g.logID)"""
     cursor.execute(
         f"""
         SELECT g.logID, g.flagColor, g.latitude, g.longitude,
@@ -1063,11 +1066,11 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
                {color_sql} AS effectiveFlagColor
         FROM geospatial_logs g
         WHERE (g.businessID IS NOT NULL AND g.businessID = %s)
-           OR (g.businessID IS NULL AND g.barangayID = %s AND g.detectedName = %s {open_guard})
+          {canonical_guard}
         ORDER BY (g.businessID = %s) DESC, g.detectedDate DESC
         LIMIT 1
         """,
-        (business_id, barangay_id, name_clean, business_id),
+        (business_id, business_id),
     )
     existing_pin = cursor.fetchone()
     if (
@@ -1113,6 +1116,52 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
     return False
 
 
+def _update_confirmed_registry_import(cursor, existing, row, barangay_id, name, address, status, import_year):
+    """Shared Import/Sync path: exact PK update, authoritative original coordinates.
+
+    Re-read under a lock so a confirmation/protection committed during an import
+    cannot be overwritten from its earlier snapshot. Never resolves coordinates.
+    """
+    cursor.execute("SELECT * FROM official_registry WHERE businessID = %s FOR UPDATE",
+                   (existing["businessID"],))
+    existing = cursor.fetchone()
+    if not existing or existing.get("confirmedLogID") is None:
+        raise RegistryValidationError("The confirmed registry link changed; retry the import.")
+    business_id = existing["businessID"]
+    if is_black_locked(cursor, business_id):
+        return "skipped_black_lock", False
+    if existing.get("applicationStatus") == "Closed":
+        return "skipped_closed", False
+    if _find_open_inspection_for_business(cursor, business_id, existing["businessName"], existing["barangayID"]):
+        return "skipped_open_inspection", False
+    cursor.execute("SELECT businessID, latitude, longitude FROM geospatial_logs WHERE logID = %s FOR UPDATE",
+                   (existing["confirmedLogID"],))
+    pin = cursor.fetchone()
+    if not pin or pin.get("businessID") != business_id or _parse_coordinate_pair(pin.get("latitude"), pin.get("longitude")) is None:
+        raise RegistryValidationError("The confirmed registry pin is inconsistent; resolve the link before importing.")
+    renewal = _parse_renewal_date(row.get("lastRenewalDate"))
+    status = _effective_import_status(status, renewal, import_year)
+    incoming = {
+        "barangayID": barangay_id, "businessName": name,
+        "businessType": _clean_upper(row.get("businessType")),
+        "lineOfBusiness": _clean_upper(row.get("lineOfBusiness")),
+        "businessAddress": address, "applicationStatus": status,
+        "lastRenewalDate": renewal, "businessSize": _clean_upper(row.get("businessSize")),
+        "registrationType": _normalise_registration_type(row.get("registrationType")),
+    }
+    changed = _registry_sync_business_fields_changed(existing, incoming)
+    if changed or any(existing.get(key) != pin.get(key) for key in ("latitude", "longitude")):
+        cursor.execute("""UPDATE official_registry SET
+            barangayID = %s, businessName = %s, businessType = %s, lineOfBusiness = %s,
+            businessAddress = %s, applicationStatus = %s, lastRenewalDate = %s,
+            businessSize = %s, registrationType = COALESCE(%s, registrationType),
+            latitude = %s, longitude = %s WHERE businessID = %s""",
+            tuple(incoming.values()) + (pin["latitude"], pin["longitude"], business_id))
+    cleared = status == "Active" and _clear_warning_for_active_import(cursor, business_id) is not None
+    _sync_flag_color(cursor, barangay_id, name, status, pin["latitude"], pin["longitude"], address, business_id=business_id)
+    return "updated" if changed else "unchanged", cleared
+
+
 # ── Service functions ─────────────────────────────────────────────────────────
 def upload_registry(file, ext: str):
     """Parse CSV/Excel → geocode → insert into OFFICIAL_REGISTRY.
@@ -1147,12 +1196,16 @@ def upload_registry(file, ext: str):
 
         # Fetch existing IDs to avoid geocoding duplicates
         cursor = mysql.connection.cursor()
-        cursor.execute("SELECT businessID FROM official_registry")
+        has_confirmed_pin = confirmed_pin_column_available(cursor)
+        cursor.execute("SELECT businessID" + (", confirmedLogID" if has_confirmed_pin else "") + " FROM official_registry")
         existing_db_ids = set()
+        confirmed_records = {}
         for r in cursor.fetchall():
             val = r.get("businessID") if isinstance(r, dict) else r[0]
             if val:
-                existing_db_ids.add(str(val).strip())
+                existing_db_ids.add(normalize_business_id(str(val)))
+                if isinstance(r, dict) and r.get("confirmedLogID") is not None:
+                    confirmed_records[normalize_business_id(str(val))] = r
         cursor.close()
 
         # Count rows that actually need geocoding (those without valid pre-filled coordinates, with an address, and not duplicates)
@@ -1217,6 +1270,9 @@ def upload_registry(file, ext: str):
                 )
 
         inserted = 0
+        updated = 0
+        unchanged = 0
+        confirmed_skips = {}
         expired_by_renewal_date = 0
         geocoded_ok = 0
         geocoded_failed = 0
@@ -1256,11 +1312,11 @@ def upload_registry(file, ext: str):
             business_name = row.get("businessName")
             biz_id_raw = row.get("Business ID") or row.get(
                 "businessID") or row.get("business_id")
-            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip().upper()
-
-            if not biz_id:
+            try:
+                biz_id = normalize_business_id(_clean_str(biz_id_raw))
+            except GreenRegistryLinkError:
                 skipped += 1
-                errors.append(f"Row {idx + 2}: missing Business ID — skipped")
+                errors.append(f"Row {idx + 2}: missing or invalid Business ID — skipped")
                 continue
 
             # Status of Application (license/permit standing).
@@ -1301,6 +1357,20 @@ def upload_registry(file, ext: str):
                     f"Row {idx + 2}: duplicate Business ID '{biz_id}' within the CSV — skipped")
                 continue
             seen_counts[biz_id] = 1
+
+            if biz_id in confirmed_records:
+                outcome, _cleared = _update_confirmed_registry_import(
+                    cursor, confirmed_records[biz_id], row, barangay_id, name_key,
+                    normalize_business_address(row.get("businessAddress"), barangay_raw), status, import_year)
+                if outcome == "updated":
+                    updated += 1
+                elif outcome == "unchanged":
+                    unchanged += 1
+                else:
+                    skipped += 1
+                    confirmed_skips[outcome] = confirmed_skips.get(outcome, 0) + 1
+                    errors.append(f"Row {idx + 2}: {outcome.replace('_', ' ')} — skipped")
+                continue
 
             if biz_id in existing_db_ids:
                 skipped += 1
@@ -1461,6 +1531,9 @@ def upload_registry(file, ext: str):
         return {
             "total_rows":       total_rows,
             "inserted":         inserted,
+            "updated":          updated,
+            "unchanged":        unchanged,
+            **confirmed_skips,
             "expired_by_renewal_date": expired_by_renewal_date,
             "inserted_ids":     inserted_ids,
             "geocoded_ok":      geocoded_ok,
@@ -1480,6 +1553,7 @@ def upload_registry(file, ext: str):
         }, None
 
     except Exception as e:
+        mysql.connection.rollback()
         return None, str(e)
 
 
@@ -2098,11 +2172,14 @@ def _registry_pin_lateral_sql(cursor):
     if geospatial_source_column_exists(cursor):
         columns.append(SOURCE_COLUMN)
     projection = ", ".join(columns)
+    canonical_guard = ("AND (r.confirmedLogID IS NULL OR logID = r.confirmedLogID)"
+                       if confirmed_pin_column_available(cursor) else "")
     return f"""LEFT JOIN LATERAL (
                 SELECT {projection}
                 FROM geospatial_logs
-                WHERE (businessID IS NOT NULL AND businessID = r.businessID)
-                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName)
+                WHERE ((businessID IS NOT NULL AND businessID = r.businessID)
+                   OR (businessID IS NULL AND barangayID = r.barangayID AND detectedName = r.businessName))
+                {canonical_guard}
                 ORDER BY (businessID = r.businessID) DESC, detectedDate DESC
                 LIMIT 1
             ) g ON TRUE"""
@@ -2278,6 +2355,7 @@ def sync_registry(file, ext: str):
                 f"aborted, nothing was changed. ({exc})"
             ) from exc
 
+        has_confirmed_pin = confirmed_pin_column_available(cursor)
         for idx, row in df.iterrows():
             if idx % 5 == 0:
                 hub.publish_to_admins({
@@ -2294,11 +2372,11 @@ def sync_registry(file, ext: str):
             business_name = row.get("businessName")
             biz_id_raw = row.get("Business ID") or row.get(
                 "businessID") or row.get("business_id")
-            biz_id = (_clean_str(biz_id_raw) or "").lstrip("#").strip().upper()
-
-            if not biz_id:
+            try:
+                biz_id = normalize_business_id(_clean_str(biz_id_raw))
+            except GreenRegistryLinkError:
                 skipped += 1
-                errors.append(f"Row {idx + 2}: missing Business ID — skipped")
+                errors.append(f"Row {idx + 2}: missing or invalid Business ID — skipped")
                 continue
 
             name_key = _clean_upper(business_name)
@@ -2334,14 +2412,16 @@ def sync_registry(file, ext: str):
 
             # Check if this business already exists in the database
             cursor.execute(
-                """
+                f"""
                 SELECT businessID, barangayID, businessName, businessType,
                        lineOfBusiness, businessAddress, applicationStatus,
                        lastRenewalDate, businessSize, registrationType,
                        latitude, longitude, coordSource, placeID, placeIDKind,
                        matchScore, matchStatus, resolveKey
+                       {', confirmedLogID' if has_confirmed_pin else ''}
                 FROM official_registry
                 WHERE businessID = %s
+                {'FOR UPDATE' if has_confirmed_pin else ''}
                 """,
                 (biz_id,),
             )
@@ -2393,6 +2473,22 @@ def sync_registry(file, ext: str):
                 invalid_status_values[invalid_key] = (
                     invalid_status_values.get(invalid_key, 0) + 1)
                 errors.append(f"Row {idx + 2}: {status_error} — skipped")
+                continue
+
+            if existing and existing.get("confirmedLogID") is not None:
+                outcome, cleared = _update_confirmed_registry_import(
+                    cursor, existing, row, barangay_id, name_key, address_raw, status, import_year)
+                if outcome == "updated":
+                    updated += 1
+                elif outcome == "unchanged":
+                    unchanged += 1
+                else:
+                    skipped += 1
+                    skipped_open_inspection += int(outcome == "skipped_open_inspection")
+                    skipped_black_lock += int(outcome == "skipped_black_lock")
+                    skipped_closed += int(outcome == "skipped_closed")
+                    errors.append(f"Row {idx + 2}: {outcome.replace('_', ' ')} — skipped")
+                cleared_warnings += int(cleared)
                 continue
 
             is_locked = False
@@ -2919,8 +3015,10 @@ def sync_registry(file, ext: str):
         # written and the caller should retry rather than treat it as a server
         # fault. Stringifying them here would force the route to decide by
         # matching message text, which a reword would silently break.
+        mysql.connection.rollback()
         raise
     except Exception as e:
+        mysql.connection.rollback()
         return None, str(e)
 
 
@@ -2967,9 +3065,10 @@ def snap_unresolved_pins(limit: int = 200):
     try:
         ensure_registry_workflow_events()
         cursor = mysql.connection.cursor()
+        confirmed_guard = "AND confirmedLogID IS NULL" if confirmed_pin_column_available(cursor) else ""
 
         # Filter cached pins in Python before applying the per-run candidate limit.
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT businessID, barangayID, businessName, businessAddress,
                    lineOfBusiness, applicationStatus, coordSource, matchStatus,
                    resolveKey, latitude, longitude, businessType
@@ -2983,6 +3082,7 @@ def snap_unresolved_pins(limit: int = 200):
                   )
               AND (matchStatus IS NULL OR matchStatus NOT IN ('approved', 'rejected'))
               AND (coordSource IS NULL OR coordSource NOT IN ('manual', 'csv'))
+              {confirmed_guard}
             ORDER BY businessID
         """)
         rows = cursor.fetchall()

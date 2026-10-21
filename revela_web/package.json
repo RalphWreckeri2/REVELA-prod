@@ -25,7 +25,8 @@
     "test:flag-source": "node --test src/components/flagSource.test.js",
     "test:registry-ladder": "node --test src/components/registryLadderPolicy.test.js",
     "test:business-compliance": "node --test src/components/businessCompliance.test.js",
-    "test:business-compliance:browser": "node scripts/verify-compliance-browser.mjs"
+    "test:business-compliance:browser": "node scripts/verify-compliance-browser.mjs",
+    "test:green-link:browser": "node scripts/verify-compliance-browser.mjs green-link-smoke"
   },
   "dependencies": {
     "@googlemaps/markerclusterer": "^2.6.2",
