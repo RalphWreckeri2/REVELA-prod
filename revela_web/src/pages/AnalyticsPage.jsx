@@ -29,6 +29,7 @@ const COLOR = {
   red: "#f43f5e", // elegant rose
   black: "#64748b", // slate gray for "closed/nonconforming" instead of blinding white
   blue: "#3b82f6",
+  yellow: "#f59e0b",
   muted: "var(--color-muted)",
   orange: "#f97316",
   purple: "#7c3aed",
