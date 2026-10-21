@@ -3,28 +3,22 @@
 Produces rich, data-driven recommendations that tell the user:
   - WHY a barangay is prioritised (score breakdown)
   - WHAT the threat looks like (flag composition, urgency)
-  - HOW MANY inspectors to deploy (proportional allocation, max 6 total)
+  - HOW MANY inspectors to deploy (business-capped, burden-weighted, max 6 total)
   - WHAT TO DO (concrete, ordered action steps)
 """
 from typing import Any, Dict, List
+from api.analytics.scoring import priority_band, NEUTRAL_SECTOR_SCORE
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _urgency_label(ops: float) -> str:
-    if ops >= 70:
-        return "TOP PRIORITY"
-    if ops >= 50:
-        return "HIGH PRIORITY"
-    if ops >= 30:
-        return "STANDARD"
-    return "MONITOR"
+    return priority_band(ops)[1]
 
 
 def _urgency_color(label: str) -> str:
     return {
-        "TOP PRIORITY":  "#6366f1",  # Indigo
-        "HIGH PRIORITY": "#8b5cf6",  # Violet
+        "HIGH PRIORITY": "#6366f1",  # Same bands as the WLC priority table
         "STANDARD":      "#0ea5e9",  # Sky blue
         "MONITOR":       "#10b981",  # Emerald
     }.get(label, "#64748b")
@@ -37,11 +31,11 @@ def _flag_summary(brgy: Dict) -> str:
     yellow = brgy.get("yellow_count", 0)
     black = brgy.get("black_count", 0)
     if red:
-        parts.append(f"{red} Unregistered")
+        parts.append(f"{red} Registration/renewal checks")
     if yellow:
         parts.append(f"{yellow} Suspicious")
     if black:
-        parts.append(f"{black} Violations")
+        parts.append(f"{black} Black-flagged")
     if not parts:
         return "No active flags"
     return ", ".join(parts)
@@ -50,23 +44,25 @@ def _flag_summary(brgy: Dict) -> str:
 def _score_breakdown(brgy: Dict, weights: Dict[str, float]) -> Dict[str, Any]:
     """Return a dict with each component and its weighted contribution."""
     risk = brgy.get("risk_score", 0)
-    sector = brgy.get("sector_score", 50)
-    distance = brgy.get("distance_score", 50)
-    w1 = weights.get("w1", 0.40)
-    w2 = weights.get("w2", 0.40)
-    w3 = weights.get("w3", 0.20)
+    sector = brgy.get("sector_score")
+    if sector is None:
+        sector = NEUTRAL_SECTOR_SCORE
+    proximity = brgy.get("proximity_score", 100 - brgy.get("distance_score", 50))
+    w1 = weights.get("w1", 0.68)
+    w2 = weights.get("w2", 0.07)
+    w3 = weights.get("w3", 0.25)
     return {
-        "risk":     {"raw": round(risk, 1),     "weight": round(w1 * 100), "contribution": round(w1 * risk, 1)},
-        "sector":   {"raw": round(sector, 1),   "weight": round(w2 * 100), "contribution": round(w2 * sector, 1)},
-        "distance": {"raw": round(100 - distance, 1), "weight": round(w3 * 100), "contribution": round(w3 * (100 - distance), 1)},
+        "risk":     {"raw": round(risk, 1),     "weight": round(w1 * 100, 1), "contribution": round(w1 * risk, 1)},
+        "sector":   {"raw": round(sector, 1),   "weight": round(w2 * 100, 1), "contribution": round(w2 * sector, 1)},
+        "distance": {"raw": round(proximity, 1), "weight": round(w3 * 100, 1), "contribution": round(w3 * proximity, 1)},
     }
 
 
 def _generate_action_steps(brgy: Dict, inspectors: int, urgency: str) -> List[str]:
     """Return concrete, ordered action steps."""
     name = brgy.get("barangayName", "this barangay")
-    red = brgy.get("red_count", 0)
-    yellow = brgy.get("yellow_count", 0)
+    red = brgy.get("dispatchable_red_count", brgy.get("red_count", 0))
+    yellow = brgy.get("dispatchable_yellow_count", brgy.get("yellow_count", 0))
     black = brgy.get("black_count", 0)
     steps = []
 
@@ -75,15 +71,17 @@ def _generate_action_steps(brgy: Dict, inspectors: int, urgency: str) -> List[st
         steps.append(
             f"Deploy {inspectors} inspector{'s' if inspectors != 1 else ''} to {name}"
         )
+    else:
+        steps.append(f"Keep {name} in WLC priority order; deployment is deferred until inspectors are available")
 
     # Step 2 — focus area
     if black:
         steps.append(
-            f"Prioritize {black} entit{'ies' if black != 1 else 'y'} with known violations — these require immediate enforcement action"
+            f"Refer {black} black-flagged record{'s' if black != 1 else ''} for administrative review — Black businesses cannot be dispatched for inspection"
         )
     if red:
         steps.append(
-            f"Verify {red} potentially unregistered entit{'ies' if red != 1 else 'y'} — confirm business registration status on-site"
+            f"Verify registration or permit renewal for {red} red-flagged record{'s' if red != 1 else ''} on-site"
         )
     if yellow:
         steps.append(
@@ -91,9 +89,11 @@ def _generate_action_steps(brgy: Dict, inspectors: int, urgency: str) -> List[st
         )
 
     # Step 3 — timing
-    if urgency == "TOP PRIORITY":
-        steps.append("Schedule inspections within the next 2 business days")
+    if inspectors == 0:
+        steps.append("Confirm inspector availability before setting a deployment date")
     elif urgency == "HIGH PRIORITY":
+        steps.append("Schedule inspections within the next 2 business days")
+    elif urgency == "STANDARD":
         steps.append("Schedule inspections within this week")
     else:
         steps.append("Schedule inspections within the next 2 weeks")
@@ -122,38 +122,69 @@ def generate_recommendations(
         Total available inspectors.  Hard-capped at 6.
     weights : dict
         ``{"w1": float, "w2": float, "w3": float}`` — the normalised WLC weights
-        (e.g. 0.40, 0.40, 0.20).
+        (e.g. 0.68, 0.07, 0.25). Deferred destinations retain their WLC order.
     """
-    total_inspectors = min(total_inspectors, 6)
+    total_inspectors = max(0, min(int(total_inspectors), 6))
 
-    # Only recommend for top-3 barangays that actually have flags
-    top_3 = rankings[:3]
-    valid = [b for b in top_3 if b.get("flagged_count", 0) > 0]
+    # Eligibility precedes the top-3 limit; never spend a slot on a flag-free row.
+    valid = [
+        b for b in rankings
+        if b.get("dispatchable_count", b.get("red_count", 0) + b.get("yellow_count", 0)) > 0
+        and int(b.get("dispatchable_business_count",
+                      b.get("dispatchable_count", b.get("red_count", 0) + b.get("yellow_count", 0))) or 0) > 0
+    ][:3]
 
     if not valid:
         return []
 
-    # Total non-green flags across ALL barangays (for proportion)
-    total_all_flags = sum(r.get("flagged_count", 0) for r in rankings) or 1
-    # Total flags across the valid top-3 only (for inspector split)
-    top_flags = sum(b.get("flagged_count", 0) for b in valid) or 1
+    capacities = [
+        max(0, int(b.get("dispatchable_business_count",
+                         b.get("dispatchable_count", b.get("red_count", 0) + b.get("yellow_count", 0))) or 0))
+        for b in valid
+    ]
+    selected = valid[:total_inspectors]
+    allocations = [0] * len(valid)
+    for index in range(len(selected)):
+        allocations[index] = 1
+
+    # Preserve WLC coverage and burden-weighted allocation, but never assign
+    # more than one inspector per eligible business in a destination.
+    remaining = total_inspectors - len(selected)
+    while remaining > 0:
+        active = [index for index in range(len(selected))
+                  if allocations[index] < capacities[index]]
+        if not active:
+            break
+        burdens = {
+            index: max(1, selected[index].get(
+                "dispatchable_burden",
+                3 * selected[index].get("dispatchable_red_count", selected[index].get("red_count", 0))
+                + 2 * selected[index].get("dispatchable_yellow_count", selected[index].get("yellow_count", 0))))
+            for index in active
+        }
+        total_burden = sum(burdens.values())
+        shares = {index: remaining * burden / total_burden for index, burden in burdens.items()}
+        extras = {
+            index: min(capacities[index] - allocations[index], int(share))
+            for index, share in shares.items()
+        }
+        assigned = sum(extras.values())
+        for index, extra in extras.items():
+            allocations[index] += extra
+        remaining -= assigned
+        if remaining <= 0:
+            break
+        active = [index for index in active if allocations[index] < capacities[index]]
+        if not active:
+            break
+        for index in sorted(active, key=lambda i: (-(shares[i] - int(shares[i])), i)):
+            if remaining <= 0:
+                break
+            allocations[index] += 1
+            remaining -= 1
 
     recommendations: List[Dict] = []
-    available = total_inspectors
-
-    for i, brgy in enumerate(valid):
-        # ── inspector allocation ────────────────────────────────────────────
-        if i == len(valid) - 1:
-            inspectors = available
-        else:
-            inspectors = max(
-                1,
-                round((brgy["flagged_count"] / top_flags) * total_inspectors),
-            )
-            remaining_slots = len(valid) - 1 - i
-            inspectors = min(inspectors, available - remaining_slots)
-        inspectors = min(inspectors, 6)
-        available -= inspectors
+    for brgy, inspectors in zip(valid, allocations):
 
         # ── urgency & scoring ───────────────────────────────────────────────
         ops = brgy.get("ops_score", 0)
@@ -163,9 +194,10 @@ def generate_recommendations(
         flags_text = _flag_summary(brgy)
 
         # ── human-readable recommendation sentence ──────────────────────────
+        deployment = (f"Deploy {inspectors} inspector{'s' if inspectors != 1 else ''} to {brgy['barangayName']}"
+                      if inspectors else f"Defer deployment to {brgy['barangayName']} until inspectors are available")
         rec_text = (
-            f"{urgency} — Deploy {inspectors} inspector{'s' if inspectors != 1 else ''} to "
-            f"{brgy['barangayName']}. "
+            f"{urgency} — {deployment}. "
             f"OPS Score: {ops}/100. "
             f"Flags: {flags_text}."
         )
@@ -179,14 +211,17 @@ def generate_recommendations(
             "urgency":       urgency,
             "urgencyColor":  _urgency_color(urgency),
             "inspectors":    inspectors,
+            "allocation_status": "ready" if inspectors else "deferred",
             "flagged_count": brgy.get("flagged_count", 0),
+            "dispatchable_count": brgy.get("dispatchable_count", brgy.get("red_count", 0) + brgy.get("yellow_count", 0)),
+            "dispatchable_business_count": capacities[len(recommendations)],
             "red_count":     brgy.get("red_count", 0),
             "yellow_count":  brgy.get("yellow_count", 0),
             "black_count":   brgy.get("black_count", 0),
             "flagSummary":   flags_text,
             "scoreBreakdown": breakdown,
             "actionSteps":   action_steps,
-            "risk_level":    brgy.get("risk_level", "Low"),
+            "risk_level":    priority_band(ops)[0],
         })
 
     return recommendations

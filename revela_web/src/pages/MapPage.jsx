@@ -26,6 +26,7 @@ import {
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
 import { canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
+import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
@@ -2375,7 +2376,7 @@ export default function MapPage() {
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const moreActionsRef = useRef(null);
   const priorityDispatchQueue = opsRankings
-    .filter((ranking) => ranking.flagged_count > 0)
+    .filter(hasDispatchableWlcTargets)
     .slice(0, 3);
 
   const [showYellowModal, setShowYellowModal] = useState(false);
@@ -4440,7 +4441,7 @@ export default function MapPage() {
           {/* Priority Dispatch Queue */}
           {isAdmin && (
             <div className="priority-dispatch-queue" style={{ marginBottom: 14, background: "var(--color-input-bg)", padding: 12, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)" }}>
-              <p className="map-location-count">Municipal rankings · independent of view filters</p>
+              <p className="map-location-count">Municipal WLC ranks · independent of view filters · only eligible new targets</p>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
                 <div className="priority-dispatch-icon" style={{ color: "var(--color-primary)", display: "flex" }}><Icon.AlertTriangle /></div>
                 <h4 style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -4450,16 +4451,16 @@ export default function MapPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {priorityDispatchQueue.length === 0 ? (
                   <p className="priority-dispatch-empty">
-                    No barangays with active flags detected.
+                    No barangays with targets eligible for a new inspection dispatch.
                   </p>
-                ) : priorityDispatchQueue.map((r, i) => (
+                ) : priorityDispatchQueue.map((r) => (
                   <div className="priority-dispatch-item" key={r.barangayID} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--color-modal-bg)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--color-border-soft)" }}>
                     <div>
-                      <div className="priority-dispatch-name" style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", marginBottom: 2 }}>{i + 1}. {r.barangayName}</div>
+                      <div className="priority-dispatch-name" style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", marginBottom: 2 }}>#{r.rank}. {r.barangayName}</div>
                       <div className="priority-dispatch-meta" style={{ fontSize: 10, color: "var(--color-muted)", fontWeight: 600 }}>
                         OPS: <span style={{ color: r.ops_score >= 60 ? "#dc2626" : r.ops_score >= 30 ? "#d97706" : "#16a34a" }}>{r.ops_score}</span>
                         <span style={{ margin: "0 4px" }}>&bull;</span>
-                        {r.flagged_count} flagged
+                        {wlcEligibilityLabel(r)}
                       </div>
                     </div>
                     <button

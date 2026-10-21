@@ -32,6 +32,7 @@ import sealImg from "../assets/seal.png";
 import ComplianceReportCard from "../components/ComplianceReportCard";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
 import { COMPLIANCE_REPORT_TITLE } from "../components/businessCompliance";
+import { registryFlagRateLabel } from "../components/wlcPolicy";
 
 // ── Color Palettes ─────────────────────────────────────────────────────────────
 const SIZE_COLORS = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
@@ -721,14 +722,9 @@ export default function ExportReportsPage() {
   };
 
   const generateUnregisteredReport = async (format) => {
-    let flags = [];
-    try {
-      const res = await getFlagsRequest({ limit: 1000 }, token);
-      const allFlags = res?.data || [];
-      flags = allFlags.filter((f) => f.flagColor === "Red" || f.flagColor === "Yellow");
-    } catch (e) {
-      console.warn("Could not fetch flags:", e);
-    }
+    const res = await getFlagsRequest({ limit: 1000 }, token);
+    const allFlags = res?.data || [];
+    const flags = allFlags.filter((f) => f.flagColor === "Red" || f.flagColor === "Yellow");
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `Unregistered_Businesses_${dateStr}`;
@@ -767,32 +763,57 @@ export default function ExportReportsPage() {
   };
 
   const generateDispatchReport = async (format) => {
-    let rankings = [];
-    let recs = [];
-    try {
-      const data = await getAnalyticsOverviewRequest(token);
-      rankings = data?.prescriptive?.rankings || [];
-      recs = (data?.prescriptive?.recommendations || []).map((r, i) => ({
-        rank: i + 1,
-        barangayName: r.barangayName,
-        recommendation: r.recommendation
-      }));
-    } catch (e) {
-      console.warn("Could not fetch rankings:", e);
-    }
+    const data = await getAnalyticsOverviewRequest(token);
+    const rankings = data?.prescriptive?.rankings || [];
+    const model = data?.prescriptive?.model || {};
+    const workforce = data?.prescriptive?.workforce || {};
+    const computedAt = data?.prescriptive?.rankings_computed_at;
+    const recs = (data?.prescriptive?.dispatch_recommendations || []).map((r) => ({
+      barangayID: r.barangayID,
+      rank: r.rank,
+      barangayName: r.barangayName,
+      recommendation: r.recommendation,
+      inspectors: r.inspectors,
+      allocation_status: r.allocation_status,
+    }));
+    const recommendationsByBarangay = new Map(recs.map((recommendation) => [
+      recommendation.barangayID,
+      recommendation,
+    ]));
 
     const dateStr = new Date().toISOString().slice(0, 10);
     const filename = `Inspector_Dispatch_Plan_${dateStr}`;
 
-    const formattedData = rankings.map((r) => ({
-      Rank: r.rank,
-      Barangay: r.barangayName,
-      PriorityScore: r.ops_score,
-      RiskLevel: r.risk_level,
-      TotalFlagged: r.flagged_count,
-      RedFlags: r.red_count,
-      NonComplianceRate: typeof r.non_compliance_rate === "number" ? `${r.non_compliance_rate}%` : r.non_compliance_rate
-    }));
+    const formattedData = rankings.map((r) => {
+      const recommendation = recommendationsByBarangay.get(r.barangayID);
+      return {
+        Rank: r.rank,
+        Barangay: r.barangayName,
+        PriorityScore: r.ops_score,
+        RiskLevel: r.risk_level,
+        PriorityLabel: r.priority_label,
+        TotalFlagged: r.flagged_count,
+        EligibleForNewDispatch: r.dispatchable_count,
+        RecommendedInspectors: recommendation?.inspectors ?? "",
+        AllocationStatus: recommendation?.allocation_status ?? "Not in dispatch plan",
+        Recommendation: recommendation?.recommendation ?? "",
+        RedFlags: r.red_count,
+        YellowFlags: r.yellow_count,
+        BlackFlags: r.black_count,
+        RiskScore: r.risk_score,
+        WeightedFlagBurden: r.weighted_burden,
+        SectorScore: r.sector_score ?? "Inactive",
+        ProximityScore: r.proximity_score,
+        RegistryActiveFlagRate: registryFlagRateLabel(r.registry_active_flag_rate),
+        UnregisteredCandidates: r.unregistered_candidate_count,
+        ModelVersion: model.version,
+        RiskWeightPercent: typeof model.weights?.w1 === "number" ? model.weights.w1 * 100 : "N/A",
+        SectorWeightPercent: typeof model.weights?.w2 === "number" ? model.weights.w2 * 100 : "N/A",
+        ProximityWeightPercent: typeof model.weights?.w3 === "number" ? model.weights.w3 * 100 : "N/A",
+        ReferenceMaxBurden: model.reference_max_burden,
+        ScoreComputedAt: computedAt,
+      };
+    });
 
     if (format === "csv") {
       const csv = Papa.unparse(formattedData.length > 0 ? formattedData : [{ Note: "No operational dispatch rankings currently available" }]);
@@ -808,7 +829,10 @@ export default function ExportReportsPage() {
         classification: "Official Use / Confidential",
         data: {
           rankings: formattedData,
-          recommendations: recs
+          recommendations: recs,
+          model,
+          workforce,
+          computedAt,
         }
       });
     }
@@ -3044,9 +3068,9 @@ export default function ExportReportsPage() {
                       <th style={{ background: "#3b82f6", color: "#fff", width: "48px" }}>Rank</th>
                       <th style={{ background: "#3b82f6", color: "#fff" }}>Barangay Name</th>
                       <th style={{ background: "#3b82f6", color: "#fff", width: "100px" }}>WLC OPS Score</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "90px" }}>Risk Level</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "90px" }}>Flag Count</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "110px" }}>Non-Compliance</th>
+                      <th style={{ background: "#3b82f6", color: "#fff", width: "90px" }}>Priority</th>
+                      <th style={{ background: "#3b82f6", color: "#fff", width: "90px" }}>Flags / Eligible Targets</th>
+                      <th style={{ background: "#3b82f6", color: "#fff", width: "110px" }}>Registry Active-Flag Rate</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3073,16 +3097,19 @@ export default function ExportReportsPage() {
                                 color: r.RiskLevel === "High" ? "#b91c1c" : r.RiskLevel === "Medium" ? "#b45309" : "#166534"
                               }}
                             >
-                              {r.RiskLevel}
+                              {r.PriorityLabel || r.RiskLevel}
                             </span>
                           </td>
-                          <td>{r.TotalFlagged}</td>
-                          <td style={{ fontWeight: "600", color: "#111827" }}>{r.NonComplianceRate}</td>
+                          <td>{r.TotalFlagged} / {r.EligibleForNewDispatch ?? "N/A"}</td>
+                          <td style={{ fontWeight: "600", color: "#111827" }}>{r.RegistryActiveFlagRate}</td>
                         </tr>
                       ))
                     )}
                   </tbody>
                 </table>
+
+                <p style={{ fontSize: 10, color: "#475569" }}>OPS = W1×Risk + W2×Sector + W3×Proximity; current municipal relative inspection priority, not violation probability. Registry rates use unique registry businesses and are not confirmed-violation rates; N/A means no denominator. Available inspectors: {printReport.data.workforce?.available_inspectors ?? "unavailable"}; one inspector maximum per eligible business. Recommended: {printReport.data.workforce?.allocated_inspectors ?? "unavailable"}; unallocated: {printReport.data.workforce?.unallocated_inspectors ?? "unavailable"}. Deferred plans do not authorize deployment.</p>
+                {printReport.data.model?.weights && <p style={{ fontSize: 10, color: "#475569" }}>Effective weights: {(printReport.data.model.weights.w1 * 100).toFixed(1)}% Risk / {(printReport.data.model.weights.w2 * 100).toFixed(1)}% Sector / {(printReport.data.model.weights.w3 * 100).toFixed(1)}% Proximity. Computed: {printReport.data.computedAt || "unavailable"}. {printReport.data.model.eligibility_note}</p>}
 
                 {printReport.data.recommendations?.length > 0 && (
                   <div className="page-break-avoid">

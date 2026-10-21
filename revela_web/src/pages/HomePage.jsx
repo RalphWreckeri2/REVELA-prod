@@ -14,6 +14,7 @@ import Footer from "../components/Footer";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useAnalyticsData } from "../components/useAnalyticsData";
+import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -273,16 +274,16 @@ function KpiSummary({ kpis, state, onRetry }) {
 }
 
 function BarangayPrioritiesWidget({ opsRankings, state }) {
-  // Preserve the backend order and existing top-five qualifying population.
-  const top5 = opsRankings.filter(b => b && b.flagged_count > 0).slice(0, 5);
+  // Preserve municipal WLC ranks; only display eligible new field destinations.
+  const top5 = opsRankings.filter(b => b && hasDispatchableWlcTargets(b)).slice(0, 5);
   return (
     <section className="overview-surface overview-priorities" aria-labelledby="overview-priorities-title" aria-busy={state.loading}>
       <div className="overview-section-heading">
         <h2 id="overview-priorities-title">Barangay Inspection Priorities</h2>
       </div>
-      <p className="overview-section-sub">Top five with qualifying flags, ranked by OPS.</p>
+      <p className="overview-section-sub">Top five eligible field destinations in municipal WLC order.</p>
       <RequestFeedback state={state} label="barangay priorities" />
-      {state.hasResult && top5.length === 0 && <p className="overview-empty">No barangays with qualifying flags in the loaded rankings.</p>}
+      {state.hasResult && top5.length === 0 && <p className="overview-empty">No barangays with targets eligible for a new inspection dispatch.</p>}
       <ol className="overview-priority-list">
         {state.loading && !state.hasResult ? (
           Array.from({ length: 4 }, (_, index) => (
@@ -299,7 +300,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
                 <span className="overview-priority-rank" aria-label={`Rank ${formatOverviewNumber(b.rank)}`}>{formatOverviewNumber(b.rank)}</span>
                 <span className="overview-priority-main">
                   <span className="overview-priority-name">{shortBarangay(b.barangayName) || "Unknown barangay"}</span>
-                  <span className="overview-priority-meta"><strong>{formatOverviewNumber(b.ops_score)}</strong>/100 OPS · {formatOverviewNumber(b.flagged_count)} qualifying {b.flagged_count === 1 ? "flag" : "flags"}</span>
+                  <span className="overview-priority-meta"><strong>{formatOverviewNumber(b.ops_score)}</strong>/100 OPS · {wlcEligibilityLabel(b)}</span>
                 </span>
                 <span className={`overview-priority-category is-${categoryClass}`}>{category}</span>
               </Link>
@@ -309,7 +310,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
       </ol>
       <details className="overview-explanation">
         <summary>How priorities are ranked</summary>
-        <p>OPS combines the backend’s risk, sector, and distance scores. Only qualifying Red, Yellow, and Black flags feed this ranking; categories are supplied by the backend.</p>
+        <p>OPS combines weighted flag burden, optional sector scores and proximity. Red, Yellow and Black flags supply risk context. New field plans skip Black-only barangays and already-assigned targets; the remaining destinations retain their municipal ranks.</p>
         <p>High: 60–100 · Medium: 30–below 60 · Low: below 30. These are barangay priorities, not counts of unassigned tasks.</p>
       </details>
       <Link className="overview-section-link" to="/analytics">View Analytics <OverviewIcon kind="arrow" /></Link>

@@ -15,6 +15,9 @@ class RegistryDB:
         self.db.row_factory = sqlite3.Row
         self.db.create_function("YEAR", 1, lambda value: int(
             str(value)[:4]) if value else None)
+        self.db.create_function("CONCAT", -1, lambda *values: (
+            None if any(value is None for value in values)
+            else "".join(str(value) for value in values)))
         self.connection = self
         self.calls = []
         self.db.executescript("""

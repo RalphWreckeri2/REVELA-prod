@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { AuthContext } from "../src/context/authContext";
 import { ThemeContext } from "../src/context/themeContext";
 import AnalyticsPage from "../src/pages/AnalyticsPage";
+import { DEFAULT_WLC_WEIGHTS } from "../src/components/wlcPolicy";
 import "../src/index.css";
 import "../src/styles/global.css";
 
@@ -23,19 +24,33 @@ const pending = [];
 let online = true;
 let mode = "hold";
 let value = 17;
+const wlcWrites = [];
+let rejectWlcSave = true;
 Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
 
 function payload(section, count = value) {
   const sections = {
     descriptive: { kpis: { active_count: count, total_businesses: count, reporting_year: 2031 }, audit_summary: { total_inspections: 0, result_breakdown: [] } },
     diagnostic: { scan_history: [], category_risk_drivers: [], dbscan_clusters: [], morans_data: { points: [] } },
-    prescriptive: { rankings: [], dispatch_recommendations: [], wlc_config: {} },
+    prescriptive: {
+      rankings: [
+        { barangayID: 1, barangayName: "Barangay I", rank: 1, ops_score: 84, risk_score: 100, sector_score: 50, proximity_score: 50, flagged_count: 100, red_count: 100, yellow_count: 0, black_count: 0, registry_active_flag_rate: 25, registry_flagged_count: 1, total_registered: 4, unregistered_candidate_count: 10, risk_level: "High", priority_label: "HIGH PRIORITY", priority_color: "#6366f1", location_missing: true },
+        { barangayID: 2, barangayName: "Barangay II", rank: 2, ops_score: 39.1, risk_score: 34, sector_score: 50, proximity_score: 50, flagged_count: 34, red_count: 34, yellow_count: 0, black_count: 0, registry_active_flag_rate: null, registry_flagged_count: 0, total_registered: 0, unregistered_candidate_count: 34, risk_level: "Medium", priority_label: "STANDARD", priority_color: "#0ea5e9", location_missing: true },
+      ],
+      dispatch_recommendations: [{ barangayID: 1, barangayName: "Barangay I", rank: 1, ops_score: 84, inspectors: 0, allocation_status: "deferred", flagged_count: 100, red_count: 100, urgency: "HIGH PRIORITY", urgencyColor: "#6366f1", scoreBreakdown: { risk: { raw: 100, weight: 68, contribution: 68 }, sector: { raw: 50, weight: 7, contribution: 3.5 }, distance: { raw: 50, weight: 25, contribution: 12.5 } }, actionSteps: ["Keep Barangay I in WLC priority order; deployment is deferred until inspectors are available"] }],
+      wlc_config: DEFAULT_WLC_WEIGHTS,
+      model: { version: "wlc-v2", weights: { w1: .68, w2: .07, w3: .25 }, reference_max_burden: 300, sector_scores_ready: false, sector_enabled: true, sector_note: "Missing sector overrides use neutral score 50; interview-derived weights remain unchanged.", location_note: "Missing locations use neutral proximity 50." },
+      workforce: {
+        active_inspectors: 0, available_inspectors: 0, allocation_capacity: 0,
+        allocated_inspectors: 0, unallocated_inspectors: 0,
+      },
+    },
     operations: { inspector_stats: [], status_breakdown: [], inspection_timeline: [] },
   };
   return Response.json({ [section]: sections[section], analytics_cache: { age_seconds: 0, computed_at: new Date().toISOString() } });
 }
 
-window.fetch = async (url) => {
+window.fetch = async (url, options = {}) => {
   const parsed = new URL(url, location.href);
   if (parsed.pathname.endsWith("/analytics/all")) {
     const section = parsed.searchParams.get("section");
@@ -49,7 +64,14 @@ window.fetch = async (url) => {
   }
   if (parsed.pathname.endsWith("/barangays")) return Response.json([{ barangayID: 1, barangayName: "Barangay I" }, { barangayID: 2, barangayName: "Barangay II" }]);
   if (parsed.pathname.endsWith("/filter-metadata")) return Response.json({ lines_of_business: [], business_types: [], business_sizes: [] });
-  if (parsed.pathname.endsWith("/wlc-config")) return Response.json({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
+  if (parsed.pathname.endsWith("/wlc-config")) {
+    if (options.method === "PUT") {
+      wlcWrites.push(JSON.parse(options.body));
+      if (rejectWlcSave) { rejectWlcSave = false; return Response.json({ error: "Synthetic policy validation failure" }, { status: 400 }); }
+      return Response.json({ data: DEFAULT_WLC_WEIGHTS });
+    }
+    return Response.json(DEFAULT_WLC_WEIGHTS);
+  }
   if (parsed.pathname.endsWith("/unread-count")) return Response.json({ count: 0 });
   if (parsed.pathname.endsWith("/stream")) return new Response('data: {"type":"connected"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
   return Response.json({ data: [] });
@@ -103,6 +125,35 @@ try {
     await wait(() => tab.getAttribute("aria-current") === "page" && [...document.querySelectorAll("h2")].some(node => node.textContent.includes(heading)), `${label} tab`);
     check(true, `${label} tab switches to its existing section`);
   }
+
+  [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.startsWith("Prescriptive")).click();
+  await wait(() => document.querySelector('[aria-label="WLC methodology"]'), "WLC methodology");
+  check(document.body.textContent.includes("W3·Proximity") && document.body.textContent.includes("municipality-wide"), "Prescriptive shows the implemented equation and fixed municipal filter scope");
+  check(document.body.textContent.includes("Deployments are deferred") && !document.body.textContent.includes("Deploy 0"), "Zero inspectors defer deployment without inventing staff");
+  const priorityTable = [...document.querySelectorAll("h3")].find(node => node.textContent === "Inspector Deployment Priority Table").parentElement.parentElement.querySelector("table");
+  check(priorityTable.textContent.includes("N/A") && priorityTable.textContent.includes("25.0%") && !priorityTable.textContent.includes("Non-Compliance"), "Registry context displays valid business rates and N/A, not a clipped record ratio");
+  check(content.scrollWidth <= content.clientWidth + 2, "Prescriptive content stays within the viewport; the wide priority table scrolls inside its card");
+  [...document.querySelectorAll("button")].find(node => node.textContent.includes("Deferred — no free inspector")).click();
+  await wait(() => document.body.textContent.includes("Sector (7%)"), "interview-derived sector contribution");
+  check(document.body.textContent.includes("Registration / renewal checks"), "Red flags are registration/renewal checks, not automatically proven unregistered businesses");
+  button("⚙ Quick Adjust WLC Weights").click();
+  await wait(() => button("Apply") && !button("Apply").disabled, "loaded WLC weights");
+  const ranges = [...document.querySelectorAll('input[type="range"]')];
+  check(!ranges[1].disabled && ranges[1].value === "7" && document.body.textContent.includes("→ +3.5"), "Interview-derived 7% sector weight remains active and contributes 3.5 points for neutral score 50");
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(ranges[0], "69");
+  ranges[0].dispatchEvent(new Event("input", { bubbles: true }));
+  await wait(() => button("Apply").disabled && document.body.textContent.includes("WLC weights must total 100%"), "invalid total disables Apply");
+  check(wlcWrites.length === 0, "An invalid WLC total never sends a save request");
+  button("Use Default (68/7/25)").click();
+  await wait(() => !button("Apply").disabled, "restore valid default weights");
+  button("Apply").click();
+  await wait(() => document.body.textContent.includes("Synthetic policy validation failure"), "visible server validation failure");
+  check(Boolean(button("Apply")), "Rejected saves keep Quick Adjust open and show the backend error");
+  button("Apply").click();
+  await wait(() => !button("Apply"), "successful WLC save closes Quick Adjust");
+  check(wlcWrites.length === 2 && wlcWrites.every(payload => JSON.stringify(payload) === JSON.stringify(DEFAULT_WLC_WEIGHTS)), "Only validated default weights are submitted; a successful save refreshes analytics");
+  [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.startsWith("Descriptive")).click();
+  await wait(() => button("Refresh") && !button("Refresh").disabled, "ready after WLC refresh");
 
   mode = "hold";
   button("Refresh").click();

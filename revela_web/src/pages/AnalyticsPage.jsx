@@ -14,6 +14,7 @@ import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
 import { analyticsSnapshotStatus } from "../components/analyticsCachePolicy";
 import { useAnalyticsData } from "../components/useAnalyticsData";
+import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { useAuth } from "../context/authContext";
 import {
   getWlcConfigRequest,
@@ -887,9 +888,12 @@ export default function AnalyticsPage() {
   const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
   const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
 
-  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });
+  const [wlcConfig, setWlcConfig] = useState({ ...DEFAULT_WLC_WEIGHTS });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
   const [savingWlc, setSavingWlc] = useState(false);
+  const [wlcSaveError, setWlcSaveError] = useState("");
+  const [wlcConfigReady, setWlcConfigReady] = useState(false);
+  const wlcValidationError = wlcPolicyError(wlcConfig);
   const [expandedDispatch, setExpandedDispatch] = useState({});
   const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
   const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
@@ -929,31 +933,40 @@ export default function AnalyticsPage() {
 
   const fetchWlcConfig = useCallback(async () => {
     if (!token) return;
-
+    setWlcConfigReady(false);
     try {
       const res = await getWlcConfigRequest(token);
       if (res) {
-        setWlcConfig({ w1_risk: res.w1_risk ?? 68, w2_sector: res.w2_sector ?? 7, w3_distance: res.w3_distance ?? 25 });
+        setWlcConfig({ w1_risk: res.w1_risk ?? DEFAULT_WLC_WEIGHTS.w1_risk, w2_sector: res.w2_sector ?? DEFAULT_WLC_WEIGHTS.w2_sector, w3_distance: res.w3_distance ?? DEFAULT_WLC_WEIGHTS.w3_distance });
+        setWlcConfigReady(true);
+        setWlcSaveError("");
       }
     } catch (e) {
-      console.error(e);
+      setWlcSaveError(e.message || "Could not load saved WLC weights. Reopen Quick Adjust to retry.");
     }
   }, [token]);
 
   const handleSaveWlc = async () => {
+    if (!wlcConfigReady) return;
+    setWlcSaveError("");
+    if (wlcValidationError) {
+      setWlcSaveError(wlcValidationError);
+      return;
+    }
     setSavingWlc(true);
     try {
       await updateWlcConfigRequest(wlcConfig, token);
-      await fetchAnalytics(false);
+      await fetchAnalytics();
       setShowWlcConfig(false);
     } catch (e) {
-      console.error(e);
+      setWlcSaveError(e.message || "Could not save WLC weights.");
     } finally {
       setSavingWlc(false);
     }
   };
 
   const handleCancelWlc = () => {
+    setWlcSaveError("");
     fetchWlcConfig();
     setShowWlcConfig(false);
   };
@@ -961,9 +974,7 @@ export default function AnalyticsPage() {
   const handleUseDefaultWlc = () => {
     setWlcConfig(prev => ({
       ...prev,
-      w1_risk: 68,
-      w2_sector: 7,
-      w3_distance: 25,
+      ...DEFAULT_WLC_WEIGHTS,
     }));
   };
 
@@ -1125,12 +1136,7 @@ export default function AnalyticsPage() {
   const scanHistory = diag?.scan_history || [];
 
   // ── Prescriptive: WLC radar (top 8) ──────────────────────────────────────
-  const radarData = (presc?.rankings || []).slice(0, 8).map(r => ({
-    barangay: shortBarangay(r.barangayName),
-    OPS: r.ops_score,
-    "Non-Compliance %": Math.min(r.non_compliance_rate, 100),
-    "Red Flags": Math.min((r.red_count / Math.max(...(presc?.rankings || []).map(x => x.red_count), 1)) * 100, 100),
-  }));
+  const radarData = opsRadarData(presc?.rankings, shortBarangay);
 
   const auditBreakdown = desc?.audit_summary?.result_breakdown || [];
   const inspectedCount = auditBreakdown.reduce((sum, r) => sum + r.count, 0);
@@ -1297,6 +1303,8 @@ export default function AnalyticsPage() {
     // Prescriptive tier
     opsRankings: data?.prescriptive?.rankings || [],
     wlcConfig: data?.prescriptive?.wlc_config || {},
+    wlcModel: data?.prescriptive?.model || {},
+    dispatchWorkforce: data?.prescriptive?.workforce || {},
     dispatchRecommendations: data?.prescriptive?.dispatch_recommendations || [],
     // Operations tier
     inspectorStats: data?.operations?.inspector_stats || [],
@@ -1692,8 +1700,8 @@ export default function AnalyticsPage() {
               </h3>
               {showFilters ? (
                 <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--color-muted)", maxWidth: 720 }}>
-                  Registry (status, sector, type, size, renewal window), geospatial flags (color, detection window),
-                  and inspections (result, verification, timestamp window). Barangay selection limits spatial and joined aggregates.
+                   Registry (status, sector, type, size, renewal window), geospatial flags (color, detection window),
+                   and inspections (result, verification, timestamp window). For Prescriptive, only barangay selection narrows the display; WLC scores and allocations remain municipality-wide.
                 </p>
               ) : (
                 <p style={{ margin: "4px 0 0", fontSize: 12, color: "var(--color-muted)" }}>
@@ -2125,7 +2133,7 @@ export default function AnalyticsPage() {
                         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--color-muted)" }}>
                           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                            {rec.inspectors ?? 0}
+                            {rec.allocation_status === "deferred" ? "Deferred" : rec.inspectors ?? 0}
                           </span>
                           <span>&middot;</span>
                           <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -2877,8 +2885,28 @@ export default function AnalyticsPage() {
             <SectionHeader
               tier="prescriptive"
               title="Prescriptive Analytics — Action Plan"
-              subtitle="Weighted Linear Combination model (OPS = W1·Risk + W2·Sector − W3·Distance) normalised 0–100 per barangay"
+              subtitle="Inspect barangays in WLC order: OPS = W1·Risk + W2·Sector + W3·Proximity (0–100)"
             />
+
+            <div className="saas-card frosted-glass" style={{ padding: "16px 20px", marginBottom: 24 }}>
+              <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--color-muted)", lineHeight: 1.6 }}>
+                Scores and ranks use current municipality-wide records. Barangay filters only narrow this list; registry, flag, date and inspection filters do not recalculate operational priorities. A score is relative inspection priority, not the probability of a violation.
+                {" "}New field plans require dispatchable Red/Yellow targets. Black-only barangays are for administrative review; already-assigned targets are not double-booked.
+              </p>
+              {presc?.workforce && <p role="status" style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>
+                {presc.workforce.available_inspectors} currently free of {presc.workforce.active_inspectors} active inspectors · {presc.workforce.allocated_inspectors} recommended for this plan, {presc.workforce.unallocated_inspectors} left unallocated when eligible-business capacity is reached.
+                {presc.workforce.available_inspectors === 0 && " Deployments are deferred; WLC priority order is unchanged."}
+              </p>}
+              <details aria-label="WLC methodology" style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.6 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700 }}>How inspection priority is calculated</summary>
+                <p>Burden = 3×Red + 2×Yellow + 4×Black. Risk = 100×burden / highest municipal burden ({presc?.model?.reference_max_burden ?? "unavailable"}); zero when no active flags exist. Counts are eligible geospatial records, not unique businesses. Barangays without active flags receive OPS 0.</p>
+                <p>Effective weights: Risk {presc?.model?.weights ? (presc.model.weights.w1 * 100).toFixed(1) : "—"}% · Sector {presc?.model?.weights ? (presc.model.weights.w2 * 100).toFixed(1) : "—"}% · Proximity {presc?.model?.weights ? (presc.model.weights.w3 * 100).toFixed(1) : "—"}%. {presc?.model?.sector_note}</p>
+                <p>{presc?.model?.location_note} Proximity = 100 − min(distance in km / 20 × 100, 100).</p>
+                <p>{presc?.model?.eligibility_note}</p>
+                <p>High priority: OPS ≥ 60; Standard: 30–59.9; Monitor: below 30. These are policy bands, not statistically calibrated violation categories. Ties use weighted burden, then barangay name and ID.</p>
+                <p>{presc?.workforce?.availability_rule} Highest WLC destinations receive inspectors first; remaining slots follow weighted burden using largest remainders. Confirm actual field availability before dispatch.</p>
+              </details>
+            </div>
 
             {/* Focal Point: Actionable Dispatch Recommendations */}
             {presc?.dispatch_recommendations && presc.dispatch_recommendations.length > 0 && (
@@ -2912,11 +2940,12 @@ export default function AnalyticsPage() {
                             <div style={{ display: "flex", gap: 12, marginTop: 4, fontSize: 12, color: "var(--color-muted)" }}>
                               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                 <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                                {rec.inspectors ?? 0} inspector{(rec.inspectors ?? 0) !== 1 ? "s" : ""}
+                                {rec.allocation_status === "deferred" ? "Deferred — no free inspector" : `${rec.inspectors ?? 0} inspector${(rec.inspectors ?? 0) !== 1 ? "s" : ""}`}
                               </span>
                               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                 <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
                                 {rec.flagged_count ?? 0} flag{(rec.flagged_count ?? 0) !== 1 ? "s" : ""}
+                                {typeof rec.dispatchable_count === "number" && ` · ${rec.dispatchable_count} eligible for new dispatch`}
                               </span>
                             </div>
                           </div>
@@ -2930,9 +2959,9 @@ export default function AnalyticsPage() {
                           <div style={{ padding: "0 20px 20px 20px", borderTop: "1px solid rgba(99,102,241,0.08)" }}>
                             {/* Flag Badges */}
                             <div style={{ display: "flex", gap: 8, marginTop: 14, marginBottom: 14, flexWrap: "wrap" }}>
-                              {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Unregistered</span>}
+                              {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Registration / renewal checks</span>}
                               {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Suspicious</span>}
-                              {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Violations</span>}
+                              {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black-flagged records</span>}
                             </div>
 
                             {/* Score Breakdown */}
@@ -2946,7 +2975,7 @@ export default function AnalyticsPage() {
                                   <div key={label} style={{ flex: "1 1 120px", background: "var(--color-surface)", padding: "10px 12px", borderRadius: 8, border: "1px solid var(--color-border)" }}>
                                     <div style={{ fontSize: 10, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label} ({data?.weight ?? 0}%)</div>
                                     <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
-                                      <span style={{ fontSize: 20, fontWeight: 800, color }}>{data?.raw ?? 0}</span>
+                                      <span style={{ fontSize: 20, fontWeight: 800, color }}>{label === "Sector" && data?.weight === 0 ? "Inactive" : data?.raw ?? 0}</span>
                                       <span style={{ fontSize: 11, color: "var(--color-muted)" }}>→ +{data?.contribution ?? 0}</span>
                                     </div>
                                   </div>
@@ -2974,7 +3003,7 @@ export default function AnalyticsPage() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 24, marginBottom: 24 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 400px), 1fr))", gap: 24, marginBottom: 24 }}>
               {/* Radar chart — top 8 */}
               <div className="tier-3-card saas-card frosted-glass" style={{ borderRadius: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -2982,7 +3011,7 @@ export default function AnalyticsPage() {
                     OPS Radar — Top 8 Barangays
                   </h3>
                   {canEditWlc && (
-                    <button className="ghost-btn" onClick={() => showWlcConfig ? handleCancelWlc() : setShowWlcConfig(true)} style={{ fontSize: 12, padding: "4px 10px", margin: 0 }}>
+                    <button className="ghost-btn" onClick={() => { if (showWlcConfig) handleCancelWlc(); else { void fetchWlcConfig(); setShowWlcConfig(true); } }} style={{ fontSize: 12, padding: "4px 10px", margin: 0 }}>
                       {showWlcConfig ? "Close Quick Adjust" : "⚙ Quick Adjust WLC Weights"}
                     </button>
                   )}
@@ -3007,13 +3036,13 @@ export default function AnalyticsPage() {
                             gap: 4
                           }}
                           onClick={handleUseDefaultWlc}
-                          title="Reset sliders to default weights (68% Risk, 7% Sector, 25% Distance)"
+                           title="Reset sliders to interview-derived default weights (68% Risk, 7% Sector, 25% Proximity)"
                           disabled={savingWlc}
                         >
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                           Use Default
                         </button>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: (wlcConfig.w1_risk + wlcConfig.w2_sector + wlcConfig.w3_distance === 100) ? "var(--color-primary)" : "var(--color-danger)" }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: !wlcValidationError ? "var(--color-primary)" : "var(--color-danger)" }}>
                           Total: {wlcConfig.w1_risk + wlcConfig.w2_sector + wlcConfig.w3_distance}%
                         </span>
                       </div>
@@ -3021,7 +3050,7 @@ export default function AnalyticsPage() {
                     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                       <div>
                         <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
-                          <span>Risk Severity (W1):</span>
+                          <span>Weighted Flag Burden (W1):</span>
                           <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w1_risk}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w1_risk} onChange={e => setWlcConfig({ ...wlcConfig, w1_risk: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
@@ -3032,15 +3061,17 @@ export default function AnalyticsPage() {
                           <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w2_sector}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w2_sector} onChange={e => setWlcConfig({ ...wlcConfig, w2_sector: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
+                        {!presc?.model?.sector_scores_ready && <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>Missing sector overrides use the existing neutral score of 50. The configured sector weight is retained; weights are not redistributed.</p>}
                       </div>
                       <div>
                         <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
-                          <span>Travel Distance (W3):</span>
+                          <span>Proximity / travel efficiency (W3):</span>
                           <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w3_distance}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w3_distance} onChange={e => setWlcConfig({ ...wlcConfig, w3_distance: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
                       </div>
                     </div>
+                    {(wlcValidationError || wlcSaveError) && <p role="alert" style={{ color: "var(--color-danger)", fontSize: 12 }}>{wlcValidationError || wlcSaveError}</p>}
                     <div style={{ marginTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                       <button
                         type="button"
@@ -3057,7 +3088,7 @@ export default function AnalyticsPage() {
                         }}
                         onClick={handleUseDefaultWlc}
                         disabled={savingWlc}
-                        title="Revert back to default weights: 68% Risk, 7% Sector, 25% Distance"
+                        title="Revert back to interview-derived defaults: 68% Risk, 7% Sector, 25% Proximity"
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                         Use Default (68/7/25)
@@ -3066,7 +3097,7 @@ export default function AnalyticsPage() {
                         <button className="ghost-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleCancelWlc} disabled={savingWlc}>
                           Cancel
                         </button>
-                        <button className="primary-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleSaveWlc} disabled={savingWlc}>
+                        <button className="primary-btn" style={{ padding: "6px 12px", fontSize: 11 }} onClick={handleSaveWlc} disabled={savingWlc || !wlcConfigReady || Boolean(wlcValidationError)}>
                           {savingWlc ? "Applying..." : "Apply"}
                         </button>
                       </div>
@@ -3083,7 +3114,8 @@ export default function AnalyticsPage() {
                       <PolarAngleAxis dataKey="barangay" tick={{ fontSize: 10, fill: "var(--color-muted)" }} />
                       <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 9 }} />
                       <Radar name="OPS Score" dataKey="OPS" stroke="#6366f1" fill="#6366f1" fillOpacity={0.18} strokeWidth={2} />
-                      <Radar name="Non-Compliance %" dataKey="Non-Compliance %" stroke={COLOR.yellow} fill={COLOR.yellow} fillOpacity={0.12} strokeWidth={2} />
+                      <Radar name="Relative flag burden" dataKey="Risk" stroke={COLOR.yellow} fill={COLOR.yellow} fillOpacity={0.12} strokeWidth={2} />
+                      <Radar name="Proximity" dataKey="Proximity" stroke={COLOR.blue} fill={COLOR.blue} fillOpacity={0.06} strokeWidth={1} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
                       <Tooltip content={<CustomTooltip />} />
                     </RadarChart>
@@ -3092,19 +3124,19 @@ export default function AnalyticsPage() {
               </div>
 
               {/* Full WLC Rankings Table */}
-              <div className="tier-2-card saas-card frosted-glass" style={{ borderRadius: 12 }}>
+              <div className="tier-2-card saas-card frosted-glass" style={{ borderRadius: 12, minWidth: 0 }}>
                 <div style={{ marginBottom: 16 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>
                     Inspector Deployment Priority Table
                   </h3>
                   <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
-                    All 16 barangays ranked by OPS — deploy inspectors top-down
+                    Municipal OPS ranks — inspect top-down as staffing permits. Registry rates below are context only, not OPS inputs.
                   </p>
                 </div>
 
                 {loading ? <Skeleton h={380} /> : (
-                  <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                  <div style={{ maxHeight: 400, overflow: "auto" }}>
+                    <table style={{ width: "100%", minWidth: 720, borderCollapse: "collapse", textAlign: "left" }}>
                       <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 10 }}>
                         <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                           <th style={{ padding: "10px 12px", fontWeight: 700 }}>#</th>
@@ -3113,6 +3145,8 @@ export default function AnalyticsPage() {
                           <th style={{ padding: "10px 12px", fontWeight: 700 }}>Flagged</th>
                           <th style={{ padding: "10px 12px", fontWeight: 700 }}>R / Y / B</th>
                           <th style={{ padding: "10px 12px", fontWeight: 700 }}>Priority</th>
+                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Registry active-flag rate</th>
+                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Unregistered candidates</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3129,6 +3163,8 @@ export default function AnalyticsPage() {
                             </td>
                             <td style={{ padding: "12px", fontWeight: 600, color: "var(--color-ink)", fontSize: 13 }}>
                               {row.barangayName}
+                              <div style={{ fontSize: 10, fontWeight: 400, color: "var(--color-muted)" }}>{wlcEligibilityLabel(row)}</div>
+                              {row.location_missing && row.inspection_required && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--color-muted)" }}>Location missing — neutral proximity</div>}
                             </td>
                             <td style={{ padding: "12px" }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -3138,9 +3174,9 @@ export default function AnalyticsPage() {
                                     className="ops-score-fill"
                                     style={{
                                       width: `${row.ops_score}%`,
-                                      background: row.risk_level === "High" ? COLOR.red
+                                      background: row.priority_color || (row.risk_level === "High" ? COLOR.red
                                         : row.risk_level === "Medium" ? COLOR.yellow
-                                          : COLOR.green,
+                                          : COLOR.green),
                                     }}
                                   />
                                 </div>
@@ -3158,16 +3194,23 @@ export default function AnalyticsPage() {
                               <span style={{
                                 padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
                                 ...riskBadgeStyle(row.risk_level),
+                                ...(row.priority_color ? { color: row.priority_color, borderColor: row.priority_color } : {}),
                               }}>
-                                {row.risk_level}
+                                {row.priority_label || row.risk_level}
                               </span>
                             </td>
+                            <td style={{ padding: "12px", fontSize: 12 }}>
+                              {registryFlagRateLabel(row.registry_active_flag_rate)}
+                              <div style={{ fontSize: 10, color: "var(--color-muted)" }}>{row.registry_flagged_count ?? "—"} / {row.total_registered ?? "—"} registry businesses</div>
+                            </td>
+                            <td style={{ padding: "12px", fontSize: 12 }}>{row.unregistered_candidate_count ?? "—"}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 )}
+                <p style={{ fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>Registry rate counts unique current Red/Yellow/Black registry businesses, including those without mapped records, against the same registry population; N/A means no denominator. It is not a confirmed-violation rate. Unregistered candidates are Red records with no registry match.</p>
               </div>
             </div>
           </section>

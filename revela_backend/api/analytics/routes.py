@@ -19,6 +19,7 @@ from google.genai import types
 from app import mysql
 from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
+from api.analytics.scoring import calculate_rankings, select_rankings
 from api.models.detection_runs import get_recent_detection_runs
 from api.analytics.filters import (
     parse_analytics_filters,
@@ -633,6 +634,7 @@ from api.registry.colors import (  # noqa: E402,F401
     _effective_flag_color_sql,
     _pin_state_column_sql,
     registry_row_color_sql,
+    _registry_column_sql,
     _verified_orange_sql,
     ladder_columns_available,
 )
@@ -707,9 +709,33 @@ _PIN_ACTIONABLE_SQL = (
 )
 
 
+def _no_open_inspection_sql(alias="g"):
+    return f"""NOT EXISTS (
+        SELECT 1 FROM inspection_reports pending
+        WHERE pending.targetID = {alias}.logID
+          AND pending.verificationStatus IN ('Assigned', 'Reassigned', 'In Progress')
+    )"""
+
+
+def _dispatchable_business_identity_sql(alias, color, no_open, registry_business_id=None):
+    registry_business_id = registry_business_id or _registry_column_sql(alias, "businessID")
+    return f"""CASE WHEN {color} IN ('Red', 'Yellow') AND {no_open} THEN
+        COALESCE(
+            CONCAT('business:', CAST(COALESCE({registry_business_id}, {alias}.businessID) AS CHAR)),
+            CONCAT('place:', CAST({alias}.placeID AS CHAR)),
+            CONCAT('log:', CAST({alias}.logID AS CHAR))
+        )
+    END"""
+
+
 def _barangay_rankings_sql(effective_flag_color, geo_on_g, geo_on_g_p,
-                           reg_o, reg_o_p, brgy_b, brgy_b_p):
+                            reg_o, reg_o_p, brgy_b, brgy_b_p):
     """Shipped form: aggregates over the geospatial x registry fan-out."""
+    no_open = _no_open_inspection_sql()
+    dispatchable_business = _dispatchable_business_identity_sql(
+        "g", effective_flag_color, no_open)
+    active_location = f"""{effective_flag_color} IN ('Red', 'Yellow') AND {no_open}
+        AND g.latitude BETWEEN -90 AND 90 AND g.longitude BETWEEN -180 AND 180"""
     sql = f"""
         SELECT
             b.barangayID,
@@ -718,8 +744,15 @@ def _barangay_rankings_sql(effective_flag_color, geo_on_g, geo_on_g_p,
             COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
             COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
             COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
-            AVG(g.latitude)                                          AS avg_lat,
-            AVG(g.longitude)                                         AS avg_lng,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red' AND {no_open}
+                  THEN g.logID END) AS dispatchable_red_count,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' AND {no_open}
+                  THEN g.logID END) AS dispatchable_yellow_count,
+            COUNT(DISTINCT {dispatchable_business}) AS dispatchable_business_count,
+            AVG(CASE WHEN {active_location} THEN g.latitude END)     AS avg_lat,
+            AVG(CASE WHEN {active_location} THEN g.longitude END)    AS avg_lng,
+            COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'
+                AND {_registry_column_sql('g', 'businessID')} IS NULL THEN g.logID END) AS unregistered_candidate_count,
             COUNT(DISTINCT o.businessID)                             AS total_registered
         FROM barangays b
         LEFT JOIN geospatial_logs   g ON g.barangayID = b.barangayID
@@ -750,8 +783,8 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
     (G rows when R=0, R rows when G=0, via LEFT JOIN), then:
       * COUNT(DISTINCT g.logID) sees each logID once per registry row, so
         DISTINCT cancels the registry multiplicity exactly;
-      * AVG(g.latitude/longitude) repeats every geo row of the barangay the same
-        number of times, so SUM/COUNT is the mean of the geo rows - unchanged;
+      * The conditional active-flag AVG repeats each eligible coordinate pair
+        the same number of times, so its mean is unchanged;
       * COUNT(DISTINCT o.businessID) sees each businessID once per geo row, so
         DISTINCT cancels the geo multiplicity exactly.
     Aggregating g and o separately therefore yields identical values, while the
@@ -761,12 +794,12 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
 
     Single-evaluation guard.  {effective_flag_color} is a large CASE carrying
     correlated official_registry/enforcement_state lookups, and it appears in
-    four COUNT aggregates; written directly against geospatial_logs MySQL would
-    expand it four times per geo row.  The inner derived table below selects it
+    counts and two location averages; written directly against geospatial_logs
+    MySQL expands it repeatedly per geo row. The inner derived table selects it
     once as eff_color; its GROUP BY on the geospatial_logs primary key (logID)
     is intended to make the derived table non-mergeable under MySQL's
     derived-table rules, so eff_color would be materialized once per actionable
-    geo row and the four outer aggregates read that plain column.  Grouping by
+    geo row and the outer aggregates read that plain column. Grouping by
     the primary key keeps one row per geo row, so values are unchanged.  MySQL
     materialization and the actual evaluation count are UNVERIFIED: they must be
     confirmed by this shape's own EXPLAIN (and the estimate not assumed here).
@@ -779,8 +812,12 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
             COALESCE(ga.red_count, 0)        AS red_count,
             COALESCE(ga.yellow_count, 0)     AS yellow_count,
             COALESCE(ga.black_count, 0)      AS black_count,
+            COALESCE(ga.dispatchable_red_count, 0) AS dispatchable_red_count,
+            COALESCE(ga.dispatchable_yellow_count, 0) AS dispatchable_yellow_count,
+            COALESCE(ga.dispatchable_business_count, 0) AS dispatchable_business_count,
             ga.avg_lat                       AS avg_lat,
             ga.avg_lng                       AS avg_lng,
+            COALESCE(ga.unregistered_candidate_count, 0) AS unregistered_candidate_count,
             COALESCE(oa.total_registered, 0) AS total_registered
         FROM barangays b
         LEFT JOIN (
@@ -790,13 +827,30 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
                 COUNT(DISTINCT CASE WHEN c.eff_color = 'Red'    THEN c.logID END) AS red_count,
                 COUNT(DISTINCT CASE WHEN c.eff_color = 'Yellow' THEN c.logID END) AS yellow_count,
                 COUNT(DISTINCT CASE WHEN c.eff_color = 'Black'  THEN c.logID END) AS black_count,
-                AVG(c.latitude)  AS avg_lat,
-                AVG(c.longitude) AS avg_lng
+                COUNT(DISTINCT CASE WHEN c.eff_color = 'Red' AND c.no_open_inspection
+                    THEN c.logID END) AS dispatchable_red_count,
+                COUNT(DISTINCT CASE WHEN c.eff_color = 'Yellow' AND c.no_open_inspection
+                    THEN c.logID END) AS dispatchable_yellow_count,
+                COUNT(DISTINCT {_dispatchable_business_identity_sql(
+                    'c', 'c.eff_color', 'c.no_open_inspection', 'c.registry_business_id'
+                )}) AS dispatchable_business_count,
+                AVG(CASE WHEN c.eff_color IN ('Red', 'Yellow') AND c.no_open_inspection
+                    AND c.latitude BETWEEN -90 AND 90 AND c.longitude BETWEEN -180 AND 180
+                    THEN c.latitude END) AS avg_lat,
+                AVG(CASE WHEN c.eff_color IN ('Red', 'Yellow') AND c.no_open_inspection
+                    AND c.latitude BETWEEN -90 AND 90 AND c.longitude BETWEEN -180 AND 180
+                    THEN c.longitude END) AS avg_lng,
+                COUNT(DISTINCT CASE WHEN c.eff_color = 'Red'
+                    AND c.registry_business_id IS NULL THEN c.logID END) AS unregistered_candidate_count
             FROM (
                 SELECT
                     g.logID,
                     g.barangayID,
                     {effective_flag_color} AS eff_color,
+                    {_registry_column_sql('g', 'businessID')} AS registry_business_id,
+                    {_no_open_inspection_sql()} AS no_open_inspection,
+                    g.businessID,
+                    g.placeID,
                     g.latitude,
                     g.longitude
                 FROM geospatial_logs g
@@ -816,6 +870,148 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
         WHERE 1=1 {brgy_b}
     """
     return sql, geo_on_g_p + reg_o_p + brgy_b_p
+
+
+def _prescriptive_registry_sql(ladder):
+    """Both sides of the rate use the SAME canonical registry population.
+
+    No pin join: repeated logs cannot inflate the numerator. Pending/Expired/
+    Black states are review signals, not proof of a violation. Registry-only
+    businesses are included, and unknown/unregistered candidates are not.
+    """
+    color = registry_row_color_sql("o", ladder=ladder)
+    return f"""
+        SELECT b.barangayID,
+               COUNT(DISTINCT o.businessID) AS total_registered,
+               COUNT(DISTINCT CASE WHEN {color} IN ('Red', 'Yellow', 'Black')
+                     THEN o.businessID END) AS registry_flagged_count
+        FROM barangays b
+        LEFT JOIN official_registry o ON o.barangayID = b.barangayID
+        GROUP BY b.barangayID
+    """
+
+
+def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
+    """One municipal input/scoring path for Analytics and Map dispatch."""
+    builder = _barangay_rankings_sql_split if _rankings_split_enabled() else _barangay_rankings_sql
+    # All dashboard filters deliberately stay OUT of the operational model.
+    # Registry metrics come from the next, separate aggregate. Disable this
+    # builder's legacy registry join so evaluating the colour/coordinates never
+    # pays the geo x registry fan-out. This does NOT enable the candidate split.
+    sql, params = builder(effective_flag_color, "", [], " AND 1=0", [], "", [])
+    _execute(cur, "prescriptive.barangay_rankings", sql, params)
+    rows = list(cur.fetchall())
+    _execute(cur, "prescriptive.registry_active_flags", _prescriptive_registry_sql(ladder))
+    registry = {row["barangayID"]: row for row in cur.fetchall()}
+    for row in rows:
+        row.update(registry.get(row["barangayID"], {}))
+    return calculate_rankings(rows, config)
+
+
+_PRESCRIPTIVE_WORKFORCE_SQL = """
+    SELECT COUNT(*) AS active_count,
+           COALESCE(SUM(CASE WHEN NOT EXISTS (
+               SELECT 1 FROM inspection_reports pending
+               WHERE pending.userID = u.userID
+                 AND pending.verificationStatus IN ('Assigned', 'Reassigned', 'In Progress')
+           ) THEN 1 ELSE 0 END), 0) AS available_count
+    FROM users u WHERE u.userRole = 'Inspector' AND u.isActive = 1
+"""
+
+
+def _diagnostic_registry_match_sql():
+    return """
+        SELECT TRIM(businessName) AS normalized_name,
+               barangayID,
+               MIN(businessID) AS businessID,
+               COUNT(DISTINCT businessID) AS match_count
+        FROM official_registry
+        GROUP BY TRIM(businessName), barangayID
+    """
+
+
+def _diagnostic_registry_match_join(registry_match_sql):
+    return f"""LEFT JOIN ({registry_match_sql}) rm
+            ON g.businessID IS NULL
+           AND rm.normalized_name = TRIM(g.detectedName)
+           AND rm.barangayID = g.barangayID"""
+
+
+def _diagnostic_category_risk_sql(effective_flag_color, registry_match_sql, geo_g, reg_o):
+    match_join = _diagnostic_registry_match_join(registry_match_sql)
+    return f"""
+        SELECT
+            COALESCE(NULLIF(TRIM(o.lineOfBusiness), ''), 'Unspecified sector') AS category,
+            COUNT(DISTINCT o.businessID) AS flagged_count
+        FROM geospatial_logs g
+        {match_join}
+        JOIN official_registry o
+          ON o.businessID = COALESCE(
+              g.businessID,
+              CASE WHEN rm.match_count = 1 THEN rm.businessID END
+          )
+        WHERE {effective_flag_color} != 'Green'
+          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL
+               OR g.flagColor = 'Orange'
+               OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))
+          {geo_g} {reg_o}
+        GROUP BY category
+        ORDER BY flagged_count DESC
+        LIMIT 10
+    """
+
+
+def _diagnostic_category_linkage_sql(effective_flag_color, registry_match_sql, geo_g):
+    match_join = _diagnostic_registry_match_join(registry_match_sql)
+    return f"""
+        SELECT COUNT(DISTINCT g.logID) AS total_flagged_records,
+               COUNT(DISTINCT CASE
+                   WHEN direct_registry.businessID IS NOT NULL OR rm.match_count = 1
+                   THEN g.logID END) AS linked_records,
+               COUNT(DISTINCT CASE
+                   WHEN direct_registry.businessID IS NULL AND rm.match_count IS NULL
+                   THEN g.logID END) AS unlinked_records,
+               COUNT(DISTINCT CASE
+                   WHEN direct_registry.businessID IS NULL AND rm.match_count > 1
+                   THEN g.logID END) AS ambiguous_records
+        FROM geospatial_logs g
+        {match_join}
+        LEFT JOIN official_registry direct_registry ON direct_registry.businessID = g.businessID
+        WHERE {effective_flag_color} != 'Green'
+          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL
+               OR g.flagColor = 'Orange'
+               OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))
+          {geo_g}
+    """
+
+
+def _build_prescriptive_section(cur, effective_flag_color, ladder, config, filters):
+    from api.analytics.dispatch import generate_recommendations
+
+    municipal_rankings, model = _load_prescriptive_rankings(cur, effective_flag_color, ladder, config)
+    _execute(cur, "prescriptive.active_inspectors", _PRESCRIPTIVE_WORKFORCE_SQL)
+    workforce = cur.fetchone() or {}
+    available = int(workforce.get("available_count") or 0)
+    recommendations = generate_recommendations(municipal_rankings, available, model["weights"])
+    allocation_capacity = min(6, available)
+    allocated = sum(recommendation["inspectors"] for recommendation in recommendations)
+    model["ignored_filters"] = [key for key, value in (filters or {}).items()
+                                if value and key != "barangay_ids"]
+    return {
+        "rankings": select_rankings(municipal_rankings, filters),
+        "rankings_computed_at": datetime.now(timezone.utc).isoformat(),
+        "wlc_config": config, "model": model,
+        "dispatch_recommendations": select_rankings(recommendations, filters),
+        "workforce": {
+            "active_inspectors": int(workforce.get("active_count") or 0),
+            "available_inspectors": available,
+            "allocation_capacity": allocation_capacity,
+            "allocated_inspectors": allocated,
+            "unallocated_inspectors": max(0, allocation_capacity - allocated),
+            "allocation_rule": "Maximum one inspector per eligible business; allocations are limited to the top three eligible WLC-ranked barangays.",
+            "availability_rule": "Active inspectors without Assigned, Reassigned or In Progress reports; shift/leave availability is not recorded.",
+        },
+    }
 
 
 def _get_all_analytics_inner(F=None):
@@ -860,12 +1056,6 @@ def _get_all_analytics_inner(F=None):
 
     # ── WLC config ────────────────────────────────────────────────────────────
     config = get_wlc_config()
-    w1 = config.get("w1_risk", 68) / 100
-    w2 = config.get("w2_sector", 7) / 100
-    w3 = config.get("w3_distance", 25) / 100
-    bplo_lat = config.get("bplo_lat", 13.960413)
-    bplo_lng = config.get("bplo_lng", 121.114547)
-    sector_scores = config.get("sectors", {})
 
     # ══════════════════════════════════════════════════════════════════════════
     # TIER 1 — DESCRIPTIVE
@@ -1265,32 +1455,15 @@ def _get_all_analytics_inner(F=None):
         if r["red_count"] > 0 or r["flagged_count"] >= 5
     )
 
-    # Attribute a sector only when trimmed name + barangay resolves to one registry row.
-    registry_match_sql = """
-        SELECT TRIM(businessName) AS normalized_name,
-               barangayID,
-               MIN(businessID) AS businessID,
-               COUNT(DISTINCT businessID) AS match_count
-        FROM official_registry
-        GROUP BY TRIM(businessName), barangayID
-    """
-    _execute(cur, "diagnostic.category_risk_drivers", f"""
-        SELECT
-            COALESCE(NULLIF(TRIM(o.lineOfBusiness), ''), 'Unspecified sector') AS category,
-            COUNT(DISTINCT o.businessID) AS flagged_count
-        FROM geospatial_logs g
-        LEFT JOIN ({registry_match_sql}) rm
-            ON g.businessID IS NULL
-           AND rm.normalized_name = TRIM(g.detectedName)
-           AND rm.barangayID = g.barangayID
-           AND rm.match_count = 1
-        JOIN official_registry o ON o.businessID = COALESCE(g.businessID, rm.businessID)
-        WHERE 1=1 AND {effective_flag_color} != 'Green'
-          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g} {reg_o}
-        GROUP BY category
-        ORDER BY flagged_count DESC
-        LIMIT 10
-    """, geo_g_p + reg_o_p)
+    # Attribute by valid businessID first; otherwise require one unique
+    # trimmed-name + barangay match. Linkage summary uses these same rules.
+    registry_match_sql = _diagnostic_registry_match_sql()
+    _execute(
+        cur, "diagnostic.category_risk_drivers",
+        _diagnostic_category_risk_sql(
+            effective_flag_color, registry_match_sql, geo_g, reg_o),
+        geo_g_p + reg_o_p,
+    )
     flagged_by_sector = list(cur.fetchall())
 
     _execute(cur, "diagnostic.sector_denominators", f"""
@@ -1316,18 +1489,12 @@ def _get_all_analytics_inner(F=None):
             "non_green_rate": round(flagged_count / total_registered * 100, 1) if total_registered else 0,
         })
 
-    _execute(cur, "diagnostic.category_linkage", f"""
-        SELECT COUNT(DISTINCT g.logID) AS total_flagged_records,
-               COUNT(DISTINCT CASE WHEN rm.match_count = 1 THEN g.logID END) AS linked_records,
-               COUNT(DISTINCT CASE WHEN rm.match_count IS NULL THEN g.logID END) AS unlinked_records,
-               COUNT(DISTINCT CASE WHEN rm.match_count > 1 THEN g.logID END) AS ambiguous_records
-        FROM geospatial_logs g
-        LEFT JOIN ({registry_match_sql}) rm
-            ON rm.normalized_name = TRIM(g.detectedName)
-           AND rm.barangayID = g.barangayID
-        WHERE {effective_flag_color} != 'Green'
-          AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
-    """, geo_g_p)
+    _execute(
+        cur, "diagnostic.category_linkage",
+        _diagnostic_category_linkage_sql(
+            effective_flag_color, registry_match_sql, geo_g),
+        geo_g_p,
+    )
     linkage_row = cur.fetchone() or {}
     total_flagged_records = int(linkage_row.get("total_flagged_records") or 0)
     linked_records = int(linkage_row.get("linked_records") or 0)
@@ -1537,113 +1704,7 @@ def _get_all_analytics_inner(F=None):
     # TIER 3 — PRESCRIPTIVE (WLC / OPS)
     # ══════════════════════════════════════════════════════════════════════════
 
-    # NOTE: Per the manuscript (§3.1 Prescriptive Analytics), only Red, Yellow,
-    # and Black flags are weighed in the WLC/OPS model. Green (compliant),
-    # Orange (under monitoring via warning letters), and Purple (permanently
-    # closed/abandoned) establishments are excluded from this computation, as
-    # they no longer represent active compliance risks requiring field
-    # deployment. flagged_count therefore counts ONLY Red/Yellow/Black logs,
-    # which drives the risk-score scaling term, the non-compliance rate, and
-    # the proportional inspector allocation in dispatch recommendations.
-    rankings_builder = (_barangay_rankings_sql_split
-                        if _rankings_split_enabled()
-                        else _barangay_rankings_sql)
-    rankings_sql, rankings_params = rankings_builder(
-        effective_flag_color, geo_on_g, geo_on_g_p, reg_o, reg_o_p, brgy_b, brgy_b_p)
-    _execute(
-        cur,
-        "prescriptive.barangay_rankings",
-        rankings_sql,
-        rankings_params,
-    )
-    rows = cur.fetchall()
-
-    max_flagged = max((r["flagged_count"] or 0 for r in rows), default=1) or 1
-    rankings = []
-
-    for row in rows:
-        flagged = int(row["flagged_count"] or 0)
-        red = int(row["red_count"] or 0)
-        yellow = int(row["yellow_count"] or 0)
-        black = int(row["black_count"] or 0)
-        total_reg = int(row["total_registered"] or 0)
-        avg_lat = row["avg_lat"]
-        avg_lng = row["avg_lng"]
-
-        risk_score = min(
-            ((red * 3 + yellow * 2 + black * 4) / max(flagged, 1))
-            * (flagged / max_flagged) * 100,
-            100,
-        )
-
-        sector_score = float(sector_scores.get(row["barangayName"], 50))
-
-        if avg_lat and avg_lng:
-            R = 6371
-            dlat = math.radians(float(avg_lat) - bplo_lat)
-            dlng = math.radians(float(avg_lng) - bplo_lng)
-            a = (math.sin(dlat / 2) ** 2
-                 + math.cos(math.radians(bplo_lat))
-                 * math.cos(math.radians(float(avg_lat)))
-                 * math.sin(dlng / 2) ** 2)
-            dist_km = R * 2 * math.asin(math.sqrt(a))
-            distance_score = min(dist_km / 20 * 100, 100)
-        else:
-            distance_score = 50
-
-        # Convert distance penalty to a normalized addition so OPS scales 0-100 properly
-        ops_score = round(w1 * risk_score + w2 *
-                          sector_score + w3 * (100 - distance_score), 1)
-        ops_score = max(0.0, min(100.0, ops_score))
-
-        non_compliance_rate = round(
-            (flagged / total_reg * 100), 1) if total_reg else 0
-
-        risk_level = (
-            "High" if ops_score >= 60 else
-            "Medium" if ops_score >= 30 else
-            "Low"
-        )
-
-        rankings.append({
-            "barangayID":          row["barangayID"],
-            "barangayName":        row["barangayName"],
-            "ops_score":           ops_score,
-            "risk_score":          round(risk_score, 1),
-            "sector_score":        sector_score,
-            "distance_score":      round(distance_score, 1),
-            "flagged_count":       flagged,
-            "red_count":           red,
-            "yellow_count":        yellow,
-            "black_count":         black,
-            "non_compliance_rate": non_compliance_rate,
-            "risk_level":          risk_level,
-        })
-
-    rankings.sort(key=lambda x: x["ops_score"], reverse=True)
-    for i, r in enumerate(rankings):
-        r["rank"] = i + 1
-    rankings_computed_at = datetime.now(timezone.utc).isoformat()
-
-    # --- Dispatch Recommendations ---
-    from api.analytics.dispatch import generate_recommendations
-
-    _execute(
-        cur,
-        "prescriptive.active_inspectors",
-        "SELECT COUNT(*) AS n FROM users WHERE userRole = 'Inspector' AND isActive = 1")
-    inspector_row = cur.fetchone()
-    total_inspectors = int(
-        inspector_row["n"]) if inspector_row and inspector_row["n"] else 6
-
-    # Pass the actual WLC weights (w1, w2, w3 are already normalised floats from config)
-    dispatch_weights = {"w1": w1, "w2": w2, "w3": w3}
-    dispatch_recommendations = generate_recommendations(
-        rankings, total_inspectors, dispatch_weights)
-    prescriptive = {
-        "rankings": rankings, "rankings_computed_at": rankings_computed_at,
-        "wlc_config": config, "dispatch_recommendations": dispatch_recommendations,
-    }
+    prescriptive = _build_prescriptive_section(cur, effective_flag_color, ladder, config, F)
     _publish_analytics_section("prescriptive", prescriptive)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -2060,83 +2121,20 @@ def analytics_filter_metadata():
 @jwt_required()
 def get_ops_rankings_only():
     """Lightweight endpoint to fetch real-time OPS priority rankings for the Maps/Dispatch UI."""
+    cur = None
     try:
-        from app import mysql
         cur = mysql.connection.cursor()
+        ladder = ladder_columns_available(cur)
         effective_flag_color = _effective_flag_color_sql(
-            "g", ladder=ladder_columns_available(cur))
-
-        config = get_wlc_config()
-        w1 = config.get("w1_risk", 68) / 100
-        w2 = config.get("w2_sector", 7) / 100
-        w3 = config.get("w3_distance", 25) / 100
-        bplo_lat = config.get("bplo_lat", 13.960413)
-        bplo_lng = config.get("bplo_lng", 121.114547)
-        sector_scores = config.get("sectors", {})
-
-        # Same exclusion rule as the main analytics endpoint: only Red/Yellow/
-        # Black flags feed the OPS ranking shown in the Priority Dispatch Queue.
-        cur.execute(f"""
-            SELECT
-                b.barangayID,
-                b.barangayName,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} IN ('Red', 'Yellow', 'Black') THEN g.logID END) AS flagged_count,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Red'    THEN g.logID END) AS red_count,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Yellow' THEN g.logID END) AS yellow_count,
-                COUNT(DISTINCT CASE WHEN {effective_flag_color} = 'Black'  THEN g.logID END) AS black_count,
-                AVG(g.latitude)                                          AS avg_lat,
-                AVG(g.longitude)                                         AS avg_lng
-            FROM barangays b
-            LEFT JOIN geospatial_logs g ON g.barangayID = b.barangayID 
-                AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))
-            GROUP BY b.barangayID, b.barangayName
-        """)
-        rows = cur.fetchall()
-
-        max_flagged = max(
-            (r["flagged_count"] or 0 for r in rows), default=1) or 1
-        rankings = []
-
-        for row in rows:
-            flagged = int(row["flagged_count"] or 0)
-            risk_score = min(
-                (((int(row["red_count"] or 0) * 3 + int(row["yellow_count"] or 0) * 2 + int(row["black_count"] or 0) * 4) / max(flagged, 1))
-                 * (flagged / max_flagged) * 100), 100
-            )
-            sector_score = float(sector_scores.get(row["barangayName"], 50))
-
-            if row["avg_lat"] and row["avg_lng"]:
-                R = 6371
-                a = (math.sin(math.radians(float(row["avg_lat"]) - bplo_lat) / 2) ** 2
-                     + math.cos(math.radians(bplo_lat)) *
-                     math.cos(math.radians(float(row["avg_lat"])))
-                     * math.sin(math.radians(float(row["avg_lng"]) - bplo_lng) / 2) ** 2)
-                distance_score = min(
-                    (R * 2 * math.asin(math.sqrt(a))) / 20 * 100, 100)
-            else:
-                distance_score = 50
-
-            ops_score = max(0.0, min(100.0, round(
-                w1 * risk_score + w2 * sector_score + w3 * (100 - distance_score), 1)))
-
-            rankings.append({
-                "barangayID": row["barangayID"],
-                "barangayName": row["barangayName"],
-                "ops_score": ops_score,
-                "flagged_count": flagged,
-                "red_count": int(row["red_count"] or 0),
-                "yellow_count": int(row["yellow_count"] or 0),
-                "black_count": int(row["black_count"] or 0),
-                "risk_level": "High" if ops_score >= 60 else "Medium" if ops_score >= 30 else "Low"
-            })
-
-        rankings.sort(key=lambda x: x["ops_score"], reverse=True)
-        for i, r in enumerate(rankings):
-            r["rank"] = i + 1
-        cur.close()
-        return jsonify({"data": rankings}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+            "g", ladder=ladder)
+        rankings, model = _load_prescriptive_rankings(cur, effective_flag_color, ladder, get_wlc_config())
+        return jsonify({"data": rankings, "model": model}), 200
+    except Exception:
+        current_app.logger.exception("Failed to load OPS rankings")
+        return jsonify({"error": "Failed to load OPS rankings"}), 500
+    finally:
+        if cur is not None:
+            cur.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2149,10 +2147,13 @@ def get_config():
 @analytics_bp.route("/wlc-config", methods=["PUT"])
 @admin_required()
 def update_config():
-    data = request.get_json()
+    data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "No configuration data provided."}), 400
-    updated_config, error = update_wlc_config(data)
+    try:
+        updated_config, error = update_wlc_config(data)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
     if error:
         return jsonify({"error": error}), 500
     return jsonify({"message": "WLC configuration updated successfully.", "data": updated_config}), 200
@@ -2315,16 +2316,24 @@ def analytics_chat():
                 "distance_score": r.get("distance_score"),
                 "risk_level": r.get("risk_level"),
                 "flagged_count": r.get("flagged_count"),
-                "non_compliance_rate": r.get("non_compliance_rate"),
+                "dispatchable_count": r.get("dispatchable_count"),
+                "registry_active_flag_rate": r.get("registry_active_flag_rate"),
+                "unregistered_candidate_count": r.get("unregistered_candidate_count"),
             } for r in ops_rankings]
             summary_parts.append(
-                f"OPS Priority Rankings (WLC-based, all barangays): {json.dumps(slim_rankings)}")
+                f"OPS Priority Rankings (WLC-based municipal ranks; the displayed list may be barangay-filtered): {json.dumps(slim_rankings)}")
 
         # WLC Config (weights)
         wlc_config = chart_data.get("wlcConfig", {})
         if wlc_config:
             summary_parts.append(
                 f"WLC Weight Configuration: {json.dumps(wlc_config)}")
+        wlc_model = chart_data.get("wlcModel", {})
+        if wlc_model:
+            summary_parts.append(f"WLC model (configured weights are applied unchanged; sector input coverage is disclosed separately): {json.dumps(wlc_model)}")
+        workforce = chart_data.get("dispatchWorkforce", {})
+        if workforce:
+            summary_parts.append(f"Dispatch workforce availability: {json.dumps(workforce)}")
 
         # Dispatch Recommendations
         dispatch = chart_data.get("dispatchRecommendations", [])
@@ -2380,7 +2389,7 @@ def analytics_chat():
             "- **Flag System**: Businesses can be flagged with color-coded flags during inspections or reviews:\n"
             "  - Green = Fully compliant\n"
             "  - Yellow = Suspected of being unregistered, needs attention\n"
-            "  - Red = Serious violations, requires enforcement action\n"
+            "  - Red = Registration or permit-renewal verification needed, not a confirmed violation\n"
             "  - Black = Critical / ordered to cease operations\n"
             "  - Orange = Under investigation or special monitoring\n"
             "  - Purple = Confirmed closed or permanently abandoned establishment\n"
@@ -2397,11 +2406,13 @@ def analytics_chat():
             "- **OPS Score (Operational Priority Score)**: A composite score (0-100) computed using WLC (Weighted Linear Combination) "
             "that ranks barangays by inspection priority. Higher score = higher priority for dispatching inspectors.\n"
             "- **WLC Weights**: The OPS score is computed from three weighted sub-scores:\n"
-            "  - Risk Score (w1): Based on the severity and count of flags (red, yellow, black) in the barangay\n"
-            "  - Sector Score (w2): Based on the risk profile of the dominant business sectors in the barangay\n"
-            "  - Distance Score (w3): Based on proximity to the BPLO office (closer = easier to dispatch)\n"
+            "  - Risk Score (w1): 100*(3*Red + 2*Yellow + 4*Black)/largest municipal weighted flag burden; zero if no flags exist\n"
+            "  - Sector Score (w2): Configured barangay policy score, with the existing neutral fallback of 50 when an override is missing. The default 68% Risk / 7% Sector / 25% Proximity weights come from stakeholder interviews and must not be redistributed because sector inputs are missing or constant. Do not describe a neutral fallback as measured industry risk\n"
+            "  - Proximity Score (w3): 100 minus normalized straight-line BPLO distance, using active-flag locations; missing locations use neutral proximity 50\n"
+            "  - OPS = w1*Risk + w2*Sector + w3*Proximity using effective weights. It is a relative priority score, NOT violation probability. Barangay display filters preserve municipal ranks; other dashboard filters do not change operational scores\n"
+            "- **Registry active-flag rate**: Unique current Red/Yellow/Black registry businesses / all registry businesses; null means N/A. Not a confirmed non-compliance rate. Unregistered candidates are a separate count\n"
             "- **Risk Level**: Derived from OPS score — High (>=60), Medium (>=30), Low (<30)\n"
-            "- **Dispatch Recommendations**: AI-generated suggestions for which barangays to prioritize for inspector dispatch, based on OPS rankings.\n"
+            "- **Dispatch Recommendations**: Deterministic WLC-ranked plans, not AI-generated allocations. High priority starts at OPS 60, Standard at 30, Monitor below 30. Only currently free inspectors are allocated (maximum six). Deferred plans have zero inspectors; never invent staffing or promise a deployment date for them. Black-only barangays and already-assigned targets are skipped: dispatchable_count must be positive for a new field plan. Black flags are administrative risk context, never an authorization for redispatch\n"
             "- **Inspector Stats**: Performance metrics for individual inspectors (inspections completed, resolution time, etc.).\n"
             "- **Inspection Status Breakdown**: Distribution of inspection statuses (Pending, In Progress, Completed, etc.).\n\n"
 

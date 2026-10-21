@@ -1,6 +1,7 @@
 import { useState, useEffect, useContext, useCallback } from "react";
 import { useTheme } from "../context/themeContext";
 import DashboardLayout from "../components/DashboardLayout";
+import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, rebalanceWlcWeight } from "../components/wlcPolicy";
 import { AuthContext } from "../context/authContext";
 import { changePasswordRequest, setup2faRequest, verify2faSetupRequest } from "../services/authService";
 import Swal from "sweetalert2";
@@ -379,7 +380,8 @@ export default function SettingsPage() {
     setShowPrivacyDoc(docKey === "privacy");
     setShowCookieDoc(docKey === "cookies");
   };
-  const [wlcConfig, setWlcConfig] = useState({ w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 });
+  const [wlcConfig, setWlcConfig] = useState({ ...DEFAULT_WLC_WEIGHTS, bplo_lat: 13.960413, bplo_lng: 121.114547 });
+  const policyValidationError = wlcPolicyError(wlcConfig);
 
   // Evidence Storage & Archival states
   const [storageStats, setStorageStats] = useState(null);
@@ -564,6 +566,10 @@ export default function SettingsPage() {
   };
 
   const handleSavePolicy = async () => {
+    if (policyValidationError) {
+      setPolicyError(policyValidationError);
+      return;
+    }
     setSavingPolicy(true);
     setPolicyError("");
 
@@ -615,27 +621,10 @@ export default function SettingsPage() {
   };
 
   const handleWeightChange = (changedKey, newValue) => {
-    let val = Math.min(100, Math.max(0, parseInt(newValue || 0, 10)));
-    const otherKeys = ["w1_risk", "w2_sector", "w3_distance"].filter(k => k !== changedKey);
-    let remaining = 100 - val;
-
-    let k1 = otherKeys[0];
-    let k2 = otherKeys[1];
-    let sumOthers = wlcConfig[k1] + wlcConfig[k2];
-
-    let newWlc = { ...wlcConfig, [changedKey]: val };
-    if (sumOthers === 0) {
-      newWlc[k1] = Math.floor(remaining / 2);
-      newWlc[k2] = remaining - newWlc[k1];
-    } else {
-      newWlc[k1] = Math.round((wlcConfig[k1] / sumOthers) * remaining);
-      newWlc[k2] = remaining - newWlc[k1];
-    }
-    setWlcConfig(newWlc);
+    setWlcConfig(rebalanceWlcWeight(wlcConfig, changedKey, newValue));
   };
 
-  const DEFAULT_WLC = { w1_risk: 68, w2_sector: 7, w3_distance: 25 };
-  const applyDefaultWlc = () => setWlcConfig(prev => ({ ...prev, ...DEFAULT_WLC }));
+  const applyDefaultWlc = () => setWlcConfig(prev => ({ ...prev, ...DEFAULT_WLC_WEIGHTS }));
 
   const handleUseCurrentLocation = () => {
     if (navigator.geolocation) {
@@ -815,7 +804,7 @@ export default function SettingsPage() {
           status={savingPolicy ? { text: "Saving…" } : policyLoading ? { text: "Loading…" } : policyError ? { text: "Policy error", tone: "error" } : policyDirty ? { text: "Unsaved changes", tone: "draft" } : null}>
           <div style={{ marginBottom: 16 }}>
             {policyError && <p className="settings-error" role="alert">{policyError}</p>}
-            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>Adjust the default priority weights and BPLO base station location.</p>
+            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>OPS = W1×Risk + W2×Sector + W3×Proximity. The default 68% Risk / 7% Sector / 25% Proximity follows the interview-derived policy. Missing sector overrides use the existing neutral score of 50; saved weights are applied unchanged, not redistributed.</p>
           </div>
           <div style={{ display: "grid", gap: 16 }}>
             {/* Linked Sliders */}
@@ -837,7 +826,7 @@ export default function SettingsPage() {
                       gap: 4
                     }}
                     onClick={applyDefaultWlc}
-                    title="Reset to default weights (68% / 7% / 25%)"
+                    title="Reset to interview-derived default weights (68% Risk / 7% Sector / 25% Proximity)"
                   >
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
                     Use Default
@@ -848,9 +837,9 @@ export default function SettingsPage() {
                 </span>
               </div>
               {[
-                { key: "w1_risk", label: "Risk Volume (W1)" },
+                { key: "w1_risk", label: "Weighted Flag Burden (W1)" },
                 { key: "w2_sector", label: "Sector Impact (W2)" },
-                { key: "w3_distance", label: "Travel Distance (W3)" }
+                { key: "w3_distance", label: "Proximity (W3)" }
               ].map(w => (
                 <div key={w.key} style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
                   <span style={{ minWidth: 140, fontSize: 12, fontWeight: 600, color: "var(--color-muted)" }}>{w.label}</span>
@@ -888,10 +877,11 @@ export default function SettingsPage() {
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-              <button className="primary-btn" type="button" onClick={handleSavePolicy} disabled={savingPolicy}>
+              <button className="primary-btn" type="button" onClick={handleSavePolicy} disabled={savingPolicy || policyLoading || !savedPolicy || Boolean(policyValidationError)}>
                 {savingPolicy ? "Saving..." : "Save Policy"}
               </button>
             </div>
+            {policyValidationError && <p role="alert" className="settings-error">{policyValidationError}</p>}
           </div>
         </SettingsSection>}
 

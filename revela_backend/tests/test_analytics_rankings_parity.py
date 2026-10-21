@@ -27,7 +27,8 @@ from api.analytics.filters import (  # noqa: E402
 from api.registry.colors import _effective_flag_color_sql  # noqa: E402
 
 COUNT_KEYS = ("flagged_count", "red_count", "yellow_count", "black_count",
-              "total_registered")
+              "total_registered", "unregistered_candidate_count", "dispatchable_red_count",
+              "dispatchable_yellow_count", "dispatchable_business_count")
 AVG_KEYS = ("avg_lat", "avg_lng")
 
 # Two registry rows in barangay 1 fan out against its two geo rows; barangay 5
@@ -192,14 +193,17 @@ class RankingsParityTests(unittest.TestCase):
     def test_split_expands_color_case_once_textually(self):
         """The GENERATED SQL carries the effective-colour CASE once in the split
         against four in the shipped form.  'ELSE g.flagColor' closes the CASE
-        exactly once per expansion.  This is a TEXT property: it does not measure
+        exactly once per expansion. WLC v2 also uses it in two conditional
+        location averages, dispatchable counts and the unregistered-candidate
+        count (ten total, including the business-capacity identity predicate).
+        This is a TEXT property: it does not measure
         how many times MySQL evaluates the expression, nor prove materialization.
         """
         F = parse_analytics_filters({})
         F["registration_type_supported"] = True
         orig_sql, _ = _build(routes._barangay_rankings_sql, F, True)
         new_sql, _ = _build(routes._barangay_rankings_sql_split, F, True)
-        self.assertEqual(orig_sql.count("ELSE g.flagColor"), 4)
+        self.assertEqual(orig_sql.count("ELSE g.flagColor"), 10)
         self.assertEqual(new_sql.count("ELSE g.flagColor"), 1)
 
     def test_gate_defaults_off(self):

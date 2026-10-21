@@ -33,7 +33,11 @@ const partialSummaryResponse = () => {
   });
 };
 const respond = kind => kind === "summary" ? summaryResponse()
-  : kind === "prescriptive" ? Response.json({ prescriptive: { rankings: [] }, analytics_cache: cache() })
+  : kind === "prescriptive" ? Response.json({ prescriptive: { rankings: [
+    { barangayID: 1, barangayName: "Black-only area", rank: 1, ops_score: 100, flagged_count: 20, red_count: 0, yellow_count: 0, black_count: 20, dispatchable_count: 0, risk_level: "High" },
+    { barangayID: 2, barangayName: "Already assigned area", rank: 2, ops_score: 90, flagged_count: 10, red_count: 10, yellow_count: 0, dispatchable_count: 0, risk_level: "High" },
+    { barangayID: 3, barangayName: "Eligible area", rank: 3, ops_score: 80, flagged_count: 8, red_count: 8, yellow_count: 0, dispatchable_count: 1, risk_level: "High" },
+  ] }, analytics_cache: cache() })
     : kind === "weather" ? Response.json({ current: { temperature_2m: 29, weather_code: 2 } })
       : Response.json({ data: [] });
 window.fetch = async (url, options = {}) => {
@@ -79,7 +83,11 @@ const render = () => root.render(<StrictMode><AuthContext.Provider value={{ toke
 try {
   render();
   await wait(() => held.some(entry => entry.kind === "summary") && calls.includes("prescriptive") && calls.includes("inspections"), "initial requests");
-  check(summary().textContent.includes("Loading summary metrics") && values().every(value => value === "—"), "Initial loading shows unavailable values instead of fabricated zeros");
+  // Home already uses loading skeletons, not literal dashes, before a result.
+  // Both must remain explicitly unavailable; accepting a numeric zero is wrong.
+  check(summary().textContent.includes("Loading summary metrics")
+    && [...summary().querySelectorAll("dd")].every(node => node.getAttribute("aria-label") === "Unavailable"
+      && (node.textContent === "—" || Boolean(node.querySelector(".ui-skeleton")))), "Initial loading shows unavailable values instead of fabricated zeros");
   const started = performance.now();
   summaryMode = "partial";
   const partial = held.find(entry => entry.kind === "summary");
@@ -105,6 +113,9 @@ try {
   othersMode = "ready";
   release();
   await wait(() => button("Refresh dashboard") && !button("Refresh dashboard").disabled, "initial load completed");
+  const priorities = [...document.querySelectorAll(".overview-priority-name")].map(node => node.textContent);
+  check(JSON.stringify(priorities) === JSON.stringify(["Eligible area"])
+    && document.querySelector(".overview-priority-rank").textContent === "3", "Overview skips Black-only/assigned destinations and preserves the eligible barangay's municipal WLC rank");
 
   summaryMode = "hold";
   button("Refresh dashboard").click();
