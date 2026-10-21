@@ -716,6 +716,70 @@ html.theme-dark .map-detection-controls {
   line-height: 1.6;
 }
 
+.map-detection-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 42px;
+  margin-bottom: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card);
+  color: var(--color-ink);
+  font: 600 13px var(--font-base);
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-detection-toggle:hover {
+  border-color: var(--color-primary);
+}
+
+.map-detection-toggle:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.map-detection-toggle-summary {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-detection-toggle-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.map-detection-toggle-action svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  transition: transform 0.15s ease;
+}
+
+.map-detection-toggle[aria-expanded="true"] .map-detection-toggle-action svg {
+  transform: rotate(180deg);
+}
+
+.map-detection-controls[hidden] {
+  display: none;
+}
+
 .map-detection-allowance-state {
   display: flex;
   align-items: center;

@@ -2185,6 +2185,7 @@ export default function MapPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
   const [runDetectionMode, setRunDetectionMode] = useState("quick");
+  const [detectionControlsCollapsed, setDetectionControlsCollapsed] = useState(false);
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
 
@@ -3967,7 +3968,7 @@ export default function MapPage() {
                       reconcileProgress?.stage === 'running' ||
                       snapProgress?.stage === 'running' ||
                       isSnapMonthlyMaxed ||
-                      isReverifyDailyMaxed
+                      isSnapDailyMaxed
                     }
                     title={
                       detectionQuota && detectionQuota.registry_count === 0
@@ -4045,7 +4046,31 @@ export default function MapPage() {
               </details>
             </div>
 
-            <section className="map-detection-controls" aria-label="Detection scan controls">
+            <button
+              className="map-detection-toggle"
+              type="button"
+              aria-expanded={!detectionControlsCollapsed}
+              aria-controls="map-detection-controls"
+              onClick={() => setDetectionControlsCollapsed(collapsed => !collapsed)}
+            >
+              <span>Detection controls</span>
+              <span className="map-detection-toggle-summary">
+                {selectedDetectionMode.label}
+                {detectionQuota && ` · ${detectionQuota.remaining_this_month}/${detectionQuota.monthly_limit} scans left`}
+              </span>
+              <span className="map-detection-toggle-action">
+                {detectionControlsCollapsed ? "Show" : "Hide"}
+                <svg viewBox="0 0 16 16" aria-hidden="true">
+                  <path d="m4 6 4 4 4-4" />
+                </svg>
+              </span>
+            </button>
+            <section
+              id="map-detection-controls"
+              className="map-detection-controls"
+              aria-label="Detection scan controls"
+              hidden={detectionControlsCollapsed}
+            >
               <div className="map-detection-config">
                 <DetectionModeDropdown
                   value={runDetectionMode}
