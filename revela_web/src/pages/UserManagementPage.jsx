@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAuth } from "../context/authContext";
+import { SkeletonTableRows } from "../components/LoadingSkeleton";
 import {
   getUsersRequest,
   createUserRequest,
@@ -685,12 +686,7 @@ export default function UserManagementPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={6} className="um-table-empty">
-                    <div className="um-spinner" />
-                    <span>Loading users…</span>
-                  </td>
-                </tr>
+                <SkeletonTableRows columns={6} rows={6} />
               ) : filteredUsers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="um-table-empty">

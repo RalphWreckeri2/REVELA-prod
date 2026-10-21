@@ -9,6 +9,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
+import { SkeletonBlock } from "../components/LoadingSkeleton";
 import Footer from "../components/Footer";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
@@ -242,7 +243,11 @@ function KpiSummary({ kpis, state, onRetry }) {
   const metric = ({ label, value, suffix, note }, index) => (
     <div className={`overview-metric metric-${index}`} key={label}>
       <dt>{label}</dt>
-      <dd aria-label={availableNumber(value) === null ? "Unavailable" : undefined}>{formatOverviewNumber(value, suffix)}</dd>
+      <dd aria-label={availableNumber(value) === null ? "Unavailable" : undefined}>
+        {state.loading && !state.hasResult
+          ? <SkeletonBlock style={{ width: 84, height: 24, margin: "0 auto" }} />
+          : formatOverviewNumber(value, suffix)}
+      </dd>
       <p>{note}</p>
     </div>
   );
@@ -279,7 +284,13 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
       <RequestFeedback state={state} label="barangay priorities" />
       {state.hasResult && top5.length === 0 && <p className="overview-empty">No barangays with qualifying flags in the loaded rankings.</p>}
       <ol className="overview-priority-list">
-        {top5.map(b => {
+        {state.loading && !state.hasResult ? (
+          Array.from({ length: 4 }, (_, index) => (
+            <li key={`skeleton-${index}`} aria-hidden="true">
+              <SkeletonBlock style={{ height: 56, borderRadius: 10 }} />
+            </li>
+          ))
+        ) : top5.map(b => {
           const category = typeof b.risk_level === "string" && b.risk_level.trim() ? b.risk_level : "Unavailable";
           const categoryClass = ["High", "Medium", "Low"].includes(category) ? category.toLowerCase() : "unknown";
           return (

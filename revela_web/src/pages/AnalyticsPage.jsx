@@ -6,6 +6,7 @@ import {
   ScatterChart, Scatter, ZAxis, ReferenceLine
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
+import { SkeletonBlock } from "../components/LoadingSkeleton";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
 import ResponsiveChart from "../components/ResponsiveChart";
@@ -131,20 +132,20 @@ const SectionHeader = ({ tier, title, subtitle }) => {
 
 // ── Loading skeleton ──────────────────────────────────────────────────────────
 const Skeleton = ({ h = 200 }) => (
-  <div aria-hidden="true" className="analytics-skeleton" style={{ height: h }} />
+  <SkeletonBlock className="analytics-skeleton" style={{ height: h }} />
 );
 
 function AnalyticsSkeleton({ tab }) {
   return (
     <section role="status" aria-label={`Loading ${tab} analytics`} aria-busy="true" className="analytics-loading-layout">
       <span className="analytics-sr-only">Loading analytics…</span>
-      <div className="analytics-skeleton-title analytics-skeleton" />
+      <SkeletonBlock className="analytics-skeleton-title analytics-skeleton" />
       {tab === "descriptive" && (
         <div className="analytics-skeleton-kpis">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="saas-card analytics-skeleton-kpi" aria-hidden="true">
-              <div className="analytics-skeleton analytics-skeleton-icon" />
-              <div><div className="analytics-skeleton analytics-skeleton-value" /><div className="analytics-skeleton analytics-skeleton-label" /></div>
+              <SkeletonBlock className="analytics-skeleton-icon" />
+              <div><SkeletonBlock className="analytics-skeleton-value" /><SkeletonBlock className="analytics-skeleton-label" /></div>
             </div>
           ))}
         </div>
@@ -152,11 +153,11 @@ function AnalyticsSkeleton({ tab }) {
       <div className="analytics-skeleton-charts">
         {(tab === "descriptive" ? [424, 280, 240, 240, 240, 240, 260] : [280, 240, 240]).map((h, i) => (
           <div key={i} className={`saas-card analytics-skeleton-chart${i === 0 || (tab === "descriptive" && (i === 1 || i === 6)) ? " analytics-skeleton-chart--wide" : ""}`} aria-hidden="true">
-            <div className="analytics-skeleton analytics-skeleton-label" />
+            <SkeletonBlock className="analytics-skeleton-label" />
             {tab === "descriptive" && [2, 3, 4].includes(i) ? (
-              <div className="analytics-skeleton-pie-wrap" style={{ height: h }}><div className="analytics-skeleton analytics-skeleton-donut" /></div>
+              <div className="analytics-skeleton-pie-wrap" style={{ height: h }}><SkeletonBlock className="analytics-skeleton-donut" /></div>
             ) : <div className="analytics-skeleton-plot" style={{ height: h }}>
-              {[42, 65, 52, 82, 60, 93, 72, 58].map((height, j) => <div key={j} className="analytics-skeleton" style={{ height: `${height}%` }} />)}
+              {[42, 65, 52, 82, 60, 93, 72, 58].map((height, j) => <SkeletonBlock key={j} className="analytics-skeleton-bar" style={{ height: `${height}%` }} />)}
             </div>}
           </div>
         ))}

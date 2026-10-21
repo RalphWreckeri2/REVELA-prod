@@ -30,6 +30,7 @@ import html2canvas from "html2canvas";
 import bpLogo from "../assets/bagongpilipinas.png";
 import sealImg from "../assets/seal.png";
 import ComplianceReportCard from "../components/ComplianceReportCard";
+import { SkeletonBlock } from "../components/LoadingSkeleton";
 import { COMPLIANCE_REPORT_TITLE } from "../components/businessCompliance";
 
 // ── Color Palettes ─────────────────────────────────────────────────────────────
@@ -1181,9 +1182,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading demographic data...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sizeData.length === 0 ? (
@@ -1363,9 +1362,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading legal structure data...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : typeData.length === 0 ? (
@@ -1533,9 +1530,7 @@ export default function ExportReportsPage() {
 
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading registration type data...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : regTypeData.length === 0 ? (
@@ -1719,9 +1714,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 220, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading sectoral data...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sectoralData.length === 0 ? (
@@ -1897,9 +1890,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 220, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading geographic distribution...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : barangaySpreadData.length === 0 ? (
@@ -2041,9 +2032,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading compliance data...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : complianceBySizeData.length === 0 ? (
@@ -2206,9 +2195,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-muted)" }}>
-                      Loading trend data...
-                    </div>
+                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : !hasTimelineData ? (

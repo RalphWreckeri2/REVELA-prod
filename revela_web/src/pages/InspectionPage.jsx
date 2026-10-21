@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useContext, useRef, useId } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
+import { SkeletonKanbanBoard } from "../components/LoadingSkeleton";
 import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
 import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
@@ -1122,7 +1123,7 @@ export default function InspectionPage() {
           </div>
         )}
         <div className="dispatch-results-summary" role="status">
-          {loading ? <span>Loading inspection reports…</span> : (
+          {loading ? <span className="ui-skeleton" style={{ display: "inline-block", width: 190 }} aria-hidden="true" /> : (
             <>
               <span><strong>{filteredReports.length}</strong> matching loaded reports</span>
               <span><strong>{reports.length}</strong> loaded of <strong>{total}</strong> matching in {isAdmin ? "the database" : "your tasks"}{filterStatus ? ` (${filterStatus})` : ""}</span>
@@ -1139,7 +1140,7 @@ export default function InspectionPage() {
       )}
 
       {loading ? (
-        <div style={s.loadingState} role="status">Loading inspections…</div>
+        <SkeletonKanbanBoard columns={visibleCols.length} />
       ) : (
         <div>
           <p className="dispatch-board-help" id="dispatch-board-help">Columns preview up to five matching loaded reports. Browse horizontally on smaller screens; use each column’s View all button for its loaded grid.</p>

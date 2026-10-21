@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useContext } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
 import { UploadModal } from "../components/UploadModal";
+import { SkeletonBlock, SkeletonDetails, SkeletonTableRows } from "../components/LoadingSkeleton";
 import AnimatePresence from "../components/AnimatePresence";
 import { AuthContext } from "../context/authContext";
 import Papa from "papaparse";
@@ -271,7 +272,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
           <button style={styles.closeBtn} onClick={onClose}><Icon.X /></button>
         </div>
 
-        {loading && <p style={{ color: "var(--color-muted)", fontSize: 13 }}>Loading…</p>}
+        {loading && <SkeletonDetails rows={5} />}
         {error && <p style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</p>}
 
         {business && (
@@ -771,7 +772,9 @@ export default function RegistryPage() {
           </label>
 
           <span style={styles.resultCount}>
-            {loading ? "Loading…" : `${total} result${total !== 1 ? "s" : ""}`}
+            {loading
+              ? <SkeletonBlock statusLabel="Loading registry results" style={{ width: 88 }} />
+              : `${total} result${total !== 1 ? "s" : ""}`}
           </span>
         </div>
       </div>
@@ -802,13 +805,7 @@ export default function RegistryPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr>
-                  <td colSpan={REGISTRY_TABLE_COL_COUNT} style={styles.emptyCell}>
-                    <div style={styles.emptyContent}>
-                      <span style={{ color: "var(--color-muted)", fontSize: 13 }}>Loading registry…</span>
-                    </div>
-                  </td>
-                </tr>
+                <SkeletonTableRows columns={REGISTRY_TABLE_COL_COUNT} rows={8} />
               ) : businesses.length === 0 ? (
                 <EmptyState hasFilters={!!hasFilters} onUpload={() => setShowUpload(true)} />
               ) : (

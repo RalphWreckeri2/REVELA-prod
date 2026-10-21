@@ -176,10 +176,11 @@ def _is_within_municipal_bounds(lat, lng):
     except (ValueError, TypeError):
         return False
 
-    # Polygon boundary screening (primary)
+    # Keep proposed pins inside the actual municipality boundary. The buffered
+    # boundary used for nearby POI detection can include locations in Lipa.
     try:
-        from api.flags.service import _within_municipality
-        return _within_municipality(lat, lng)
+        from api.flags.service import is_within_municipality_boundary
+        return is_within_municipality_boundary(lat, lng)
     except Exception:
         pass
 
@@ -1000,9 +1001,31 @@ def list_review_queue(page=1, per_page=20, search=""):
             ):
                 d[k] = float(d[k]) if d.get(k) is not None else None
             d.setdefault("reviewHistoryID", None)
+            candidate_has_coordinates = (
+                d.get("candidateLatitude") is not None
+                and d.get("candidateLongitude") is not None
+            )
+            candidate_in_municipality = (
+                candidate_has_coordinates
+                and _is_within_municipal_bounds(
+                    d["candidateLatitude"], d["candidateLongitude"]
+                )
+            )
+            candidate_can_be_rejected = (
+                candidate_has_coordinates
+                and d.get("reviewOutcome") == "review"
+                and (
+                    key_is_current
+                    or (review_type is None and not is_legacy_retained_review)
+                )
+            )
+            d["candidateOutsideMunicipality"] = bool(
+                candidate_can_be_rejected and not candidate_in_municipality
+            )
+            candidate_is_valid = candidate_is_valid and candidate_in_municipality
             d["candidateAvailable"] = candidate_is_valid
             d["candidateHistoryID"] = (
-                d.get("reviewHistoryID") if candidate_is_valid else None
+                d.get("reviewHistoryID") if candidate_can_be_rejected else None
             )
             d["latitude"] = (
                 d.get("candidateLatitude") if candidate_is_valid
@@ -1433,6 +1456,8 @@ def decide_review(
         )
         if approve:
             if has_reverify_proposal:
+                if not _is_within_municipal_bounds(proposal_lat, proposal_lng):
+                    return False, "The selected location candidate is outside the municipality"
                 cur.execute(
                     """UPDATE official_registry
                        SET latitude=%s, longitude=%s, placeID=%s, placeIDKind='poi',
@@ -1499,7 +1524,12 @@ def decide_review(
                     (proposal_id,),
                 )
             elif retained_pin_reapproval:
-                return False, "Use a location choice to complete this address re-approval"
+                cur.execute(
+                    """UPDATE official_registry
+                       SET matchStatus=NULL, matchScore=NULL
+                       WHERE businessID=%s AND matchStatus='review'""",
+                    (business_id,),
+                )
             else:
                 _update_pin(cur, _g(r, "barangayID", 1), _g(r, "businessName", 2),
                             _g(r, "latitude", 4), _g(r, "longitude", 5), None, None, business_id=business_id)

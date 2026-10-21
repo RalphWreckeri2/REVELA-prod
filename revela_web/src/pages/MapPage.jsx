@@ -11,6 +11,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { GoogleMap, Data, Marker } from "@react-google-maps/api";
 import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markerclusterer";
 import DashboardLayout from "../components/DashboardLayout";
+import { SkeletonBlock, SkeletonList } from "../components/LoadingSkeleton";
 import "../styles/MapPage.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import BatchDispatchModal from "../components/BatchDispatchModal";
@@ -3315,7 +3316,9 @@ export default function MapPage() {
           action,
           candidate.locationReapproval
             ? { candidateHistoryID: candidate.candidateHistoryID }
-            : {},
+            : action === "reject" && candidate.candidateHistoryID != null
+              ? { candidateHistoryID: candidate.candidateHistoryID }
+              : {},
         );
         setReviewQueueNotice(
           isApprove
@@ -4367,7 +4370,11 @@ export default function MapPage() {
                   Clear filters
                 </button>
               )}
-              <span style={styles.countBadge} aria-live="polite">{loadingFlags ? "…" : flagsError ? "—" : visibleFlags.length}</span>
+              <span style={styles.countBadge} aria-live="polite">
+                {loadingFlags
+                  ? <SkeletonBlock statusLabel="Loading location count" style={{ width: 20, height: 13 }} />
+                  : flagsError ? "—" : visibleFlags.length}
+              </span>
             </div>
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
 
@@ -4384,7 +4391,7 @@ export default function MapPage() {
           </div>
 
           <div className="map-location-results" aria-busy={loadingFlags}>
-            {loadingFlags ? <p role="status">Loading locations…</p> : flagsError ? (
+            {loadingFlags ? <SkeletonList rows={5} /> : flagsError ? (
               <div role="alert"><p>Locations could not be refreshed. {flagsError}</p>
                 <button type="button" className="ghost-btn" onClick={() => fetchFlags(false)}>Retry</button></div>
             ) : visibleFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
@@ -4707,9 +4714,7 @@ export default function MapPage() {
 
             <div style={{ overflowY: "auto", padding: 20 }}>
               {reviewQueueLoading && !reviewQueue?.data?.length ? (
-                <p style={{ margin: 0, color: "var(--color-muted)", textAlign: "center", padding: 30 }}>
-                  Loading pending suggestions…
-                </p>
+                <SkeletonList rows={4} />
               ) : reviewQueue?.data?.length ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {reviewQueue.data.map((candidate) => (
@@ -4861,12 +4866,21 @@ export default function MapPage() {
                           </div>
                         </div>
                       </div>
+                      {candidate.candidateOutsideMunicipality && (
+                        <p role="alert" style={{
+                          margin: "10px 0 0",
+                          color: "var(--color-danger, #dc2626)",
+                          fontSize: 12,
+                        }}>
+                          The suggested pin is outside the Mataasnakahoy boundary and cannot be approved. Reject it to keep the current pin.
+                        </p>
+                      )}
                       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
                         <button
                           type="button"
                           className="ghost-btn"
                           onClick={() => handleReviewQueueDecision(candidate, "reject")}
-                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || (candidate.locationReapproval && !candidate.candidateAvailable)}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || (candidate.locationReapproval && candidate.candidateHistoryID == null)}
                           style={{ color: "var(--color-danger, #dc2626)" }}
                         >
                           {reviewQueueActionId === candidate.businessID ? "Saving…" : candidate.locationReapproval ? "Reject imported location" : "Reject suggestion"}
@@ -4875,7 +4889,7 @@ export default function MapPage() {
                           type="button"
                           className="primary-btn"
                           onClick={() => handleReviewQueueDecision(candidate, "approve")}
-                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || candidate.candidateOutsideMunicipality || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
                         >
                           {reviewQueueActionId === candidate.businessID ? "Saving…" : candidate.locationReapproval
                             ? selectedLocationChoice(reviewLocationChoices, candidate) === PREVIOUS_LOCATION

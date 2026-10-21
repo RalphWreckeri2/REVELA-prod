@@ -482,6 +482,49 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         self.assertEqual(item["matchScore"], 0.65)
         self.assertIn("place_google_rev", item["mapsUrl"])
 
+    @patch("api.registry.places_resolver._is_within_municipal_bounds", return_value=False)
+    @patch("api.registry.places_resolver.compute_resolve_key", return_value="current-key")
+    @patch("api.registry.places_resolver.mysql")
+    def test_review_queue_marks_outside_candidates_unavailable_but_rejectable(
+        self, mock_mysql, _resolve_key, _in_boundary
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.return_value = {"c": 1}
+        cursor.fetchall.return_value = [{
+            "businessID": "BIZ-OUTSIDE",
+            "barangayID": 1,
+            "barangayName": "Barangay II",
+            "businessName": "Outside Store",
+            "businessAddress": "Main St",
+            "originalLatitude": 13.962,
+            "originalLongitude": 121.112,
+            "originalPlaceID": "old-place",
+            "coordSource": "places",
+            "matchScore": 0.65,
+            "matchStatus": "review",
+            "resolveKey": None,
+            "reviewHistoryID": 17,
+            "reviewOutcome": "review",
+            "reviewType": "reverify",
+            "reviewKey": "current-key",
+            "candidateLatitude": 13.970,
+            "candidateLongitude": 121.130,
+            "candidatePlaceID": "outside-place",
+            "candidateSource": "places",
+            "candidateCoordSource": "places",
+        }]
+
+        result, error = list_review_queue()
+
+        self.assertIsNone(error)
+        item = result["data"][0]
+        self.assertFalse(item["candidateAvailable"])
+        self.assertTrue(item["candidateOutsideMunicipality"])
+        self.assertEqual(item["candidateHistoryID"], 17)
+        self.assertEqual(item["latitude"], 13.962)
+        self.assertEqual(item["longitude"], 121.112)
+
     @patch("api.registry.places_resolver.mysql")
     def test_review_accept_locks_pin(self, mock_mysql):
         """Accepting a review candidate must set matchStatus='approved' and coordSource='manual'."""
@@ -751,6 +794,92 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
                  ).args[1],
             ("BIZ-REV-04", "imported_candidate"),
         )
+
+    @patch("api.registry.places_resolver.mysql")
+    def test_reject_without_a_current_proposal_keeps_retained_pin_and_clears_review(
+        self, mock_mysql
+    ):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {
+                "businessID": "BIZ-REV-STALE",
+                "barangayID": 1,
+                "businessName": "Retained Store",
+                "businessAddress": "Updated address",
+                "latitude": 13.962,
+                "longitude": 121.112,
+                "placeID": "retained-place",
+                "coordSource": "manual",
+                "matchStatus": "review",
+                "resolveKey": None,
+            },
+            None,
+            {"reverifyHistoryID": 91},
+            None,
+        ]
+        mock_mysql.connection.cursor.return_value = cursor
+
+        ok, error = decide_review("BIZ-REV-STALE", approve=False)
+
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+        clear_review = next(
+            call for call in cursor.execute.call_args_list
+            if "SET matchStatus=NULL, matchScore=NULL" in call.args[0]
+        )
+        self.assertEqual(clear_review.args[1], ("BIZ-REV-STALE",))
+        self.assertFalse(any(
+            "latitude=NULL" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        mock_mysql.connection.commit.assert_called_once()
+
+    @patch("api.registry.places_resolver._is_within_municipal_bounds", return_value=False)
+    @patch("api.registry.places_resolver.mysql")
+    def test_outside_reverify_candidate_cannot_be_approved(
+        self, mock_mysql, _in_boundary
+    ):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {
+                "businessID": "BIZ-OUTSIDE-APPROVE",
+                "barangayID": 1,
+                "businessName": "Outside Store",
+                "businessAddress": "Main St",
+                "latitude": 13.962,
+                "longitude": 121.112,
+                "placeID": "old-place",
+                "placeIDKind": "poi",
+                "matchScore": 0.6,
+                "coordSource": "places",
+                "matchStatus": "review",
+                "resolveKey": None,
+            },
+            None,
+            {"reverifyHistoryID": 91},
+            {
+                "reviewHistoryID": 92,
+                "newLat": 13.970,
+                "newLng": 121.130,
+                "placeID": "outside-place",
+                "score": 0.7,
+            },
+        ]
+        mock_mysql.connection.cursor.return_value = cursor
+        with patch(
+            "api.registry.places_resolver.compute_resolve_key",
+            return_value="current-key",
+        ):
+            ok, error = decide_review(
+                "BIZ-OUTSIDE-APPROVE", approve=True,
+            )
+
+        self.assertFalse(ok)
+        self.assertIn("outside the municipality", error)
+        self.assertFalse(any(
+            "UPDATE official_registry" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
 
     @patch("api.registry.places_resolver._update_pin")
     @patch("api.registry.places_resolver.mysql")

@@ -441,6 +441,16 @@ class PlacesResolverHardeningTests(unittest.TestCase):
         self.assertFalse(_is_within_municipal_bounds(None, None))
         self.assertFalse(_is_within_municipal_bounds("invalid", "coords"))
 
+    @patch(
+        "api.flags.service.is_within_municipality_boundary",
+        return_value=False,
+    )
+    def test_candidate_screening_uses_unbuffered_municipal_boundary(
+        self, strict_boundary
+    ):
+        self.assertFalse(_is_within_municipal_bounds(13.9667, 121.1167))
+        strict_boundary.assert_called_once_with(13.9667, 121.1167)
+
     @patch.dict(os.environ, {"GOOGLE_MAPS_API_KEY": "dummy_test_key"})
     @patch("api.registry.places_resolver.mysql")
     def test_resolve_key_cache_consumes_zero_api_calls(self, mock_mysql):
