@@ -18,6 +18,14 @@ const barangays = ["Barangay I", "Barangay II", "Barangay II-A", "Barangay III",
 const sectors = ["Retail Sale in Non-Specialized Stores with Food, Beverages or Tobacco Predominating", "Food and Beverage Service Activities — Restaurants and Mobile Food Services", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles", "Manufacture of Other Food Products and Prepared Meals", "Other Community, Social and Personal Service Activities", "Transportation and Storage"];
 const sizes = ["Micro", "Small", "Medium", "Large"];
 const empty = state === "empty";
+const monitoringRecords = empty ? [] : barangays.map((barangayName, index) => {
+  const flagColor = ["Green", "Red", "Yellow", "Orange", "Black", "Purple"][index % 6];
+  const verifiedGreen = flagColor === "Green";
+  return { logID: index + 1, detectedName: `Preview pin ${index + 1}`, barangayID: index + 1, barangayName,
+    flagColor, originSource: "detection", registryLinked: false, verifiedGreen,
+    verifiedGreenAt: verifiedGreen ? "2026-10-20T14:00:00Z" : null,
+    verificationStatus: verifiedGreen ? "Verified" : flagColor === "Yellow" ? "Assigned" : null };
+});
 const descriptive = {
   kpis: { total_businesses: empty ? 0 : 1248, active_count: empty ? 0 : 1010, expired_count: empty ? 0 : 156, pending_count: empty ? 0 : 42, closed_count: 24, revoked_count: 16, compliance_rate: 80.9, current_year_registered_count: 1098, upcoming_year_renewal_count: 870, new_registration_count: 276, renewal_registration_count: 972 },
   nature_per_barangay: empty ? [] : barangays.map((barangayName, i) => ({ barangayName, Retail: 48 + i * 3, Services: 24 + i })),
@@ -29,6 +37,15 @@ const descriptive = {
   compliance_timeline: empty ? [] : ["Oct 2025", "Nov 2025", "Dec 2025", "Jan 2026", "Feb 2026", "Mar 2026", "Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"].map((month, i) => ({ month, active_count: [270, 305, 290, 1010, 960, 860, 740, 660, 590, 440, 370, 310][i], non_active_count: [180, 165, 178, 238, 220, 190, 174, 160, 141, 132, 112, 101][i] })),
   enforcement_progress: empty ? [] : barangays.map((barangayName, i) => ({ barangayName, green_count: 44 + i, red_count: 3 + i, yellow_count: 5, black_count: 1, orange_count: 2, purple_count: 1 })),
   audit_summary: { total_inspections: empty ? 0 : 96, result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 64 }, { inspectionResult: "Red", count: 22 }, { inspectionResult: "Black", count: 10 }] },
+  non_registry_monitoring: {
+    summary: { total: monitoringRecords.length,
+      needs_verification: monitoringRecords.filter(row => ["Red", "Yellow"].includes(row.flagColor)).length,
+      under_inspection: monitoringRecords.filter(row => row.verificationStatus === "Assigned").length,
+      verified_green: monitoringRecords.filter(row => row.verifiedGreen).length },
+    records: monitoringRecords, generated_at: new Date().toISOString(),
+    by_barangay: monitoringRecords.map(row => ({ barangayID: row.barangayID, barangayName: row.barangayName,
+      ...Object.fromEntries(["Green", "Red", "Yellow", "Orange", "Black", "Purple", "Unknown"].map(color => [color, color === row.flagColor ? 1 : 0])) })),
+  },
 };
 const sections = {
   descriptive,

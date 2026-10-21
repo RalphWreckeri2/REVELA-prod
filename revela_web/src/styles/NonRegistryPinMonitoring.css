@@ -1,0 +1,46 @@
+.non-registry-monitoring {
+  min-width: 0;
+  margin-bottom: 32px;
+  padding: 20px;
+  border-radius: 12px;
+}
+.non-registry-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 20px;
+  margin-bottom: 16px;
+}
+.non-registry-heading > div:first-child { flex: 1 1 340px; min-width: 0; }
+.non-registry-heading h4 { margin: 0 0 6px; color: var(--color-ink); font-size: 17px; font-weight: 800; }
+.non-registry-heading p,
+.non-registry-note { margin: 8px 0; color: var(--color-muted); font-size: 12px; line-height: 1.6; }
+.non-registry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.non-registry-actions .ghost-btn { margin: 0; }
+.non-registry-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.non-registry-kpis .kpi-card { min-width: 0; padding: 12px; gap: 10px; }
+.non-registry-kpis .kpi-info { min-width: 0; }
+.non-registry-kpis .kpi-info h3 { font-size: 24px; }
+.non-registry-kpis .kpi-info p { overflow-wrap: anywhere; font-size: 12px; }
+.non-registry-monitoring h5 { margin: 18px 0 8px; color: var(--color-ink); font-size: 14px; }
+.non-registry-empty { padding: 32px 12px; text-align: center; color: var(--color-muted); font-size: 13px; }
+.non-registry-error { color: var(--color-danger); font-size: 13px; }
+.non-registry-dialog { width: 1100px; box-sizing: border-box; }
+.non-registry-list-toolbar,
+.non-registry-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-block: 12px; }
+.non-registry-table-scroll { max-width: 100%; max-height: 50vh; overflow: auto; border: 1px solid var(--color-border); border-radius: 8px; }
+.non-registry-table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 12px; }
+.non-registry-table th,
+.non-registry-table td { padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--color-border-soft); }
+.non-registry-table th { position: sticky; top: 0; background: var(--color-surface); color: var(--color-ink); z-index: 1; }
+.non-registry-table td { overflow-wrap: anywhere; }
+.non-registry-pagination span { color: var(--color-muted); font-size: 12px; }
+@container analytics-content (max-width: 950px) {
+  .non-registry-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .non-registry-monitoring { padding: 14px; }
+  .non-registry-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .non-registry-kpis .kpi-icon { display: none; }
+}

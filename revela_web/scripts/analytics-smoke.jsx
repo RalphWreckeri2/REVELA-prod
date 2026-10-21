@@ -6,6 +6,7 @@ import { AuthContext } from "../src/context/authContext";
 import { ThemeContext } from "../src/context/themeContext";
 import AnalyticsPage from "../src/pages/AnalyticsPage";
 import { DEFAULT_WLC_WEIGHTS } from "../src/components/wlcPolicy";
+import Papa from "papaparse";
 import "../src/index.css";
 import "../src/styles/global.css";
 
@@ -26,11 +27,56 @@ let mode = "hold";
 let value = 17;
 const wlcWrites = [];
 let rejectWlcSave = true;
+let monitoringMode = "ready";
+const downloads = [];
+// Inspect CSV Blobs entirely in memory; do not write to the user's Downloads.
+const createObjectURL = URL.createObjectURL.bind(URL);
+URL.createObjectURL = blob => {
+  const url = createObjectURL(blob);
+  downloads.push({ blob, url });
+  return url;
+};
+const dispatchAnchorEvent = HTMLAnchorElement.prototype.dispatchEvent;
+HTMLAnchorElement.prototype.dispatchEvent = function (event) {
+  if (event.type === "click" && this.download && this.href.startsWith("blob:")) {
+    const item = downloads.find(download => download.url === this.href);
+    if (item) item.filename = this.download;
+    return true;
+  }
+  return dispatchAnchorEvent.call(this, event);
+};
 Object.defineProperty(navigator, "onLine", { configurable: true, get: () => online });
 
-function payload(section, count = value) {
+function nonRegistryFixture(query = {}) {
+  let records = Array.from({ length: 25 }, (_, index) => {
+    const color = ["Green", "Red", "Yellow", "Orange", "Black", "Purple"][index % 6];
+    const verified = color === "Green" && index !== 24;
+    return { logID: index + 1, detectedName: `Non-registry fixture ${index + 1}`, barangayID: index % 2 + 1,
+      barangayName: index % 2 ? "Barangay II" : "Barangay I", flagColor: color,
+      registryLinked: false, originSource: index % 2 ? "manual" : "detection",
+      verificationStatus: color === "Yellow" ? "Assigned" : verified ? "Verified" : null,
+      hasActiveInspection: color === "Yellow", verifiedGreen: verified,
+      verifiedGreenAt: verified ? "2026-10-20T14:00:00Z" : null };
+  });
+  if (monitoringMode === "empty") records = [];
+  records = records.filter(row => (!query.barangay_ids || query.barangay_ids.split(",").includes(String(row.barangayID)))
+    && (!query.flag_color || row.flagColor === query.flag_color));
+  const byBarangay = new Map();
+  records.forEach(row => {
+    if (!byBarangay.has(row.barangayID)) byBarangay.set(row.barangayID, {
+      barangayID: row.barangayID, barangayName: row.barangayName, Green: 0, Red: 0, Yellow: 0, Orange: 0, Black: 0, Purple: 0, Unknown: 0,
+    });
+    byBarangay.get(row.barangayID)[row.flagColor] += 1;
+  });
+  return { records, by_barangay: [...byBarangay.values()], generated_at: new Date().toISOString(),
+    summary: { total: records.length, needs_verification: records.filter(row => ["Red", "Yellow"].includes(row.flagColor)).length,
+      under_inspection: records.filter(row => row.hasActiveInspection).length, verified_green: records.filter(row => row.verifiedGreen).length } };
+}
+
+function payload(section, count = value, query = {}) {
   const sections = {
-    descriptive: { kpis: { active_count: count, total_businesses: count, reporting_year: 2031 }, audit_summary: { total_inspections: 0, result_breakdown: [] } },
+    descriptive: { kpis: { active_count: count, total_businesses: count, reporting_year: 2031 }, audit_summary: { total_inspections: 0, result_breakdown: [] },
+      non_registry_monitoring: monitoringMode === "missing" ? undefined : nonRegistryFixture(query) },
     diagnostic: { scan_history: [], category_risk_drivers: [], dbscan_clusters: [], morans_data: { points: [] } },
     prescriptive: {
       rankings: [
@@ -58,9 +104,9 @@ window.fetch = async (url, options = {}) => {
     if (mode === "fail") return Response.json({ error: "Synthetic backend failure" }, { status: 503 });
     if (mode === "hold" || (mode === "filters" && parsed.searchParams.get("barangay_ids") === "1")) {
       // Deliberately ignore AbortSignal: stale-response rejection must still work.
-      return new Promise((resolve) => pending.push({ section, resolve }));
+      return new Promise((resolve) => pending.push({ section, query: Object.fromEntries(parsed.searchParams), resolve }));
     }
-    return payload(section, mode === "filters" ? 222 : value);
+    return payload(section, mode === "filters" ? 222 : value, Object.fromEntries(parsed.searchParams));
   }
   if (parsed.pathname.endsWith("/barangays")) return Response.json([{ barangayID: 1, barangayName: "Barangay I" }, { barangayID: 2, barangayName: "Barangay II" }]);
   if (parsed.pathname.endsWith("/filter-metadata")) return Response.json({ lines_of_business: [], business_types: [], business_sizes: [] });
@@ -76,7 +122,7 @@ window.fetch = async (url, options = {}) => {
   if (parsed.pathname.endsWith("/stream")) return new Response('data: {"type":"connected"}\n\n', { headers: { "Content-Type": "text/event-stream" } });
   return Response.json({ data: [] });
 };
-const release = (count) => pending.splice(0).forEach(({ section, resolve }) => resolve(payload(section, count)));
+const release = (count) => pending.splice(0).forEach(({ section, query, resolve }) => resolve(payload(section, count, query)));
 const root = createRoot(document.getElementById("smoke-root"));
 try {
   root.render(<StrictMode><AuthContext.Provider value={{ token: "offline-fixture", user: { role: "Admin", fullName: "Test Admin" }, logout() {} }}>
@@ -125,6 +171,45 @@ try {
     await wait(() => tab.getAttribute("aria-current") === "page" && [...document.querySelectorAll("h2")].some(node => node.textContent.includes(heading)), `${label} tab`);
     check(true, `${label} tab switches to its existing section`);
   }
+
+  const monitoring = () => document.querySelector(".non-registry-monitoring");
+  const monitoringValues = () => [...(monitoring()?.querySelectorAll(".kpi-card h3") || [])].map(node => node.textContent);
+  await wait(() => monitoringValues().length === 4, "non-registry monitoring cards");
+  const fieldKpiHeading = [...document.querySelectorAll("h4")].find(node => node.textContent === "Field & Inspection KPIs");
+  check(fieldKpiHeading.nextElementSibling.nextElementSibling === monitoring()
+    && monitoring().nextElementSibling.textContent.includes("Quick Insights"), "Non-Registry Pin Monitoring is inside Section B, after its KPIs and before Quick Insights");
+  check(JSON.stringify(monitoringValues()) === JSON.stringify(["25", "8", "4", "4"]), "Non-registry cards separate all pins, Red/Yellow, current inspection workflow and evidence-backed Green");
+  await wait(() => monitoring().querySelector(".recharts-surface"), "non-registry barangay chart");
+  check(monitoring().textContent.includes("Purple pins") && monitoring().textContent.includes("Orange pins"), "The barangay chart includes all current flag colors, not only Red/Yellow");
+  monitoring().querySelector("button").click();
+  await wait(() => document.querySelector(".non-registry-dialog"), "non-registry list dialog");
+  let list = document.querySelector(".non-registry-dialog");
+  check(list.querySelectorAll("tbody tr").length === 20 && list.textContent.includes("25 matching pins"), "View List paginates the same full monitoring snapshot");
+  [...list.querySelectorAll("button")].find(node => node.textContent === "Next").click();
+  await wait(() => document.querySelectorAll(".non-registry-dialog tbody tr").length === 5, "second non-registry page");
+  list = document.querySelector(".non-registry-dialog");
+  [...list.querySelectorAll("button")].find(node => node.textContent === "Export CSV").click();
+  await wait(() => downloads.some(item => item.filename?.startsWith("Non_Registry_Pins_")), "non-registry CSV Blob");
+  const downloaded = downloads.find(item => item.filename?.startsWith("Non_Registry_Pins_"));
+  const exportedPins = Papa.parse((await downloaded.blob.text()).replace(/^\uFEFF/, ""), { header: true }).data;
+  check(exportedPins.length === 25 && exportedPins.every(row => row["Registry Link"] === "Not in Registry")
+    && exportedPins.at(-1)["Inspection-Verified Compliant"] === "No", "CSV includes all 25 pins across pages and does not treat unverified Green as compliant");
+  list.querySelector('[aria-label="Close dialog"]').click();
+  await wait(() => !document.querySelector(".non-registry-dialog"), "close non-registry list");
+  check(document.activeElement === monitoring().querySelector("button"), "Closing View List restores focus to its trigger");
+  monitoringMode = "empty";
+  button("Refresh").click();
+  await wait(() => JSON.stringify(monitoringValues()) === JSON.stringify(["0", "0", "0", "0"]), "empty non-registry snapshot");
+  check(monitoring().textContent.includes("No non-registry pins match"), "A real empty cohort shows four zeros and a clear empty chart state");
+  await wait(() => button("Refresh") && !button("Refresh").disabled, "refresh after empty cohort");
+  monitoringMode = "missing";
+  button("Refresh").click();
+  await wait(() => monitoring().textContent.includes("data is unavailable"), "unavailable non-registry snapshot");
+  check(monitoringValues().length === 0 && [...monitoring().querySelectorAll("button")].every(node => node.disabled), "Missing monitoring data never turns into fake zero cards or a downloadable empty report");
+  await wait(() => button("Refresh") && !button("Refresh").disabled, "refresh after unavailable cohort");
+  monitoringMode = "ready";
+  button("Refresh").click();
+  await wait(() => monitoringValues()[0] === "25" && button("Refresh") && !button("Refresh").disabled, "restore non-registry cohort");
 
   [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.startsWith("Prescriptive")).click();
   await wait(() => document.querySelector('[aria-label="WLC methodology"]'), "WLC methodology");
@@ -206,6 +291,9 @@ try {
     await wait(() => tab.getAttribute("aria-current") === "page", `filtered ${label} tab`);
     check(calls.some(call => call.section === label.toLowerCase() && call.filter === "2") && barangay.value === "2", `${label} receives and retains the selected filter`);
   }
+  [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.startsWith("Descriptive")).click();
+  await wait(() => monitoringValues()[0] === "12", "barangay-filtered non-registry cohort");
+  check(JSON.stringify(monitoringValues()) === JSON.stringify(["12", "4", "0", "0"]), "Non-registry cards use the selected barangay rather than the unfiltered municipality");
   mode = "ready";
   const registryStatus = [...document.querySelectorAll("select")].find(node => [...node.options].some(option => option.value === "Active"));
   const flagStatus = [...document.querySelectorAll("select")].find(node => [...node.options].some(option => option.value === "Green"));
@@ -218,10 +306,15 @@ try {
   button("Apply filters").click();
   await wait(() => calls.length >= beforeApply + 4, "apply shared registry and flag filters");
   check(calls.slice(beforeApply).every(call => call.query.application_status === "Expired" && call.query.flag_color === "Red" && call.filter === "2"), "Apply filters sends registry, flag and barangay criteria to all four sections");
+  await wait(() => monitoringValues()[0] === "4", "flag-filtered non-registry cohort");
+  check(JSON.stringify(monitoringValues()) === JSON.stringify(["4", "4", "0", "0"])
+    && monitoring().textContent.includes("renewal filters do not apply"), "Flag filters scope monitoring while registry-only filters are explicitly inapplicable");
   const beforeClear = calls.length;
   button("Clear all").click();
   await wait(() => calls.length >= beforeClear + 4, "clear all shared filters");
   check(calls.slice(beforeClear).every(call => !call.query.application_status && !call.query.flag_color && !call.filter), "Clear all resets the filters across all four sections");
+  await wait(() => monitoringValues()[0] === "25", "clear non-registry filters");
+  check(JSON.stringify(monitoringValues()) === JSON.stringify(["25", "8", "4", "4"]), "Clear all restores the complete non-registry snapshot");
   document.getElementById("analytics-smoke-results").textContent = JSON.stringify({ passed: results.length, failed: 0, checks: results });
 } catch (error) {
   document.getElementById("analytics-smoke-results").textContent = JSON.stringify({ passed: results.length, failed: 1, error: error.stack, checks: results });

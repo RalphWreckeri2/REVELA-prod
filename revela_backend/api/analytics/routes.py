@@ -20,6 +20,8 @@ from app import mysql
 from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
 from api.analytics.scoring import calculate_rankings, select_rankings
+from api.analytics.non_registry import non_registry_monitoring_sql, build_non_registry_monitoring
+from api.flags.compliance import origin_source_sql
 from api.models.detection_runs import get_recent_detection_runs
 from api.analytics.filters import (
     parse_analytics_filters,
@@ -1399,6 +1401,15 @@ def _get_all_analytics_inner(F=None):
         for row in cur.fetchall()
     ]
 
+    # Share Map/report membership and verified-compliance evidence, rather than
+    # treating a missing businessID or a Green colour alone as classification.
+    monitoring_sql, monitoring_params = non_registry_monitoring_sql(
+        Fx, ladder=ladder,
+        source_sql=origin_source_sql("g", _labeled(cur, "schema:geospatial_logs.source")),
+    )
+    _execute(cur, "descriptive.non_registry_monitoring", monitoring_sql, monitoring_params)
+    non_registry_monitoring = build_non_registry_monitoring(cur.fetchall(), Fx)
+
     descriptive = {
         "kpis": kpis,
         "enforcement_progress": enforcement_progress,
@@ -1410,7 +1421,8 @@ def _get_all_analytics_inner(F=None):
         "compliance_by_size": compliance_by_size,
         "compliance_timeline": compliance_timeline,
         "audit_summary": {"total_inspections": total_inspections,
-                          "result_breakdown": result_breakdown},
+                           "result_breakdown": result_breakdown},
+        "non_registry_monitoring": non_registry_monitoring,
     }
     _publish_analytics_section("descriptive", descriptive)
 

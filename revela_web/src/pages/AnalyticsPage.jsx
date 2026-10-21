@@ -9,6 +9,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
+import NonRegistryPinMonitoring from "../components/NonRegistryPinMonitoring";
 import ResponsiveChart from "../components/ResponsiveChart";
 import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
@@ -2387,6 +2388,9 @@ export default function AnalyticsPage() {
                 <KpiCard iconVariant="green" value={clearedCount ?? "—"} label="Compliant (Cleared)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="gold" value={`${inspectedCount > 0 ? Math.round((clearedCount / inspectedCount) * 100) : 0}%`} label="Clearance Rate" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} style={{ padding: "12px 10px" }} />
               </div>
+
+              {/* Non-registry monitoring, inside Section B after its KPIs */}
+              <NonRegistryPinMonitoring snapshot={desc?.non_registry_monitoring} refreshing={backgroundRefreshing} />
 
               {/* Field Inspections FAQs */}
               <div style={{ marginBottom: 32 }}>
