@@ -2,7 +2,6 @@ from flask import Flask, jsonify
 from flask_jwt_extended import JWTManager
 from flask_mysqldb import MySQL
 from config import Config
-from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 from api.utils import cors_config
 import os
@@ -30,25 +29,7 @@ def create_app():
     # frontend silently blocked; setting it overrides the production defaults.
     # Parsing, www/apex mirroring, and trailing-slash normalisation live in
     # api/utils/cors_config.py so they can be unit tested.
-    allowed_origins = cors_config.build_allowed_origins(
-        os.getenv("CORS_ORIGINS"))
-    app.logger.info(
-        "[CORS] Allowed origins: %s",
-        ", ".join(
-            o if isinstance(o, str) else getattr(o, "pattern", str(o))
-            for o in allowed_origins
-        ),
-    )
-
-    CORS(app, resources={
-        r"/api/*": {
-            "origins": allowed_origins,
-            "allow_headers": ["Content-Type", "Authorization"],
-            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-            "supports_credentials": True,
-            "max_age": 86400,
-        }
-    })
+    cors_config.init_app(app, os.getenv("CORS_ORIGINS"))
 
     # Behavior-neutral request telemetry: one structured line per request
     # (route, status, duration, size, correlation id) plus the shared `revela`

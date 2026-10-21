@@ -1005,42 +1005,66 @@ export async function submitInspectionRequest(payload, token) {
   }
 }
 
-/**
- * POST /api/inspections/:id/verify
- * Admin verifies a submitted report → updates flagColor.
- * @param {number} reportId
- */
+/** HTTP response errors must stay distinct from an unreadable network/preflight failure. */
+async function inspectionRegistryRequest(url, options, action) {
+  let response;
+  try {
+    response = await fetch(url, options);
+  } catch (cause) {
+    // A rejected fetch has no readable HTTP response (offline, DNS, or a
+    // browser-blocked preflight). Do not relabel a backend validation error
+    // merely because its message contains the word "fetch".
+    if (cause?.name === "AbortError") throw cause;
+    const error = new Error(
+      `${action} could not reach the API. Check your connection or ask an administrator to check the API/CORS deployment.`,
+      { cause },
+    );
+    error.code = "api_network_error";
+    throw error;
+  }
+
+  try {
+    return await handleResponse(response);
+  } catch (cause) {
+    if (cause.cause instanceof SyntaxError) {
+      const missingRoute = response.status === 404;
+      const error = new Error(missingRoute
+        ? `${action} endpoint was not found (HTTP 404). The API backend may need the registry-link deployment.`
+        : `${action} returned an unexpected API response (HTTP ${response.status}). Please try again or contact an administrator.`,
+      { cause });
+      error.code = missingRoute ? "api_endpoint_not_found" : "api_invalid_response";
+      error.status = response.status;
+      throw error;
+    }
+    // Preserve the status, machine-readable code and message of JSON API
+    // validation/auth/conflict errors, including migration-required responses.
+    throw cause;
+  }
+}
+
+/** POST /api/inspections/:id/verify — authenticated admin confirmation. */
 export async function verifyInspectionRequest(
   reportId,
   token,
   updateLocation = false,
   registryLink = {},
 ) {
-  try {
-    const res = await fetch(`${BASE_URL}/inspections/${reportId}/verify`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ ...registryLink, updateLocation }),
-    });
-    return await handleResponse(res);
-  } catch (err) {
-    connectionGuard(err);
-  }
+  return inspectionRegistryRequest(`${BASE_URL}/inspections/${reportId}/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ ...registryLink, updateLocation }),
+  }, "Inspection verification");
 }
 
 export async function previewGreenRegistryLinkRequest(reportId, businessID, token) {
-  try {
-    const qs = new URLSearchParams({ businessID });
-    const res = await fetch(`${BASE_URL}/inspections/${reportId}/green-registry-link?${qs}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return await handleResponse(res);
-  } catch (err) {
-    connectionGuard(err);
-  }
+  const qs = new URLSearchParams({ businessID });
+  return inspectionRegistryRequest(`${BASE_URL}/inspections/${reportId}/green-registry-link?${qs}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+  }, "Business ID review");
 }
 
 /**

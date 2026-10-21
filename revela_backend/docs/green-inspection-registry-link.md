@@ -2,6 +2,9 @@
 
 ## Deployment
 
+For the deployed review-route 404/preflight investigation and rollout checks, see
+[`green-registry-link-deployment.md`](green-registry-link-deployment.md).
+
 Apply `migrations/20261021_01_confirmed_registry_pin.sql` after the existing
 enforcement-state migrations, before deploying the updated backend and web UI.
 The migration adds only:
@@ -117,14 +120,14 @@ unit-test runner likewise blocks application DB connections and external HTTP.
 
 Results:
 
-- **23 MySQL tests passed**, including existing/new registry records, missing
+- **25 MySQL tests passed**, including existing/new registry records, missing
   required details, missing/invalid/conflicting IDs, stale reviews, retries,
   same-report concurrency, two pins competing for one ID, database constraints,
   atomic rollback, role gates, enforcement safeguards, and subsequent
   import/sync retaining one original marker with zero location-resolution calls.
 - **230 targeted backend tests and 96 subtests passed** across the two isolated
   unit-test commands above.
-- `npm run test:green-link:browser`: **10 checks passed** with synthetic fetch
+- `npm run test:green-link:browser`: **20 checks passed** with synthetic fetch
   responses and external DNS blocked by the local browser runner.
 - Frontend lint, context checks, available unit-test scripts and production build
   passed. The aggregate `npm run verify` stops at the pre-existing missing file

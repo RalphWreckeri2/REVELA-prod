@@ -401,16 +401,21 @@ def reassign_submitted(report_id):
     return jsonify(result), 200
 
 
-# ── POST /api/inspections/<id>/verify ─────────────────────────────────────────
-@inspections_bp.route("/<int:report_id>/green-registry-link", methods=["GET"])
+# OPTIONS must be routable before authentication or any schema/business lookup.
+# Keep GET on the same admin-only view; a global catch-all OPTIONS handler would
+# hide missing routes/deployment drift without making the actual GET work.
+@inspections_bp.route("/<int:report_id>/green-registry-link", methods=["GET", "OPTIONS"])
 @admin_required()
 def green_registry_link_preview(report_id):
+    if request.method == "OPTIONS":
+        return "", 204
     result, error = preview_green_registry_link(report_id, request.args.get("businessID"))
     if error:
         return jsonify({"error": str(error), "code": "green_registry_link_conflict" if error.conflict else "green_registry_link_invalid"}), 409 if error.conflict else 400
     return jsonify(result), 200
 
 
+# ── POST /api/inspections/<id>/verify ─────────────────────────────────────────
 @inspections_bp.route("/<int:report_id>/verify", methods=["POST", "OPTIONS"])
 @admin_required()
 def verify(report_id):

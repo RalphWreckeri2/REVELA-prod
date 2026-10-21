@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import InspectionPage from "../src/pages/InspectionPage";
 import { AuthContext } from "../src/context/authContext";
 import { ThemeContext } from "../src/context/themeContext";
+import { previewGreenRegistryLinkRequest, verifyInspectionRequest } from "../src/services/api";
 import "../src/index.css";
 import "../src/styles/global.css";
 
@@ -30,11 +31,17 @@ const reports = [
 const submissions = [];
 let missingName = false;
 let conflict = false;
+let reviewFailure = null;
+let verificationFailure = null;
 window.fetch = async (url, options = {}) => {
   const parsed = new URL(url, location.href);
   if (/\/inspections\/?$/.test(parsed.pathname)) return Response.json({ data: reports, total: 2, pages: 1 });
   const review = parsed.pathname.match(/\/inspections\/(\d+)\/green-registry-link$/);
   if (review) {
+    if (reviewFailure === "network") throw new TypeError("Failed to fetch");
+    if (reviewFailure === "missing-route") return new Response("<!doctype html><title>404 Not Found</title>", { status: 404, headers: { "Content-Type": "text/html" } });
+    if (reviewFailure === "proxy") return new Response("Bad Gateway", { status: 502 });
+    if (reviewFailure === "validation") return Response.json({ error: "Could not fetch registry details for this Business ID.", code: "green_registry_link_invalid" }, { status: 400 });
     if (conflict) return Response.json({ error: "This Business ID is already confirmed against a different pin.", code: "green_registry_link_conflict" }, { status: 409 });
     const report = reports.find(row => row.reportID === Number(review[1]));
     return Response.json({
@@ -47,6 +54,8 @@ window.fetch = async (url, options = {}) => {
     });
   }
   if (/\/inspections\/\d+\/verify$/.test(parsed.pathname)) {
+    if (verificationFailure === "network") throw new TypeError("Failed to fetch");
+    if (verificationFailure === "conflict") return Response.json({ error: "Review the registry link again before confirming.", code: "green_registry_link_conflict" }, { status: 409 });
     submissions.push(JSON.parse(options.body));
     return Response.json({ status: "Verified", locationUpdated: false });
   }
@@ -105,6 +114,27 @@ try {
   button("Review Business ID").click();
   await wait(() => document.body.textContent.includes("already confirmed against a different pin"), "conflicting link error");
   check(submissions.length === 1 && button("Confirm & Verify").disabled, "Conflicting links cannot submit a verification");
+  conflict = false;
+  for (const [failure, code, status, message] of [
+    ["validation", "green_registry_link_invalid", 400, "Could not fetch registry details for this Business ID."],
+    ["network", "api_network_error", undefined, "Business ID review could not reach the API"],
+    ["missing-route", "api_endpoint_not_found", 404, "endpoint was not found (HTTP 404)"],
+    ["proxy", "api_invalid_response", 502, "unexpected API response (HTTP 502)"],
+  ]) {
+    reviewFailure = failure;
+    button("Review Business ID").click();
+    await wait(() => document.body.textContent.includes(message), `${failure} review message`);
+    let caught;
+    try { await previewGreenRegistryLinkRequest(2, "BPLO-002", "offline-fixture"); } catch (error) { caught = error; }
+    check(caught?.code === code && caught?.status === status && caught?.message.includes(message), `${failure} review error preserves its distinct code, HTTP status and user message`);
+    check(submissions.length === 1 && button("Confirm & Verify").disabled, `${failure} review failure cannot submit a verification`);
+  }
+  for (const [failure, code, status] of [["network", "api_network_error", undefined], ["conflict", "green_registry_link_conflict", 409]]) {
+    verificationFailure = failure;
+    let caught;
+    try { await verifyInspectionRequest(2, "offline-fixture", false, { businessID: "BPLO-002" }); } catch (error) { caught = error; }
+    check(caught?.code === code && caught?.status === status, `Verification distinguishes ${failure} failures without hiding backend validation`);
+  }
   document.getElementById("green-link-smoke-results").textContent = JSON.stringify({ passed: checks.length, failed: 0, checks });
 } catch (error) {
   document.getElementById("green-link-smoke-results").textContent = JSON.stringify({ passed: checks.length, failed: 1, error: String(error), checks });

@@ -4,16 +4,15 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from flask import Flask
-from flask_jwt_extended import JWTManager, create_access_token
+from flask_jwt_extended import create_access_token
 
 from tests import test_registry_inspection_sync as audit
 from api.inspections import service as inspections
-from api.inspections.routes import inspections_bp
 from api.registry import service as registry
 from api.registry.inspection_link import GreenRegistryLinkError
 from api.models.geospatial import reset_source_column_cache
 from api.registry.colors import reset_ladder_column_cache
+from tests.green_link_http import ORIGIN, create_http_app
 
 
 class GreenRegistryLinkTests(unittest.TestCase):
@@ -411,24 +410,72 @@ class GreenRegistryLinkTests(unittest.TestCase):
 
     def test_admin_routes_require_review_and_inspector_cannot_confirm(self):
         _, report_id = self.seed()
-        app = Flask(__name__)
-        app.config["JWT_SECRET_KEY"] = "isolated-green-link-test-secret-32-characters"
-        JWTManager(app)
-        app.register_blueprint(inspections_bp, url_prefix="/api/inspections")
+        app = create_http_app(blueprint_only=True)
         with app.app_context():
             admin = create_access_token(identity="9", additional_claims={"role": "Admin"})
             inspector = create_access_token(identity="9", additional_claims={"role": "Inspector"})
         client = app.test_client()
         with patch("api.middleware.decorators._verify_user_and_session", return_value=None):
-            self.assertEqual(client.post(f"/api/inspections/{report_id}/verify", json={}, headers={"Authorization": f"Bearer {admin}"}).status_code, 400)
-            self.assertEqual(client.get(f"/api/inspections/{report_id}/green-registry-link?businessID=BPLO-001", headers={"Authorization": f"Bearer {inspector}"}).status_code, 403)
-            review = client.get(f"/api/inspections/{report_id}/green-registry-link?businessID=BPLO-001", headers={"Authorization": f"Bearer {admin}"})
+            for path, method, headers in (
+                (f"/api/inspections/{report_id}/green-registry-link?businessID=BPLO-001", "GET", "authorization"),
+                (f"/api/inspections/{report_id}/verify", "POST", "authorization,content-type"),
+            ):
+                preflight = client.options(path, headers={"Origin": ORIGIN,
+                    "Access-Control-Request-Method": method, "Access-Control-Request-Headers": headers})
+                self.assertEqual(preflight.status_code, 204)
+                self.assertEqual(preflight.headers["Access-Control-Allow-Origin"], ORIGIN)
+            self.assertEqual(client.post(f"/api/inspections/{report_id}/verify", json={}, headers={"Origin": ORIGIN, "Authorization": f"Bearer {admin}"}).status_code, 400)
+            self.assertEqual(client.get(f"/api/inspections/{report_id}/green-registry-link?businessID=BPLO-001", headers={"Origin": ORIGIN, "Authorization": f"Bearer {inspector}"}).status_code, 403)
+            before = self.snapshot()
+            review = client.get(f"/api/inspections/{report_id}/green-registry-link?businessID=BPLO-001", headers={"Origin": ORIGIN, "Authorization": f"Bearer {admin}"})
             self.assertEqual(review.status_code, 200)
+            self.assertEqual(review.headers["Access-Control-Allow-Origin"], ORIGIN)
+            self.assertEqual(review.json["pin"]["logID"], before["geospatial_logs"][0]["logID"])
+            self.assertEqual(review.json["registry"]["businessName"], "ISOLATED SHOP BPLO-001")
+            self.assertFalse(review.json["registryExists"])
+            self.assertEqual(review.json["missingRequiredFields"], [])
+            self.assertTrue(review.json["reviewToken"])
+            self.assertEqual(self.snapshot(), before, "Review must not modify any isolated record")
             response = client.post(f"/api/inspections/{report_id}/verify", json={
                 "businessID": "BPLO-001", "confirmEstablishment": True,
                 "registryReviewToken": review.json["reviewToken"],
-            }, headers={"Authorization": f"Bearer {admin}"})
+            }, headers={"Origin": ORIGIN, "Authorization": f"Bearer {admin}"})
             self.assertEqual(response.status_code, 200, response.json)
+            self.assertEqual(response.headers["Access-Control-Allow-Origin"], ORIGIN)
+
+    def test_missing_migration_is_a_separate_authenticated_409_not_a_preflight_failure(self):
+        _, report_id = self.seed()
+        app = create_http_app(blueprint_only=True)
+        with app.app_context():
+            admin = create_access_token(identity="9", additional_claims={"role": "Admin"})
+        before = self.snapshot()
+        path = f"/api/inspections/{report_id}/green-registry-link?businessID=BPLO-001"
+        with patch("api.middleware.decorators._verify_user_and_session", return_value=None), patch(
+            "api.registry.inspection_link.confirmed_pin_column_available", return_value=False):
+            client = app.test_client()
+            preflight = client.options(path, headers={"Origin": ORIGIN,
+                "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"})
+            self.assertEqual(preflight.status_code, 204)
+            review = client.get(path, headers={"Origin": ORIGIN, "Authorization": f"Bearer {admin}"})
+        self.assertEqual(review.status_code, 409)
+        self.assertIn("migration", review.json["error"])
+        self.assertEqual(review.headers["Access-Control-Allow-Origin"], ORIGIN)
+        self.assertEqual(self.snapshot(), before)
+
+    def test_read_only_schema_check_detects_the_applied_migration(self):
+        from scripts.check_green_registry_link_schema import inspect_schema
+
+        connection = audit.connect_to_disposable_mysql()
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SET SESSION TRANSACTION READ ONLY")
+            result = inspect_schema(connection)
+            self.assertEqual(result["status"], "ready", result)
+            self.assertTrue(result["read_only"])
+            self.assertTrue(all(result["checks"].values()))
+        finally:
+            connection.rollback()
+            connection.close()
 
     def concurrent_confirmations(self, requests):
         local = threading.local()

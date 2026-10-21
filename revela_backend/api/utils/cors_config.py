@@ -144,3 +144,23 @@ def build_allowed_origins(raw=None):
         if pattern not in allowed:
             allowed.append(pattern)
     return allowed
+
+
+def init_app(app, raw=None):
+    """Apply the shared explicit API policy to the application or an isolated fixture."""
+    from flask_cors import CORS
+
+    allowed_origins = build_allowed_origins(raw)
+    app.logger.info(
+        "[CORS] Allowed origins: %s",
+        ", ".join(origin if isinstance(origin, str) else origin.pattern for origin in allowed_origins),
+    )
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": allowed_origins,
+            "allow_headers": ["Content-Type", "Authorization"],
+            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            "supports_credentials": True,
+            "max_age": 86400,
+        }
+    })
