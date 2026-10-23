@@ -15,7 +15,7 @@ export default function ProtectedRoute({ children }) {
   }, [isForbidden, logout]);
 
   // Not logged in at all → back to login
-  if (!token) return <Navigate to="/" replace />;
+  if (!token) return <Navigate to="/login" replace />;
 
   // Token exists but user profile hasn't loaded yet → wait
   if (!user) {
@@ -65,7 +65,7 @@ export default function ProtectedRoute({ children }) {
 
   // Logged in but role is not permitted to use the web dashboard
   if (isForbidden) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/login" replace />;
   }
 
   return children;

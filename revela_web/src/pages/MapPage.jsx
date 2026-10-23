@@ -54,6 +54,8 @@ import {
   updateFlagLocationRequest,
   deleteFlagRequest,
   updateFlagColorRequest,
+  previewFlagComplianceRequest,
+  confirmFlagComplianceRequest,
   cancelRunDetection,
   getDetectionQuotaRequest,
   getPlacesUsageRequest,
@@ -635,7 +637,7 @@ function normalizeFlag(flag) {
 }
 
 // â”€â”€ Flag Detail Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, onReviewLocation, isAdmin, actionLoading, isClosing }) {
+function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, onConfirmCompliance, onReviewLocation, isAdmin, actionLoading, isClosing }) {
   const [showMoreActions, setShowMoreActions] = useState(false);
   const fc = getFlagColor(flag.color);
 
@@ -765,6 +767,15 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
 
         {/* Secondary Actions */}
         <div style={{ display: "flex", gap: 12 }}>
+          {isAdmin && Number(flag.id) > 0 && ["Red", "Yellow"].includes(flag.color) && (
+            <button
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", height: 44, borderRadius: 10, fontWeight: 600, fontSize: 14, cursor: "pointer", border: "none", background: "#16a34a", color: "#ffffff", transition: "all 0.2s" }}
+              disabled={actionLoading || flag.hasActiveInspection}
+              onClick={() => onConfirmCompliance(flag)}
+            >
+              Confirm compliance
+            </button>
+          )}
           {isAdmin && flag.color !== "Purple" && flag.color !== "Black" && (
             <button
               style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", height: 44, borderRadius: 10, fontWeight: 600, fontSize: 14, cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)", color: "var(--color-ink)", transition: "all 0.2s" }}
@@ -778,7 +789,9 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             <button
               style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", height: 44, borderRadius: 10, fontWeight: 600, fontSize: 14, cursor: "pointer", border: "1px solid var(--color-border)", background: "var(--color-surface)", color: "var(--color-ink)", transition: "all 0.2s" }}
               disabled={actionLoading}
-              onClick={() => onUpdateColor(flag.id, "Green")}
+              onClick={() => Number(flag.id) > 0
+                ? onConfirmCompliance(flag)
+                : onUpdateColor(flag.id, "Green")}
             >
               Mark as active
             </button>
@@ -2760,6 +2773,63 @@ export default function MapPage() {
     }
   };
 
+  const handleConfirmCompliance = async (flag) => {
+    try {
+      let businessID = flag.businessID;
+      if (!businessID) {
+        const idPrompt = await Swal.fire({
+          title: "Business ID required",
+          text: "Enter the official Business ID from the office record.",
+          input: "text",
+          inputPlaceholder: "Official Business ID",
+          inputValidator: (value) => value?.trim() ? undefined : "Business ID is required.",
+          showCancelButton: true,
+          confirmButtonText: "Review Business ID",
+        });
+        if (!idPrompt.isConfirmed) return;
+        businessID = idPrompt.value.trim();
+      }
+
+      setActionLoading(true);
+      setActionError("");
+      const review = await previewFlagComplianceRequest(flag.id, businessID, token);
+      const identityName = review.registry.businessName || flag.name;
+      const confirmation = await Swal.fire({
+        title: "Confirm compliance?",
+        text: `${review.registryExists ? "Existing registry record" : "New registry record"}: ${identityName}\nBusiness ID: ${review.businessID}\nThis will link the original pin and set the permit to Active / Green.`,
+        input: "text",
+        inputLabel: "Office evidence/reference (optional)",
+        inputPlaceholder: "Reason or office record reference",
+        showCancelButton: true,
+        confirmButtonText: "Confirm and mark Green",
+      });
+      if (!confirmation.isConfirmed) return;
+
+      await confirmFlagComplianceRequest(flag.id, {
+        businessID: review.businessID,
+        registryReviewToken: review.reviewToken,
+        confirmEstablishment: true,
+        reason: confirmation.value || null,
+      }, token);
+      handleCloseDetailModal();
+      await fetchFlags();
+      await Swal.fire({
+        icon: "success",
+        title: "Compliance confirmed",
+        text: `${review.businessID} is now Active / Green.`,
+      });
+    } catch (err) {
+      setActionError(err.message || "Could not confirm compliance.");
+      await Swal.fire({
+        icon: "error",
+        title: "Compliance not confirmed",
+        text: err.message || "Could not confirm compliance.",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   const handleRunDetection = async () => {
     // The scan limit comes from the backend quota config, not a hardcoded 2.
     const scanLimit = detectionQuota?.monthly_limit ?? 10;
@@ -4547,6 +4617,7 @@ export default function MapPage() {
           onDispatch={(flag) => setDispatchTarget(flag)}
           onDelete={handleDeleteFlag}
           onUpdateColor={handleUpdateFlagColor}
+          onConfirmCompliance={handleConfirmCompliance}
           onReviewLocation={handleReviewLocation}
           isAdmin={isAdmin}
           actionLoading={actionLoading}

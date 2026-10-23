@@ -6,7 +6,9 @@ For the deployed review-route 404/preflight investigation and rollout checks, se
 [`green-registry-link-deployment.md`](green-registry-link-deployment.md).
 
 Apply `migrations/20261021_01_confirmed_registry_pin.sql` after the existing
-enforcement-state migrations, before deploying the updated backend and web UI.
+enforcement-state migrations and then
+`migrations/20261021_02_compliance_confirmation_event.sql`, before deploying
+the updated backend and web UI.
 The migration adds only:
 
 - nullable `official_registry.confirmedLogID`;
@@ -59,6 +61,46 @@ mirrored into business enforcement state. A legacy single-use Black dispatch
 grant can record a finding for its already linked pin but cannot move/recolour
 the pin, change permit standing, or adopt an unlinked pin.
 
+Real map pins cannot be changed directly to Green through the manual color
+endpoint. Office reactivation of a closed field pin uses Business ID review and
+the audited compliance-confirmation flow; registry-only records retain their
+direct status-correction action.
+
+## Clearing an Orange warning as compliance
+
+An admin Clear Warning action means the office has confirmed compliance from
+its own records; it does not require another inspector visit or a business
+account. For a linked Registry business, the existing Business ID is used. The
+action atomically clears the warning, sets `applicationStatus = 'Active'`, and
+updates linked pins to Green while preserving Black-lock and open-inspection
+protections and recording the actor, reason/reference, and warning history.
+
+For an unregistered field pin, the admin must enter the official Business ID
+and review the exact Registry identity against the original pin before
+confirming. If there is no Registry record yet, the record is created from the
+pin's name and barangay, linked to the original pin, activated, and made Green
+in the same transaction. Identity conflicts, stale reviews, Black locks,
+revoked permits, and pending inspections are refused without partial writes.
+The office retains the compliance evidence; an optional reason/reference is
+stored in the enforcement audit event.
+
+## Office-confirmed compliance
+
+An admin can confirm compliance on a Red, Yellow, or Purple pin when the office
+already holds the supporting records, without dispatching an inspector. A
+Purple field pin linked to a Closed Registry permit can be reactivated through
+this reviewed flow. If the pin is not linked, the admin enters the official
+Business ID and reviews its exact Registry identity against the pin; linked
+pins use their existing ID. Confirmation activates the Registry record,
+refreshes `lastRenewalDate` to the confirmation date, links the original pin,
+sets it Green, and records a `compliance_confirmed` enforcement event
+atomically. Clearing registered or pin-level warnings also refreshes the
+renewal date. Active warnings, Black locks, revoked records, stale identity
+reviews, and open inspections on the original pin or any linked, legacy
+name/barangay-matched, or Place-ID-matched pin are refused.
+This records office-confirmed compliance but does not fabricate a Green
+inspector report or change inspection history.
+
 ## Import and Sync Registry
 
 Both workflows match confirmed records by Business ID and share the same locked
@@ -81,6 +123,18 @@ the original source remains stored on the pin.
 
 ## API contract
 
+- Admin-only `GET /api/inspections/{reportID}/warning-registry-link?businessID=…`
+  previews the identity before clearing an Orange warning on an unregistered
+  pin. Admin-only `POST /api/flags/{logID}/clear-warning` accepts the reviewed
+  `reportID`, `businessID`, `registryReviewToken` and
+  `confirmEstablishment: true`, plus an optional `reason`. A stale identity
+  review or any enforcement conflict is refused without writes.
+- Admin-only `GET /api/flags/{logID}/compliance-review?businessID=…` and
+  `POST /api/flags/{logID}/confirm-compliance` review and confirm office-held
+  Red/Yellow/Purple compliance without creating an inspection report.
+- Admin-only `POST /api/registry/{businessID}/clear-warning` uses the existing
+  registry ID and now marks the permit Active / Green as part of clearing the
+  warning.
 - Admin-only `GET /api/inspections/{reportID}/green-registry-link?businessID=…`
   returns registry/pin details, missing required fields and a review token.
 - Existing admin-only `POST /api/inspections/{reportID}/verify` accepts:

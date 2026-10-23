@@ -527,6 +527,7 @@ export async function clearWarningRequest(
   reason,
   token,
   subjectType = "business",
+  linkConfirmation = {},
 ) {
   const endpoint =
     subjectType === "geospatial_log"
@@ -538,11 +539,43 @@ export async function clearWarningRequest(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ reason, ...linkConfirmation }),
   });
   // handleResponse already throws the server's message for a 409, which is
   // exactly what the detail modal shows back to the admin.
   return await handleResponse(res);
+}
+
+export async function previewFlagComplianceRequest(logId, businessID, token) {
+  try {
+    const qs = new URLSearchParams({ businessID });
+    const res = await fetch(
+      `${BASE_URL}/flags/${encodeURIComponent(logId)}/compliance-review?${qs}`,
+      { headers: { Authorization: "Bearer " + token } },
+    );
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function confirmFlagComplianceRequest(logId, payload, token) {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/flags/${encodeURIComponent(logId)}/confirm-compliance`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+        body: JSON.stringify(payload),
+      },
+    );
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
 }
 
 export async function unlockBlackDispatchRequest(businessId, reason, token) {
@@ -1065,6 +1098,18 @@ export async function previewGreenRegistryLinkRequest(reportId, businessID, toke
     method: "GET",
     headers: { Authorization: `Bearer ${token}` },
   }, "Business ID review");
+}
+
+export async function previewWarningRegistryLinkRequest(reportId, businessID, token) {
+  try {
+    const qs = new URLSearchParams({ businessID });
+    const res = await fetch(`${BASE_URL}/inspections/${reportId}/warning-registry-link?${qs}`, {
+      headers: { Authorization: "Bearer " + token },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
 }
 
 /**

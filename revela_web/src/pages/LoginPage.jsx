@@ -369,6 +369,13 @@ export default function LoginPage() {
       <div className="orb orb-br" />
       <div className="orb orb-mid" />
 
+      <button className="login-back-button" type="button" onClick={() => navigate("/")}>
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="m15 18-6-6 6-6M9 12h12" />
+        </svg>
+        Back to home
+      </button>
+
       <div className="login-card">
 
         {/* ── LEFT PANEL — unchanged ── */}

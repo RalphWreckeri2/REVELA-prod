@@ -157,7 +157,7 @@ def test_active_warning_excludes_green_even_with_stored_green(db):
     assert report_ids() == []
 
 
-def test_clear_warning_to_a_green_base_does_not_invent_verified_compliance(db):
+def test_unregistered_pin_cannot_clear_without_a_reviewed_business_id(db):
     pin(db, color="Green")
     db.db.execute("""INSERT INTO inspection_reports
         (reportID,targetID,targetType,userID,verificationStatus,inspectionResult,noticeLevel)
@@ -166,8 +166,8 @@ def test_clear_warning_to_a_green_base_does_not_invent_verified_compliance(db):
     _, error = inspections.verify_inspection(17, verified_by_user_id=2)
     assert error is None
     _, error = registry.clear_pin_warning(17, 2, "Clear warning only")
-    assert error is None
-    assert map_pin()["flagColor"] == "Green"
+    assert isinstance(error, registry.GreenRegistryLinkError)
+    assert map_pin()["flagColor"] == "Orange"
     assert map_pin()["inspectionVerifiedCompliant"] is False
     assert report_ids() == []
 

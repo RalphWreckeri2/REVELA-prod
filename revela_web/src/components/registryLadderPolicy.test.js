@@ -310,7 +310,6 @@ test("Inspection Clear Warning requires a Verified warned business and no open i
     { warningLevel: 0 },
     { hasNonVerifiedInspection: 1 },
     { hasNonVerifiedInspection: undefined },
-    { businessID: null },
     { blackLocked: 1 },
     { applicationStatus: "Revoked" },
     { flagColor: "Black" },
@@ -323,7 +322,7 @@ test("Inspection Clear Warning requires a Verified warned business and no open i
   assert.equal(canClearInspectionWarning(inspection(), "Inspector"), false);
 });
 
-test("Inspection Clear Warning supports an unregistered pin only with a known base color", () => {
+test("Inspection Clear Warning supports an unregistered pin with an active warning", () => {
   const pin = inspection({
     businessID: null,
     logID: 21,
@@ -332,8 +331,6 @@ test("Inspection Clear Warning supports an unregistered pin only with a known ba
   assert.equal(canClearInspectionWarning(pin, "Admin"), true);
   for (const changes of [
     { logID: null },
-    { warningBaseColor: null },
-    { warningBaseColor: "Orange" },
     { flagColor: "Red" },
     { warningLevel: 0 },
     { blackLocked: 1 },
@@ -364,7 +361,7 @@ test("clearing an Inspection warning refreshes detail before notifying the Map",
   });
   assert.equal(result.warningLevel, 0);
   assert.deepEqual(calls, [
-    ["clear", "BIZ-1", "resolved", "test-token", "business"],
+    ["clear", "BIZ-1", "resolved", "test-token", "business", {}],
     ["refresh-detail"],
     ["refresh-map"],
   ]);
@@ -382,13 +379,23 @@ test("clearing an unregistered Inspection warning targets the geospatial log", a
     role: "Admin",
     reason: "Complied",
     token: "test-token",
+    businessID: "B-21",
+    registryReviewToken: "review-token",
+    confirmEstablishment: true,
     request: async (...args) => {
       calls.push(args);
       return { warningLevel: 0 };
     },
     refresh: async () => {},
   });
-  assert.deepEqual(calls, [[21, "Complied", "test-token", "geospatial_log"]]);
+  assert.deepEqual(calls, [[
+    21, "Complied", "test-token", "geospatial_log", {
+      reportID: 7,
+      businessID: "B-21",
+      registryReviewToken: "review-token",
+      confirmEstablishment: true,
+    },
+  ]]);
 });
 
 test("a refused clear cannot trigger a success refresh", async () => {

@@ -430,18 +430,12 @@ def verify_2fa_setup():
     # Fetch the temporarily saved secret from the database
     secret = get_user_2fa_secret(int(user_id))
 
-    print(f"DEBUG → user_id: {user_id}, code: {code}, secret: {secret}")
-
     if not code:
         return jsonify({"error": "Missing 2FA code"}), 400
     if not secret:
         return jsonify({"error": "No 2FA setup found for user"}), 400
 
     is_valid = verify_totp_code(secret, code)
-    print(
-        f"DEBUG → is_valid: {is_valid}, server_time: {__import__('datetime').datetime.now()}")
-
-    print(f"DEBUG → expected code: {__import__('pyotp').TOTP(secret).now()}")
     if is_valid:
         success = enable_user_2fa(int(user_id), True)
         if success:

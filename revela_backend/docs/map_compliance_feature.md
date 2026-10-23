@@ -55,8 +55,9 @@ report includes **source = detection** with either linkage state, and
 **source = manual** only when there is no valid registry link. Registry,
 registry-detected, unknown-origin and linked manual pins are excluded.
 Orange warnings and Black locks exclude rows through the existing color rule.
-Clear Warning does not itself supply Green inspection evidence and its workflow
-is unchanged.
+Office-confirmed compliance can update a pin to Green, but does not fabricate
+Green inspection evidence and is not counted as an inspector-verified result.
+See `green-inspection-registry-link.md` for the compliance-confirmation flow.
 
 `Verified On` is the event's `eventTimestamp` (written by the existing
 `UTC_TIMESTAMP(6)` writer), serialized with UTC `Z` and displayed consistently in

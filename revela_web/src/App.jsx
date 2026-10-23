@@ -1,10 +1,11 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeProvider';
 import { AuthProvider } from './context/AuthProvider';
-import ProtectedRoute from './components/ProtectedRoute';   // ← add this
+import ProtectedRoute from './components/ProtectedRoute';
 import RouteErrorBoundary from './components/RouteErrorBoundary';
 import LoginPage from './pages/LoginPage';
+import LandingPage from './pages/LandingPage';
 import TermsPage from './components/TermsPage';
 import PrivacyPage from './components/PrivacyPage';
 import CookiePolicyPage from './components/CookiePolicyPage';
@@ -27,52 +28,53 @@ function PathnameKeyedRouteErrorBoundary({ children }) {
   return <RouteErrorBoundary key={pathname}>{children}</RouteErrorBoundary>;
 }
 
-export default function App() {
-  // Usability gate only: phone-sized screens get the restricted-access notice.
-  // Tablets, laptops and desktops fall through to the normal application.
-  // This re-evaluates on rotate/resize, so no orientation is stuck.
+function PortalDeviceGate() {
+  // Keep the portal's existing device policy without blocking the public page.
+  // This still re-evaluates on rotate/resize, so no orientation is stuck.
   const { restricted } = useDeviceAccess();
+  return restricted ? <DesktopAccessRequired /> : <Outlet />;
+}
 
-  if (restricted) {
-    return <DesktopAccessRequired />;
-  }
-
+export default function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
         <BrowserRouter>
           {/* Inside the router so route changes count as activity. */}
           <InactivityProvider>
-          <PathnameKeyedRouteErrorBoundary>
-          <Suspense
-            fallback={(
-              <div className="route-loading" role="status">
-                <span className="route-loading-indicator" aria-hidden="true" />
-                Loading page...
-              </div>
-            )}
-          >
-          <Routes>
-            {/* Public & Legal */}
-            <Route path="/" element={<LoginPage />} />
-            <Route path="/terms" element={<TermsPage />} />
-            <Route path="/privacy" element={<PrivacyPage />} />
-            <Route path="/cookies" element={<CookiePolicyPage />} />
-            <Route path="/cookie-policy" element={<CookiePolicyPage />} />
+            <PathnameKeyedRouteErrorBoundary>
+              <Suspense
+                fallback={(
+                  <div className="route-loading" role="status">
+                    <span className="route-loading-indicator" aria-hidden="true" />
+                    Loading page...
+                  </div>
+                )}
+              >
+                <Routes>
+                  {/* Public & Legal */}
+                  <Route path="/" element={<LandingPage />} />
+                  <Route path="/terms" element={<TermsPage />} />
+                  <Route path="/privacy" element={<PrivacyPage />} />
+                  <Route path="/cookies" element={<CookiePolicyPage />} />
+                  <Route path="/cookie-policy" element={<CookiePolicyPage />} />
 
-            {/* Protected */}
-            <Route path="/home" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
-            <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
-            <Route path="/registry" element={<ProtectedRoute><RegistryPage /></ProtectedRoute>} />
-            <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
-            <Route path="/inspections/calendar" element={<ProtectedRoute><InspectionCalendarPage /></ProtectedRoute>} />
-            <Route path="/inspections" element={<ProtectedRoute><InspectionPage /></ProtectedRoute>} />
-            <Route path="/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
-            <Route path="/reports" element={<ProtectedRoute><ExportReportsPage /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
-          </Routes>
-          </Suspense>
-          </PathnameKeyedRouteErrorBoundary>
+                  {/* Login and protected screens retain the existing device policy. */}
+                  <Route element={<PortalDeviceGate />}>
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/home" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
+                    <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
+                    <Route path="/registry" element={<ProtectedRoute><RegistryPage /></ProtectedRoute>} />
+                    <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
+                    <Route path="/inspections/calendar" element={<ProtectedRoute><InspectionCalendarPage /></ProtectedRoute>} />
+                    <Route path="/inspections" element={<ProtectedRoute><InspectionPage /></ProtectedRoute>} />
+                    <Route path="/users" element={<ProtectedRoute><UserManagementPage /></ProtectedRoute>} />
+                    <Route path="/reports" element={<ProtectedRoute><ExportReportsPage /></ProtectedRoute>} />
+                    <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+                  </Route>
+                </Routes>
+              </Suspense>
+            </PathnameKeyedRouteErrorBoundary>
           </InactivityProvider>
         </BrowserRouter>
       </ThemeProvider>

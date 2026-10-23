@@ -42,6 +42,9 @@ export default function AboutCreditsModal({ onClose, isClosing }) {
     >
       <div
         className={"modal-panel" + (isClosing ? " closing" : "")}
+        role="dialog"
+        aria-modal="true"
+        aria-label="REVELA credits and system information"
         style={{
           background: "var(--color-modal-bg, #ffffff)",
           borderRadius: "20px",

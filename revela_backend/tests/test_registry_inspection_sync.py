@@ -288,12 +288,12 @@ class RegistryInspectionSyncTests(unittest.TestCase):
                 self.assert_inspection_unchanged(before)
                 self.assert_color(log_id, color)
 
-    def test_explicit_admin_color_change_is_not_undone_by_old_verified_terminal_result(self):
-        business_id, log_id, _, _ = self.seed(color="Purple", verification="Verified", result="Purple", verified_event=True)
+    def test_real_pin_cannot_be_marked_green_without_compliance_confirmation(self):
+        _, log_id, _, _ = self.seed(color="Purple", verification="Verified", result="Purple", verified_event=True)
         ok, error = flags.update_flag_color(log_id, "Green")
-        self.assertTrue(ok, error)
-        self.sync(self.frame_row(business_id))
-        self.assert_color(log_id, "Green")
+        self.assertFalse(ok)
+        self.assertIn("Business ID review", str(error))
+        self.assert_color(log_id, "Purple")
 
     def test_same_file_twice_no_duplicate_records_or_inspection_side_effects(self):
         business_id, log_id, _, _ = self.seed()

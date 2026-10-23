@@ -25,7 +25,11 @@ def report_one():
     return next(row for row in payload["data"] if row["reportID"] == 1)
 
 
-def test_clear_refreshes_actual_inspection_payload_without_changing_permit_status(db):
+def database_current_date(db):
+    return db.rows("SELECT CURRENT_DATE AS today")[0]["today"]
+
+
+def test_clear_marks_registered_business_active_and_green(db):
     db.seed()
     before = report_one()
     assert before["warningLevel"] == 1
@@ -36,8 +40,10 @@ def test_clear_refreshes_actual_inspection_payload_without_changing_permit_statu
     after = report_one()
     assert after["verificationStatus"] == "Verified"
     assert after["warningLevel"] == 0
-    assert after["flagColor"] == "Yellow"
-    assert after["applicationStatus"] == "Pending"
+    assert after["flagColor"] == "Green"
+    assert after["applicationStatus"] == "Active"
+    assert db.rows("SELECT lastRenewalDate FROM official_registry") == [
+        {"lastRenewalDate": database_current_date(db)}]
     assert after["noticeLevel"] == 1  # The historical report is preserved.
     assert db.rows("SELECT noticeLevel FROM geospatial_logs") == [
         {"noticeLevel": 0}]
@@ -45,8 +51,9 @@ def test_clear_refreshes_actual_inspection_payload_without_changing_permit_statu
 
 def seed_unregistered_orange_pin(db, *, base_color="Red", locked=0, status="Verified"):
     db.db.execute("""INSERT INTO geospatial_logs
-        (logID, businessID, barangayID, detectedName, flagColor, noticeLevel)
-        VALUES (20, NULL, 1, 'FIELD SHOP', 'Orange', 2)""")
+        (logID, businessID, barangayID, detectedName, flagColor, noticeLevel,
+         latitude, longitude)
+        VALUES (20, NULL, 1, 'FIELD SHOP', 'Orange', 2, 13.9667, 121.1167)""")
     db.db.execute("""INSERT INTO enforcement_state
         (subjectType, subjectID, warningLevel, warningBaseColor, blackLocked)
         VALUES ('geospatial_log', '20', 2, ?, ?)""", (base_color, locked))
@@ -99,23 +106,31 @@ def test_unregistered_pin_warning_survives_later_green_and_clears_to_base(db):
         {"flagColor": "Green", "noticeLevel": 0}]
 
 
-def test_unregistered_pin_clear_resets_warning_restores_base_and_audits_reason(db):
+def test_unregistered_pin_clear_links_id_activates_and_audits_reason(db):
     db.seed()
     seed_unregistered_orange_pin(db, base_color="Yellow")
 
-    result, error = registry.clear_pin_warning(20, 2, "Complied")
+    review, error = inspections.preview_warning_registry_link(20, "FIELD-20")
+    assert error is None
+    result, error = registry.clear_pin_warning(
+        20, 2, "Complied", report_id=20, business_id="FIELD-20",
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
 
     assert error is None
-    assert result == {
-        "logID": 20,
-        "subjectType": "geospatial_log",
-        "warningCleared": True,
-        "previousWarningLevel": 2,
-        "warningLevel": 0,
-        "flagColor": "Yellow",
-    }
+    assert result["businessID"] == "FIELD-20"
+    assert result["warningCleared"]
+    assert result["applicationStatus"] == "Active"
+    assert result["flagColor"] == "Green"
     assert db.rows("SELECT flagColor, noticeLevel FROM geospatial_logs WHERE logID = 20") == [
-        {"flagColor": "Yellow", "noticeLevel": 0}]
+        {"flagColor": "Green", "noticeLevel": 0}]
+    assert db.rows("SELECT businessID FROM geospatial_logs WHERE logID = 20") == [
+        {"businessID": "FIELD-20"}]
+    assert db.rows("SELECT applicationStatus FROM official_registry WHERE businessID = 'FIELD-20'") == [
+        {"applicationStatus": "Active"}]
+    assert db.rows("SELECT lastRenewalDate FROM official_registry WHERE businessID = 'FIELD-20'") == [
+        {"lastRenewalDate": database_current_date(db)}]
     assert db.rows("SELECT warningLevel, warningBaseColor, warningClearReason FROM enforcement_state WHERE subjectID = '20'") == [
         {"warningLevel": 0, "warningBaseColor": None, "warningClearReason": "Complied"}]
     assert db.rows("SELECT subjectType, subjectID, eventType, reason, previousLevel, newLevel FROM enforcement_events") == [
@@ -123,15 +138,227 @@ def test_unregistered_pin_clear_resets_warning_restores_base_and_audits_reason(d
          "reason": "Complied", "previousLevel": 2, "newLevel": 0}]
 
 
+@pytest.mark.parametrize("color", ["Red", "Yellow"])
+def test_office_confirms_red_or_yellow_without_dispatching_inspection(db, color):
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID, businessID, barangayID, detectedName, flagColor, latitude, longitude)
+        VALUES (30, NULL, 1, 'OFFICE SHOP', ?, 13.9667, 121.1167)""", (color,))
+    db.commit()
+
+    review, error = registry.preview_pin_compliance(30, "OFFICE-30")
+    assert error is None
+    result, error = registry.confirm_pin_compliance(
+        30, "OFFICE-30", 2, "Office renewal record",
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert error is None
+    assert result == {
+        "businessID": "OFFICE-30",
+        "logID": 30,
+        "applicationStatus": "Active",
+        "flagColor": "Green",
+        "complianceConfirmed": True,
+    }
+    assert db.rows("SELECT businessID, flagColor FROM geospatial_logs WHERE logID=30") == [
+        {"businessID": "OFFICE-30", "flagColor": "Green"}]
+    assert db.rows("SELECT applicationStatus, confirmedLogID FROM official_registry WHERE businessID='OFFICE-30'") == [
+        {"applicationStatus": "Active", "confirmedLogID": 30}]
+    assert db.rows("SELECT lastRenewalDate FROM official_registry WHERE businessID='OFFICE-30'") == [
+        {"lastRenewalDate": database_current_date(db)}]
+    assert db.rows("SELECT subjectType, subjectID, eventType, actorUserID, reason FROM enforcement_events") == [
+        {"subjectType": "business", "subjectID": "OFFICE-30",
+         "eventType": "compliance_confirmed", "actorUserID": 2,
+         "reason": "Office renewal record"}]
+
+
+def test_office_compliance_confirmation_rejects_stale_business_id_review(db):
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID, barangayID, detectedName, flagColor, latitude, longitude)
+        VALUES (30, 1, 'OFFICE SHOP', 'Yellow', 13.9667, 121.1167)""")
+    db.commit()
+    review, error = registry.preview_pin_compliance(30, "OFFICE-30")
+    assert error is None
+    db.db.execute("UPDATE geospatial_logs SET detectedName='OTHER SHOP' WHERE logID=30")
+    db.commit()
+
+    result, error = registry.confirm_pin_compliance(
+        30, "OFFICE-30", 2,
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert result is None
+    assert isinstance(error, registry.GreenRegistryLinkError)
+    assert "Review the Business ID again" in str(error)
+    assert db.rows("SELECT * FROM official_registry WHERE businessID='OFFICE-30'") == []
+    assert db.rows("SELECT * FROM enforcement_events") == []
+
+
+def test_purple_pin_reactivation_allows_closed_registry_and_refreshes_renewal_date(db):
+    db.db.execute("""INSERT INTO official_registry
+        (businessID,businessName,barangayID,applicationStatus,lastRenewalDate,
+         latitude,longitude)
+        VALUES ('CLOSED-1','CLOSED SHOP',1,'Closed','2020-01-01',13.9667,121.1167)""")
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID,businessID,barangayID,detectedName,flagColor,latitude,longitude)
+        VALUES (30,'CLOSED-1',1,'CLOSED SHOP','Purple',13.9667,121.1167)""")
+    db.commit()
+
+    review, error = registry.preview_pin_compliance(30, "CLOSED-1")
+    assert error is None
+    result, error = registry.confirm_pin_compliance(
+        30, "CLOSED-1", 2, "Office reactivation",
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert error is None
+    assert result["flagColor"] == "Green"
+    assert db.rows("SELECT applicationStatus,lastRenewalDate FROM official_registry WHERE businessID='CLOSED-1'") == [
+        {"applicationStatus": "Active",
+         "lastRenewalDate": database_current_date(db)}]
+    assert db.rows("SELECT flagColor FROM geospatial_logs WHERE logID=30") == [
+        {"flagColor": "Green"}]
+
+
+def test_pending_inspection_on_legacy_pin_blocks_confirmed_compliance(db):
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID,businessID,barangayID,detectedName,flagColor,latitude,longitude)
+        VALUES (30,NULL,1,'OFFICE SHOP','Yellow',13.9667,121.1167)""")
+    db.commit()
+    review, error = registry.preview_pin_compliance(30, "OFFICE-30")
+    assert error is None
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID,businessID,barangayID,detectedName,flagColor)
+        VALUES (31,NULL,1,'OFFICE SHOP','Red')""")
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID,targetID,userID,verificationStatus)
+        VALUES (31,31,9,'Assigned')""")
+    db.commit()
+
+    result, error = registry.confirm_pin_compliance(
+        30, "OFFICE-30", 2,
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
+    assert db.rows("SELECT businessID,flagColor FROM geospatial_logs WHERE logID=30") == [
+        {"businessID": None, "flagColor": "Yellow"}]
+    assert db.rows("SELECT * FROM official_registry WHERE businessID='OFFICE-30'") == []
+
+
+@pytest.mark.parametrize("pending_on_original_pin", [True, False])
+def test_place_id_matched_inspection_blocks_compliance_despite_name_difference(
+        db, pending_on_original_pin):
+    db.db.execute("""INSERT INTO official_registry
+        (businessID,businessName,barangayID,applicationStatus,placeID)
+        VALUES ('OFFICE-30','REGISTRY SHOP',1,'Closed','place-office')""")
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID,barangayID,detectedName,flagColor,latitude,longitude,placeID)
+        VALUES (30,1,'FIELD SHOP','Yellow',13.9667,121.1167,'place-office')""")
+    db.commit()
+    review, error = registry.preview_pin_compliance(30, "OFFICE-30")
+    assert error is None
+
+    pending_log_id = 30 if pending_on_original_pin else 31
+    if not pending_on_original_pin:
+        db.db.execute("""INSERT INTO geospatial_logs
+            (logID,barangayID,detectedName,flagColor,placeID)
+            VALUES (31,1,'OTHER FIELD NAME','Red','place-office')""")
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID,targetID,userID,verificationStatus)
+        VALUES (?, ?, 9, 'Assigned')""", (100 + pending_log_id, pending_log_id))
+    db.commit()
+
+    result, error = registry.confirm_pin_compliance(
+        30, "OFFICE-30", 2,
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
+    assert db.rows("SELECT flagColor FROM geospatial_logs WHERE logID=30") == [
+        {"flagColor": "Yellow"}]
+    assert db.rows("SELECT applicationStatus FROM official_registry WHERE businessID='OFFICE-30'") == [
+        {"applicationStatus": "Closed"}]
+
+
+def test_pending_inspection_on_legacy_pin_blocks_pin_warning_clear(db):
+    seed_unregistered_orange_pin(db)
+    review, error = inspections.preview_warning_registry_link(20, "FIELD-20")
+    assert error is None
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID,businessID,barangayID,detectedName,flagColor)
+        VALUES (21,NULL,1,'FIELD SHOP','Red')""")
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID,targetID,userID,verificationStatus)
+        VALUES (21,21,9,'Assigned')""")
+    db.commit()
+
+    result, error = registry.clear_pin_warning(
+        20, 2, "Complied", report_id=20, business_id="FIELD-20",
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
+    assert db.rows("SELECT warningLevel FROM enforcement_state WHERE subjectID='20'") == [
+        {"warningLevel": 2}]
+    assert db.rows("SELECT * FROM official_registry WHERE businessID='FIELD-20'") == []
+
+
+@pytest.mark.parametrize("pending_on_original_pin", [True, False])
+def test_place_id_matched_inspection_blocks_pin_warning_clear_despite_name_difference(
+        db, pending_on_original_pin):
+    seed_unregistered_orange_pin(db)
+    db.db.execute("UPDATE geospatial_logs SET placeID='place-field' WHERE logID=20")
+    db.db.execute("""INSERT INTO official_registry
+        (businessID,businessName,barangayID,applicationStatus,placeID)
+        VALUES ('FIELD-20','REGISTERED FIELD SHOP',1,'Active','place-field')""")
+    db.commit()
+    review, error = inspections.preview_warning_registry_link(20, "FIELD-20")
+    assert error is None
+
+    pending_log_id = 20 if pending_on_original_pin else 21
+    if not pending_on_original_pin:
+        db.db.execute("""INSERT INTO geospatial_logs
+            (logID,barangayID,detectedName,flagColor,placeID)
+            VALUES (21,1,'ANOTHER FIELD NAME','Red','place-field')""")
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID,targetID,userID,verificationStatus)
+        VALUES (?, ?, 9, 'Assigned')""", (100 + pending_log_id, pending_log_id))
+    db.commit()
+
+    result, error = registry.clear_pin_warning(
+        20, 2, "Complied", report_id=20, business_id="FIELD-20",
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True,
+    )
+
+    assert result is None
+    assert isinstance(error, registry.RegistryLadderConflict)
+    assert db.rows("SELECT flagColor,businessID FROM geospatial_logs WHERE logID=20") == [
+        {"flagColor": "Orange", "businessID": None}]
+    assert db.rows("SELECT applicationStatus FROM official_registry WHERE businessID='FIELD-20'") == [
+        {"applicationStatus": "Active"}]
+
+
 @pytest.mark.parametrize("changes, message", [
-    ({"base_color": None}, "pre-warning color is unknown"),
     ({"locked": 1}, "Black-locked"),
 ])
 def test_unregistered_pin_clear_refuses_unsafe_state_without_writes(db, changes, message):
     db.seed()
     seed_unregistered_orange_pin(db, **changes)
 
-    result, error = registry.clear_pin_warning(20, 2, "test")
+    result, error = registry.clear_pin_warning(
+        20, 2, "test", report_id=20, business_id="FIELD-20",
+        registry_review_token="stale", confirm_establishment=True)
 
     assert result is None
     assert isinstance(error, registry.RegistryLadderConflict)
@@ -145,9 +372,18 @@ def test_unregistered_pin_clear_refuses_unsafe_state_without_writes(db, changes,
 
 def test_unregistered_pin_clear_refuses_an_open_inspection(db):
     db.seed()
-    seed_unregistered_orange_pin(db, status="In Progress")
+    seed_unregistered_orange_pin(db)
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID, targetID, targetType, userID, verificationStatus, inspectionResult)
+        VALUES (21, 20, 'geospatial_log', 9, 'In Progress', 'Orange')""")
+    db.commit()
+    review, error = inspections.preview_warning_registry_link(20, "FIELD-20")
+    assert error is None
 
-    result, error = registry.clear_pin_warning(20, 2)
+    result, error = registry.clear_pin_warning(
+        20, 2, report_id=20, business_id="FIELD-20",
+        registry_review_token=review["reviewToken"],
+        confirm_establishment=True)
 
     assert result is None
     assert isinstance(error, registry.RegistryLadderConflict)
@@ -158,6 +394,8 @@ def test_unregistered_pin_clear_refuses_an_open_inspection(db):
 def test_unregistered_pin_clear_route_is_admin_only_and_uses_pin_id(db):
     db.seed()
     seed_unregistered_orange_pin(db)
+    review, error = inspections.preview_warning_registry_link(20, "FIELD-20")
+    assert error is None
     app = Flask(__name__)
     app.config["JWT_SECRET_KEY"] = "isolated-registry-test-secret-key-32-chars"
     JWTManager(app)
@@ -167,7 +405,12 @@ def test_unregistered_pin_clear_route_is_admin_only_and_uses_pin_id(db):
             identity="2", additional_claims={"role": "Admin"})
     with patch("api.middleware.decorators._verify_user_and_session", return_value=None):
         response = app.test_client().post(
-            "/api/flags/20/clear-warning", json={"reason": "Verified"},
+            "/api/flags/20/clear-warning", json={
+                "reason": "Verified", "reportID": 20,
+                "businessID": "FIELD-20",
+                "registryReviewToken": review["reviewToken"],
+                "confirmEstablishment": True,
+            },
             headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.get_json()["logID"] == 20
@@ -208,8 +451,9 @@ def test_existing_clear_route_enforces_role_and_maps_returned_typed_conflicts(db
     assert response.status_code == expected
     if expected == 409:
         assert response.get_json()["code"] == "warning_clear_refused"
+    expected_status = "Active" if status == "Pending" and expected == 200 else status
     assert db.rows("SELECT applicationStatus FROM official_registry")[
-        0]["applicationStatus"] == status
+        0]["applicationStatus"] == expected_status
 
 
 def test_revoked_without_lock_cannot_receive_a_dispatch_grant(db):

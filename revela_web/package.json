@@ -16,6 +16,8 @@
     "test:overview:browser": "node scripts/verify-compliance-browser.mjs overview-smoke",
     "test:analytics-layout:browser": "node scripts/verify-layout-browser.mjs --analytics-fixes-only",
     "test:layouts:browser": "node scripts/verify-layout-browser.mjs",
+    "test:public-entry:browser": "npm run build && node scripts/verify-public-entry-browser.mjs",
+    "test:settings:browser": "npm run build && node scripts/verify-settings-browser.mjs",
     "test:location-review": "node --test src/components/locationReviewPolicy.test.js",
     "test:map-marker-position": "node --test src/components/mapMarkerPosition.test.js",
     "test:dispatch-eligibility": "node --test src/components/dispatchEligibility.test.js",

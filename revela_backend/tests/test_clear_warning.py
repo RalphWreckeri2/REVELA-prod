@@ -139,6 +139,9 @@ class ClearWarningTests(Harness):
         self.assertIn("warningClearedAt = NOW()", update[0])
         self.assertIn("warningClearedBy = %s", update[0])
         self.assertIn("warningClearReason = %s", update[0])
+        activate = cursor.writes("UPDATE official_registry")
+        self.assertEqual(len(activate), 1)
+        self.assertIn("applicationStatus = 'Active'", activate[0])
 
     def test_writes_the_audit_row_with_both_levels(self):
         cursor = LadderCursor(rows={

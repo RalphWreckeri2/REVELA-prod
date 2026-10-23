@@ -15,7 +15,7 @@
  *   bottomBar — optional in-flow controls below the scrolling page content
  */
 
-import { useState, useEffect, useRef, useCallback, useEffectEvent } from "react";
+import { startTransition, useState, useEffect, useRef, useCallback, useEffectEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/authContext";
 import {
@@ -840,12 +840,16 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
       confirmButtonText: 'Yes, log out'
     }).then((result) => {
       if (result.isConfirmed) {
-        if (typeof onLogout === "function") {
-          onLogout();
-        } else if (logout) {
-          logout();
-        }
-        navigate("/");
+        // Match the router's transition priority so the auth guard cannot
+        // redirect to /login before the existing logout destination commits.
+        startTransition(() => {
+          if (typeof onLogout === "function") {
+            onLogout();
+          } else if (logout) {
+            logout();
+          }
+          navigate("/");
+        });
       }
     });
   };

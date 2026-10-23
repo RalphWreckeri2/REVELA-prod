@@ -402,14 +402,27 @@ def black_flag_route(log_id):
     return jsonify({"message": f"Flag #{log_id} escalated to Black"}), 200
 
 
-@flags_bp.route("/<int:log_id>/clear-warning", methods=["POST"])
+@flags_bp.route("/<int:log_id>/clear-warning", methods=["POST", "OPTIONS"])
 @admin_required()
 def clear_pin_warning_route(log_id):
-    """Admin: clear a warning on an unregistered geospatial pin."""
+    """Admin: link a reviewed Business ID and clear an unregistered pin warning."""
+    if request.method == "OPTIONS":
+        return "", 204
     data = request.get_json(silent=True) or {}
     result, error = registry_service.clear_pin_warning(
-        log_id, get_jwt_identity(), data.get("reason"))
+        log_id, get_jwt_identity(), data.get("reason"),
+        report_id=data.get("reportID"),
+        business_id=data.get("businessID"),
+        registry_review_token=data.get("registryReviewToken"),
+        confirm_establishment=data.get("confirmEstablishment", False))
     if error:
+        if isinstance(error, registry_service.GreenRegistryLinkError):
+            status = 409 if error.conflict else 400
+            return jsonify({
+                "error": str(error),
+                "code": "warning_registry_link_conflict"
+                if error.conflict else "warning_registry_link_invalid",
+            }), status
         if isinstance(error, registry_service.RegistryNotFoundError):
             return jsonify({"error": str(error)}), 404
         if isinstance(error, (registry_service.RegistryLadderConflict,
@@ -418,6 +431,51 @@ def clear_pin_warning_route(log_id):
                 "error": str(error),
                 "code": "warning_clear_refused",
             }), 409
+        return jsonify({"error": str(error)}), 500
+    return jsonify(result), 200
+
+
+@flags_bp.route("/<int:log_id>/compliance-review", methods=["GET", "OPTIONS"])
+@admin_required()
+def compliance_review_route(log_id):
+    if request.method == "OPTIONS":
+        return "", 204
+    result, error = registry_service.preview_pin_compliance(
+        log_id, request.args.get("businessID"))
+    if error:
+        return jsonify({
+            "error": str(error),
+            "code": "compliance_review_conflict" if error.conflict
+            else "compliance_review_invalid",
+        }), 409 if error.conflict else 400
+    return jsonify(result), 200
+
+
+@flags_bp.route("/<int:log_id>/confirm-compliance", methods=["POST", "OPTIONS"])
+@admin_required()
+def confirm_compliance_route(log_id):
+    if request.method == "OPTIONS":
+        return "", 204
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required"}), 400
+    result, error = registry_service.confirm_pin_compliance(
+        log_id, data.get("businessID"), get_jwt_identity(),
+        data.get("reason"),
+        registry_review_token=data.get("registryReviewToken"),
+        confirm_establishment=data.get("confirmEstablishment", False),
+    )
+    if error:
+        if isinstance(error, registry_service.GreenRegistryLinkError):
+            status = 409 if error.conflict else 400
+            return jsonify({
+                "error": str(error),
+                "code": "compliance_review_conflict"
+                if error.conflict else "compliance_review_invalid",
+            }), status
+        if isinstance(error, (registry_service.RegistryLadderConflict,
+                              registry_service.RegistryLadderUnavailable)):
+            return jsonify({"error": str(error), "code": "compliance_refused"}), 409
         return jsonify({"error": str(error)}), 500
     return jsonify(result), 200
 

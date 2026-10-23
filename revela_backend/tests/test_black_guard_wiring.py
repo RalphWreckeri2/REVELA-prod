@@ -196,6 +196,13 @@ class UpdateFlagColorGuardTests(GuardHarness):
         ):
             return flags_service.update_flag_color(22, "Green"), cursor
 
+    def test_an_unlocked_real_pin_cannot_be_marked_green_directly(self):
+        (ok, error), cursor = self._real_pin(locked=False)
+        self.assertFalse(ok)
+        self.assertIn("Business ID review", str(error))
+        self.assertIn("compliance confirmation", str(error))
+        self.assertEqual(cursor.updates(), [])
+
     def test_a_locked_registry_only_flag_refuses_the_recolour(self):
         (ok, error), _ = self._registry_only(locked=True)
         self.assertFalse(ok)
@@ -213,10 +220,6 @@ class UpdateFlagColorGuardTests(GuardHarness):
 
     def test_an_unlocked_registry_flag_is_still_recolourable(self):
         (ok, error), _ = self._registry_only(locked=False)
-        self.assertTrue(ok, error)
-
-    def test_an_unlocked_real_pin_is_still_recolourable(self):
-        (ok, error), _ = self._real_pin(locked=False)
         self.assertTrue(ok, error)
 
     def test_the_route_answers_409(self):

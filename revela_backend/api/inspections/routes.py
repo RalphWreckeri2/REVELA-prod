@@ -22,6 +22,7 @@ from api.inspections.service import (
     reassign_submitted_report,
     verify_inspection,
     preview_green_registry_link,
+    preview_warning_registry_link,
     get_all_inspections,
     get_inspection_calendar,
     user_can_access_inspection_evidence,
@@ -398,6 +399,24 @@ def reassign_submitted(report_id):
         )
     except (TypeError, ValueError, KeyError) as exc:
         print(f"notify_inspection_assigned skipped: {exc}")
+    return jsonify(result), 200
+
+
+# ── POST /api/inspections/<id>/verify ─────────────────────────────────────────
+@inspections_bp.route(
+    "/<int:report_id>/warning-registry-link", methods=["GET", "OPTIONS"])
+@admin_required()
+def warning_registry_link_preview(report_id):
+    if request.method == "OPTIONS":
+        return "", 204
+    result, error = preview_warning_registry_link(
+        report_id, request.args.get("businessID"))
+    if error:
+        return jsonify({
+            "error": str(error),
+            "code": "warning_registry_link_conflict" if error.conflict
+            else "warning_registry_link_invalid",
+        }), 409 if error.conflict else 400
     return jsonify(result), 200
 
 

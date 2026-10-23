@@ -106,6 +106,16 @@ export function AuthProvider({ children }) {
     }
   }, [token]);
 
+  // Apply only server-confirmed settings; never let a preferences response
+  // overwrite identity, roles, or other authorization-related profile fields.
+  const applyAccountSettings = useCallback((settings) => {
+    const patch = {};
+    for (const key of ["emailInspectionAlerts", "is_2fa_enabled"]) {
+      if (typeof settings[key] === "boolean") patch[key] = settings[key];
+    }
+    setUser(current => current ? { ...current, ...patch } : current);
+  }, []);
+
   useEffect(() => {
     if (!token) return;
     const handleUserUpdate = () => {
@@ -130,7 +140,7 @@ export function AuthProvider({ children }) {
   }, [token, setToken]);
 
   return (
-    <AuthContext.Provider value={{ token, user, login, completeLogin, logout, refreshUser }}>
+    <AuthContext.Provider value={{ token, user, login, completeLogin, logout, refreshUser, applyAccountSettings }}>
       {children}
     </AuthContext.Provider>
   );

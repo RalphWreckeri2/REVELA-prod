@@ -24,6 +24,51 @@
   overflow: hidden;
 }
 
+.login-back-button {
+  position: absolute;
+  z-index: 3;
+  top: 20px;
+  left: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid rgba(26, 58, 26, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #1a3a1a;
+  font: 600 13px "Inter", -apple-system, sans-serif;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition:
+    background var(--duration-normal),
+    border-color var(--duration-normal),
+    transform var(--duration-normal);
+}
+
+.login-back-button svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.login-back-button:hover {
+  transform: translateX(-2px);
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(26, 58, 26, 0.24);
+}
+
+.login-back-button:focus-visible {
+  outline: 2px solid #3b6d11;
+  outline-offset: 3px;
+}
+
 /* Topographic Overlay to emphasize GIS */
 .topo-overlay {
   position: absolute;
@@ -94,7 +139,7 @@
   display: flex;
   /* Fluid cap so an 800-820px tablet viewport (e.g. iPad portrait) is not
      left flush against the card edge. No visual change on wider screens. */
-  width: min(800px, 92%);
+  width: min(940px, 92%);
   min-height: 500px;
   border-radius: 20px;
   overflow: hidden;
@@ -535,6 +580,15 @@
 html.theme-dark .login-root {
   background: #000000;
 }
+html.theme-dark .login-back-button {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(12, 12, 12, 0.72);
+  color: #e2f1e9;
+}
+html.theme-dark .login-back-button:hover {
+  background: rgba(30, 30, 30, 0.92);
+  border-color: rgba(255, 255, 255, 0.28);
+}
 html.theme-dark .orb-tl { background: rgba(52, 211, 153, 0.06); }
 html.theme-dark .orb-br { background: rgba(252, 211, 77, 0.04); }
 html.theme-dark .orb-mid { background: rgba(16, 185, 129, 0.03); }
@@ -708,4 +762,37 @@ html.theme-dark .login-minimal-dot {
   color: #333333;
 }
 
+@keyframes login-page-enter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
 
+@keyframes login-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.login-root {
+  animation: login-page-enter 420ms ease-out both;
+}
+
+.login-root .login-card {
+  animation: login-card-enter 620ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-root,
+  .login-root .login-card {
+    animation: none;
+  }
+}

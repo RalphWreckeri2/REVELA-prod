@@ -28,6 +28,7 @@ from api.models.geospatial import (
 )
 from api.registry.locks import (
     BLACK_RELOCKED,
+    COMPLIANCE_CONFIRMED,
     WARNING_CLEARED,
     BlackLockedError,
     BlackBusinessDeletionForbidden,
@@ -1776,17 +1777,282 @@ def _clear_pin_mirror(cursor, business_id):
     return cursor.rowcount
 
 
+def _find_pending_business_inspection(cursor, log_id, business_id,
+                                      business_name, barangay_id, place_id,
+                                      *, lock=False):
+    """Find in-flight inspections on the target or any identity-matched pin."""
+    lock_clause = " FOR UPDATE" if lock else ""
+    cursor.execute(
+        """SELECT ir.reportID, ir.verificationStatus, g.logID
+           FROM inspection_reports ir
+           JOIN geospatial_logs g ON g.logID = ir.targetID
+           WHERE ir.targetType = 'geospatial_log'
+             AND (g.logID = %s
+                  OR g.businessID = %s
+                  OR (g.businessID IS NULL
+                      AND g.barangayID = %s
+                      AND g.detectedName = %s)
+                  OR (%s IS NOT NULL
+                      AND g.barangayID = %s
+                      AND g.placeID = %s))
+             AND (ir.verificationStatus IS NULL
+                  OR ir.verificationStatus <> 'Verified')
+           ORDER BY ir.irTimestamp DESC
+           LIMIT 1""" + lock_clause,
+        (log_id, business_id, barangay_id, business_name,
+         place_id, barangay_id, place_id),
+    )
+    return cursor.fetchone()
+
+
+def preview_pin_compliance(log_id, business_id):
+    """Review an exact Business ID for office-confirmed pin compliance."""
+    cursor = mysql.connection.cursor()
+    try:
+        from api.registry.inspection_link import prepare_green_link
+
+        cursor.execute(
+            """SELECT g.logID, g.businessID, g.flagColor
+               FROM geospatial_logs g
+               WHERE g.logID = %s""",
+            (log_id,),
+        )
+        pin = cursor.fetchone()
+        if not pin:
+            raise GreenRegistryLinkError(
+                f"Detection pin #{log_id} not found.", conflict=True)
+        if pin.get("flagColor") not in ("Red", "Yellow", "Purple"):
+            raise GreenRegistryLinkError(
+                "Office compliance confirmation is available only for Red, Yellow, or Purple pins.",
+                conflict=True,
+            )
+
+        cursor.execute(
+            """SELECT warningLevel, blackLocked
+               FROM enforcement_state
+               WHERE subjectType = 'geospatial_log' AND subjectID = %s""",
+            (str(log_id),),
+        )
+        pin_state = cursor.fetchone() or {}
+        if (_coerce_int(pin_state.get("warningLevel")) > 0
+                or _coerce_int(pin_state.get("blackLocked"))):
+            raise GreenRegistryLinkError(
+                "This pin has an active warning or Black lock and cannot use the office compliance action.",
+                conflict=True,
+            )
+
+        plan = prepare_green_link(
+            cursor,
+            {"targetID": log_id, "targetType": "geospatial_log"},
+            business_id,
+        )
+        registry = plan["registry"]
+        if registry and registry.get("applicationStatus") in (
+                "Revoked", "Blacklisted"):
+            raise GreenRegistryLinkError(
+                "A revoked or Black-locked Registry business cannot be reopened by this compliance action.",
+                conflict=True,
+            )
+        pin_identity = registry or plan["newFields"]
+        if _find_pending_business_inspection(
+                cursor, log_id, plan["businessID"],
+                pin_identity.get("businessName"),
+                pin_identity.get("barangayID"),
+                (registry or {}).get("placeID") or plan["pin"].get("placeID")):
+            raise GreenRegistryLinkError(
+                "This business has an inspection that is not yet Verified. Resolve it before confirming compliance.",
+                conflict=True,
+            )
+        if registry:
+            cursor.execute(
+                """SELECT warningLevel, blackLocked
+                   FROM enforcement_state
+                   WHERE subjectType = 'business' AND subjectID = %s""",
+                (str(plan["businessID"]),),
+            )
+            business_state = cursor.fetchone() or {}
+            if (_coerce_int(business_state.get("warningLevel")) > 0
+                    or _coerce_int(business_state.get("blackLocked"))):
+                raise GreenRegistryLinkError(
+                    "This Registry business has an active warning or Black lock; use the warning workflow instead.",
+                    conflict=True,
+                )
+        return {
+            "businessID": plan["businessID"],
+            "reviewToken": plan["reviewToken"],
+            "registryExists": registry is not None,
+            "registry": ({key: registry.get(key) for key in (
+                "businessID", "businessName", "barangayID", "applicationStatus")}
+                if registry else plan["newFields"]),
+            "pin": {key: plan["pin"].get(key) for key in (
+                "logID", "detectedName", "barangayID", "latitude", "longitude")},
+        }, None
+    except GreenRegistryLinkError as exc:
+        return None, exc
+    finally:
+        mysql.connection.rollback()
+        cursor.close()
+
+
+def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
+                           registry_review_token=None,
+                           confirm_establishment=False):
+    """Atomically link and mark an office-confirmed pin compliant."""
+    cursor = None
+    try:
+        cursor = mysql.connection.cursor()
+        if not _enforcement_tables_available(cursor):
+            cursor.close()
+            return None, RegistryLadderUnavailable(
+                "Compliance confirmation requires the enforcement state and event tables.")
+        if not _has_enforcement_columns(cursor, CLEAR_WARNING_COLUMNS):
+            cursor.close()
+            return None, _ladder_not_migrated("Compliance confirmation")
+        if confirm_establishment is not True:
+            raise GreenRegistryLinkError(
+                "Review the Business ID and confirm the office record matches this establishment.")
+
+        from api.registry.inspection_link import prepare_green_link, save_green_link
+
+        plan = prepare_green_link(
+            cursor,
+            {"targetID": log_id, "targetType": "geospatial_log"},
+            business_id,
+            lock=True,
+        )
+        pin, registry = plan["pin"], plan["registry"]
+        if pin.get("flagColor") not in ("Red", "Yellow", "Purple"):
+            raise GreenRegistryLinkError(
+                "This pin is no longer Red, Yellow, or Purple; refresh and review it again.",
+                conflict=True,
+            )
+        if registry and registry.get("applicationStatus") in (
+                "Revoked", "Blacklisted"):
+            raise GreenRegistryLinkError(
+                "A revoked or Black-locked Registry business cannot be reopened by this compliance action.",
+                conflict=True,
+            )
+        if registry_review_token != plan["reviewToken"]:
+            raise GreenRegistryLinkError(
+                "Registry or pin details changed. Review the Business ID again before confirming.",
+                conflict=True,
+            )
+
+        cursor.execute(
+            """SELECT warningLevel, blackLocked
+               FROM enforcement_state
+               WHERE subjectType = 'geospatial_log' AND subjectID = %s
+               FOR UPDATE""",
+            (str(log_id),),
+        )
+        pin_state = cursor.fetchone() or {}
+        if (_coerce_int(pin_state.get("warningLevel")) > 0
+                or _coerce_int(pin_state.get("blackLocked"))):
+            raise GreenRegistryLinkError(
+                "This pin has an active warning or Black lock and cannot use the office compliance action.",
+                conflict=True,
+            )
+
+        business_id = plan["businessID"]
+        pin_identity = registry or plan["newFields"]
+        pending = _find_pending_business_inspection(
+            cursor, log_id, business_id,
+            pin_identity.get("businessName"),
+            pin_identity.get("barangayID"),
+            (registry or {}).get("placeID") or pin.get("placeID"),
+            lock=True,
+        )
+        if pending:
+            raise RegistryLadderConflict(
+                "This business has an inspection that is not yet Verified. Resolve it before confirming compliance.")
+
+        cursor.execute(
+            """SELECT warningLevel, blackLocked
+               FROM enforcement_state
+               WHERE subjectType = 'business' AND subjectID = %s
+               FOR UPDATE""",
+            (str(business_id),),
+        )
+        business_state = cursor.fetchone() or {}
+        if (_coerce_int(business_state.get("warningLevel")) > 0
+                or _coerce_int(business_state.get("blackLocked"))):
+            raise GreenRegistryLinkError(
+                "This Registry business has an active warning or Black lock; use the warning workflow instead.",
+                conflict=True,
+            )
+
+        save_green_link(cursor, plan)
+        cursor.execute(
+            """UPDATE official_registry
+               SET applicationStatus = 'Active',
+                   lastRenewalDate = CURDATE()
+               WHERE businessID = %s""",
+            (business_id,),
+        )
+        if cursor.rowcount != 1 and registry is None:
+            raise RegistryLadderConflict(
+                "The Registry permit could not be activated; no changes were saved.")
+        cursor.execute(
+            """INSERT INTO enforcement_state (
+                   subjectType, subjectID, warningLevel, blackLocked
+               ) VALUES ('business', %s, 0, 0)
+               ON DUPLICATE KEY UPDATE subjectID = VALUES(subjectID)""",
+            (str(business_id),),
+        )
+        cursor.execute(
+            """UPDATE geospatial_logs
+               SET businessID = %s, flagColor = 'Green', noticeLevel = 0
+               WHERE logID = %s AND flagColor IN ('Red', 'Yellow', 'Purple')""",
+            (business_id, log_id),
+        )
+        if cursor.rowcount != 1:
+            raise RegistryLadderConflict(
+                "The detection pin changed before it could be confirmed. Refresh and review again.")
+
+        record_enforcement_event(
+            cursor, business_id=business_id,
+            event_type=COMPLIANCE_CONFIRMED, actor_user_id=actor_user_id,
+            reason=reason, previous_level=0, new_level=0,
+            previous_black=0, new_black=0,
+        )
+        mysql.connection.commit()
+        cursor.close()
+        try:
+            from api.notifications import hub
+            hub.publish_to_admins(
+                {"type": "registry_updated", "businessID": business_id,
+                 "logID": log_id})
+        except Exception:
+            pass
+        return {
+            "businessID": business_id,
+            "logID": log_id,
+            "applicationStatus": "Active",
+            "flagColor": "Green",
+            "complianceConfirmed": True,
+        }, None
+    except (RegistryLadderConflict, RegistryLadderUnavailable,
+            GreenRegistryLinkError) as exc:
+        if cursor is not None:
+            mysql.connection.rollback()
+            cursor.close()
+        return None, exc
+    except Exception as exc:
+        mysql.connection.rollback()
+        if cursor is not None:
+            cursor.close()
+        return None, str(exc)
+
+
 def clear_warning(business_id, cleared_by_user_id, reason=None):
-    """Clear a business's Orange warning level. Admin or SUPER_ADMIN.
+    """Mark a warned registered business compliant. Admin or SUPER_ADMIN.
 
     Allowed only when there is a warning to clear, the business is not Black
-    locked, and no inspection is still in flight. Sets warningLevel to 0 and
-    records who, when and why.
+    locked, and no inspection is still in flight. Sets the permit to Active,
+    clears warningLevel, updates linked pins to Green, and records who, when
+    and why in the same transaction.
 
-    Never touches applicationStatus, blackLocked or blackDispatchUnlocked.
-    Clearing the warning ladder is not a clearance of anything else: an Active
-    business that was warned goes back to Green, and a Pending or Expired one
-    goes back to its own permit colour.
+    Black-lock state is never changed.
 
     Returns (summary, error). `error` is a RegistryLadderConflict (409),
     RegistryLadderUnavailable (409) or RegistryNotFoundError (404).
@@ -1798,7 +2064,17 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
             cursor.close()
             return None, _ladder_not_migrated("Clearing a warning")
 
-        state = _load_ladder_state(cursor, business_id, CLEAR_WARNING_COLUMNS)
+        cursor.execute(
+            """SELECT r.applicationStatus, es.warningLevel, es.blackLocked
+               FROM official_registry r
+               LEFT JOIN enforcement_state es
+                 ON es.subjectType = 'business'
+                AND es.subjectID = CAST(r.businessID AS CHAR)
+               WHERE r.businessID = %s
+               FOR UPDATE""",
+            (business_id,),
+        )
+        state = cursor.fetchone()
         if state is None:
             cursor.close()
             return None, RegistryNotFoundError("Business not found")
@@ -1875,6 +2151,14 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
                 "so the warning was not cleared."
             )
 
+        cursor.execute(
+            """UPDATE official_registry
+               SET applicationStatus = 'Active',
+                   lastRenewalDate = CURDATE()
+               WHERE businessID = %s
+                 AND applicationStatus NOT IN ('Revoked', 'Blacklisted')""",
+            (business_id,),
+        )
         pins_updated = _clear_pin_mirror(cursor, business_id)
 
         locked = _coerce_int(state.get("blackLocked"))
@@ -1897,6 +2181,8 @@ def clear_warning(business_id, cleared_by_user_id, reason=None):
             "warningCleared": True,
             "previousWarningLevel": level,
             "warningLevel": 0,
+            "applicationStatus": "Active",
+            "flagColor": "Green",
             "pinsUpdated": pins_updated,
         }, None
 
@@ -1927,11 +2213,15 @@ def _enforcement_tables_available(cursor):
     return found == {"enforcement_state", "enforcement_events"}
 
 
-def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
-    """Clear an Orange warning on an unregistered detection pin.
+def clear_pin_warning(log_id, cleared_by_user_id, reason=None, *,
+                      report_id=None, business_id=None,
+                      registry_review_token=None,
+                      confirm_establishment=False):
+    """Link an unregistered warned pin to its reviewed Business ID and clear it.
 
-    Requires the generalized enforcement tables. The base color must be known
-    so clearing the warning never guesses Green or leaves the pin Orange.
+    A field pin cannot become Green without an exact Business ID review.
+    Linking, setting the permit Active, clearing enforcement, and audit writes
+    are committed atomically.
     """
     cursor = None
     try:
@@ -1942,11 +2232,15 @@ def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
                 "Clearing a detection-pin warning requires the enforcement "
                 "state and event tables. Apply the enforcement-state migration first."
             )
+        if not _has_enforcement_columns(cursor, CLEAR_WARNING_COLUMNS):
+            cursor.close()
+            return None, _ladder_not_migrated("Clearing a detection-pin warning")
 
         cursor.execute(
             """SELECT g.logID, g.businessID, g.placeID, g.detectedName,
                       g.barangayID, g.flagColor, es.warningLevel,
-                      es.blackLocked, es.warningBaseColor
+                      es.blackLocked, es.warningBaseColor,
+                      g.latitude, g.longitude, g.source
                FROM geospatial_logs g
                LEFT JOIN enforcement_state es
                  ON es.subjectType = 'geospatial_log'
@@ -1960,26 +2254,12 @@ def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
             cursor.close()
             return None, RegistryNotFoundError(f"Detection pin #{log_id} not found")
 
-        cursor.execute(
-            """SELECT r.businessID
-               FROM official_registry r
-               WHERE (%s IS NOT NULL AND r.businessID = %s)
-                  OR (%s IS NOT NULL AND r.placeID = %s
-                      AND (%s IS NULL OR r.businessID = %s))
-                  OR (%s IS NULL AND r.barangayID = %s
-                      AND r.businessName = %s)
-               LIMIT 1""",
-            (pin["businessID"], pin["businessID"],
-             pin["placeID"], pin["placeID"], pin["businessID"], pin["businessID"],
-             pin["businessID"], pin["barangayID"], pin["detectedName"]),
-        )
-        linked_registry_row = cursor.fetchone()
-        if linked_registry_row:
+        if pin.get("businessID"):
             mysql.connection.rollback()
             cursor.close()
             return None, RegistryLadderConflict(
-                "This pin is linked to a Registry business. Clear its warning "
-                "from the linked Inspection record instead."
+                "This pin already has a Business ID. Clear its warning from "
+                "the linked Registry business instead."
             )
 
         level = _coerce_int(pin.get("warningLevel"))
@@ -1996,34 +2276,117 @@ def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
                 "A Black-locked detection pin cannot have its warning cleared."
             )
 
-        base_color = pin.get("warningBaseColor")
-        if base_color not in ("Red", "Yellow", "Green", "Purple"):
+        if not confirm_establishment:
             mysql.connection.rollback()
             cursor.close()
-            return None, RegistryLadderConflict(
-                "The pin's pre-warning color is unknown, so it cannot be "
-                "cleared without guessing. Review its inspection history first."
+            return None, GreenRegistryLinkError(
+                "Review the Business ID and confirm it represents this establishment.")
+        try:
+            report_id = int(report_id)
+        except (TypeError, ValueError):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, GreenRegistryLinkError(
+                "A verified Orange inspection is required to clear this warning.")
+        cursor.execute(
+            """SELECT reportID, targetID, targetType, inspectionResult,
+                      verificationStatus
+               FROM inspection_reports
+               WHERE reportID = %s""",
+            (report_id,),
+        )
+        report = cursor.fetchone()
+        if (not report or report.get("targetType") != "geospatial_log"
+                or report.get("targetID") != log_id
+                or report.get("inspectionResult") != "Orange"
+                or report.get("verificationStatus") != "Verified"):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, GreenRegistryLinkError(
+                "Only a Verified Orange inspection on this pin can clear its warning.")
+
+        from api.registry.inspection_link import prepare_green_link, save_green_link
+
+        try:
+            plan = prepare_green_link(cursor, report, business_id, lock=True)
+        except GreenRegistryLinkError as exc:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, exc
+        if registry_review_token != plan["reviewToken"]:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, GreenRegistryLinkError(
+                "Registry or pin details changed. Review the Business ID again before confirming.",
+                conflict=True,
             )
 
-        cursor.execute(
-            """SELECT reportID, verificationStatus
-               FROM inspection_reports
-               WHERE targetType = 'geospatial_log'
-                 AND targetID = %s
-                 AND (verificationStatus IS NULL OR verificationStatus <> 'Verified')
-               ORDER BY irTimestamp DESC
-               LIMIT 1""",
-            (log_id,),
+        pin_identity = plan["registry"] or plan["newFields"]
+        pending = _find_pending_business_inspection(
+            cursor, log_id, plan["businessID"],
+            pin_identity.get("businessName"),
+            pin_identity.get("barangayID"),
+            (plan["registry"] or {}).get("placeID")
+            or plan["pin"].get("placeID"),
+            lock=True,
         )
-        pending = cursor.fetchone()
         if pending:
             mysql.connection.rollback()
             cursor.close()
             return None, RegistryLadderConflict(
-                "This detection pin has an inspection that is not yet Verified. "
+                "This business has an inspection that is not yet Verified. "
                 "Verify it or send it back first."
             )
 
+        business_id = plan["businessID"]
+        registry = plan["registry"]
+        if registry and (registry.get("applicationStatus") in ("Revoked", "Blacklisted")):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "A revoked or Black-locked Registry business cannot be cleared.")
+
+        cursor.execute(
+            """SELECT warningLevel, blackLocked
+               FROM enforcement_state
+               WHERE subjectType = 'business' AND subjectID = %s
+               FOR UPDATE""",
+            (str(business_id),),
+        )
+        business_state = cursor.fetchone() or {}
+        if _coerce_int(business_state.get("blackLocked")):
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "A Black-locked Registry business cannot be cleared.")
+
+        pin_level = level
+        business_level = _coerce_int(business_state.get("warningLevel"))
+        save_green_link(cursor, plan)
+        cursor.execute(
+            """UPDATE official_registry
+               SET applicationStatus = 'Active',
+                   lastRenewalDate = CURDATE()
+               WHERE businessID = %s""",
+            (business_id,),
+        )
+        if cursor.rowcount != 1 and registry is None:
+            mysql.connection.rollback()
+            cursor.close()
+            return None, RegistryLadderConflict(
+                "The Registry permit could not be activated; no warning was cleared.")
+
+        cursor.execute(
+            """INSERT INTO enforcement_state (
+                   subjectType, subjectID, warningLevel, blackLocked,
+                   warningClearedAt, warningClearedBy, warningClearReason
+               ) VALUES ('business', %s, 0, 0, NOW(), %s, %s)
+               ON DUPLICATE KEY UPDATE
+                   warningLevel = 0, warningBaseColor = NULL,
+                   warningClearedAt = NOW(), warningClearedBy = VALUES(warningClearedBy),
+                   warningClearReason = VALUES(warningClearReason)""",
+            (str(business_id), cleared_by_user_id, reason),
+        )
         cursor.execute(
             """UPDATE enforcement_state
                SET warningLevel = 0,
@@ -2046,9 +2409,9 @@ def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
 
         cursor.execute(
             """UPDATE geospatial_logs
-               SET noticeLevel = 0, flagColor = %s
+               SET businessID = %s, noticeLevel = 0, flagColor = 'Green'
                WHERE logID = %s AND flagColor = 'Orange'""",
-            (base_color, log_id),
+            (business_id, log_id),
         )
         if cursor.rowcount != 1:
             mysql.connection.rollback()
@@ -2058,14 +2421,17 @@ def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
                 "Refresh and try again."
             )
 
-        cursor.execute(
-            """INSERT INTO enforcement_events (
-                   subjectType, subjectID, eventType, actorUserID, reason,
-                   previousLevel, newLevel, previousBlack, newBlack
-               ) VALUES ('geospatial_log', %s, 'warning_cleared', %s, %s,
-                         %s, 0, 0, 0)""",
-            (str(log_id), cleared_by_user_id, reason, level),
-        )
+        record_enforcement_event(
+            cursor, subject_type="geospatial_log", subject_id=log_id,
+            event_type=WARNING_CLEARED, actor_user_id=cleared_by_user_id,
+            reason=reason, previous_level=pin_level, new_level=0,
+            previous_black=0, new_black=0)
+        if business_level > 0:
+            record_enforcement_event(
+                cursor, business_id=business_id, event_type=WARNING_CLEARED,
+                actor_user_id=cleared_by_user_id, reason=reason,
+                previous_level=business_level, new_level=0,
+                previous_black=0, new_black=0)
 
         mysql.connection.commit()
         cursor.close()
@@ -2081,13 +2447,20 @@ def clear_pin_warning(log_id, cleared_by_user_id, reason=None):
             "warningCleared": True,
             "previousWarningLevel": level,
             "warningLevel": 0,
-            "flagColor": base_color,
+            "businessID": business_id,
+            "applicationStatus": "Active",
+            "flagColor": "Green",
         }, None
     except (RegistryLadderConflict, RegistryLadderUnavailable,
             RegistryNotFoundError):
         if cursor is not None:
             cursor.close()
         raise
+    except GreenRegistryLinkError as exc:
+        mysql.connection.rollback()
+        if cursor is not None:
+            cursor.close()
+        return None, exc
     except Exception as e:
         mysql.connection.rollback()
         if cursor is not None:

@@ -30,6 +30,7 @@ from api.models.inspection_lifecycle_events import (
 from api.registry.inspection_link import (
     GreenRegistryLinkError, prepare_green_link, save_green_link,
 )
+from api.inspections.evidence_cleanup import cleanup_evidence, recovery_storage_stats
 
 
 # ── Inspector task list ───────────────────────────────────────────────────────
@@ -996,6 +997,54 @@ def preview_green_registry_link(report_id, business_id):
         cursor.close()
 
 
+def preview_warning_registry_link(report_id, business_id):
+    """Review a Business ID before clearing a verified Orange field-pin warning."""
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute("""SELECT reportID, targetID, targetType, inspectionResult, verificationStatus
+                          FROM inspection_reports WHERE reportID = %s""", (report_id,))
+        report = cursor.fetchone()
+        if (not report or report["inspectionResult"] != "Orange"
+                or report["verificationStatus"] != "Verified"):
+            raise GreenRegistryLinkError(
+                "Only a Verified Orange inspection can be reviewed for compliance.")
+
+        plan = prepare_green_link(cursor, report, business_id)
+        pin, registry = plan["pin"], plan["registry"]
+        cursor.execute("""SELECT es.warningLevel, es.blackLocked
+                          FROM enforcement_state es
+                          WHERE es.subjectType = 'geospatial_log'
+                            AND es.subjectID = %s""",
+                       (str(pin["logID"]),))
+        pin_state = cursor.fetchone() or {}
+        if (pin.get("flagColor") != "Orange"
+                or _coerce_notice_level(pin_state.get("warningLevel")) <= 0):
+            raise GreenRegistryLinkError(
+                "This pin no longer has an active Orange warning.", conflict=True)
+        if _coerce_notice_level(pin_state.get("blackLocked")):
+            raise GreenRegistryLinkError(
+                "A Black-locked pin cannot be cleared.", conflict=True)
+        if registry and registry.get("applicationStatus") in ("Revoked", "Blacklisted"):
+            raise GreenRegistryLinkError(
+                "A revoked or Black-locked Registry business cannot be cleared.",
+                conflict=True)
+        return {
+            "businessID": plan["businessID"],
+            "reviewToken": plan["reviewToken"],
+            "registryExists": registry is not None,
+            "registry": ({key: registry.get(key) for key in (
+                "businessID", "businessName", "barangayID", "applicationStatus")}
+                if registry else plan["newFields"]),
+            "pin": {key: pin.get(key) for key in (
+                "logID", "detectedName", "barangayID", "latitude", "longitude")},
+        }, None
+    except GreenRegistryLinkError as exc:
+        return None, exc
+    finally:
+        mysql.connection.rollback()
+        cursor.close()
+
+
 def verify_inspection(report_id, verified_by_user_id=None, update_location=False,
                       business_id=None, confirm_establishment=False,
                       registry_review_token=None, registry_fields=None):
@@ -1897,9 +1946,12 @@ def get_evidence_storage_stats(evidence_dir):
                     except OSError:
                         pass
 
-        total_mb = round(total_bytes / (1024 * 1024), 2)
         avg_file_size = (
             total_bytes / total_files) if total_files > 0 else (1.2 * 1024 * 1024)
+        recovery = recovery_storage_stats(evidence_dir)
+        total_bytes += recovery["recoveryBytes"]
+        total_files += recovery["recoveryFiles"]
+        total_mb = round(total_bytes / (1024 * 1024), 2)
 
         # 2. Query MySQL for verified reports
         cursor = mysql.connection.cursor()
@@ -1962,6 +2014,8 @@ def get_evidence_storage_stats(evidence_dir):
             "totalFilesOnDisk": total_files,
             "totalDiskBytes": total_bytes,
             "totalDiskMB": total_mb,
+            "cleanupPending": recovery["cleanupPending"],
+            "recoveryDiskMB": round(recovery["recoveryBytes"] / (1024 * 1024), 2),
             "categories": formatted_categories,
         }, None
 
@@ -3161,117 +3215,5 @@ Municipality of Mataasnakahoy
 
 
 def cleanup_archived_evidence(evidence_dir, filter_type):
-    """
-    Deletes physical photo files from disk matching the filter_type for Verified reports,
-    and updates the report's photoPath in MySQL to 'archived://<filename>' (or 'archived://none'
-    if report had no photo) to maintain full audit integrity without leaving broken images.
-    """
-    try:
-        day_map = {
-            "older_365d": 365,
-            "older_180d": 180,
-            "older_90d": 90,
-            "older_30d": 30,
-            "all_verified": 0,
-        }
-        if filter_type not in day_map:
-            return None, f"Invalid filter type: {filter_type}."
-
-        days = day_map[filter_type]
-        cutoff_date = (datetime.now() - timedelta(days=days)
-                       ) if days > 0 else None
-
-        cursor = mysql.connection.cursor()
-        query = """
-            SELECT reportID, photoPath, irTimestamp
-            FROM inspection_reports
-            WHERE verificationStatus = 'Verified'
-              AND (photoPath IS NULL OR (photoPath NOT LIKE 'archived://%%' AND photoPath NOT LIKE '[\"archived://%%'))
-        """
-        params = []
-        if cutoff_date:
-            query += " AND irTimestamp <= %s"
-            params.append(cutoff_date.strftime("%Y-%m-%d %H:%M:%S"))
-
-        cursor.execute(query, tuple(params))
-        reports = cursor.fetchall()
-
-        deleted_files_count = 0
-        updated_reports_count = 0
-        freed_bytes = 0
-
-        for rep in reports:
-            raw_photo_path = rep.get("photoPath")
-            rep_id = rep.get("reportID")
-
-            if not raw_photo_path:
-                cursor.execute("""
-                    UPDATE inspection_reports
-                    SET photoPath = 'archived://none'
-                    WHERE reportID = %s
-                """, (rep_id,))
-                updated_reports_count += 1
-                continue
-
-            is_json_array = False
-            raw_items = []
-            try:
-                parsed = json.loads(raw_photo_path)
-                if isinstance(parsed, list):
-                    is_json_array = True
-                    raw_items = parsed
-                else:
-                    raw_items = [raw_photo_path]
-            except Exception:
-                raw_items = [raw_photo_path]
-
-            new_items = []
-            rep_changed = False
-
-            for item in raw_items:
-                if not item or not isinstance(item, str):
-                    continue
-                item_str = item.strip()
-                if item_str.startswith("archived://"):
-                    new_items.append(item_str)
-                    continue
-
-                orig_filename = os.path.basename(item_str)
-                local_filepath = os.path.join(evidence_dir, orig_filename)
-
-                if os.path.isfile(local_filepath):
-                    try:
-                        sz = os.path.getsize(local_filepath)
-                        os.remove(local_filepath)
-                        freed_bytes += sz
-                        deleted_files_count += 1
-                    except OSError as oe:
-                        print(f"Failed to delete {local_filepath}: {oe}")
-
-                new_items.append(f"archived://{orig_filename}")
-                rep_changed = True
-
-            if rep_changed:
-                updated_val = json.dumps(
-                    new_items) if is_json_array else new_items[0]
-                cursor.execute("""
-                    UPDATE inspection_reports
-                    SET photoPath = %s
-                    WHERE reportID = %s
-                """, (updated_val, rep_id))
-                updated_reports_count += 1
-
-        mysql.connection.commit()
-        cursor.close()
-
-        freed_mb = round(freed_bytes / (1024 * 1024), 2)
-        return {
-            "deletedFiles": deleted_files_count,
-            "updatedReports": updated_reports_count,
-            "freedBytes": freed_bytes,
-            "freedMB": freed_mb,
-            "message": f"Successfully cleared {deleted_files_count} photo file(s) and archived {updated_reports_count} report(s), freeing {freed_mb} MB.",
-        }, None
-
-    except Exception as e:
-        return None, str(e)
+    """Archive verified evidence with recoverable filesystem/DB changes."""
+    return cleanup_evidence(mysql.connection, evidence_dir, filter_type)

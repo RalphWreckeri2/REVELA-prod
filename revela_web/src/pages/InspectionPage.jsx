@@ -18,6 +18,7 @@ import {
   reassignSubmittedInspectionRequest,
   verifyInspectionRequest,
   previewGreenRegistryLinkRequest,
+  previewWarningRegistryLinkRequest,
   getInspectorsRequest,
   parseInspectionEvidence,
   clearWarningRequest,
@@ -634,21 +635,57 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
   const photoReturnRef = useRef(null);
 
   const handleClearWarning = async () => {
-    const { isConfirmed, value } = await Swal.fire({
-      title: "Clear this warning?",
-      text: "The warning level returns to 0. The permit status stays the same.",
-      input: "text", inputPlaceholder: "Reason (optional)",
-      showCancelButton: true, confirmButtonText: "Clear warning",
-    });
-    if (!isConfirmed) return;
-    setClearingWarning(true);
-    setClearError("");
     try {
+      let businessID = report.businessID;
+      let registryReview = null;
+      if (!businessID) {
+        const idPrompt = await Swal.fire({
+          title: "Business ID required",
+          text: "Enter the official Business ID from the office record before confirming compliance.",
+          input: "text",
+          inputPlaceholder: "Official Business ID",
+          inputValidator: (value) => value?.trim() ? undefined : "Business ID is required.",
+          showCancelButton: true,
+          confirmButtonText: "Review Business ID",
+        });
+        if (!idPrompt.isConfirmed) return;
+        businessID = idPrompt.value.trim();
+        setClearingWarning(true);
+        setClearError("");
+        registryReview = await previewWarningRegistryLinkRequest(
+          report.reportID, businessID, token,
+        );
+      }
+
+      const establishment = report.detectedName || report.businessName || "this establishment";
+      const reviewSummary = registryReview
+        ? `${registryReview.registryExists ? "Existing registry record" : "New registry record"}: ${registryReview.registry.businessName || establishment}\nBusiness ID: ${registryReview.businessID}\nThis will link the original pin and set the business to Active / Green.`
+        : `Business ID: ${businessID}\nThis will set the permit to Active and clear the warning to Green.`;
+      const confirmation = await Swal.fire({
+        title: "Confirm compliance?",
+        text: reviewSummary,
+        input: "text",
+        inputLabel: "Office evidence/reference (optional)",
+        inputPlaceholder: "Reason or office record reference",
+        showCancelButton: true,
+        confirmButtonText: "Confirm and mark Green",
+      });
+      if (!confirmation.isConfirmed) return;
+
+      setClearingWarning(true);
+      setClearError("");
       await clearInspectionWarning({
-        report, role, reason: value || null, token, request: clearWarningRequest,
+        report,
+        role,
+        reason: confirmation.value || null,
+        token,
+        businessID,
+        registryReviewToken: registryReview?.reviewToken,
+        confirmEstablishment: Boolean(registryReview),
+        request: clearWarningRequest,
         refresh: onWarningCleared,
         onChanged: () => window.dispatchEvent(new CustomEvent("revela:registry-update", {
-          detail: { businessID: report.businessID, logID: report.logID },
+          detail: { businessID, logID: report.logID },
         })),
       });
     } catch (err) {

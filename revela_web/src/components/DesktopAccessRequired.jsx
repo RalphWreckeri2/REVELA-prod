@@ -8,7 +8,9 @@ import "../styles/DesktopAccessRequired.css";
  * frosted glass card, forest-green headings) so it reads as part of the same
  * product rather than a generic browser error page.
  */
-export default function DesktopAccessRequired() {
+export default function DesktopAccessRequired({ mode = "portal" }) {
+  const isLandingPage = mode === "landing";
+
   return (
     <main className="restricted-root">
       {/* Decorative layer only. Contained here so the blurred orbs can bleed
@@ -29,7 +31,9 @@ export default function DesktopAccessRequired() {
           <div className="restricted-gold-bar" />
           <p className="restricted-powered">Powered by</p>
           <h1 className="restricted-wordmark">REVELA</h1>
-          <p className="restricted-portal-label">BPLO Admin Portal</p>
+          <p className="restricted-portal-label">
+            {isLandingPage ? "REVELA Website" : "BPLO Admin Portal"}
+          </p>
         </header>
 
         <div className="restricted-divider" />
@@ -47,12 +51,14 @@ export default function DesktopAccessRequired() {
             Best Viewed on a Larger Screen
           </h2>
           <p className="restricted-message">
-            The REVELA Admin Portal is designed for tablets, laptops, and
-            desktop computers. For the best experience, please open this page
-            on a larger device.
+            {isLandingPage
+              ? "The REVELA website is designed for a larger screen. Reduce your browser zoom or open this page on a larger device."
+              : "The REVELA Admin Portal is designed for tablets, laptops, and desktop computers. For the best experience, please open this page on a larger device."}
           </p>
           <p className="restricted-note">
-            Field inspectors can continue using the REVELA mobile application.
+            {isLandingPage
+              ? "Zoom out to continue viewing the landing page."
+              : "Field inspectors can continue using the REVELA mobile application."}
           </p>
         </div>
       </section>

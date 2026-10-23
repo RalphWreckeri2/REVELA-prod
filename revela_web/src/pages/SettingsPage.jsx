@@ -189,13 +189,24 @@ function Setup2FAModal({ onClose, token, onSuccess, isClosing }) {
   const [loading, setLoading] = useState(true);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
+  const [setupAttempt, setSetupAttempt] = useState(0);
+  const setupReady = !loading && Boolean(secret && otpUri);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setSecret("");
+    setOtpUri("");
+    setCode("");
+    setError("");
 
     async function fetchSetup() {
       try {
         const res = await setup2faRequest(token);
+        if (typeof res.secret !== "string" || !res.secret.trim()
+          || typeof res.otpUri !== "string" || !res.otpUri.trim()) {
+          throw new Error("Incomplete 2FA setup response");
+        }
         if (!cancelled) {
           setSecret(res.secret);
           setOtpUri(res.otpUri);
@@ -208,11 +219,11 @@ function Setup2FAModal({ onClose, token, onSuccess, isClosing }) {
     }
     fetchSetup();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, setupAttempt]);
 
   const handleVerify = async (e) => {
     e.preventDefault();
-    if (!code || code.length !== 6) return;
+    if (!setupReady || verifying || !/^\d{6}$/.test(code)) return;
     setVerifying(true);
     setError("");
     try {
@@ -239,6 +250,14 @@ function Setup2FAModal({ onClose, token, onSuccess, isClosing }) {
 
         {loading ? (
           <p style={{ fontSize: 14, color: "var(--color-muted)" }}>Generating secure keys...</p>
+        ) : !setupReady ? (
+          <div>
+            <p style={{ fontSize: 13, color: "var(--color-muted)" }}>Setup is not ready. Retry before entering a verification code.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" className="ghost-btn" onClick={onClose}>Cancel</button>
+              <button type="button" className="primary-btn" onClick={() => setSetupAttempt(attempt => attempt + 1)}>Retry setup</button>
+            </div>
+          </div>
         ) : (
           <form onSubmit={handleVerify} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>1. Scan this QR code with Google Authenticator or Authy:</p>
@@ -252,7 +271,7 @@ function Setup2FAModal({ onClose, token, onSuccess, isClosing }) {
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
               <button type="button" className="ghost-btn" onClick={onClose}>Cancel</button>
-              <button type="submit" className="primary-btn" disabled={verifying || code.length < 6}>{verifying ? "Verifying..." : "Verify & Enable"}</button>
+              <button type="submit" className="primary-btn" disabled={!setupReady || verifying || code.length !== 6}>{verifying ? "Verifying..." : "Verify & Enable"}</button>
             </div>
           </form>
         )}
@@ -336,7 +355,7 @@ function MapPickerModal({ isDark, center, marker, onPick, onClose, isClosing }) 
 }
 
 export default function SettingsPage() {
-  const { token, user, refreshUser } = useContext(AuthContext);
+  const { token, user, applyAccountSettings } = useContext(AuthContext);
   const canEditPolicy = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const savedEmailAlerts = localStorage.getItem("revela_emailAlerts");
   const serverEmailAlerts = typeof user?.emailInspectionAlerts === "boolean" ? user.emailInspectionAlerts : null;
@@ -387,6 +406,7 @@ export default function SettingsPage() {
   const [storageStats, setStorageStats] = useState(null);
   const [storageLoading, setStorageLoading] = useState(false);
   const [storageError, setStorageError] = useState("");
+  const [storageWarning, setStorageWarning] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("older_180d");
   const [downloadingArchive, setDownloadingArchive] = useState(false);
   const [cleaningStorage, setCleaningStorage] = useState(false);
@@ -400,7 +420,12 @@ export default function SettingsPage() {
       setStorageError("");
       getEvidenceStorageStatsRequest(token)
         .then(data => {
-          if (data) setStorageStats(data);
+          if (data) {
+            setStorageStats(data);
+            setStorageWarning(data.cleanupPending
+              ? "Recovery backups still occupy server storage. Retry cleanup to finish, or contact an administrator if recovery is blocked."
+              : "");
+          }
         })
         .catch(err => {
           setStorageError(err.message || "Could not load evidence usage.");
@@ -435,15 +460,16 @@ export default function SettingsPage() {
   const handleExecuteCleanup = async (filterToClean) => {
     setCleaningStorage(true);
     setStorageError("");
+    setStorageWarning("");
     try {
       const res = await cleanupEvidenceStorageRequest(filterToClean, token);
+      if (res.warning) setStorageWarning(res.warning);
       await Swal.fire({
-        icon: "success",
-        title: "Storage Cleared",
-        text: res.message || `Deleted ${res.deletedFiles} photo(s), freeing ${res.freedMB} MB of server storage.`,
+        icon: res.warning ? "warning" : "success",
+        title: res.warning ? "Cleanup Needs Attention" : "Storage Cleared",
+        text: res.warning || res.message || `Deleted ${res.deletedFiles} photo(s), freeing ${res.freedMB} MB of server storage.`,
         confirmButtonColor: "#56ab2f",
       });
-      fetchStorageStats();
     } catch (err) {
       setStorageError(err.message || "Cleanup failed.");
       Swal.fire({
@@ -453,6 +479,7 @@ export default function SettingsPage() {
       });
     } finally {
       setCleaningStorage(false);
+      fetchStorageStats();
     }
   };
 
@@ -505,7 +532,8 @@ export default function SettingsPage() {
     const selectedCat = storageStats?.categories?.[selectedFilter];
     const repCount = selectedCat?.reportCount || 0;
     const photoCount = selectedCat?.photoCount || 0;
-    if (repCount === 0) {
+    const recoveryPending = Boolean(storageWarning || storageStats?.cleanupPending);
+    if (repCount === 0 && !recoveryPending) {
       Swal.fire({
         icon: "info",
         title: "Nothing to Clean",
@@ -516,10 +544,10 @@ export default function SettingsPage() {
 
     const result = await Swal.fire({
       icon: "warning",
-      title: "Archive & Clear Server Photos?",
+      title: recoveryPending ? "Retry Pending Cleanup?" : "Archive & Clear Server Photos?",
       html: `
         <div style="text-align: left; font-size: 14px; line-height: 1.5;">
-          <p>You are about to archive <strong>${repCount} verified report(s)</strong> (${photoCount} photo file(s)) matching <em>${selectedCat?.label}</em>.</p>
+          <p>${recoveryPending ? "This will first recover or dispose of pending recovery backups." : ""} You are about to archive <strong>${repCount} verified report(s)</strong> (${photoCount} photo file(s)) matching <em>${selectedCat?.label || selectedFilter}</em>.</p>
           <p style="color: #e53e3e; font-weight: 600; margin-top: 8px;">
             Ensure you have already downloaded the ZIP backup to your municipal computer!
           </p>
@@ -537,19 +565,31 @@ export default function SettingsPage() {
   };
 
   const handleSavePreferences = async () => {
+    if (savingPreferences) return;
     setSavingPreferences(true);
     setPreferencesError("");
-    localStorage.setItem("revela_emailAlerts", emailAlerts);
+    // Appearance is browser-local, independently of the account email setting.
     if (previewTheme) {
       setTheme(previewTheme);
     }
     try {
-      await updateMePreferencesRequest({ emailInspectionAlerts: emailAlerts }, token);
-      if (refreshUser) await refreshUser();
+      const saved = await updateMePreferencesRequest({ emailInspectionAlerts: emailAlerts }, token);
+      if (typeof saved.emailInspectionAlerts !== "boolean") {
+        throw new Error("The server did not confirm the email preference.");
+      }
+      applyAccountSettings({ emailInspectionAlerts: saved.emailInspectionAlerts });
+      setEmailAlerts(saved.emailInspectionAlerts);
+      setEmailAlertsEdited(false);
+      let browserWarning = "";
+      try {
+        localStorage.setItem("revela_emailAlerts", saved.emailInspectionAlerts);
+      } catch {
+        browserWarning = "Your account was updated, but this browser could not store the email fallback.";
+      }
       Swal.fire({
-        icon: "success",
+        icon: browserWarning ? "warning" : "success",
         title: "Saved",
-        text: "Preferences synced to your account.",
+        text: browserWarning || "Email inspection alerts saved to your account. Appearance is saved only in this browser.",
         timer: 2000,
         showConfirmButton: false,
       });
@@ -557,8 +597,8 @@ export default function SettingsPage() {
       setPreferencesError(err.message || "Preferences save failed.");
       Swal.fire({
         icon: "error",
-        title: "Save failed",
-        text: err.message || "Could not update notification preferences on the server.",
+        title: "Email preferences not saved",
+        text: `${err.message || "Could not update notification preferences on the server."} Appearance changes remain local to this browser.`,
       });
     } finally {
       setSavingPreferences(false);
@@ -609,7 +649,7 @@ export default function SettingsPage() {
               throw new Error(data.error || "Failed to disable 2FA");
             }
             Swal.fire('Disabled!', '2FA has been disabled.', 'success');
-            if (refreshUser) refreshUser();
+            applyAccountSettings({ is_2fa_enabled: false });
           } catch (err) {
             Swal.fire('Error', err.message, 'error');
           }
@@ -703,6 +743,7 @@ export default function SettingsPage() {
                       key={opt.label}
                       type="button"
                       aria-pressed={isActive}
+                      disabled={savingPreferences}
                       onClick={() => { setEmailAlertsEdited(true); setEmailAlerts(opt.value); }}
                       style={{
                         display: "inline-flex", alignItems: "center", padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13,
@@ -764,6 +805,7 @@ export default function SettingsPage() {
                     <button
                       key={opt.value}
                       type="button"
+                      disabled={savingPreferences}
                       onClick={() => setPreviewTheme(opt.value)}
                       aria-pressed={isActive}
                       style={{
@@ -919,9 +961,10 @@ export default function SettingsPage() {
         {/* Evidence Storage & Archival */}
         <SettingsSection id="settings-evidence" title="Inspection Evidence Storage & Archival"
           summary={storageStats ? `${storageStats.totalDiskMB} MB · ${storageStats.totalFilesOnDisk} evidence files${selectedStorage ? ` · ${selectedStorage.label}: ${selectedStorage.reportCount} reports / ${selectedStorage.photoCount} photos eligible` : ""}` : storageLoading ? "Loading evidence usage…" : "Evidence usage unavailable"}
-          status={cleaningStorage ? { text: "Clearing…" } : downloadingArchive ? { text: "Downloading…" } : storageLoading ? { text: "Loading…" } : storageError ? { text: "Storage error", tone: "error" } : null}>
+          status={cleaningStorage ? { text: "Clearing…" } : downloadingArchive ? { text: "Downloading…" } : storageLoading ? { text: "Loading…" } : storageError ? { text: "Storage error", tone: "error" } : storageWarning ? { text: "Cleanup pending", tone: "warning" } : null}>
           <div style={{ marginBottom: 16 }}>
             {storageError && <p className="settings-error" role="alert">{storageError}</p>}
+            {storageWarning && <p className="settings-warning" role="status">{storageWarning}</p>}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>
@@ -1024,8 +1067,12 @@ export default function SettingsPage() {
                 const isSelected = selectedFilter === opt.key;
                 const cat = storageStats?.categories?.[opt.key];
                 return (
-                  <div
+                  <button
                     key={opt.key}
+                    type="button"
+                    className="settings-cutoff-card"
+                    aria-pressed={isSelected}
+                    disabled={cleaningStorage || downloadingArchive}
                     onClick={() => setSelectedFilter(opt.key)}
                     style={{
                       padding: "12px 14px",
@@ -1036,7 +1083,7 @@ export default function SettingsPage() {
                       transition: "all 0.2s ease",
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                    <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                       <span style={{ fontSize: 13, fontWeight: 700, color: isSelected ? "var(--color-primary, #10b981)" : "var(--color-ink)" }}>
                         {opt.label}
                       </span>
@@ -1045,11 +1092,11 @@ export default function SettingsPage() {
                           {cat.reportCount} reports ({cat.photoCount} photos)
                         </span>
                       )}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--color-muted)" }}>
+                    </span>
+                    <span style={{ display: "block", fontSize: 11, color: "var(--color-muted)" }}>
                       {opt.sub}
-                    </div>
-                  </div>
+                    </span>
+                  </button>
                 );
               })}
             </div>
@@ -1080,7 +1127,7 @@ export default function SettingsPage() {
                     borderColor: "var(--color-border)",
                   }}
                   onClick={handleDirectCleanup}
-                  disabled={cleaningStorage || downloadingArchive || (storageStats?.categories?.[selectedFilter]?.reportCount === 0)}
+                  disabled={cleaningStorage || downloadingArchive || (storageStats?.categories?.[selectedFilter]?.reportCount === 0 && !storageWarning && !storageStats?.cleanupPending)}
                 >
                   {cleaningStorage ? "Clearing..." : "Clear Server Storage"}
                 </button>
@@ -1213,9 +1260,10 @@ export default function SettingsPage() {
                 btnLabel: "Read guide →",
               },
             ].map((card, idx) => (
-              <div
+              <button
                 key={idx}
-                className="hover-lift"
+                type="button"
+                className="hover-lift settings-manual-card"
                 onClick={() => openInstructionalManual(card.id)}
                 style={{
                   padding: "16px",
@@ -1229,12 +1277,12 @@ export default function SettingsPage() {
                   transition: "all 0.2s ease",
                 }}
               >
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ display: "block" }}>
+                  <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 18 }}>{card.icon}</span>
                       <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--color-ink)" }}>{card.title}</span>
-                    </div>
+                    </span>
                     <span style={{
                       fontSize: 10,
                       fontWeight: 700,
@@ -1246,15 +1294,15 @@ export default function SettingsPage() {
                     }}>
                       {card.tag}
                     </span>
-                  </div>
-                  <p style={{ margin: "0 0 12px 0", fontSize: 12, color: "var(--color-muted)", lineHeight: 1.45 }}>
+                  </span>
+                  <span style={{ display: "block", margin: "0 0 12px 0", fontSize: 12, color: "var(--color-muted)", lineHeight: 1.45 }}>
                     {card.summary}
-                  </p>
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", display: "flex", alignItems: "center", gap: 4 }}>
+                  </span>
+                </span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--color-primary)", display: "flex", alignItems: "center", gap: 4 }}>
                   <span>{card.btnLabel}</span>
-                </div>
-              </div>
+                </span>
+              </button>
             ))}
           </div>
         </SettingsSection>
@@ -1315,7 +1363,7 @@ export default function SettingsPage() {
         <ChangePasswordModal token={token} onClose={() => setShowPasswordModal(false)} />
       </AnimatePresence>
       <AnimatePresence isVisible={show2FAModal}>
-        <Setup2FAModal token={token} onClose={() => setShow2FAModal(false)} onSuccess={refreshUser} />
+        <Setup2FAModal token={token} onClose={() => setShow2FAModal(false)} onSuccess={() => applyAccountSettings({ is_2fa_enabled: true })} />
       </AnimatePresence>
       <AnimatePresence isVisible={showTermsDoc}>
         <LegalDocModal title="Terms & Conditions" onClose={() => setShowTermsDoc(false)}>

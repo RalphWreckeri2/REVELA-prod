@@ -1,6 +1,8 @@
-import random
-import bcrypt
+import logging
 import os
+import random
+
+import bcrypt
 import requests
 from api.models.user import find_user_by_email, find_user_by_id, update_last_login, update_password
 from api.models.otp import (
@@ -12,6 +14,9 @@ from api.models.otp import (
     get_daily_otp_count,
 )
 import pyotp
+
+
+logger = logging.getLogger(__name__)
 
 
 def login_user(email, password):
@@ -120,12 +125,12 @@ def send_otp_via_philsms(phone_number, otp_code, is_final_attempt=False):
         formatted_phone = format_phone_number(phone_number)
 
         if not formatted_phone:
-            print(f"SMS error: Invalid phone number format: {phone_number}")
+            logger.warning("PhilSMS delivery skipped: invalid recipient format")
             return False
 
         token = os.getenv("PHILSMS_API_TOKEN") or os.getenv("PHILSMS_TOKEN") or os.getenv("PHILSMS_API_KEY")
         if not token:
-            print("SMS error: PHILSMS_API_TOKEN is not configured in environment variables.")
+            logger.error("PhilSMS delivery failed: provider credentials are not configured")
             return False
 
         url = "https://dashboard.philsms.com/api/v3/sms/send"
@@ -153,30 +158,47 @@ def send_otp_via_philsms(phone_number, otp_code, is_final_attempt=False):
 
         # Check HTTP status
         if response.status_code not in (200, 201):
-            print(f"PhilSMS error: HTTP {response.status_code} - {response.text}")
+            logger.warning(
+                "PhilSMS delivery failed: HTTP status=%s",
+                response.status_code,
+            )
             return False
 
         # Parse JSON response and check API status
         try:
             api_response = response.json()
+            if not isinstance(api_response, dict):
+                logger.warning(
+                    "PhilSMS returned an unrecognized response format")
+                return response.ok
             status_val = api_response.get("status")
             if status_val in ("success", "Success", 1, True) or "data" in api_response:
-                print(f"SMS sent successfully via PhilSMS to {formatted_phone}")
+                logger.info("PhilSMS delivery succeeded")
                 return True
             elif status_val in ("error", "failed", 0, False):
-                print(f"PhilSMS API error: {api_response}")
+                logger.warning(
+                    "PhilSMS delivery failed: provider reported an error")
                 return False
             else:
-                print(f"PhilSMS response: {api_response}")
+                logger.warning(
+                    "PhilSMS returned an unrecognized provider status")
                 return True
         except Exception:
+            logger.warning(
+                "PhilSMS returned a non-JSON response; using HTTP status")
             return response.ok
 
-    except requests.exceptions.RequestException as e:
-        print(f"OTP Dispatch Failed: {e}")
+    except requests.exceptions.RequestException as exc:
+        logger.warning(
+            "PhilSMS delivery failed: transport error type=%s",
+            type(exc).__name__,
+        )
         return False
-    except Exception as e:
-        print(f"SMS error: {type(e).__name__} - {e}")
+    except Exception as exc:
+        logger.error(
+            "PhilSMS delivery failed: unexpected error type=%s",
+            type(exc).__name__,
+        )
         return False
 
 
@@ -241,8 +263,11 @@ def send_otp_email(email, otp_code, is_final_attempt=False):
             }
         )
         return response.status_code == 200
-    except Exception as e:
-        print(f"Email error: {e}")
+    except Exception as exc:
+        logger.warning(
+            "OTP email delivery failed: error type=%s",
+            type(exc).__name__,
+        )
         return False
 
 

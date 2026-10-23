@@ -3,6 +3,7 @@ from flask_jwt_extended import JWTManager
 from flask_mysqldb import MySQL
 from config import Config
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 from api.utils import cors_config
 import os
 
@@ -19,6 +20,13 @@ def create_app():
     # production setting is missing.
     if not app.config.get("JWT_SECRET_KEY"):
         raise RuntimeError("JWT_SECRET_KEY must be set in revela_backend/.env")
+
+    trusted_proxy_count = app.config.get("TRUSTED_PROXY_COUNT", 0)
+    if isinstance(trusted_proxy_count, bool) or not isinstance(
+            trusted_proxy_count, int) or trusted_proxy_count < 0:
+        raise RuntimeError("TRUSTED_PROXY_COUNT must be a non-negative integer")
+    if trusted_proxy_count:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=trusted_proxy_count)
 
     # Init extensions
     mysql.init_app(app)
@@ -37,6 +45,8 @@ def create_app():
     # it does not alter request handling or response bodies.
     from api.middleware import request_telemetry
     request_telemetry.init_app(app)
+    from api.middleware import request_rate_limit
+    request_rate_limit.init_app(app)
 
     # Register blueprints
     from api.auth.routes import auth_bp

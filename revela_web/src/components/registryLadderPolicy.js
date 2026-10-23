@@ -46,8 +46,7 @@ export function canClearInspectionWarning(report, role) {
     report.logID != null &&
     report.flagColor === "Orange" &&
     warningLevel(report) > 0 &&
-    !isBlackLocked(report) &&
-    ["Red", "Yellow", "Green", "Purple"].includes(report.warningBaseColor)
+    !isBlackLocked(report)
   );
 }
 
@@ -57,6 +56,9 @@ export async function clearInspectionWarning({
   role,
   reason,
   token,
+  businessID,
+  registryReviewToken,
+  confirmEstablishment,
   request,
   refresh,
   onChanged,
@@ -64,12 +66,25 @@ export async function clearInspectionWarning({
   if (!canClearInspectionWarning(report, role))
     throw new Error("This inspection's warning cannot be cleared.");
   const isPinSubject = report.businessID == null;
+  if (
+    isPinSubject &&
+    (!businessID || !registryReviewToken || confirmEstablishment !== true)
+  )
+    throw new Error("Review and confirm the official Business ID first.");
   const subjectId = isPinSubject ? report.logID : report.businessID;
   const result = await request(
     subjectId,
     reason,
     token,
     isPinSubject ? "geospatial_log" : "business",
+    isPinSubject
+      ? {
+          reportID: report.reportID,
+          businessID,
+          registryReviewToken,
+          confirmEstablishment: true,
+        }
+      : {},
   );
   await refresh();
   onChanged?.(result);

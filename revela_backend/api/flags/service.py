@@ -3475,7 +3475,7 @@ def insert_yellow_flag(
 
 
 def update_flag_color(log_id, color):
-    """Update a flag's color manually (e.g. to Purple, Orange, Yellow, Red, Black, Green).
+    """Update a flag's color manually (e.g. to Purple, Orange, Yellow, or Red).
     Supports both real geospatial_logs (log_id > 0) and virtual registry flags (log_id < 0).
     """
     try:
@@ -3544,6 +3544,13 @@ def update_flag_color(log_id, color):
                     and is_black_locked(cursor, row["businessID"]))):
             cursor.close()
             return False, "Black flags cannot be edited."
+
+        if color == "Green":
+            cursor.close()
+            return False, (
+                "Map pins can only be marked Green after Business ID review "
+                "and compliance confirmation."
+            )
 
         cursor.execute("""
             UPDATE geospatial_logs
