@@ -5291,14 +5291,14 @@ const styles = {
   livePill: { display: "inline-flex", alignItems: "center", gap: 6, background: "#fee2e2", color: "#b91c1c", padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700 },
   liveDot: { width: 7, height: 7, borderRadius: "50%", background: "#ef4444" },
 
-  mapLayout: { display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "stretch" },
+  mapLayout: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) 320px", gap: 20, alignItems: "start" },
   mapColumn: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0, minHeight: 0 },
 
   layerBar: { display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
   layerSearch: { position: "relative", flex: "0 1 360px", width: "min(360px, 100%)", minWidth: 220, marginLeft: "auto" },
   layerToggle: { padding: "6px 14px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s", whiteSpace: "nowrap", flexShrink: 0 },
 
-  mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: "1 1 auto", minHeight: 0 },
+  mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: "0 0 auto" },
   mapSearchInput: { width: "100%", height: 38, padding: "8px 40px 8px 38px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)", background: "var(--color-input-bg)", color: "var(--color-ink)", fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "var(--font-base)" },
   mapSearchClear: { position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "var(--radius-sm)", background: "transparent", color: "var(--color-muted)", cursor: "pointer" },
   mapCanvas: { width: "100%", height: "100%", position: "relative", background: "#e8f5e2" },
@@ -5311,8 +5311,8 @@ const styles = {
   statsStrip: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 },
   statCard: { display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "center", textAlign: "left", gap: 4, padding: "12px 10px", borderRadius: "var(--radius-lg)", minWidth: 0, overflow: "hidden" },
 
-  sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflowY: "auto", overflowX: "hidden" },
-  flagList: { overflowY: "auto", overscrollBehavior: "contain", display: "flex", flexDirection: "column", gap: 8, flex: "1 1 auto", minHeight: 0, paddingRight: 2 },
+  sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 },
+  flagList: { overflowY: "auto", overscrollBehavior: "contain", display: "flex", flexDirection: "column", gap: 8, maxHeight: "clamp(260px, 36vh, 400px)", minHeight: 0, paddingRight: 2 },
   flagCard: { border: "1px solid", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer", transition: "all 0.12s" },
   flagName: { fontSize: 13, fontWeight: 700, color: "var(--color-ink)", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   flagMeta: { fontSize: 11, color: "var(--color-muted)" },

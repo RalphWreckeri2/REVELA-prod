@@ -4,16 +4,15 @@
   min-width: 0;
 }
 
-/* The map page owns the viewport below the app navbar. The workspace flexes
-   into the remaining height instead of growing with the business result list. */
+/* Let the shared .saas-content scroll the page normally. Only the business
+   result list is height-bounded, so filters and the OPS queue stay expanded. */
 .map-page {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 24px;
-  height: 100%;
+  min-width: 0;
   min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
 }
 
 /* Map workspace gets the extra room from a tighter content gutter. */
@@ -32,11 +31,9 @@
   flex: 0 0 auto;
 }
 
-/* Keep the map the dominant surface: below this height the page scrolls
-   instead of squeezing the results list into an unusable strip. */
 .map-page > .map-layout {
-  flex: 1 1 auto;
-  min-height: 440px;
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 .map-page > .saas-footer {
@@ -47,9 +44,12 @@
   min-height: 0;
 }
 
-/* The map itself must keep a usable drawing area even when the header is tall. */
+/* The map keeps its own comfortable height instead of matching the sidebar,
+   whose filters and OPS queue are allowed to make the page taller. */
 .map-canvas-container {
-  min-height: 220px;
+  flex: 0 0 auto;
+  height: clamp(500px, 66dvh, 800px);
+  min-height: 500px;
 }
 
 /* Keep the layer bar on one row; the layer chips scroll horizontally. */
@@ -444,23 +444,21 @@
   gap: 12px;
 }
 
+/* All four filters stay at their natural height; the page scrolls if needed. */
 .map-sidebar-filters {
-  flex: 0 1 auto;
-  min-height: 120px;
-  max-height: min(280px, 45%);
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  flex: 0 0 auto;
+  min-height: 0;
   padding-right: 2px;
 }
 
-/* Guarantees at least a couple of visible rows; the card list keeps its own
-   scrollbar while the count and pagination stay pinned. */
+/* Only the card list is bounded. Count and pagination remain outside the
+   scrolling area so page controls are always visible. */
 .map-location-results {
   display: flex;
-  flex: 1 1 180px;
+  flex: 0 0 auto;
   flex-direction: column;
-  min-height: 120px;
-  overflow: hidden;
+  min-height: 0;
+  overflow: visible;
   margin: 0 0 16px;
   min-width: 0;
   color: var(--color-muted);
@@ -1189,12 +1187,10 @@ html.theme-dark .map-detection-toggle-action {
   min-width: 0;
 }
 
+/* The ranking queue is fully expanded; it is not an internal scroll area. */
 .map-side-panel > .priority-dispatch-queue {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  max-height: min(160px, 30%);
-  overflow-y: auto;
-  overscroll-behavior: contain;
 }
 
 .map-side-panel > .map-side-panel-actions {
@@ -1790,24 +1786,14 @@ html.theme-dark .api-usage-modal {
   }
 
   .map-canvas-container {
-    flex: 0 0 auto !important;
-    height: clamp(320px, 48dvh, 520px) !important;
-    min-height: 320px !important;
+    height: clamp(480px, 62dvh, 700px) !important;
+    min-height: 480px !important;
   }
 
   .map-layout > .map-side-panel.saas-card {
     height: auto !important;
-    max-height: min(70dvh, 640px) !important;
-    overflow-y: auto !important;
-  }
-
-  .map-side-panel .map-sidebar-filters {
-    max-height: min(36dvh, 320px);
-  }
-
-  .map-side-panel .map-location-results {
-    flex: 0 1 auto;
-    max-height: 45dvh;
+    max-height: none !important;
+    overflow: visible !important;
   }
 }
 
