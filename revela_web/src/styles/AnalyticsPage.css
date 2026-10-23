@@ -280,3 +280,409 @@
   .analytics-quick-nav { max-width: calc(100% - 112px); left: calc((100% - 92px) / 2); }
   .analytics-quick-nav-btn { padding-inline: 9px; font-size: 11px; }
 }
+
+/* ── Prescriptive plan intro ─────────────────────────────────────────────── */
+.presc-plan-intro {
+  padding: 16px 20px;
+  margin-bottom: 24px;
+}
+
+.presc-plan-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-md);
+  background: var(--color-card-alt);
+}
+
+.presc-plan-summary-item {
+  min-width: 0;
+  padding: 11px 14px 10px;
+}
+
+.presc-plan-summary-item + .presc-plan-summary-item {
+  border-left: 1px solid var(--color-border-soft);
+}
+
+.presc-plan-summary-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.presc-plan-summary-value {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  color: var(--color-ink);
+  font-size: 12px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+}
+
+.presc-plan-summary-value strong {
+  color: var(--color-ink);
+  font-size: 21px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.presc-plan-summary-unit {
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.presc-plan-summary-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 7px 14px 8px;
+  border-top: 1px solid var(--color-border-soft);
+  color: var(--color-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.presc-plan-summary-hint strong {
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+.presc-plan-deferred {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-sm);
+  background: var(--flag-yellow-bg);
+  color: var(--flag-yellow-text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.presc-plan-context {
+  margin: 0 0 14px;
+  padding: 1px 0 1px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.presc-method {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-card-alt);
+}
+
+.presc-method > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 12px;
+  color: var(--color-ink);
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--duration-fast) ease;
+}
+
+.presc-method > summary::-webkit-details-marker {
+  display: none;
+}
+
+.presc-method > summary:hover {
+  background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+}
+
+.presc-method > summary:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.presc-method[open] > summary {
+  border-bottom: 1px solid var(--color-border-soft);
+}
+
+.presc-method-icon {
+  display: inline-flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.presc-method-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.presc-method-copy {
+  display: flex;
+  flex: 1 1 170px;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.presc-method-title {
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.presc-method-subtitle {
+  color: var(--color-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.presc-method-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--color-primary-dark);
+  font-size: 11.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.presc-method-action svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform var(--duration-fast) ease;
+}
+
+.presc-method[open] .presc-method-action svg {
+  transform: rotate(180deg);
+}
+
+.presc-method-action-open {
+  display: none;
+}
+
+.presc-method[open] .presc-method-action-closed {
+  display: none;
+}
+
+.presc-method[open] .presc-method-action-open {
+  display: inline;
+}
+
+.presc-method-body {
+  padding: 0 14px 14px;
+}
+
+.presc-method-group {
+  padding: 12px 0;
+}
+
+.presc-method-group + .presc-method-group {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.presc-method-group:last-child {
+  padding-bottom: 2px;
+}
+
+.presc-method-group h4 {
+  margin: 0 0 5px;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+}
+
+.presc-method-group p {
+  margin: 0 0 6px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.presc-method-group p:last-child {
+  margin-bottom: 0;
+}
+
+.presc-formula {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 7px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--color-modal-bg);
+  color: var(--color-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+
+.presc-formula-result {
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+
+.presc-formula-op {
+  color: var(--color-subtle);
+  font-weight: 500;
+}
+
+.presc-formula-term {
+  white-space: nowrap;
+}
+
+.presc-formula-term em {
+  color: var(--color-primary-dark);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.presc-formula-range {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--color-surface);
+  color: var(--color-muted);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.presc-value-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.presc-value {
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--color-modal-bg);
+}
+
+.presc-value dt {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.presc-value dd {
+  margin: 2px 0 0;
+  color: var(--color-ink);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.presc-band-list {
+  display: grid;
+  gap: 5px;
+  margin: 6px 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.presc-band-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 9px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--color-modal-bg);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.presc-band-list strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-ink);
+  font-weight: 700;
+}
+
+.presc-band-list > li > span:last-child {
+  color: var(--color-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.presc-band-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+}
+
+.presc-band-dot--high { background: var(--color-danger); }
+.presc-band-dot--standard { background: var(--color-warning); }
+.presc-band-dot--monitor { background: var(--color-subtle); }
+
+@container analytics-content (max-width: 560px) {
+  .presc-plan-intro {
+    padding: 14px;
+  }
+
+  .presc-plan-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .presc-plan-summary-item + .presc-plan-summary-item {
+    border-top: 1px solid var(--color-border-soft);
+    border-left: 0;
+  }
+
+  .presc-method-subtitle {
+    display: none;
+  }
+
+  .presc-formula-range {
+    margin-left: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presc-method > summary,
+  .presc-method-action svg {
+    transition: none;
+  }
+}

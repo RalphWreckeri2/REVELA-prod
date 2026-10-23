@@ -345,6 +345,8 @@ const formatWorkflowDate = (value) => {
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const STREET_VIEW_LAYER_MIN_ZOOM = 16;
 const REVIEW_QUEUE_PAGE_SIZE = 20;
+const MUNICIPAL_MAP_PADDING = 28;
+const MUNICIPAL_PAN_ALLOWANCE_RATIO = 0.03;
 
 // `public/data/mataasnakahoy.json` is a single outer boundary for the whole
 // municipality. Feature names must be listed here so the heatmap sums all
@@ -506,6 +508,69 @@ function distanceToRingInMeters(lat, lng, ring) {
     if (dSq < minSq) minSq = dSq;
   }
   return Math.sqrt(minSq);
+}
+
+/** Returns the outer bounds of the supplied GeoJSON features as plain lat/lng values. */
+function computeGeoJsonBounds(features) {
+  let north = -Infinity;
+  let south = Infinity;
+  let east = -Infinity;
+  let west = Infinity;
+
+  const visitCoordinates = (coordinates) => {
+    if (!Array.isArray(coordinates) || coordinates.length === 0) return;
+    if (typeof coordinates[0] === "number" && typeof coordinates[1] === "number") {
+      const [lng, lat] = coordinates;
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      north = Math.max(north, lat);
+      south = Math.min(south, lat);
+      east = Math.max(east, lng);
+      west = Math.min(west, lng);
+      return;
+    }
+    coordinates.forEach(visitCoordinates);
+  };
+
+  (features || []).forEach((feature) => visitCoordinates(feature?.geometry?.coordinates));
+
+  return Number.isFinite(north) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(west)
+    ? { north, south, east, west }
+    : null;
+}
+
+// Web Mercator projection of latitude to the [0, 1] world Y axis used by
+// Google Maps' 256px tiles. Kept local so the zoom calculation does not depend
+// on a map instance being ready.
+function latitudeToMercatorY(lat) {
+  const clamped = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const sin = Math.sin((clamped * Math.PI) / 180);
+  return 0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI);
+}
+
+// The largest zoom at which the municipality still fits inside the map's
+// padded viewport. This is the basis for the dynamic minimum zoom.
+function computeMunicipalFitZoom(bounds, width, height, padding) {
+  const usableWidth = Math.max(1, width - padding.left - padding.right);
+  const usableHeight = Math.max(1, height - padding.top - padding.bottom);
+  const lngFraction = Math.max(1e-9, (bounds.east - bounds.west) / 360);
+  const latFraction = Math.max(
+    1e-9,
+    Math.abs(latitudeToMercatorY(bounds.south) - latitudeToMercatorY(bounds.north)),
+  );
+  const zoomForWidth = Math.log2(usableWidth / (256 * lngFraction));
+  const zoomForHeight = Math.log2(usableHeight / (256 * latFraction));
+  return Math.min(zoomForWidth, zoomForHeight);
+}
+
+function expandMunicipalBounds(bounds, ratio) {
+  const latPad = Math.max(0.0005, (bounds.north - bounds.south) * ratio);
+  const lngPad = Math.max(0.0005, (bounds.east - bounds.west) * ratio);
+  return {
+    north: bounds.north + latPad,
+    south: bounds.south - latPad,
+    east: bounds.east + lngPad,
+    west: bounds.west - lngPad,
+  };
 }
 
 /** Returns true if (lat, lng) is inside a GeoJSON Polygon or MultiPolygon geometry or within bufferMeters distance. */
@@ -872,6 +937,7 @@ function MapCanvas({
   loadError,
   center,
   zoom,
+  municipalBounds,
   mapRef,
   layers,
   flags,
@@ -906,6 +972,10 @@ function MapCanvas({
   const clusterRef = useRef(null);
   const diagnosticCircleRefs = useRef([]);
   const geoJsonDataRef = useRef(null);
+  const mapContainerRef = useRef(null);
+  const minZoomRef = useRef(null);
+  const restrictionBoundsRef = useRef(null);
+  const initialMunicipalFitRef = useRef(false);
 
   // Sync zoom prop if parent changes it
   useEffect(() => {
@@ -1004,6 +1074,82 @@ function MapCanvas({
     };
   }, [isLoaded, mapInstance, layers.diagnostics, clusters]);
 
+  const getMunicipalMapBounds = useCallback(() => {
+    if (!municipalBounds || !window.google?.maps?.LatLngBounds) return null;
+    const { north, south, east, west } = municipalBounds;
+    const viewport = new window.google.maps.LatLngBounds(
+      { lat: south, lng: west },
+      { lat: north, lng: east },
+    );
+    const allowance = expandMunicipalBounds(municipalBounds, MUNICIPAL_PAN_ALLOWANCE_RATIO);
+    const restriction = new window.google.maps.LatLngBounds(
+      { lat: allowance.south, lng: allowance.west },
+      { lat: allowance.north, lng: allowance.east },
+    );
+    return { viewport, restriction };
+  }, [municipalBounds]);
+
+  const clampMapCenterToRestriction = useCallback((map, restriction) => {
+    if (!map || !restriction) return;
+    const center = map.getCenter();
+    if (!center) return;
+    const southWest = restriction.getSouthWest();
+    const northEast = restriction.getNorthEast();
+    const lat = Math.min(Math.max(center.lat(), southWest.lat()), northEast.lat());
+    const lng = Math.min(Math.max(center.lng(), southWest.lng()), northEast.lng());
+    if (Math.abs(lat - center.lat()) > 1e-9 || Math.abs(lng - center.lng()) > 1e-9) {
+      map.setCenter({ lat, lng });
+    }
+  }, []);
+
+  const applyMunicipalViewLimits = useCallback(({ fit = false } = {}) => {
+    const map = mapInstance || internalMapRef.current;
+    const municipalMapBounds = getMunicipalMapBounds();
+    if (!map || !municipalMapBounds || !municipalBounds) return false;
+
+    const mapDiv = map.getDiv();
+    const width = mapDiv?.clientWidth || 0;
+    const height = mapDiv?.clientHeight || 0;
+    if (width < 32 || height < 32) return false;
+
+    const padding = {
+      top: MUNICIPAL_MAP_PADDING,
+      right: MUNICIPAL_MAP_PADDING,
+      bottom: MUNICIPAL_MAP_PADDING,
+      left: MUNICIPAL_MAP_PADDING,
+    };
+    // Floor to a 0.05 zoom step so rounding never leaves part of the
+    // municipality outside the padded viewport at the minimum zoom.
+    const minZoom = Math.max(
+      1,
+      Math.floor(computeMunicipalFitZoom(municipalBounds, width, height, padding) * 20) / 20,
+    );
+
+    minZoomRef.current = minZoom;
+    restrictionBoundsRef.current = municipalMapBounds.restriction;
+
+    map.setOptions({
+      minZoom,
+      restriction: {
+        latLngBounds: municipalMapBounds.restriction,
+        strictBounds: false,
+      },
+    });
+
+    if (fit) {
+      map.fitBounds(municipalMapBounds.viewport, padding);
+      return true;
+    }
+
+    const currentZoom = map.getZoom();
+    if (currentZoom == null || currentZoom < minZoom) {
+      map.setZoom(minZoom);
+    }
+    clampMapCenterToRestriction(map, municipalMapBounds.restriction);
+
+    return true;
+  }, [clampMapCenterToRestriction, getMunicipalMapBounds, mapInstance, municipalBounds]);
+
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
     setMapInstance(map);
@@ -1015,10 +1161,63 @@ function MapCanvas({
       if (z != null) setCurrentZoom(z);
     });
 
+    // Safety net for programmatic moves (fitBounds / flyTo / setCenter) as
+    // well as user gestures: never leave the municipal restriction and never
+    // fall below the dynamically calculated minimum zoom.
+    map.addListener("idle", () => {
+      const minZoom = minZoomRef.current;
+      const activeZoom = map.getZoom();
+      if (minZoom != null && activeZoom != null && activeZoom < minZoom) {
+        map.setZoom(minZoom);
+      }
+      clampMapCenterToRestriction(map, restrictionBoundsRef.current);
+    });
+
     if (isPickingLocation) {
       map.setOptions({ draggableCursor: 'crosshair' });
     }
-  }, [mapRef, isPickingLocation, zoom]);
+  }, [clampMapCenterToRestriction, mapRef, isPickingLocation, zoom]);
+
+  // Fit the whole municipality once the boundary asset is ready. Subsequent
+  // calls only refresh the limits so resizing does not reset the user's view.
+  useEffect(() => {
+    if (!isLoaded || !mapInstance || !municipalBounds) return undefined;
+    const frameId = requestAnimationFrame(() => {
+      const map = internalMapRef.current;
+      if (!map) return;
+      window.google?.maps?.event?.trigger(map, "resize");
+      const applied = applyMunicipalViewLimits({ fit: !initialMunicipalFitRef.current });
+      if (applied) initialMunicipalFitRef.current = true;
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [isLoaded, mapInstance, municipalBounds, applyMunicipalViewLimits]);
+
+  // Keep the map layout in sync with its container (desktop/mobile layout
+  // changes, sidebar collapse, window resize). Google Maps needs an explicit
+  // resize event after the container dimensions change.
+  useEffect(() => {
+    if (!isLoaded || !mapInstance) return undefined;
+    const container = mapContainerRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return undefined;
+
+    let frameId = null;
+    const observer = new ResizeObserver(() => {
+      if (frameId != null) cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        const map = internalMapRef.current;
+        if (!map) return;
+        window.google?.maps?.event?.trigger(map, "resize");
+        applyMunicipalViewLimits();
+      });
+    });
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+      if (frameId != null) cancelAnimationFrame(frameId);
+    };
+  }, [isLoaded, mapInstance, applyMunicipalViewLimits]);
 
   const handleMapUnmount = useCallback(() => {
     streetViewCoverageLayerRef.current?.setMap(null);
@@ -1445,8 +1644,10 @@ function MapCanvas({
   const handleCenter = () => {
     const activeMap = mapInstance || internalMapRef.current;
     if (activeMap) {
-      activeMap.panTo(DEFAULT_MAP_CENTER);
-      activeMap.setZoom(13);
+      if (!applyMunicipalViewLimits({ fit: true })) {
+        activeMap.panTo(DEFAULT_MAP_CENTER);
+        activeMap.setZoom(13);
+      }
     }
   };
 
@@ -1473,7 +1674,7 @@ function MapCanvas({
   }
 
   return (
-    <div style={styles.mapCanvas}>
+    <div ref={mapContainerRef} style={styles.mapCanvas}>
       <GoogleMap
         mapContainerStyle={{ width: "100%", height: "100%" }}
         center={center}
@@ -2192,6 +2393,7 @@ export default function MapPage() {
   const workflowSummaryShownRef = useRef(true);
 
   const [flags, setFlags] = useState([]);
+  const [municipalBounds, setMunicipalBounds] = useState(null);
   const [barangayRiskLevels, setBarangayRiskLevels] = useState({});
   const [loadingFlags, setLoadingFlags] = useState(false);
   const [flagsError, setFlagsError] = useState("");
@@ -2543,15 +2745,22 @@ export default function MapPage() {
       .catch(err => console.error("Failed to load barangays", err));
   }, [token]);
 
-  // Pre-fetch GeoJSON once so handleMapClick can do real point-in-polygon checks
+  // Pre-fetch GeoJSON once so handleMapClick can do real point-in-polygon
+  // checks and the map can derive its municipal navigation limits from the
+  // same authoritative boundary asset.
   useEffect(() => {
-    if (geoJsonFeaturesRef.current) return; // already loaded
+    if (geoJsonFeaturesRef.current) return;
+    let cancelled = false;
     fetch("/data/mataasnakahoy.json")
       .then(r => r.json())
       .then(json => {
-        geoJsonFeaturesRef.current = Array.isArray(json.features) ? json.features : [];
+        if (cancelled) return;
+        const features = Array.isArray(json.features) ? json.features : [];
+        geoJsonFeaturesRef.current = features;
+        setMunicipalBounds(computeGeoJsonBounds(features));
       })
       .catch(err => console.warn("Could not pre-load GeoJSON for PiP checks", err));
+    return () => { cancelled = true; };
   }, []);
 
   const [inspectors, setInspectors] = useState([]);
@@ -3923,8 +4132,9 @@ export default function MapPage() {
   };
 
   return (
-    <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
+    <DashboardLayout className="map-shell" user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
 
+      <div className="map-page">
       {/* Page Header */}
       <div className="page-header map-page-header">
         <div className="map-page-heading-row">
@@ -4117,31 +4327,46 @@ export default function MapPage() {
               </details>
             </div>
 
-            <button
-              className="map-detection-toggle"
-              type="button"
-              aria-expanded={!detectionControlsCollapsed}
-              aria-controls="map-detection-controls"
-              onClick={() => setDetectionControlsCollapsed(collapsed => !collapsed)}
-            >
-              <span>Detection controls</span>
-              <span className="map-detection-toggle-summary">
-                {selectedDetectionMode.label}
-                {detectionQuota && ` · ${detectionQuota.remaining_this_month}/${detectionQuota.monthly_limit} scans left`}
-              </span>
-              <span className="map-detection-toggle-action">
-                {detectionControlsCollapsed ? "Show" : "Hide"}
-                <svg viewBox="0 0 16 16" aria-hidden="true">
-                  <path d="m4 6 4 4 4-4" />
-                </svg>
-              </span>
-            </button>
-            <section
-              id="map-detection-controls"
-              className="map-detection-controls"
-              aria-label="Detection scan controls"
-              hidden={detectionControlsCollapsed}
-            >
+            <div className={`map-detection-disclosure${detectionControlsCollapsed ? " is-collapsed" : " is-open"}`}>
+              <button
+                className="map-detection-toggle"
+                type="button"
+                aria-expanded={!detectionControlsCollapsed}
+                aria-controls="map-detection-controls"
+                onClick={() => setDetectionControlsCollapsed(collapsed => !collapsed)}
+              >
+                <span className="map-detection-toggle-icon" aria-hidden="true">
+                  <Icon.Radar />
+                </span>
+                <span className="map-detection-toggle-copy">
+                  <span className="map-detection-toggle-title">Detection Controls</span>
+                  <span className="map-detection-toggle-meta">
+                    <span className="map-detection-toggle-mode">{selectedDetectionMode.label}</span>
+                    {detectionQuota && (
+                      <span className="map-detection-toggle-quota">
+                        {detectionQuota.remaining_this_month}/{detectionQuota.monthly_limit} scans left
+                      </span>
+                    )}
+                  </span>
+                </span>
+                <span className="map-detection-toggle-action">
+                  <span>{detectionControlsCollapsed ? "Show controls" : "Hide controls"}</span>
+                  <svg viewBox="0 0 16 16" aria-hidden="true">
+                    <path d="m4 6 4 4 4-4" />
+                  </svg>
+                </span>
+              </button>
+              <div
+                id="map-detection-controls"
+                className={`map-detection-expander${detectionControlsCollapsed ? " is-collapsed" : ""}`}
+                aria-hidden={detectionControlsCollapsed || undefined}
+                inert={detectionControlsCollapsed || undefined}
+              >
+                <div className="map-detection-expander-inner">
+                  <section
+                    className="map-detection-controls"
+                    aria-label="Detection scan controls"
+                  >
               <div className="map-detection-config">
                 <DetectionModeDropdown
                   value={runDetectionMode}
@@ -4202,6 +4427,9 @@ export default function MapPage() {
                 </div>
               )}
             </section>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -4271,7 +4499,7 @@ export default function MapPage() {
         <div style={styles.mapColumn}>
 
           {/* Layer toggle */}
-          <div className="frosted-glass saas-card" style={styles.layerBar}>
+          <div className="frosted-glass saas-card map-layer-bar" style={styles.layerBar}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
               <Icon.Layers />
               <span style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", whiteSpace: "nowrap" }}>Layers</span>
@@ -4343,6 +4571,7 @@ export default function MapPage() {
               loadError={loadError}
               center={DEFAULT_MAP_CENTER}
               zoom={13}
+              municipalBounds={municipalBounds}
               mapRef={mapRef}
               layers={layers}
               flags={visibleFlags}
@@ -4449,9 +4678,9 @@ export default function MapPage() {
         </div>
 
         {/* Right: side panel */}
-        <div className="frosted-glass saas-card" style={styles.sidePanel}>
+        <div className="frosted-glass saas-card map-side-panel" style={styles.sidePanel}>
 
-          <div style={{ marginBottom: 14 }}>
+          <div className="map-sidebar-filters" style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <Icon.Flag />
               <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--color-ink)", flex: 1 }}>
@@ -4551,7 +4780,7 @@ export default function MapPage() {
           )}
 
           {/* Action Buttons at Bottom */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+          <div className="map-side-panel-actions" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
             {isAdmin && (
               <button
                 className="primary-btn"
@@ -4606,6 +4835,7 @@ export default function MapPage() {
           </button>
         </p>
       </footer>
+      </div>
 
       {/* Flag detail modal â€” opens on marker or side panel click */}
       <AnimatePresence isVisible={!!modalFlag}>
@@ -5062,13 +5292,13 @@ const styles = {
   liveDot: { width: 7, height: 7, borderRadius: "50%", background: "#ef4444" },
 
   mapLayout: { display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "stretch" },
-  mapColumn: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 },
+  mapColumn: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0, minHeight: 0 },
 
   layerBar: { display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
   layerSearch: { position: "relative", flex: "0 1 360px", width: "min(360px, 100%)", minWidth: 220, marginLeft: "auto" },
   layerToggle: { padding: "6px 14px", borderRadius: 20, border: "1px solid", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-base)", transition: "all 0.15s", whiteSpace: "nowrap", flexShrink: 0 },
 
-  mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: 1, minHeight: 480 },
+  mapWrapper: { borderRadius: "var(--radius-lg)", overflow: "hidden", position: "relative", flex: "1 1 auto", minHeight: 0 },
   mapSearchInput: { width: "100%", height: 38, padding: "8px 40px 8px 38px", borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)", background: "var(--color-input-bg)", color: "var(--color-ink)", fontSize: 12, outline: "none", boxSizing: "border-box", fontFamily: "var(--font-base)" },
   mapSearchClear: { position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", border: "none", borderRadius: "var(--radius-sm)", background: "transparent", color: "var(--color-muted)", cursor: "pointer" },
   mapCanvas: { width: "100%", height: "100%", position: "relative", background: "#e8f5e2" },
@@ -5081,8 +5311,8 @@ const styles = {
   statsStrip: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6 },
   statCard: { display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "center", textAlign: "left", gap: 4, padding: "12px 10px", borderRadius: "var(--radius-lg)", minWidth: 0, overflow: "hidden" },
 
-  sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", position: "sticky", top: 20, minWidth: 0 },
-  flagList: { overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, flex: 1, paddingRight: 2 },
+  sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, height: "100%", overflowY: "auto", overflowX: "hidden" },
+  flagList: { overflowY: "auto", overscrollBehavior: "contain", display: "flex", flexDirection: "column", gap: 8, flex: "1 1 auto", minHeight: 0, paddingRight: 2 },
   flagCard: { border: "1px solid", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer", transition: "all 0.12s" },
   flagName: { fontSize: 13, fontWeight: 700, color: "var(--color-ink)", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   flagMeta: { fontSize: 11, color: "var(--color-muted)" },

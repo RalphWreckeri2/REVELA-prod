@@ -1025,6 +1025,11 @@ export default function AnalyticsPage() {
   const desc = data?.descriptive;
   const diag = data?.diagnostic;
   const presc = data?.prescriptive;
+  const prescWorkforce = presc?.workforce;
+  const prescModel = presc?.model;
+  const prescWeights = prescModel?.weights;
+  const prescWeight = (key) =>
+    typeof prescWeights?.[key] === "number" ? `${(prescWeights[key] * 100).toFixed(1)}%` : "—";
   const kpis = desc?.kpis;
   const reportingYear = kpis?.reporting_year ?? Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila", year: "numeric" }));
 
@@ -2889,26 +2894,187 @@ export default function AnalyticsPage() {
             <SectionHeader
               tier="prescriptive"
               title="Prescriptive Analytics — Action Plan"
-              subtitle="Inspect barangays in WLC order: OPS = W1·Risk + W2·Sector + W3·Proximity (0–100)"
+              subtitle="Recommended inspection priorities and inspector allocation."
             />
 
-            <div className="saas-card frosted-glass" style={{ padding: "16px 20px", marginBottom: 24 }}>
-              <p style={{ margin: "0 0 8px", fontSize: 13, color: "var(--color-muted)", lineHeight: 1.6 }}>
-                Scores and ranks use current municipality-wide records. Barangay filters only narrow this list; registry, flag, date and inspection filters do not recalculate operational priorities. A score is relative inspection priority, not the probability of a violation.
-                {" "}New field plans require dispatchable Red/Yellow targets. Black-only barangays are for administrative review; already-assigned targets are not double-booked.
+            <div className="saas-card frosted-glass presc-plan-intro">
+              {prescWorkforce && (
+                <div
+                  className="presc-plan-summary"
+                  role="group"
+                  aria-label="Inspector availability and plan allocation"
+                >
+                  <div className="presc-plan-summary-item">
+                    <span className="presc-plan-summary-label">Available inspectors</span>
+                    <span className="presc-plan-summary-value">
+                      <strong>{prescWorkforce.available_inspectors}</strong>
+                      <span className="presc-plan-summary-unit">of {prescWorkforce.active_inspectors} active</span>
+                    </span>
+                  </div>
+                  <div className="presc-plan-summary-item">
+                    <span className="presc-plan-summary-label">Recommended for this plan</span>
+                    <span className="presc-plan-summary-value">
+                      <strong>{prescWorkforce.allocated_inspectors}</strong>
+                    </span>
+                  </div>
+                  <div className="presc-plan-summary-item">
+                    <span className="presc-plan-summary-label">Unallocated inspectors</span>
+                    <span className="presc-plan-summary-value">
+                      <strong>{prescWorkforce.unallocated_inspectors}</strong>
+                    </span>
+                  </div>
+                  <p className="presc-plan-summary-hint">
+                    <strong>Allocation capacity: {prescWorkforce.allocation_capacity ?? "—"}</strong>
+                    {` inspector${prescWorkforce.allocation_capacity === 1 ? "" : "s"}. `}
+                    Limited to eligible businesses in the top three eligible barangays; remaining available inspectors stay unallocated.
+                  </p>
+                </div>
+              )}
+
+              {prescWorkforce?.available_inspectors === 0 && (
+                <p role="status" className="presc-plan-deferred">
+                  Deployments are deferred; WLC priority order is unchanged.
+                </p>
+              )}
+
+              <p className="presc-plan-context">
+                Scores reflect municipality-wide inspection priorities. Barangay filters narrow this list without changing scores or ranks.
               </p>
-              {presc?.workforce && <p role="status" style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: "var(--color-ink)" }}>
-                {presc.workforce.available_inspectors} currently free of {presc.workforce.active_inspectors} active inspectors · {presc.workforce.allocated_inspectors} recommended for this plan, {presc.workforce.unallocated_inspectors} left unallocated when eligible-business capacity is reached.
-                {presc.workforce.available_inspectors === 0 && " Deployments are deferred; WLC priority order is unchanged."}
-              </p>}
-              <details aria-label="WLC methodology" style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.6 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 700 }}>How inspection priority is calculated</summary>
-                <p>Burden = 3×Red + 2×Yellow + 4×Black. Risk = 100×burden / highest municipal burden ({presc?.model?.reference_max_burden ?? "unavailable"}); zero when no active flags exist. Counts are eligible geospatial records, not unique businesses. Barangays without active flags receive OPS 0.</p>
-                <p>Effective weights: Risk {presc?.model?.weights ? (presc.model.weights.w1 * 100).toFixed(1) : "—"}% · Sector {presc?.model?.weights ? (presc.model.weights.w2 * 100).toFixed(1) : "—"}% · Proximity {presc?.model?.weights ? (presc.model.weights.w3 * 100).toFixed(1) : "—"}%. {presc?.model?.sector_note}</p>
-                <p>{presc?.model?.location_note} Proximity = 100 − min(distance in km / 20 × 100, 100).</p>
-                <p>{presc?.model?.eligibility_note}</p>
-                <p>High priority: OPS ≥ 60; Standard: 30–59.9; Monitor: below 30. These are policy bands, not statistically calibrated violation categories. Ties use weighted burden, then barangay name and ID.</p>
-                <p>{presc?.workforce?.availability_rule} Highest WLC destinations receive inspectors first; remaining slots follow weighted burden using largest remainders. Confirm actual field availability before dispatch.</p>
+
+              <details className="presc-method">
+                <summary>
+                  <span className="presc-method-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 6h16" />
+                      <path d="M4 12h16" />
+                      <path d="M4 18h9" />
+                      <circle cx="18.5" cy="18" r="2.5" />
+                    </svg>
+                  </span>
+                  <span className="presc-method-copy">
+                    <span className="presc-method-title">How priorities and allocation work</span>
+                    <span className="presc-method-subtitle">Scoring, eligibility, priority bands, and inspector rules</span>
+                  </span>
+                  <span className="presc-method-action">
+                    <span className="presc-method-action-closed">View details</span>
+                    <span className="presc-method-action-open">Hide details</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true">
+                      <path d="m4 6 4 4 4-4" />
+                    </svg>
+                  </span>
+                </summary>
+
+                <div className="presc-method-body">
+                  <section className="presc-method-group" aria-labelledby="presc-method-scoring">
+                    <h4 id="presc-method-scoring">Score calculation and effective weights</h4>
+                    <p>
+                      Scores and ranks use current municipality-wide records. Barangay filters only narrow this list; registry, flag, date, and inspection filters do not recalculate operational priorities. A score is a relative inspection priority, not the probability of a violation.
+                    </p>
+                    <p>
+                      Burden = 3 × Red + 2 × Yellow + 4 × Black. Risk = 100 × burden ÷ highest municipal burden ({prescModel?.reference_max_burden ?? "unavailable"}); zero when no active flags exist. Counts are eligible geospatial records, not unique businesses. Barangays without active flags receive OPS 0.
+                    </p>
+                    <div
+                      className="presc-formula"
+                      role="math"
+                      aria-label="OPS equals W1 times Risk plus W2 times Sector plus W3 times Proximity, on a scale of 0 to 100"
+                    >
+                      <span className="presc-formula-result">OPS</span>
+                      <span className="presc-formula-op">=</span>
+                      <span className="presc-formula-term"><em>W<sub>1</sub></em> × Risk</span>
+                      <span className="presc-formula-op">+</span>
+                      <span className="presc-formula-term"><em>W<sub>2</sub></em> × Sector</span>
+                      <span className="presc-formula-op">+</span>
+                      <span className="presc-formula-term"><em>W<sub>3</sub></em> × Proximity</span>
+                      <span className="presc-formula-range">0–100</span>
+                    </div>
+                    <dl className="presc-value-grid">
+                      <div className="presc-value">
+                        <dt>Risk weight</dt>
+                        <dd>{prescWeight("w1")}</dd>
+                      </div>
+                      <div className="presc-value">
+                        <dt>Sector weight</dt>
+                        <dd>{prescWeight("w2")}</dd>
+                      </div>
+                      <div className="presc-value">
+                        <dt>Proximity weight</dt>
+                        <dd>{prescWeight("w3")}</dd>
+                      </div>
+                    </dl>
+                    {prescModel?.sector_note && <p>{prescModel.sector_note}</p>}
+                    <p>
+                      {prescModel?.location_note ? `${prescModel.location_note} ` : ""}
+                      Proximity = 100 − min(distance in km ÷ 20 × 100, 100).
+                    </p>
+                  </section>
+
+                  <section className="presc-method-group" aria-labelledby="presc-method-eligibility">
+                    <h4 id="presc-method-eligibility">Dispatch eligibility and exclusions</h4>
+                    <p>
+                      {prescModel?.eligibility_note || "Black flags remain risk context but cannot be dispatched. Recommendations skip Black-only barangays and targets with Assigned, Reassigned, or In Progress reports."}
+                    </p>
+                    <p>
+                      New field plans require dispatchable Red/Yellow targets. Black-only barangays are for administrative review; already-assigned targets are not double-booked.
+                    </p>
+                  </section>
+
+                  <section className="presc-method-group" aria-labelledby="presc-method-bands">
+                    <h4 id="presc-method-bands">Priority bands and tie-breaking</h4>
+                    <p>These are policy bands, not statistically calibrated violation categories.</p>
+                    <ul className="presc-band-list">
+                      <li>
+                        <strong><span className="presc-band-dot presc-band-dot--high" aria-hidden="true" />High priority</strong>
+                        <span>OPS ≥ 60</span>
+                      </li>
+                      <li>
+                        <strong><span className="presc-band-dot presc-band-dot--standard" aria-hidden="true" />Standard</strong>
+                        <span>OPS 30–59.9</span>
+                      </li>
+                      <li>
+                        <strong><span className="presc-band-dot presc-band-dot--monitor" aria-hidden="true" />Monitor</strong>
+                        <span>OPS below 30</span>
+                      </li>
+                    </ul>
+                    <p>Ties use weighted burden, then barangay name, then barangay ID.</p>
+                  </section>
+
+                  <section className="presc-method-group" aria-labelledby="presc-method-workforce">
+                    <h4 id="presc-method-workforce">Inspector availability and allocation rules</h4>
+                    <p>
+                      {prescWorkforce?.availability_rule || "Active inspectors without Assigned, Reassigned, or In Progress reports; shift and leave availability is not recorded."}
+                    </p>
+                    <p>
+                      {prescWorkforce?.allocation_rule || "Maximum one inspector per eligible business; allocations are limited to the top three eligible WLC-ranked barangays."}
+                    </p>
+                    <p>
+                      Highest WLC destinations receive inspectors first; remaining slots follow weighted burden using largest remainders. Confirm actual field availability before dispatch.
+                    </p>
+                    {prescWorkforce && (
+                      <dl className="presc-value-grid presc-value-grid--inspectors">
+                        <div className="presc-value">
+                          <dt>Active inspectors</dt>
+                          <dd>{prescWorkforce.active_inspectors}</dd>
+                        </div>
+                        <div className="presc-value">
+                          <dt>Available inspectors</dt>
+                          <dd>{prescWorkforce.available_inspectors}</dd>
+                        </div>
+                        <div className="presc-value">
+                          <dt>Allocation capacity</dt>
+                          <dd>{prescWorkforce.allocation_capacity ?? "—"}</dd>
+                        </div>
+                        <div className="presc-value">
+                          <dt>Recommended for this plan</dt>
+                          <dd>{prescWorkforce.allocated_inspectors}</dd>
+                        </div>
+                        <div className="presc-value">
+                          <dt>Unallocated inspectors</dt>
+                          <dd>{prescWorkforce.unallocated_inspectors}</dd>
+                        </div>
+                      </dl>
+                    )}
+                  </section>
+                </div>
               </details>
             </div>
 

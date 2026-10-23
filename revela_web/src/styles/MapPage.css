@@ -4,6 +4,76 @@
   min-width: 0;
 }
 
+/* The map page owns the viewport below the app navbar. The workspace flexes
+   into the remaining height instead of growing with the business result list. */
+.map-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* Map workspace gets the extra room from a tighter content gutter. */
+.saas-root.map-shell .saas-content {
+  gap: 0;
+}
+
+@media (min-width: 1201px) {
+  .saas-root.map-shell .saas-content {
+    padding-block: 24px;
+  }
+}
+
+.map-page > .map-page-header,
+.map-page > .saas-footer {
+  flex: 0 0 auto;
+}
+
+/* Keep the map the dominant surface: below this height the page scrolls
+   instead of squeezing the results list into an unusable strip. */
+.map-page > .map-layout {
+  flex: 1 1 auto;
+  min-height: 440px;
+}
+
+.map-page > .saas-footer {
+  margin-top: 0;
+}
+
+.map-layout > * {
+  min-height: 0;
+}
+
+/* The map itself must keep a usable drawing area even when the header is tall. */
+.map-canvas-container {
+  min-height: 220px;
+}
+
+/* Keep the layer bar on one row; the layer chips scroll horizontally. */
+.map-layer-bar {
+  flex-wrap: nowrap !important;
+}
+
+/* The stats strip is secondary information. Let it scroll horizontally on
+   narrower desktops rather than pushing the map down. */
+@media (min-width: 901px) and (max-width: 1500px) {
+  .map-stats-strip {
+    display: flex !important;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .map-stats-strip > * {
+    flex: 1 0 92px;
+    min-width: 92px;
+  }
+}
+
 .map-page-header {
   display: flex;
   flex-direction: column;
@@ -355,31 +425,49 @@
   white-space: nowrap;
 }
 
+/* Expanded controls share the disclosure card instead of drawing a second
+   card inside it. */
 .map-detection-controls {
   --detection-accent: var(--color-primary-dark);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(230px, 0.8fr);
   align-items: start;
-  flex: 1 1 100%;
   gap: 16px 24px;
   min-width: 0;
-  padding: 18px 20px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-modal-bg);
+  padding: 16px 20px 18px;
+  border-top: 1px solid var(--color-border-soft);
+  background: transparent;
 }
 
 .map-location-filters {
   display: grid;
   gap: 12px;
 }
+
+.map-sidebar-filters {
+  flex: 0 1 auto;
+  min-height: 120px;
+  max-height: min(280px, 45%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+
+/* Guarantees at least a couple of visible rows; the card list keeps its own
+   scrollbar while the count and pagination stay pinned. */
 .map-location-results {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  min-height: 120px;
+  overflow: hidden;
   margin: 0 0 16px;
   min-width: 0;
   color: var(--color-muted);
   font-size: 12px;
 }
 .map-location-count {
+  flex: 0 0 auto;
   margin: 0 0 8px;
   font-size: 11px;
   color: var(--color-muted);
@@ -424,6 +512,7 @@
 }
 .map-location-pagination {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
@@ -716,68 +805,203 @@ html.theme-dark .map-detection-controls {
   line-height: 1.6;
 }
 
+/* ── Detection controls disclosure ───────────────────────── */
+.map-detection-disclosure {
+  flex: 1 1 100%;
+  min-width: 0;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--color-primary) 26%,
+    var(--color-border)
+  );
+  border-radius: var(--radius-lg);
+  background: var(--color-modal-bg);
+  overflow: hidden;
+  transition:
+    border-color var(--duration-fast) ease,
+    background-color var(--duration-fast) ease;
+}
+
+/* Collapsed is the state that looked informational before: tint it and keep
+   a green edge so it reads as an interactive card. */
+.map-detection-disclosure.is-collapsed {
+  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-modal-bg));
+}
+
+.map-detection-disclosure:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--color-primary) 48%,
+    var(--color-border)
+  );
+}
+
 .map-detection-toggle {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
   width: 100%;
-  min-height: 42px;
-  margin-bottom: 8px;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-card);
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 1px);
+  background: transparent;
   color: var(--color-ink);
-  font: 600 13px var(--font-base);
+  font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--duration-fast) ease;
 }
 
 .map-detection-toggle:hover {
-  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
 }
 
 .map-detection-toggle:focus-visible {
   outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
+  outline-offset: -3px;
 }
 
-.map-detection-toggle-summary {
+.map-detection-toggle-icon {
+  display: inline-flex;
+  flex: 0 0 34px;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--color-primary) 22%,
+    transparent
+  );
+  border-radius: var(--radius-md);
+  background: var(--color-primary-light);
+  color: var(--color-primary-dark);
+}
+
+.map-detection-toggle-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.map-detection-toggle-copy {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  gap: 3px;
   min-width: 0;
-  flex: 1;
-  overflow: hidden;
+}
+
+.map-detection-toggle-title {
+  color: var(--color-ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.map-detection-toggle-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  min-width: 0;
   color: var(--color-muted);
-  font-size: 12px;
-  font-weight: 400;
-  text-overflow: ellipsis;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.map-detection-toggle-mode {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.map-detection-toggle-quota {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--color-primary) 22%,
+    var(--color-border)
+  );
+  border-radius: 999px;
+  background: var(--color-modal-bg);
+  color: var(--color-primary-dark);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
 .map-detection-toggle-action {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 5px;
-  color: var(--color-muted);
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0 11px;
+  border: 1px solid color-mix(
+    in srgb,
+    var(--color-primary) 42%,
+    var(--color-border)
+  );
+  border-radius: var(--radius-sm);
+  background: var(--color-modal-bg);
+  color: var(--color-primary-dark);
   font-size: 12px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  transition:
+    background-color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease;
+}
+
+.map-detection-toggle:hover .map-detection-toggle-action {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .map-detection-toggle-action svg {
   width: 14px;
   height: 14px;
+  flex: 0 0 auto;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
-  transition: transform 0.15s ease;
+  transition: transform var(--duration-fast) ease;
 }
 
 .map-detection-toggle[aria-expanded="true"] .map-detection-toggle-action svg {
   transform: rotate(180deg);
 }
 
-.map-detection-controls[hidden] {
-  display: none;
+/* Grid-row expansion keeps the transition smooth without measuring heights.
+   The collapsed content is inert, so it cannot be tabbed to while hidden. */
+.map-detection-expander {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--duration-normal) ease;
+}
+
+.map-detection-expander.is-collapsed {
+  grid-template-rows: 0fr;
+}
+
+.map-detection-expander-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+html.theme-dark .map-detection-toggle-action {
+  background: var(--color-card-alt);
 }
 
 .map-detection-allowance-state {
@@ -881,6 +1105,14 @@ html.theme-dark .map-detection-controls {
     gap: 14px 18px;
   }
 
+  .map-detection-toggle {
+    align-items: flex-start;
+  }
+
+  .map-detection-toggle-icon {
+    margin-top: 1px;
+  }
+
   .map-detection-allowance {
     display: flex;
     grid-column: 1 / -1;
@@ -918,6 +1150,14 @@ html.theme-dark .map-detection-controls {
   }
 }
 
+@container map-detection-toolbar (max-width: 380px) {
+  .map-detection-toggle-action {
+    flex: 1 1 100%;
+    min-height: 34px;
+    margin-left: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .map-detection-spinner {
     animation: none;
@@ -925,7 +1165,12 @@ html.theme-dark .map-detection-controls {
 
   .map-detection-mode-trigger,
   .map-detection-mode-trigger > svg,
-  .map-run-detection {
+  .map-run-detection,
+  .map-detection-disclosure,
+  .map-detection-toggle,
+  .map-detection-toggle-action,
+  .map-detection-toggle-action svg,
+  .map-detection-expander {
     transition: none;
   }
 }
@@ -942,6 +1187,18 @@ html.theme-dark .map-detection-controls {
 
 .priority-dispatch-queue {
   min-width: 0;
+}
+
+.map-side-panel > .priority-dispatch-queue {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: min(160px, 30%);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.map-side-panel > .map-side-panel-actions {
+  flex: 0 0 auto;
 }
 
 .priority-dispatch-queue > div:last-child {
@@ -1518,6 +1775,11 @@ html.theme-dark .api-usage-modal {
     flex-wrap: wrap;
   }
 
+  .map-page > .map-layout {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
   .map-layout {
     grid-template-columns: minmax(0, 1fr) !important;
   }
@@ -1526,9 +1788,34 @@ html.theme-dark .api-usage-modal {
     position: static !important;
     max-height: none !important;
   }
+
+  .map-canvas-container {
+    flex: 0 0 auto !important;
+    height: clamp(320px, 48dvh, 520px) !important;
+    min-height: 320px !important;
+  }
+
+  .map-layout > .map-side-panel.saas-card {
+    height: auto !important;
+    max-height: min(70dvh, 640px) !important;
+    overflow-y: auto !important;
+  }
+
+  .map-side-panel .map-sidebar-filters {
+    max-height: min(36dvh, 320px);
+  }
+
+  .map-side-panel .map-location-results {
+    flex: 0 1 auto;
+    max-height: 45dvh;
+  }
 }
 
 @media (max-width: 900px) {
+  .map-layer-bar {
+    flex-wrap: wrap !important;
+  }
+
   .map-layer-options {
     flex: 1 1 100% !important;
     flex-wrap: wrap !important;
