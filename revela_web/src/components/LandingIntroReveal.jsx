@@ -6,9 +6,27 @@ import { ROAD_POINTS } from "./landingMapRoad";
 import { useTheme } from "../context/themeContext";
 import { useLocation } from "react-router-dom";
 
-const SESSION_KEY = "revela.landing.intro.v12";
-const INTRO_FALLBACK_MS = 8500;
+const SESSION_KEY = "revela.landing.intro.v13";
+const ASSET_TIMEOUT_MS = 6000;
+const PLAYBACK_WATCHDOG_MS = 14000;
 let playedWithoutStorage = false;
+
+function markIntroPlayed() {
+  playedWithoutStorage = true;
+  try { window.sessionStorage.setItem(SESSION_KEY, "played"); } catch { /* Optional storage. */ }
+}
+
+function decodeImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      if (image.decode) image.decode().then(resolve, reject);
+      else resolve();
+    };
+    image.onerror = () => reject(new Error(`Could not load intro asset: ${src}`));
+    image.src = src;
+  });
+}
 
 const prefersReducedMotion = () => (
   typeof window !== "undefined" &&
@@ -37,21 +55,51 @@ export default function LandingIntroReveal({ children }) {
   const location = useLocation();
   const contentRef = useRef(null);
   const mapRef = useRef(null);
-  const [status, setStatus] = useState(() => {
+  const playbackStartedRef = useRef(null);
+  const [mapSource] = useState(() => (
+    typeof window !== "undefined" && window.innerWidth * window.devicePixelRatio > 1200
+      ? mapRoadsLarge : mapRoads
+  ));
+  const [phase, setPhase] = useState(() => {
     if (typeof window === "undefined") return "complete";
-    return location.state?.skipIntro || prefersReducedMotion() || hasAlreadyPlayed() ? "complete" : "playing";
+    return location.state?.skipIntro || prefersReducedMotion() || hasAlreadyPlayed() ? "complete" : "preparing";
   });
+  const isActive = phase !== "complete";
 
   useEffect(() => {
     if (!location.state?.skipIntro) return;
-    playedWithoutStorage = true;
-    try { window.sessionStorage.setItem(SESSION_KEY, "played"); } catch { /* Optional storage. */ }
+    markIntroPlayed();
   }, [location.state?.skipIntro]);
+
+  useEffect(() => {
+    if (phase !== "preparing") return undefined;
+    let active = true;
+    let ready = false;
+    const begin = () => {
+      if (!active || !ready || document.hidden) return;
+      window.clearTimeout(timeout);
+      markIntroPlayed();
+      playbackStartedRef.current = performance.now();
+      setPhase("drawing");
+    };
+    const timeout = window.setTimeout(() => {
+      if (active && !ready) { markIntroPlayed(); setPhase("complete"); }
+    }, ASSET_TIMEOUT_MS);
+    window.addEventListener("visibilitychange", begin);
+    Promise.all([decodeImage(mapSource), decodeImage(revelaLogo)])
+      .then(() => { ready = true; begin(); })
+      .catch(() => { if (active) { markIntroPlayed(); setPhase("complete"); } });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      window.removeEventListener("visibilitychange", begin);
+    };
+  }, [phase, mapSource]);
 
   // Non-scaling strokes use screen-pixel dash lengths. Measure each path at
   // its rendered size so the end of every street is drawn on all viewports.
   useLayoutEffect(() => {
-    if (status !== "playing" || !mapRef.current) return undefined;
+    if (phase === "preparing" || phase === "complete" || !mapRef.current) return undefined;
     const svg = mapRef.current;
     const measure = () => {
       const scale = svg.getBoundingClientRect().width / svg.viewBox.baseVal.width;
@@ -63,27 +111,27 @@ export default function LandingIntroReveal({ children }) {
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
     observer?.observe(svg);
     return () => observer?.disconnect();
-  }, [status]);
+  }, [phase]);
 
-  // Independent of animation events: always release the page.
+  // A watchdog is only for failed animation events or long background-tab
+  // interruptions. It never schedules the next visual phase.
   useEffect(() => {
-    if (status !== "playing") return undefined;
-
-    playedWithoutStorage = true;
-    try {
-      window.sessionStorage.setItem(SESSION_KEY, "played");
-    } catch {
-      // Retain once-per-mount-session behavior when storage is unavailable.
-    }
-
-    const timer = window.setTimeout(() => setStatus("complete"), INTRO_FALLBACK_MS);
-    return () => window.clearTimeout(timer);
-  }, [status]);
+    if (!playbackStartedRef.current || phase === "complete") return undefined;
+    const remaining = Math.max(0, PLAYBACK_WATCHDOG_MS - (performance.now() - playbackStartedRef.current));
+    const timer = window.setTimeout(() => setPhase("complete"), remaining);
+    const checkVisibility = () => {
+      if (!document.hidden && performance.now() - playbackStartedRef.current >= PLAYBACK_WATCHDOG_MS) {
+        setPhase("complete");
+      }
+    };
+    window.addEventListener("visibilitychange", checkVisibility);
+    return () => { window.clearTimeout(timer); window.removeEventListener("visibilitychange", checkVisibility); };
+  }, [phase]);
 
   // Hold the page still while the intro owns the screen. Cleanup always
   // restores the exact inline styles so scrolling and interaction come back.
   useEffect(() => {
-    if (status !== "playing") return undefined;
+    if (!isActive) return undefined;
 
     const scroller = contentRef.current?.querySelector(".landing-page");
     const bodyOverflow = document.body.style.overflow;
@@ -99,43 +147,52 @@ export default function LandingIntroReveal({ children }) {
       document.documentElement.style.overflow = rootOverflow;
       if (scroller) scroller.style.overflowY = scrollerOverflow;
     };
-  }, [status]);
+  }, [isActive]);
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return undefined;
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
     const handleChange = () => {
-      if (query.matches) setStatus("complete");
+      if (query.matches) setPhase("complete");
     };
 
     query.addEventListener?.("change", handleChange);
     return () => query.removeEventListener?.("change", handleChange);
   }, []);
 
-  const handleRevealEnd = (event) => {
-    if (event.animationName === "landing-opening-reveal") setStatus("complete");
+  const handleAnimationEnd = (event) => {
+    if (phase === "drawing" && event.target.classList.contains("landing-opening__roads") && event.animationName === "landing-opening-map-coast") {
+      setPhase("collapsing");
+    } else if (phase === "collapsing" && event.target.classList.contains("landing-opening__map") && event.animationName === "landing-opening-lines-out") {
+      setPhase("logo");
+    } else if (phase === "logo" && event.target.classList.contains("landing-opening__logo-jump") && event.animationName === "landing-opening-logo-jump") {
+      setPhase("revealing");
+    } else if (phase === "revealing" && event.target.classList.contains("landing-opening__cover") && event.animationName === "landing-opening-reveal") {
+      setPhase("complete");
+    }
   };
 
   const skipIntro = () => {
-    setStatus("complete");
+    markIntroPlayed();
+    setPhase("complete");
     window.requestAnimationFrame(() => document.querySelector(".landing-brand")?.focus({ preventScroll: true }));
   };
 
-  const roadsImage = { src: mapRoads, srcSet: `${mapRoads} 1200w, ${mapRoadsLarge} 1920w`, sizes: "100vw", alt: "", draggable: false };
+  const roadsImage = { src: mapSource, alt: "", draggable: false };
 
   return (
     <>
       <div
         ref={contentRef}
-        className={`landing-intro-content is-${status}`}
-        inert={status !== "complete"}
+        className={`landing-intro-content is-${phase === "complete" ? "complete" : "playing"}`}
+        inert={phase !== "complete"}
       >
         {children}
       </div>
 
-      {status === "playing" && <>
-        <div className="landing-opening" data-theme={isDark ? "dark" : "light"} aria-hidden="true">
-          <div className="landing-opening__cover" onAnimationEnd={handleRevealEnd} />
+      {phase !== "complete" && <>
+        <div className={`landing-opening is-${phase}`} data-theme={isDark ? "dark" : "light"} aria-hidden="true" onAnimationEnd={handleAnimationEnd}>
+          <div className="landing-opening__cover" />
           <div className="landing-opening__disc" />
 
           <div className="landing-opening__scene">

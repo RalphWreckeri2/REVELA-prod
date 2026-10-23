@@ -1279,7 +1279,10 @@
     transparent 0 calc(var(--intro-reveal) - 0.75px),
     #000 var(--intro-reveal)
   );
-  animation: landing-opening-reveal 1s cubic-bezier(0.55, 0, 0.3, 1) 6.93s both;
+}
+
+.landing-opening.is-revealing .landing-opening__cover {
+  animation: landing-opening-reveal 1s cubic-bezier(0.55, 0, 0.3, 1) both;
 }
 
 /* Fills the cover's hole until the logo has returned and the iris begins. */
@@ -1294,7 +1297,10 @@
   margin-top: calc((var(--intro-dot) + 2px) / -2);
   border-radius: 50%;
   background: var(--intro-background);
-  animation: landing-opening-disc-out 0.4s ease-out 6.93s forwards;
+}
+
+.landing-opening.is-revealing .landing-opening__disc {
+  animation: landing-opening-disc-out 0.4s ease-out forwards;
 }
 
 .landing-opening__scene {
@@ -1310,7 +1316,10 @@
   width: 100vw;
   height: 100dvh;
   transform-origin: center;
-  animation: landing-opening-lines-out 0.95s cubic-bezier(0.4, 0.06, 0.75, 1) 4.48s forwards;
+}
+
+.landing-opening:is(.is-collapsing, .is-logo, .is-revealing) .landing-opening__map {
+  animation: landing-opening-lines-out 0.95s cubic-bezier(0.4, 0.06, 0.75, 1) both;
 }
 
 .landing-opening__artwork {
@@ -1365,6 +1374,9 @@
     radial-gradient(circle at 59% 48%, #000 0 var(--intro-map-town), transparent calc(var(--intro-map-town) + 3%)),
     radial-gradient(circle at 78% 72%, #000 0 var(--intro-map-south), transparent calc(var(--intro-map-south) + 3%)),
     radial-gradient(circle at 22% 44%, #000 0 var(--intro-map-coast), transparent calc(var(--intro-map-coast) + 3%));
+}
+
+.landing-opening:is(.is-drawing, .is-collapsing, .is-logo, .is-revealing) .landing-opening__roads {
   animation:
     landing-opening-map-appear 0.28s ease-out 0.12s both,
     landing-opening-map-town 4.05s ease-out 0.2s both,
@@ -1390,12 +1402,18 @@
 .landing-opening__branch-light--first {
   -webkit-mask-image: radial-gradient(circle at 55% 78%, #000 0, transparent 7%);
   mask-image: radial-gradient(circle at 55% 78%, #000 0, transparent 7%);
+}
+
+.landing-opening:is(.is-drawing, .is-collapsing, .is-logo, .is-revealing) .landing-opening__branch-light--first {
   animation: landing-opening-neighborhood 0.88s ease-in-out 3.13s both;
 }
 
 .landing-opening__branch-light--second {
   -webkit-mask-image: radial-gradient(circle at 62% 62%, #000 0, transparent 7%);
   mask-image: radial-gradient(circle at 62% 62%, #000 0, transparent 7%);
+}
+
+.landing-opening:is(.is-drawing, .is-collapsing, .is-logo, .is-revealing) .landing-opening__branch-light--second {
   animation: landing-opening-neighborhood 0.8s ease-in-out 3.59s both;
 }
 
@@ -1416,13 +1434,15 @@
   stroke-dasharray: var(--line-length, 1600px) var(--line-length, 1600px);
   stroke-dashoffset: var(--line-length, 1600px);
   opacity: 0;
+}
+
+.landing-opening:is(.is-drawing, .is-collapsing, .is-logo, .is-revealing) .landing-opening__main-road {
   animation: landing-opening-line 2.95s ease-out 0.28s both;
 }
 
 .landing-opening__main-road--glow {
   stroke: var(--intro-primary-glow);
   stroke-width: 6;
-  filter: blur(2.5px);
 }
 
 .landing-opening__traveler {
@@ -1430,6 +1450,9 @@
   opacity: 0;
   filter: drop-shadow(0 0 4px var(--intro-primary-glow));
   offset-rotate: 0deg;
+}
+
+.landing-opening:is(.is-drawing, .is-collapsing, .is-logo, .is-revealing) .landing-opening__traveler {
   animation: landing-opening-traveler 1.25s linear 3s both;
 }
 
@@ -1481,9 +1504,12 @@ html.theme-dark .landing-opening-skip {
   box-shadow: var(--intro-dot-shadow);
   opacity: 0;
   transform-origin: 50% 50%;
+}
+
+.landing-opening:is(.is-collapsing, .is-logo, .is-revealing) .landing-opening__dot {
   animation:
-    landing-opening-dot 1.61s linear 5.32s both,
-    landing-opening-dot-glow 0.58s ease-out 5.35s both;
+    landing-opening-dot 1.61s linear 0.83s both,
+    landing-opening-dot-glow 0.58s ease-out 0.86s both;
 }
 
 .landing-opening__logo {
@@ -1499,7 +1525,10 @@ html.theme-dark .landing-opening-skip {
   width: 100%;
   opacity: 0;
   clip-path: circle(var(--intro-mask-start) at 50% 50%);
-  animation: landing-opening-logo-jump 1.5s linear 5.43s both;
+}
+
+.landing-opening:is(.is-logo, .is-revealing) .landing-opening__logo-jump {
+  animation: landing-opening-logo-jump 1.5s linear both;
   will-change: transform, clip-path, opacity;
 }
 

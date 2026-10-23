@@ -2390,7 +2390,7 @@ export default function MapPage() {
 
   const mapRef = useRef(null);
   const mapWorkspaceRef = useRef(null);
-  const [canStickMapWorkspace, setCanStickMapWorkspace] = useState(false);
+  const [mapLayoutMode, setMapLayoutMode] = useState("stacked");
   const detailModalCameraRef = useRef(null);
   const workflowSummaryShownRef = useRef(true);
 
@@ -2438,10 +2438,11 @@ export default function MapPage() {
 
     // The app header is outside .saas-content. Leave a small gap above the
     // workspace and below the scroller; never clip its toolbar or statistics.
-    const measure = () => setCanStickMapWorkspace(
-      window.innerWidth > 1200 &&
-      workspace.getBoundingClientRect().height + 16 + 24 <= scroller.clientHeight,
-    );
+    const measure = () => {
+      const fits = workspace.getBoundingClientRect().height + 16 + 24 <= scroller.clientHeight;
+      const desktop = window.matchMedia("(min-width: 1201px)").matches;
+      setMapLayoutMode(fits ? (desktop ? "sticky" : "stacked") : "ops-below");
+    };
     const frame = window.requestAnimationFrame(measure);
     const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
     observer?.observe(workspace);
@@ -4156,6 +4157,53 @@ export default function MapPage() {
     Purple: flags.filter(f => f.color === "Purple").length,
   };
 
+  // This same queue/actions block lives in the side panel when sticky fits,
+  // or beneath both grid columns when the workspace is taller than the viewport.
+  const opsAndActions = isAdmin && (
+    <>
+      <div className="priority-dispatch-queue" style={{ marginBottom: 14, background: "var(--color-input-bg)", padding: 12, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)" }}>
+        <p className="map-location-count">Municipal WLC ranks · independent of view filters · only eligible new targets</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <div className="priority-dispatch-icon" style={{ color: "var(--color-primary)", display: "flex" }}><Icon.AlertTriangle /></div>
+          <h4 style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Priority Dispatch Queue
+          </h4>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {priorityDispatchQueue.length === 0 ? (
+            <p className="priority-dispatch-empty">No barangays with targets eligible for a new inspection dispatch.</p>
+          ) : priorityDispatchQueue.map((r) => (
+            <div className="priority-dispatch-item" key={r.barangayID} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--color-modal-bg)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--color-border-soft)" }}>
+              <div>
+                <div className="priority-dispatch-name" style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", marginBottom: 2 }}>#{r.rank}. {r.barangayName}</div>
+                <div className="priority-dispatch-meta" style={{ fontSize: 10, color: "var(--color-muted)", fontWeight: 600 }}>
+                  OPS: <span style={{ color: r.ops_score >= 60 ? "#dc2626" : r.ops_score >= 30 ? "#d97706" : "#16a34a" }}>{r.ops_score}</span>
+                  <span style={{ margin: "0 4px" }}>&bull;</span>
+                  {wlcEligibilityLabel(r)}
+                </div>
+              </div>
+              <button className="ghost-btn priority-filter-btn" style={{ fontSize: 10, padding: "4px 10px" }}
+                onClick={() => { setSearch(r.barangayName); setFilterColor("all"); setLocationsPage(1); }}>
+                Filter
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="map-side-panel-actions" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+        <button className="primary-btn" style={{ width: "100%", justifyContent: "center", padding: "12px 14px", borderRadius: 12, fontSize: 13, fontWeight: 700, boxSizing: "border-box" }}
+          onClick={() => setIsBatchDispatchOpen(true)}>
+          <Icon.Send size={16} /> Batch Dispatch by Barangay
+        </button>
+        <button className="primary-btn" style={{ width: "100%", justifyContent: "center", padding: "12px 14px", borderRadius: 12, fontSize: 13, fontWeight: 700, boxSizing: "border-box" }}
+          onClick={() => setIsInspectorModalOpen(true)}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, flexShrink: 0 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
+          View Inspector Backlog
+        </button>
+      </div>
+    </>
+  );
+
   return (
     <DashboardLayout className="map-shell" user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
 
@@ -4518,10 +4566,10 @@ export default function MapPage() {
       )}
 
       {/* Map layout */}
-      <div className="map-layout" style={styles.mapLayout}>
+      <div className={`map-layout${mapLayoutMode === "ops-below" ? " map-layout--ops-below" : ""}`} style={styles.mapLayout}>
 
         {/* Left: map + layer controls */}
-        <div ref={mapWorkspaceRef} className={`map-workspace${canStickMapWorkspace ? " is-sticky" : ""}`} style={styles.mapColumn}>
+        <div ref={mapWorkspaceRef} className={`map-workspace${mapLayoutMode === "sticky" ? " is-sticky" : ""}`} style={styles.mapColumn}>
 
           {/* Layer toggle */}
           <div className="frosted-glass saas-card map-layer-bar" style={styles.layerBar}>
@@ -4763,87 +4811,12 @@ export default function MapPage() {
           </div>
 
           {/* Priority Dispatch Queue */}
-          {isAdmin && (
-            <div className="priority-dispatch-queue" style={{ marginBottom: 14, background: "var(--color-input-bg)", padding: 12, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border-soft)" }}>
-              <p className="map-location-count">Municipal WLC ranks · independent of view filters · only eligible new targets</p>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                <div className="priority-dispatch-icon" style={{ color: "var(--color-primary)", display: "flex" }}><Icon.AlertTriangle /></div>
-                <h4 style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", margin: 0, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                  Priority Dispatch Queue
-                </h4>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {priorityDispatchQueue.length === 0 ? (
-                  <p className="priority-dispatch-empty">
-                    No barangays with targets eligible for a new inspection dispatch.
-                  </p>
-                ) : priorityDispatchQueue.map((r) => (
-                  <div className="priority-dispatch-item" key={r.barangayID} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--color-modal-bg)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--color-border-soft)" }}>
-                    <div>
-                      <div className="priority-dispatch-name" style={{ fontSize: 12, fontWeight: 700, color: "var(--color-ink)", marginBottom: 2 }}>#{r.rank}. {r.barangayName}</div>
-                      <div className="priority-dispatch-meta" style={{ fontSize: 10, color: "var(--color-muted)", fontWeight: 600 }}>
-                        OPS: <span style={{ color: r.ops_score >= 60 ? "#dc2626" : r.ops_score >= 30 ? "#d97706" : "#16a34a" }}>{r.ops_score}</span>
-                        <span style={{ margin: "0 4px" }}>&bull;</span>
-                        {wlcEligibilityLabel(r)}
-                      </div>
-                    </div>
-                    <button
-                      className="ghost-btn priority-filter-btn"
-                      style={{ fontSize: 10, padding: "4px 10px" }}
-                      onClick={() => {
-                        setSearch(r.barangayName);
-                        setFilterColor("all");
-                        setLocationsPage(1);
-                      }}
-                    >
-                      Filter
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Action Buttons at Bottom */}
-          <div className="map-side-panel-actions" style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-            {isAdmin && (
-              <button
-                className="primary-btn"
-                style={{
-                  width: "100%",
-                  justifyContent: "center",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  boxSizing: "border-box",
-                }}
-                onClick={() => setIsBatchDispatchOpen(true)}
-              >
-                <Icon.Send size={16} /> Batch Dispatch by Barangay
-              </button>
-            )}
-            {isAdmin && (
-              <button
-                className="primary-btn"
-                style={{
-                  width: "100%",
-                  justifyContent: "center",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  boxSizing: "border-box",
-                }}
-                onClick={() => setIsInspectorModalOpen(true)}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, flexShrink: 0 }}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
-                View Inspector Backlog
-              </button>
-            )}
-          </div>
+          {mapLayoutMode !== "ops-below" && opsAndActions}
 
         </div>
+        {mapLayoutMode === "ops-below" && isAdmin && (
+          <div className="frosted-glass saas-card map-ops-workspace">{opsAndActions}</div>
+        )}
       </div>
 
       {/* Footer */}

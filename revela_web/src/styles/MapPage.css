@@ -46,13 +46,24 @@
 
 /* .saas-content is the page scroller and starts below the app header. A grid
    item sticks within .map-layout, so it releases before the in-flow footer.
-   The measured class is absent whenever the full workspace would not fit. */
+   The measured mode switches to the full-width OPS row if it cannot fit. */
 @media (min-width: 1201px) {
   .map-layout > .map-workspace.is-sticky {
     position: sticky;
     top: 16px;
     align-self: start;
   }
+}
+
+/* When zoom or a short viewport prevents the complete map workspace from
+   fitting below the header, move OPS and its actions beneath both columns.
+   The sidebar then ends with the bounded results list instead of leaving a
+   long empty area beside the map. */
+.map-layout--ops-below > .map-ops-workspace {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding: 16px;
+  overflow: visible;
 }
 
 /* The map keeps its own comfortable height instead of matching the sidebar,
