@@ -1319,7 +1319,7 @@ export default function AnalyticsPage() {
   }), [data]);
 
   return (
-    <DashboardLayout className="analytics-page" bottomBar={(
+    <DashboardLayout className={`analytics-page${activeTab === "prescriptive" ? " analytics-page--prescriptive" : ""}`} bottomBar={(
       <div className="analytics-tools">
         {showFloatingNav && !snapshotIsExpired && (
           <nav className="analytics-quick-nav" aria-label="Analytics quick navigation">
@@ -2904,12 +2904,15 @@ export default function AnalyticsPage() {
                   role="group"
                   aria-label="Inspector availability and plan allocation"
                 >
-                  <div className="presc-plan-summary-item">
+                  <div className="presc-plan-summary-item" aria-describedby="presc-inspector-count-help">
                     <span className="presc-plan-summary-label">Available inspectors</span>
                     <span className="presc-plan-summary-value">
                       <strong>{prescWorkforce.available_inspectors}</strong>
                       <span className="presc-plan-summary-unit">of {prescWorkforce.active_inspectors} active</span>
                     </span>
+                    <p className="presc-plan-summary-explainer" id="presc-inspector-count-help">
+                      Active means an enabled Inspector account, not someone online. Available means no Assigned, Reassigned, or In Progress report; confirm field availability separately.
+                    </p>
                   </div>
                   <div className="presc-plan-summary-item">
                     <span className="presc-plan-summary-label">Recommended for this plan</span>
@@ -2926,7 +2929,7 @@ export default function AnalyticsPage() {
                   <p className="presc-plan-summary-hint">
                     <strong>Allocation capacity: {prescWorkforce.allocation_capacity ?? "—"}</strong>
                     {` inspector${prescWorkforce.allocation_capacity === 1 ? "" : "s"}. `}
-                    Limited to eligible businesses in the top three eligible barangays; remaining available inspectors stay unallocated.
+                    Capacity is capped at six; unallocated counts unused capacity in this plan. Recommendations cover eligible businesses in up to three eligible barangays.
                   </p>
                 </div>
               )}
@@ -3173,7 +3176,7 @@ export default function AnalyticsPage() {
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 400px), 1fr))", gap: 24, marginBottom: 24 }}>
+            <div className="presc-results-grid">
               {/* Radar chart — top 8 */}
               <div className="tier-3-card saas-card frosted-glass" style={{ borderRadius: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
@@ -3294,7 +3297,7 @@ export default function AnalyticsPage() {
               </div>
 
               {/* Full WLC Rankings Table */}
-              <div className="tier-2-card saas-card frosted-glass" style={{ borderRadius: 12, minWidth: 0 }}>
+              <div className="tier-2-card saas-card frosted-glass presc-priority-card" style={{ borderRadius: 12, minWidth: 0 }}>
                 <div style={{ marginBottom: 16 }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>
                     Inspector Deployment Priority Table
@@ -3305,41 +3308,47 @@ export default function AnalyticsPage() {
                 </div>
 
                 {loading ? <Skeleton h={380} /> : (
-                  <div style={{ maxHeight: 400, overflow: "auto" }}>
-                    <table style={{ width: "100%", minWidth: 720, borderCollapse: "collapse", textAlign: "left" }}>
-                      <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 10 }}>
-                        <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>#</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Barangay</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>OPS</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Flagged</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>R / Y / B</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Priority</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Registry active-flag rate</th>
-                          <th style={{ padding: "10px 12px", fontWeight: 700 }}>Unregistered candidates</th>
+                  <div className="presc-priority-scroll" role="region" aria-label="Inspector deployment priorities" tabIndex={0}>
+                    <table className="presc-priority-table">
+                      <colgroup>
+                        <col className="presc-col-rank" />
+                        <col className="presc-col-barangay" />
+                        <col className="presc-col-ops" />
+                        <col className="presc-col-flagged" />
+                        <col className="presc-col-flags" />
+                        <col className="presc-col-priority" />
+                        <col className="presc-col-registry" />
+                        <col className="presc-col-candidates" />
+                      </colgroup>
+                      <thead>
+                        <tr>
+                          <th scope="col">#</th>
+                          <th scope="col">Barangay</th>
+                          <th scope="col" className="presc-numeric">OPS</th>
+                          <th scope="col" className="presc-numeric">Flagged</th>
+                          <th scope="col" className="presc-numeric">R / Y / B</th>
+                          <th scope="col">Priority</th>
+                          <th scope="col" className="presc-numeric">Registry flag rate</th>
+                          <th scope="col" className="presc-numeric">Unregistered candidates</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(presc?.rankings || []).map((row) => (
-                          <tr
-                            key={row.barangayID}
-                            className="ops-row"
-                            style={{ borderBottom: "1px solid rgba(226,232,240,0.35)", transition: "background 0.15s" }}
-                          >
-                            <td style={{ padding: "12px", fontWeight: 700, color: "var(--color-muted)", fontSize: 13 }}>
+                          <tr key={row.barangayID} className="ops-row">
+                            <td className="presc-rank-cell">
                               {row.rank <= 3
                                 ? <span style={{ color: row.rank === 1 ? COLOR.red : row.rank === 2 ? COLOR.yellow : COLOR.green, fontWeight: 800 }}>#{row.rank}</span>
                                 : `#${row.rank}`}
                             </td>
-                            <td style={{ padding: "12px", fontWeight: 600, color: "var(--color-ink)", fontSize: 13 }}>
-                              {row.barangayName}
-                              <div style={{ fontSize: 10, fontWeight: 400, color: "var(--color-muted)" }}>{wlcEligibilityLabel(row)}</div>
-                              {row.location_missing && row.inspection_required && <div style={{ fontSize: 10, fontWeight: 400, color: "var(--color-muted)" }}>Location missing — neutral proximity</div>}
+                            <td className="presc-barangay-cell">
+                              <strong>{row.barangayName}</strong>
+                              <small>{wlcEligibilityLabel(row)}</small>
+                              {row.location_missing && row.inspection_required && <small>Location missing — neutral proximity</small>}
                             </td>
-                            <td style={{ padding: "12px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <strong style={{ fontSize: 14, color: "var(--color-ink)", minWidth: 36 }}>{row.ops_score}</strong>
-                                <div className="ops-score-bar" style={{ width: 40 }}>
+                            <td className="presc-numeric">
+                              <div className="presc-ops-cell">
+                                <strong>{Number(row.ops_score ?? 0).toFixed(1)}</strong>
+                                <div className="ops-score-bar" aria-hidden="true">
                                   <div
                                     className="ops-score-fill"
                                     style={{
@@ -3352,35 +3361,34 @@ export default function AnalyticsPage() {
                                 </div>
                               </div>
                             </td>
-                            <td style={{ padding: "12px", color: "var(--color-muted)", fontSize: 13 }}>{row.flagged_count}</td>
-                            <td style={{ padding: "12px", fontSize: 12 }}>
-                              <span style={{ color: COLOR.red }}>{row.red_count}</span>
-                              {" / "}
-                              <span style={{ color: COLOR.yellow }}>{row.yellow_count}</span>
-                              {" / "}
-                              <span style={{ color: COLOR.black, fontWeight: 700 }}>{row.black_count}</span>
+                            <td className="presc-numeric presc-flagged-cell">{row.flagged_count}</td>
+                            <td className="presc-numeric">
+                              <div className="presc-flag-counts" role="group" aria-label={`Red ${row.red_count}, Yellow ${row.yellow_count}, Black ${row.black_count}`}>
+                                <span className="presc-flag-count presc-flag-count--red" style={{ color: COLOR.red }}><abbr title="Red">R</abbr><strong>{row.red_count}</strong></span>
+                                <span className="presc-flag-count presc-flag-count--yellow" style={{ color: COLOR.yellow }}><abbr title="Yellow">Y</abbr><strong>{row.yellow_count}</strong></span>
+                                <span className="presc-flag-count presc-flag-count--black" style={{ color: COLOR.black }}><abbr title="Black">B</abbr><strong>{row.black_count}</strong></span>
+                              </div>
                             </td>
-                            <td style={{ padding: "12px" }}>
-                              <span style={{
-                                padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+                            <td>
+                              <span className="presc-priority-badge" style={{
                                 ...riskBadgeStyle(row.risk_level),
                                 ...(row.priority_color ? { color: row.priority_color, borderColor: row.priority_color } : {}),
                               }}>
                                 {row.priority_label || row.risk_level}
                               </span>
                             </td>
-                            <td style={{ padding: "12px", fontSize: 12 }}>
-                              {registryFlagRateLabel(row.registry_active_flag_rate)}
-                              <div style={{ fontSize: 10, color: "var(--color-muted)" }}>{row.registry_flagged_count ?? "—"} / {row.total_registered ?? "—"} registry businesses</div>
+                            <td className="presc-numeric presc-registry-cell">
+                              <strong>{registryFlagRateLabel(row.registry_active_flag_rate)}</strong>
+                              <small>{row.registry_flagged_count ?? "—"} / {row.total_registered ?? "—"} registry businesses</small>
                             </td>
-                            <td style={{ padding: "12px", fontSize: 12 }}>{row.unregistered_candidate_count ?? "—"}</td>
+                            <td className="presc-numeric presc-candidates-cell">{row.unregistered_candidate_count ?? "—"}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 )}
-                <p style={{ fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>Registry rate counts unique current Red/Yellow/Black registry businesses, including those without mapped records, against the same registry population; N/A means no denominator. It is not a confirmed-violation rate. Unregistered candidates are Red records with no registry match.</p>
+                <p className="presc-priority-note">Registry flag rate counts unique current Red/Yellow/Black registry businesses, including those without mapped records, against the same registry population; N/A means no denominator. It is not a confirmed-violation rate. Unregistered candidates are Red records with no registry match.</p>
               </div>
             </div>
           </section>
