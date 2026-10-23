@@ -1,11 +1,13 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/authContext";
 import { requestOtpRequest, resetPasswordRequest, verify2faRequest } from "../services/api";
 import { changePasswordRequest } from "../services/authService";
 import "../styles/LoginPage.css";
 import Swal from "sweetalert2";
 import sealImg from "../assets/seal.png";
+import revelaLogo from "../assets/logo.png";
+import { usePublicPageTransition } from "../context/publicPageTransitionContext";
 import TermsPage from "../components/TermsPage";
 import PrivacyPage from "../components/PrivacyPage";
 import CookiePolicyPage from "../components/CookiePolicyPage";
@@ -99,6 +101,15 @@ const ALLOWED_ROLES = ["Admin", "SUPER_ADMIN", "System Administrator"];
 export default function LoginPage() {
   const { login, completeLogin, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const { toHome } = usePublicPageTransition();
+  const headingRef = useRef(null);
+  const fromLanding = location.state?.publicTransition === true;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => headingRef.current?.focus({ preventScroll: true }), fromLanding ? 500 : 0);
+    return () => window.clearTimeout(timer);
+  }, [fromLanding]);
 
   // -- 2FA
   const [loginStep, setLoginStep] = useState("credentials");
@@ -363,13 +374,9 @@ export default function LoginPage() {
   const stepLabel = ["", "Step 1 of 3 — Identify Account", "Step 2 of 3 — Enter OTP", "Step 3 of 3 — New Password"];
 
   return (
-    <div className="login-root">
-      <div className="topo-overlay" />
-      <div className="orb orb-tl" />
-      <div className="orb orb-br" />
-      <div className="orb orb-mid" />
+    <div className={`login-root${fromLanding ? " is-public-transition" : ""}`}>
 
-      <button className="login-back-button" type="button" onClick={() => navigate("/")}>
+      <button className="login-back-button" type="button" onClick={toHome}>
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="m15 18-6-6 6-6M9 12h12" />
         </svg>
@@ -378,9 +385,8 @@ export default function LoginPage() {
 
       <div className="login-card">
 
-        {/* ── LEFT PANEL — unchanged ── */}
+        {/* ── LEFT BRAND PANEL ── */}
         <div className="left-panel">
-          <div className="left-inner-orb" />
           <div className="seal-row">
             <img src={sealImg} alt="Seal of Mataasnakahoy" className="seal" />
             <div>
@@ -391,11 +397,11 @@ export default function LoginPage() {
           </div>
           <div className="left-brand">
             <div className="gold-bar" />
-            <p className="powered-by">Powered by</p>
+            <img className="login-brand-logo" src={revelaLogo} alt="" />
             <h1 className="wordmark">REVELA</h1>
-            <p className="tagline">Geospatial Business<br />Intelligence System</p>
+            <p className="tagline">Local insight. Clearer decisions.</p>
             <div className="brand-divider" />
-            <p className="brand-desc">Compliance Monitoring &amp;<br />Non-Registered Business Detection</p>
+            <p className="brand-desc">Location-based business monitoring and inspection support.</p>
           </div>
         </div>
 
@@ -406,7 +412,7 @@ export default function LoginPage() {
             <span className="portal-label">BPLO Admin Portal</span>
           </div>
 
-          <h2 className="form-heading">{loginStep === "credentials" ? "Welcome back" : "Two-Step Verification"}</h2>
+          <h2 className="form-heading" ref={headingRef} tabIndex={-1}>{loginStep === "credentials" ? "Welcome back" : "Two-Step Verification"}</h2>
           <p className="form-sub">{loginStep === "credentials" ? "Sign in to access the compliance dashboard" : "Secure your account"}</p>
 
           <Alert type="error" message={loginError} />

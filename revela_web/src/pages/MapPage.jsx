@@ -2389,6 +2389,8 @@ export default function MapPage() {
   const { isLoaded, loadError } = useGoogleMapsScript();
 
   const mapRef = useRef(null);
+  const mapWorkspaceRef = useRef(null);
+  const [canStickMapWorkspace, setCanStickMapWorkspace] = useState(false);
   const detailModalCameraRef = useRef(null);
   const workflowSummaryShownRef = useRef(true);
 
@@ -2428,6 +2430,29 @@ export default function MapPage() {
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const [opsRankings, setOpsRankings] = useState([]);
+
+  useEffect(() => {
+    const workspace = mapWorkspaceRef.current;
+    const scroller = workspace?.closest(".saas-content");
+    if (!workspace || !scroller) return undefined;
+
+    // The app header is outside .saas-content. Leave a small gap above the
+    // workspace and below the scroller; never clip its toolbar or statistics.
+    const measure = () => setCanStickMapWorkspace(
+      window.innerWidth > 1200 &&
+      workspace.getBoundingClientRect().height + 16 + 24 <= scroller.clientHeight,
+    );
+    const frame = window.requestAnimationFrame(measure);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    observer?.observe(workspace);
+    observer?.observe(scroller);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
 
   const showWorkflowOperationSummary = useCallback(async (operation, outcome = {}) => {
     const config = {
@@ -4496,7 +4521,7 @@ export default function MapPage() {
       <div className="map-layout" style={styles.mapLayout}>
 
         {/* Left: map + layer controls */}
-        <div style={styles.mapColumn}>
+        <div ref={mapWorkspaceRef} className={`map-workspace${canStickMapWorkspace ? " is-sticky" : ""}`} style={styles.mapColumn}>
 
           {/* Layer toggle */}
           <div className="frosted-glass saas-card map-layer-bar" style={styles.layerBar}>
@@ -4721,7 +4746,7 @@ export default function MapPage() {
                 <button type="button" className="ghost-btn" onClick={() => fetchFlags(false)}>Retry</button></div>
             ) : visibleFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
               <p className="map-location-count" role="status">{visibleFlags.length} matching {visibleFlags.length === 1 ? "location" : "locations"}</p>
-              <div style={styles.flagList}>
+              <div className="map-location-list">
                 {locations.data.map(flag => <button key={flag.id} type="button" className="map-location-card"
                   onClick={() => handleMarkerClick(flag.id)}>
                   <span className="map-location-color" style={{ background: getFlagColor(flag.color).marker }} aria-hidden="true" />
@@ -5312,7 +5337,6 @@ const styles = {
   statCard: { display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "center", textAlign: "left", gap: 4, padding: "12px 10px", borderRadius: "var(--radius-lg)", minWidth: 0, overflow: "hidden" },
 
   sidePanel: { borderRadius: "var(--radius-lg)", padding: 16, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 },
-  flagList: { overflowY: "auto", overscrollBehavior: "contain", display: "flex", flexDirection: "column", gap: 8, maxHeight: "clamp(260px, 36vh, 400px)", minHeight: 0, paddingRight: 2 },
   flagCard: { border: "1px solid", borderRadius: "var(--radius-md)", padding: "12px 14px", cursor: "pointer", transition: "all 0.12s" },
   flagName: { fontSize: 13, fontWeight: 700, color: "var(--color-ink)", marginBottom: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   flagMeta: { fontSize: 11, color: "var(--color-muted)" },

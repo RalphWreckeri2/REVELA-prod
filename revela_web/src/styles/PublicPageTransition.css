@@ -1,0 +1,90 @@
+.public-route-layer {
+  --public-route-color: #197451;
+  --public-route-glow: rgba(28, 140, 92, 0.22);
+  position: fixed;
+  z-index: 5;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.public-route-layer[data-theme="dark"] {
+  --public-route-color: #fff;
+  --public-route-glow: rgba(255, 255, 255, 0.24);
+}
+
+.public-route-layer__map {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(90deg,
+    rgba(247, 248, 243, 0.48) 0%,
+    rgba(247, 248, 243, 0.71) 28%,
+    rgba(247, 248, 243, 0.76) 55%,
+    rgba(247, 248, 243, 0.53) 80%,
+    rgba(247, 248, 243, 0.38) 100%), var(--public-map);
+  background-position: center, var(--public-map-x) center;
+  background-size: 100% 100%, var(--public-map-width) var(--public-map-height);
+  background-repeat: no-repeat;
+}
+
+.public-route-layer[data-theme="dark"] .public-route-layer__map {
+  background-image: linear-gradient(90deg,
+    rgba(16, 21, 18, 0.51) 0%,
+    rgba(16, 21, 18, 0.7) 28%,
+    rgba(16, 21, 18, 0.75) 55%,
+    rgba(16, 21, 18, 0.55) 80%,
+    rgba(16, 21, 18, 0.4) 100%), var(--public-map);
+}
+
+.public-route-layer svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.public-route-layer__glow,
+.public-route-layer__line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 0;
+}
+.public-route-layer__glow { stroke: var(--public-route-glow); stroke-width: 10; filter: blur(4px); }
+.public-route-layer__line { stroke: var(--public-route-color); stroke-width: 2.7; }
+.public-route-layer__dot {
+  fill: var(--public-route-color);
+  filter: drop-shadow(0 0 5px var(--public-route-color));
+}
+
+/* Only the road outside the card remains after the hand-off. The connector
+   exists briefly while the old landing content fades, then disappears. */
+.public-route-layer--settled svg,
+.public-route-layer--idle svg { opacity: 0.84; transition: opacity 260ms ease-out; }
+
+.public-route-layer--to-login .public-route-layer__map { animation: public-map-in 360ms ease-out both; }
+.public-route-layer--to-login .public-route-layer__connector path { animation: public-route-draw 370ms ease-out both; }
+.public-route-layer--to-login .public-route-layer__connector { animation: public-connector-out 230ms 410ms both; }
+.public-route-layer--to-login .public-route-layer__road path { animation: public-route-draw 310ms 365ms ease-out both; }
+.public-route-layer--to-login .public-route-layer__dot { animation: public-dot-in 140ms 620ms both; }
+.public-route-layer--to-home { animation: public-map-out 400ms 300ms both; }
+.public-route-layer--to-home .public-route-layer__road path { animation: public-route-retract 600ms ease-in both; }
+.public-route-layer--to-home .public-route-layer__dot { animation: public-map-out 160ms both; }
+
+body:has(.public-route-layer--to-login) .landing-page-content,
+body:has(.public-route-layer--to-login) .landing-header { opacity: 0; transition: opacity 360ms ease-out; }
+body:has(.public-route-layer--to-home) .login-card,
+body:has(.public-route-layer--to-home) .login-back-button { opacity: 0; transition: opacity 290ms ease-in; }
+
+@keyframes public-map-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes public-map-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes public-route-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes public-route-retract { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 1; } }
+@keyframes public-connector-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes public-dot-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .public-route-layer *, .public-route-layer,
+  body:has(.public-route-layer) .landing-page-content { animation: none !important; transition: none !important; }
+}

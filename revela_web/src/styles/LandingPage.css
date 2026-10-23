@@ -5,6 +5,8 @@
   --landing-muted: #52645f;
   --landing-accent: #4e896b;
   --landing-line: rgba(13, 73, 56, 0.14);
+  --landing-route: #197451;
+  --landing-route-glow: rgba(28, 140, 92, 0.22);
   --landing-overlay: linear-gradient(
     90deg,
     #f7f8f3 0%,
@@ -31,6 +33,8 @@
   --landing-muted: #b4c5bb;
   --landing-accent: #83c6a1;
   --landing-line: rgba(226, 241, 233, 0.18);
+  --landing-route: #fff;
+  --landing-route-glow: rgba(255, 255, 255, 0.24);
   --landing-overlay: linear-gradient(
     90deg,
     #101512 0%,
@@ -273,14 +277,58 @@
   overflow: visible;
 }
 
-.landing-page .landing-road-highlight__stroke {
+.landing-page .landing-road-highlight__stroke,
+.landing-page .landing-road-highlight__glow {
   fill: none;
-  stroke: rgba(13, 73, 56, 0.64);
-  stroke-width: 5;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
+}
+
+.landing-page .landing-road-highlight__stroke {
+  stroke: var(--landing-route);
+  stroke-width: 2.7;
+}
+
+.landing-page .landing-road-highlight__glow {
+  stroke: var(--landing-route-glow);
+  stroke-width: 10;
+  filter: blur(4px);
+}
+
+.landing-page .landing-road-highlight__branch-core,
+.landing-page .landing-road-highlight__branch-glow {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0;
+}
+
+.landing-page .landing-road-highlight__branch-core {
+  stroke: var(--landing-route);
+  stroke-width: 1.25;
+}
+
+.landing-page .landing-road-highlight__branch-glow {
+  stroke: var(--landing-route-glow);
+  stroke-width: 5;
+  filter: blur(2px);
+}
+
+.landing-page .landing-road-highlight__tip {
+  fill: #b4edbc;
+  stroke: var(--landing-route);
+  stroke-width: 1.5;
+  filter: drop-shadow(0 0 5px var(--landing-route));
+}
+
+.landing-page[data-theme="dark"] .landing-road-highlight__tip {
+  fill: #fff;
+  stroke: #fff;
+  filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.65));
 }
 
 .landing-page .landing-hero-inner {
@@ -534,28 +582,29 @@
   display: none;
 }
 
-.landing-page .landing-placeholder-section {
+.landing-page .landing-content-section {
   position: relative;
   display: flex;
-  height: 100vh;
-  height: 100svh;
-  min-height: 100vh;
-  min-height: 100svh;
+  min-height: 75svh;
   align-items: center;
-  padding: 100px 32px;
+  padding: 150px 48px;
   background: var(--landing-surface);
   color: var(--landing-ink);
   scroll-margin-top: 0;
 }
 
-.landing-page .landing-placeholder-section--alternate {
+.landing-page .landing-content-section--alternate {
   background: var(--landing-hero-surface);
 }
 
 .landing-page .landing-section-inner {
   position: relative;
   z-index: 2;
-  width: min(100%, 1050px);
+  display: grid;
+  width: min(100%, 1120px);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: clamp(130px, 13vw, 210px);
+  align-items: center;
   margin-inline: auto;
 }
 
@@ -614,10 +663,7 @@
     font-size: 17px;
   }
 
-  .landing-page .landing-feature-card {
-    min-height: 220px;
-    padding: 26px;
-  }
+  .landing-page .landing-feature-card { padding: 26px; }
 
   .landing-page .landing-feature-card h3 {
     font-size: 16px;
@@ -677,7 +723,7 @@
 }
 
 .landing-page #contact {
-  padding-bottom: 120px;
+  padding-bottom: 180px;
 }
 
 .landing-page .landing-section-kicker {
@@ -687,31 +733,42 @@
   letter-spacing: 0.17em;
 }
 
-.landing-page .landing-placeholder-section h2 {
+.landing-page .landing-content-section h2 {
   margin-top: 10px;
   color: var(--landing-ink);
-  font-size: clamp(32px, 4vw, 48px);
+  font-size: clamp(32px, 3.5vw, 52px);
+  line-height: 1.12;
   letter-spacing: -0.045em;
 }
 
-.landing-page .landing-placeholder-copy {
-  max-width: 700px;
-  margin-top: 14px;
+.landing-page .landing-section-lead > p:not(.landing-section-kicker),
+.landing-page .landing-section-summary,
+.landing-page .landing-section-detail p {
+  margin-top: 18px;
   color: var(--landing-muted);
-  font-size: 15px;
+  font-size: clamp(14px, 1.3vw, 17px);
   line-height: 1.7;
 }
 
+.landing-page .landing-section-detail p + p { margin-top: 18px; }
+.landing-page .landing-detail-rule { display: block; width: 36px; height: 3px; background: #bd9654; }
+.landing-page .landing-section-detail h3 { margin-top: 22px; font-size: 21px; }
+.landing-page .landing-section-detail a { color: var(--landing-ink); font-weight: 700; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.landing-page .landing-support-detail { max-width: 440px; }
+.landing-page #contact .landing-login { margin-top: 26px; }
+
 .landing-page .landing-feature-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 30px;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: clamp(130px, 13vw, 210px);
+  row-gap: 28px;
+  margin-top: 62px;
 }
 
 .landing-page .landing-feature-card {
-  min-height: 190px;
-  padding: 20px;
+  min-height: 168px;
+  padding: 24px;
   border: 1px solid var(--landing-line);
   border-radius: 14px;
   background: var(--landing-surface);
@@ -720,13 +777,13 @@
 .landing-page .landing-feature-card h3 {
   margin-top: 14px;
   color: var(--landing-ink);
-  font-size: 14px;
+  font-size: 17px;
 }
 
 .landing-page .landing-feature-card p {
   margin-top: 8px;
   color: var(--landing-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
 }
 
@@ -870,6 +927,8 @@
 }
 
 @media (max-width: 900px) {
+  .landing-page .landing-section-inner,
+  .landing-page .landing-feature-grid { column-gap: 100px; }
   .landing-page .landing-hero {
     --landing-map-position: 64%;
   }
@@ -902,6 +961,31 @@
 }
 
 @media (max-width: 640px) {
+  .landing-page .landing-content-section {
+    min-height: 0;
+    padding: 110px 22px 120px 50px;
+  }
+
+  .landing-page #contact { padding-bottom: 180px; }
+
+  .landing-page .landing-section-inner { display: block; }
+
+  .landing-page .landing-section-detail,
+  .landing-page .landing-section-summary { margin-top: 46px; }
+
+  .landing-page .landing-feature-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 26px;
+    margin-top: 56px;
+  }
+
+  .landing-page .landing-feature-card { min-height: 0; padding: 20px; }
+
+  .landing-page .landing-section-lead > p:not(.landing-section-kicker),
+  .landing-page .landing-section-summary,
+  .landing-page .landing-section-detail p { font-size: 14px; }
+
   .landing-page .landing-header {
     top: 8px;
   }
@@ -1078,23 +1162,6 @@
     text-decoration: none;
   }
 
-  .landing-page .landing-placeholder-section {
-    padding: 90px 20px;
-  }
-
-  .landing-page #contact {
-    padding-bottom: 150px;
-  }
-
-  .landing-page .landing-feature-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .landing-page .landing-feature-card {
-    min-height: 150px;
-    padding: 14px;
-  }
-
   .landing-page .landing-footer-inner {
     width: calc(100% - 40px);
     align-items: flex-start;
@@ -1134,9 +1201,17 @@
     transition-duration: 0.01ms !important;
   }
 
-  .landing-page .landing-road-highlight__stroke {
+  .landing-page .landing-road-highlight__stroke,
+  .landing-page .landing-road-highlight__glow,
+  .landing-page .landing-road-highlight__branch-core,
+  .landing-page .landing-road-highlight__branch-glow {
     stroke-dashoffset: 0 !important;
   }
+
+  .landing-page .landing-road-highlight__branch-core { opacity: 0.28 !important; }
+  .landing-page .landing-road-highlight__branch-glow { opacity: 0.1 !important; }
+
+  .landing-page .landing-road-highlight__tip { display: none !important; }
 }
 
 /* Map lines converge into a small portal, the mark springs out and back,
@@ -1152,6 +1227,13 @@
   --intro-mask-start: 7px;
   --intro-mask-max: 30px;
   --intro-jump: -34px;
+  --intro-background: #fff;
+  --intro-primary-line: rgba(13, 73, 56, 0.86);
+  --intro-primary-glow: rgba(35, 126, 87, 0.22);
+  --intro-lumen: #237e56;
+  --intro-dot-color: #4e896b;
+  --intro-dot-shadow: 0 0 10px rgba(201, 166, 94, 0.22), 0 0 18px rgba(78, 137, 107, 0.14);
+  --intro-dot-shadow-bright: 0 0 12px rgba(78, 137, 107, 0.42), 0 0 23px rgba(78, 137, 107, 0.22);
   position: fixed;
   z-index: 9999;
   inset: 0;
@@ -1162,19 +1244,30 @@
   pointer-events: auto;
 }
 
+.landing-opening[data-theme="dark"] {
+  /* Matches the dark landing surface visible through the opening portal. */
+  --intro-background: #101512;
+  --intro-primary-line: rgba(255, 255, 255, 0.86);
+  --intro-primary-glow: rgba(255, 255, 255, 0.21);
+  --intro-lumen: #fff;
+  --intro-dot-color: #fff;
+  --intro-dot-shadow: 0 0 9px rgba(255, 255, 255, 0.32), 0 0 17px rgba(255, 255, 255, 0.12);
+  --intro-dot-shadow-bright: 0 0 12px rgba(255, 255, 255, 0.48), 0 0 23px rgba(255, 255, 255, 0.23);
+}
+
 @property --intro-reveal {
   syntax: "<length>";
   inherits: false;
   initial-value: 7px;
 }
 
-/* White everywhere except the portal-sized hole. The animatable mask radius
+/* Theme surface everywhere except the portal-sized hole. The animatable mask radius
    grows that hole so the page appears from the center without a hard cut. */
 .landing-opening__cover {
   position: absolute;
   z-index: 0;
   inset: 0;
-  background: #fff;
+  background: var(--intro-background);
   -webkit-mask-image: radial-gradient(
     circle at 50% 50%,
     transparent 0 calc(var(--intro-reveal) - 0.75px),
@@ -1185,7 +1278,7 @@
     transparent 0 calc(var(--intro-reveal) - 0.75px),
     #000 var(--intro-reveal)
   );
-  animation: landing-opening-reveal 1s cubic-bezier(0.55, 0, 0.3, 1) 4.2s both;
+  animation: landing-opening-reveal 1s cubic-bezier(0.55, 0, 0.3, 1) 4.46s both;
 }
 
 /* Fills the cover's hole until the logo has returned and the iris begins. */
@@ -1199,52 +1292,107 @@
   margin-left: calc((var(--intro-dot) + 2px) / -2);
   margin-top: calc((var(--intro-dot) + 2px) / -2);
   border-radius: 50%;
-  background: #fff;
-  animation: landing-opening-disc-out 0.4s ease-out 4.2s forwards;
+  background: var(--intro-background);
+  animation: landing-opening-disc-out 0.4s ease-out 4.46s forwards;
 }
 
 .landing-opening__scene {
   position: absolute;
   z-index: 2;
   inset: 0;
+  display: grid;
+  place-items: center;
   pointer-events: none;
 }
 
-.landing-opening__lines {
+.landing-opening__map {
+  width: min(85vw, 950px);
+  aspect-ratio: 1200 / 675;
+  transform-origin: center;
+  animation: landing-opening-lines-out 0.38s cubic-bezier(0.45, 0, 0.75, 1) 2.43s forwards;
+}
+
+.landing-opening__artwork {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  -webkit-mask-image: radial-gradient(ellipse 76% 60% at 55% 48%, #000 28%, transparent 94%);
+  mask-image: radial-gradient(ellipse 76% 60% at 55% 48%, #000 28%, transparent 94%);
+}
+
+@property --intro-map-town {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+@property --intro-map-south {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+@property --intro-map-coast {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
+.landing-opening__roads {
   display: block;
   width: 100%;
   height: 100%;
-  overflow: visible;
-  transform-box: view-box;
-  transform-origin: 50% 50%;
-  animation: landing-opening-lines-out 0.45s ease-in 1.95s forwards;
+  object-fit: contain;
+  opacity: 0;
+  -webkit-mask-image:
+    radial-gradient(circle at 59% 48%, #000 0 var(--intro-map-town), transparent calc(var(--intro-map-town) + 3%)),
+    radial-gradient(circle at 78% 72%, #000 0 var(--intro-map-south), transparent calc(var(--intro-map-south) + 3%)),
+    radial-gradient(circle at 22% 44%, #000 0 var(--intro-map-coast), transparent calc(var(--intro-map-coast) + 3%));
+  mask-image:
+    radial-gradient(circle at 59% 48%, #000 0 var(--intro-map-town), transparent calc(var(--intro-map-town) + 3%)),
+    radial-gradient(circle at 78% 72%, #000 0 var(--intro-map-south), transparent calc(var(--intro-map-south) + 3%)),
+    radial-gradient(circle at 22% 44%, #000 0 var(--intro-map-coast), transparent calc(var(--intro-map-coast) + 3%));
+  animation:
+    landing-opening-map-appear 0.2s ease-out 0.12s both,
+    landing-opening-map-town 1.35s ease-out 0.18s both,
+    landing-opening-map-south 1.25s ease-out 0.52s both,
+    landing-opening-map-coast 1.25s ease-out 0.68s both;
 }
 
-.landing-opening__line {
+.landing-opening[data-theme="dark"] .landing-opening__roads {
+  filter: brightness(0) invert(1);
+}
+
+.landing-opening__road-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.landing-opening__main-road {
   fill: none;
-  stroke: rgba(78, 137, 107, 0.52);
-  stroke-width: 1.15;
+  stroke: var(--intro-primary-line);
+  stroke-width: 1.9;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-dasharray: 1 1;
-  stroke-dashoffset: 1;
+  stroke-dasharray: var(--line-length, 1600px) var(--line-length, 1600px);
+  stroke-dashoffset: var(--line-length, 1600px);
   opacity: 0;
-  animation: landing-opening-line var(--line-duration) cubic-bezier(0.55, 0, 0.35, 1) var(--line-delay) both;
+  animation: landing-opening-line 1.48s ease-out 0.24s both;
 }
 
-.landing-opening__line--branch {
-  stroke: rgba(78, 137, 107, 0.34);
-  stroke-width: 0.95;
+.landing-opening__main-road--glow {
+  stroke: var(--intro-primary-glow);
+  stroke-width: 6;
+  filter: blur(2.5px);
 }
 
-.landing-opening__line--gold {
-  stroke: rgba(191, 155, 80, 0.44);
-  stroke-width: 1.05;
-}
-
-.landing-opening__line--curl {
-  stroke: rgba(78, 137, 107, 0.5);
-  stroke-width: 1.2;
+.landing-opening__traveler {
+  fill: var(--intro-lumen);
+  opacity: 0;
+  filter: drop-shadow(0 0 4px var(--intro-primary-glow));
+  offset-rotate: 0deg;
+  animation: landing-opening-traveler 1.02s linear 0.83s both;
 }
 
 .landing-opening__portal {
@@ -1264,13 +1412,13 @@
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: #4e896b;
-  box-shadow:
-    0 0 10px rgba(201, 166, 94, 0.22),
-    0 0 18px rgba(78, 137, 107, 0.14);
+  background: var(--intro-dot-color);
+  box-shadow: var(--intro-dot-shadow);
   opacity: 0;
   transform-origin: 50% 50%;
-  animation: landing-opening-dot 2.2s linear 2s both;
+  animation:
+    landing-opening-dot 2s linear 2.46s both,
+    landing-opening-dot-glow 0.58s ease-out 2.52s both;
 }
 
 .landing-opening__logo {
@@ -1286,7 +1434,7 @@
   width: 100%;
   opacity: 0;
   clip-path: circle(var(--intro-mask-start) at 50% 50%);
-  animation: landing-opening-logo-jump 1.5s linear 2.7s both;
+  animation: landing-opening-logo-jump 1.5s linear 2.96s both;
   will-change: transform, clip-path, opacity;
 }
 
@@ -1299,14 +1447,34 @@
 }
 
 @keyframes landing-opening-line {
-  0% { stroke-dashoffset: 1; opacity: 0; }
+  0% { stroke-dashoffset: var(--line-length, 1600px); opacity: 0; }
   8% { opacity: 1; }
   100% { stroke-dashoffset: 0; opacity: 1; }
 }
 
+@keyframes landing-opening-map-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes landing-opening-map-town {
+  from { --intro-map-town: 0%; }
+  to { --intro-map-town: 74%; }
+}
+
+@keyframes landing-opening-map-south {
+  from { --intro-map-south: 0%; }
+  to { --intro-map-south: 58%; }
+}
+
+@keyframes landing-opening-map-coast {
+  from { --intro-map-coast: 0%; }
+  to { --intro-map-coast: 59%; }
+}
+
 @keyframes landing-opening-lines-out {
   from { opacity: 1; transform: scale(1); }
-  to { opacity: 0; transform: scale(0.8); }
+  to { opacity: 0; transform: scale(0.02); }
 }
 
 @keyframes landing-opening-dot {
@@ -1380,6 +1548,19 @@
     --intro-mask-max: 25px;
     --intro-jump: -30px;
   }
+
+  .landing-opening__map { width: min(96vw, 600px); }
+}
+
+@keyframes landing-opening-traveler {
+  0% { opacity: 0; offset-distance: 0%; }
+  10%, 83% { opacity: 1; }
+  100% { opacity: 0; offset-distance: 100%; }
+}
+
+@keyframes landing-opening-dot-glow {
+  0%, 100% { box-shadow: var(--intro-dot-shadow); }
+  65% { box-shadow: var(--intro-dot-shadow-bright); }
 }
 
 @media (prefers-reduced-motion: reduce) {

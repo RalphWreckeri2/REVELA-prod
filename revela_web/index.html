@@ -2,6 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // Use ThemeProvider's saved preference and system fallback before CSS or
+      // the React intro can paint, so a saved dark landing never flashes white.
+      try {
+        const preference = localStorage.getItem("revela-theme");
+        if (preference === "dark" ||
+          (preference !== "light" && matchMedia("(prefers-color-scheme: dark)").matches)) {
+          document.documentElement.classList.add("theme-dark");
+        }
+      } catch {
+        if (matchMedia("(prefers-color-scheme: dark)").matches) {
+          document.documentElement.classList.add("theme-dark");
+        }
+      }
+    </script>
     <link rel="icon" type="image/png" href="/revela_icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>REVELA</title>

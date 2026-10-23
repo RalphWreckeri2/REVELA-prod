@@ -1,25 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-
-const MAP_WIDTH = 4096;
-const MAP_HEIGHT = 2301;
+import { MAP_WIDTH, MAP_HEIGHT, ROAD_POINTS } from "./landingMapRoad";
 const TIP_LEAD_RATIO = 0.4;
-
-/**
- * The prominent north–south road through Mataasnakahoy, traced in the
- * background image's native 4096 × 2301 pixel coordinates.
- */
-const ROAD_POINTS = [
-  [2954, 0], [2955, 200], [2952, 300], [2939, 400],
-  [2911, 500], [2875, 600], [2844, 700], [2820, 800],
-  [2799, 900], [2777, 1000], [2755, 1100], [2732, 1200],
-  [2702, 1300], [2662, 1400], [2615, 1500], [2563, 1600],
-  [2510, 1700], [2464, 1800], [2415, 1900], [2367, 2000],
-  [2336, 2100], [2320, 2200], [2316, 2301],
-];
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const format = (value) => (Number.isFinite(value) ? value.toFixed(2) : "0");
 const pointString = ([x, y]) => `${format(x)} ${format(y)}`;
+const cubic = (a, b, c, d, t) => {
+  const remaining = 1 - t;
+  return remaining ** 3 * a + 3 * remaining ** 2 * t * b + 3 * remaining * t ** 2 * c + t ** 3 * d;
+};
 
 function rectInContent(element, contentRect) {
   const rect = element.getBoundingClientRect();
@@ -32,7 +21,7 @@ function rectInContent(element, contentRect) {
   };
 }
 
-function buildRoute({ content, hero, about, features, contact, footer, header }) {
+function buildRoute({ content, hero, about, features, contact, footer }) {
   const contentRect = content.getBoundingClientRect();
   const width = content.clientWidth;
   const height = Math.max(content.clientHeight, content.scrollHeight);
@@ -109,97 +98,106 @@ function buildRoute({ content, hero, about, features, contact, footer, header })
   const featuresRect = rectInContent(features, contentRect);
   const contactRect = rectInContent(contact, contentRect);
   const footerRect = footer ? rectInContent(footer, contentRect) : null;
-  const aboutContentRect = about.querySelector(".landing-section-inner")
-    ? rectInContent(about.querySelector(".landing-section-inner"), contentRect)
-    : null;
+  const mobile = width <= 640;
+  const center = mobile ? 23 : width / 2;
+  // Both desktop columns reserve a central track; on phones text begins 50px
+  // in, leaving the narrow route lane to the left of the stacked content.
+  const inner = features.querySelector(".landing-section-inner");
+  const columnGap = inner ? parseFloat(window.getComputedStyle(inner).columnGap) : 130;
+  const amplitude = mobile ? 7 : Math.min(34, Math.max(20, columnGap / 2 - 27));
+  const x = (factor) => center + factor * amplitude;
+  const endY = footerRect ? footerRect.top - 36 : contactRect.top + contactRect.height - 38;
+  const cardRects = [...features.querySelectorAll(".landing-feature-card")]
+    .map((card) => rectInContent(card, contentRect));
+  const cardRows = [...new Set(cardRects.map((rect) => Math.round(rect.top)))].map((top) => {
+    const row = cardRects.filter((rect) => Math.abs(rect.top - top) < 3);
+    return { top, bottom: Math.max(...row.map((rect) => rect.top + rect.height)) };
+  });
 
-  const sectionInners = [about, features, contact]
-    .map((section) => section.querySelector(".landing-section-inner"))
-    .filter(Boolean)
-    .map((element) => element.getBoundingClientRect());
-  const contentLeft = sectionInners.length
-    ? Math.min(...sectionInners.map((rect) => rect.left - contentRect.left))
-    : 20;
-  const contentRight = sectionInners.length
-    ? Math.max(...sectionInners.map((rect) => rect.right - contentRect.left))
-    : width - 20;
-  const headerRect = header ? rectInContent(header, contentRect) : null;
+  const anchors = [
+    [x(mobile ? 0 : 0.45), aboutRect.top + 110],
+    [x(-0.82), aboutRect.top + aboutRect.height * 0.37],
+    [x(0.93), aboutRect.top + aboutRect.height * 0.68],
+    [x(-0.24), aboutRect.top + aboutRect.height - 38],
+    [x(0.48), featuresRect.top + 50],
+    [x(-0.7), featuresRect.top + Math.min(220, featuresRect.height * 0.23)],
+    ...cardRows.map((row, index) => [x([0.82, -0.91, 0.56, -0.67, 0.72][index % 5]), (row.top + row.bottom) / 2]),
+    [x(0.18), featuresRect.top + featuresRect.height - 38],
+    [x(-0.4), contactRect.top + 50],
+    [x(0.84), contactRect.top + contactRect.height * 0.34],
+    [x(-0.68), contactRect.top + contactRect.height * 0.68],
+    [x(0.2), endY],
+  ].sort((a, b) => a[1] - b[1]);
 
-  // Prefer the right-hand whitespace: at least 10px clear of section content,
-  // at least 8px inside the viewport edge, and outside the fixed navbar.
-  const rightCorridor = Math.min(
-    width - 8,
-    contentRight + Math.max(12, (width - contentRight) * 0.35),
-  );
-  const rightClear = !headerRect
-    || rightCorridor - 2.5 > headerRect.right
-    || rightCorridor + 2.5 < headerRect.left;
+  // Monotone-in-Y cubic spans with shared tangents create broad, unequal
+  // bends. This avoids sharp joints and avoids a repeating sine-wave rhythm.
+  const nodes = [join, ...anchors];
+  const slope = (index) => {
+    if (index === 0) return tangent.x / Math.max(0.2, tangent.y);
+    const before = nodes[index - 1];
+    const after = nodes[Math.min(nodes.length - 1, index + 1)];
+    return Math.max(-0.27, Math.min(0.27, (after[0] - before[0]) / Math.max(1, after[1] - before[1])));
+  };
+  const spans = [];
+  let path = heroPath;
+  for (let index = 0; index < nodes.length - 1; index += 1) {
+    const from = nodes[index];
+    const to = nodes[index + 1];
+    const rise = (to[1] - from[1]) * (index === 0 ? 0.3 : 0.34);
+    const control1 = [from[0] + slope(index) * rise, from[1] + rise];
+    const control2 = [to[0] - slope(index + 1) * rise, to[1] - rise];
+    path += ` C ${pointString(control1)} ${pointString(control2)} ${pointString(to)}`;
+    spans.push({ from, control1, control2, to });
+  }
 
-  // On narrow screens the mobile navbar spans almost the full width in both
-  // its expanded and compact states. Use the narrow left edge instead so the
-  // route never runs behind the navbar and does not switch sides on scroll.
-  const leftBoundary = Math.min(headerRect?.left ?? contentLeft, contentLeft);
-  const leftCorridor = Math.max(6, leftBoundary - 14);
-  const leftClear = Boolean(headerRect) && leftCorridor + 2.5 < leftBoundary;
-  const useLeftCorridor = leftClear && (window.innerWidth <= 640 || !rightClear);
-
-  const safeLeft = contentRight + 10;
-  const safeRight = Math.max(safeLeft, width - 8);
-  const corridorX = useLeftCorridor ? leftCorridor : rightCorridor;
-  const amplitude = useLeftCorridor
-    ? 0
-    : Math.min(18, Math.max(0, (safeRight - safeLeft) / 2 - 3));
-
-  const aboutJoinY = Math.max(
-    join[1] + 80,
-    Math.min(
-      aboutRect.top + aboutRect.height * 0.28,
-      (aboutContentRect?.top ?? aboutRect.top + aboutRect.height * 0.5) - 24,
-    ),
-  );
-  const endY = Math.max(
-    contactRect.top + 40,
-    Math.min(
-      contactRect.top + contactRect.height - 24,
-      (footerRect?.top ?? contactRect.top + contactRect.height - 69) - 28,
-    ),
-  );
-
-  // Leave the road along its own tangent, then ease into the safe corridor.
-  // The end tangent is vertical so the section S-curves start clean.
-  const joinControl1 = [
-    join[0] + tangent.x * 90,
-    join[1] + tangent.y * 90,
-  ];
-  const joinControl2 = [
-    corridorX,
-    join[1] + (aboutJoinY - join[1]) * 0.65,
-  ];
-  let path = `${heroPath} C ${pointString(joinControl1)} ${pointString(joinControl2)} ${pointString([corridorX, aboutJoinY])}`;
-
-  // Each section gets a gentle S-curve. Both ends are vertical and both
-  // control points stay between the corridor edges, so the route cannot
-  // overshoot into content or off the viewport edge.
-  const appendBulge = (startY, finishY, bulge) => {
-    const middleY = startY + (finishY - startY) * 0.52;
-    const middleX = corridorX + bulge;
-    const firstRise = (middleY - startY) * 0.38;
-    const secondRise = (finishY - middleY) * 0.38;
-    path += ` C ${pointString([corridorX, startY + firstRise])} ${pointString([middleX, middleY - firstRise])} ${pointString([middleX, middleY])}`;
-    path += ` C ${pointString([middleX, middleY + secondRise])} ${pointString([corridorX, finishY - secondRise])} ${pointString([corridorX, finishY])}`;
+  const atY = (y) => {
+    const span = spans.find(({ to }) => y <= to[1]) ?? spans.at(-1);
+    if (!span) return center;
+    let low = 0;
+    let high = 1;
+    for (let index = 0; index < 22; index += 1) {
+      const middle = (low + high) / 2;
+      if (cubic(span.from[1], span.control1[1], span.control2[1], span.to[1], middle) < y) low = middle;
+      else high = middle;
+    }
+    return cubic(span.from[0], span.control1[0], span.control2[0], span.to[0], (low + high) / 2);
   };
 
-  appendBulge(aboutJoinY, aboutRect.top + aboutRect.height, amplitude);
-  appendBulge(featuresRect.top, featuresRect.top + featuresRect.height, -amplitude);
-  appendBulge(contactRect.top, endY, amplitude);
+  const featureJunctions = mobile
+    ? [cardRows[1], cardRows[3]].filter(Boolean).map((row) => row.bottom + 13)
+    : cardRows.slice(0, 3).map((row) => (row.top + row.bottom) / 2 + 18);
+  const junctions = [
+    [aboutRect.top + aboutRect.height * 0.3, 1, 0],
+    ...(!mobile ? [[aboutRect.top + aboutRect.height * 0.57, -1, 1]] : []),
+    [aboutRect.top + aboutRect.height * 0.76, 1, 2],
+    ...featureJunctions.map((y, index) => [y, index % 2 ? 1 : -1, index + 3]),
+    [contactRect.top + contactRect.height * 0.26, -1, 6],
+    ...(!mobile ? [[contactRect.top + contactRect.height * 0.49, 1, 7]] : []),
+    [contactRect.top + contactRect.height * 0.72, -1, 8],
+  ];
+  const branches = junctions.map(([y, side, index]) => {
+    const startX = atY(y);
+    const available = columnGap / 2 - 14 - Math.abs(startX - center);
+    const length = mobile ? 7 + (index % 2) * 2 : Math.min(16 + (index * 7) % 15, Math.max(6, available));
+    const turn = (index % 3 - 1) * (mobile ? 4 : 10);
+    const end = [startX + side * length, y + turn];
+    return {
+      y,
+      path: `M ${pointString([startX, y])} C ${pointString([startX + side * length * 0.3, y - 5])} ${pointString([startX + side * length * 0.72, y + turn * 0.72])} ${pointString(end)}`,
+    };
+  });
 
-  return { width, height, path };
+  return { width, height, path, branches, branchSignature: branches.map(({ path: d }) => d).join("|") };
 }
 
 export default function LandingRoadHighlight() {
   const hostRef = useRef(null);
   const pathRef = useRef(null);
+  const glowRef = useRef(null);
+  const tipRef = useRef(null);
   const updateProgressRef = useRef(null);
+  const branchDistancesRef = useRef([]);
+  const branchNodesRef = useRef([]);
   const [route, setRoute] = useState(null);
 
   useLayoutEffect(() => {
@@ -210,17 +208,17 @@ export default function LandingRoadHighlight() {
     const features = content?.querySelector("#features");
     const contact = content?.querySelector("#contact");
     const footer = contact?.querySelector(".landing-footer");
-    const header = document.querySelector(".landing-header-inner");
     if (!content || !hero || !about || !features || !contact) return undefined;
 
     const measure = () => {
-      const next = buildRoute({ content, hero, about, features, contact, footer, header });
+      const next = buildRoute({ content, hero, about, features, contact, footer });
       if (!next) return;
       setRoute((previous) => (
         previous
         && previous.path === next.path
         && previous.width === next.width
         && previous.height === next.height
+        && previous.branchSignature === next.branchSignature
           ? previous
           : next
       ));
@@ -237,7 +235,14 @@ export default function LandingRoadHighlight() {
     observer?.observe(about);
     observer?.observe(features);
     observer?.observe(contact);
-    if (header) observer?.observe(header);
+    if (footer) observer?.observe(footer);
+    [about, features, contact].forEach((section) => {
+      const inner = section.querySelector(".landing-section-inner");
+      if (inner) observer?.observe(inner);
+    });
+    const featureGrid = features.querySelector(".landing-feature-grid");
+    if (featureGrid) observer?.observe(featureGrid);
+    features.querySelectorAll(".landing-feature-card").forEach((card) => observer?.observe(card));
     window.addEventListener("resize", measure);
     document.fonts?.ready?.then(measure).catch(() => {});
 
@@ -247,10 +252,30 @@ export default function LandingRoadHighlight() {
     };
   }, []);
 
+  useLayoutEffect(() => {
+    const path = pathRef.current;
+    if (!route || !path?.getAttribute("d")) return;
+    const total = path.getTotalLength();
+    branchNodesRef.current = [...hostRef.current.querySelectorAll(".landing-road-highlight__branch")];
+    branchDistancesRef.current = route.branches.map(({ y }) => {
+      let low = 0;
+      let high = total;
+      for (let index = 0; index < 24; index += 1) {
+        const middle = (low + high) / 2;
+        if (path.getPointAtLength(middle).y < y) low = middle;
+        else high = middle;
+      }
+      return (low + high) / 2;
+    });
+    updateProgressRef.current?.();
+  }, [route]);
+
   useEffect(() => {
     const host = hostRef.current;
     const scroller = host?.closest(".landing-page");
     const path = pathRef.current;
+    const glow = glowRef.current;
+    const tip = tipRef.current;
     if (!scroller || !path) return undefined;
 
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
@@ -260,6 +285,16 @@ export default function LandingRoadHighlight() {
       animationFrame = 0;
       if (motion?.matches) {
         path.style.strokeDashoffset = "0";
+        if (glow) glow.style.strokeDashoffset = "0";
+        if (tip) tip.style.display = "none";
+        branchNodesRef.current.forEach((node) => {
+          const core = node.querySelector(".landing-road-highlight__branch-core");
+          const aura = node.querySelector(".landing-road-highlight__branch-glow");
+          core.style.strokeDashoffset = "0";
+          core.style.opacity = "0.28";
+          aura.style.strokeDashoffset = "0";
+          aura.style.opacity = "0.1";
+        });
         return;
       }
 
@@ -270,6 +305,29 @@ export default function LandingRoadHighlight() {
         (scroller.scrollTop + lead) / (maxScroll + viewportHeight * TIP_LEAD_RATIO),
       );
       path.style.strokeDashoffset = String(1 - progress);
+      if (glow) glow.style.strokeDashoffset = String(1 - progress);
+      const length = path.getAttribute("d") ? path.getTotalLength() : 0;
+      branchNodesRef.current.forEach((node, index) => {
+        const core = node.querySelector(".landing-road-highlight__branch-core");
+        const aura = node.querySelector(".landing-road-highlight__branch-glow");
+        const distance = length * progress - branchDistancesRef.current[index];
+        const reveal = clamp01(distance / (route?.width <= 640 ? 38 : 96));
+        const pulse = Math.sin(Math.PI * reveal);
+        core.style.strokeDashoffset = String(1 - reveal);
+        aura.style.strokeDashoffset = String(1 - reveal);
+        core.style.opacity = reveal ? String(0.28 + 0.45 * pulse) : "0";
+        aura.style.opacity = reveal ? String(0.09 + 0.42 * pulse) : "0";
+      });
+      if (tip) {
+        tip.style.display = progress > 0 && progress < 1 ? "" : "none";
+        if (progress > 0 && progress < 1 && path.getAttribute("d")) {
+          const point = path.getPointAtLength(length * progress);
+          tip.setAttribute("cx", String(point.x));
+          tip.setAttribute("cy", String(point.y));
+        } else {
+          tip.style.display = "none";
+        }
+      }
     };
 
     const schedule = () => {
@@ -291,7 +349,7 @@ export default function LandingRoadHighlight() {
       if (animationFrame) window.cancelAnimationFrame(animationFrame);
       if (updateProgressRef.current === schedule) updateProgressRef.current = null;
     };
-  }, []);
+  }, [route]);
 
   return (
     <div ref={hostRef} className="landing-road-highlight" aria-hidden="true">
@@ -301,12 +359,20 @@ export default function LandingRoadHighlight() {
         focusable="false"
         style={route ? undefined : { visibility: "hidden" }}
       >
+        {route?.branches.map((branch, index) => (
+          <g className="landing-road-highlight__branch" key={`${index}-${branch.y}`}>
+            <path d={branch.path} pathLength="1" className="landing-road-highlight__branch-glow" />
+            <path d={branch.path} pathLength="1" className="landing-road-highlight__branch-core" />
+          </g>
+        ))}
+        <path ref={glowRef} d={route?.path ?? ""} pathLength="1" className="landing-road-highlight__glow" />
         <path
           ref={pathRef}
           d={route?.path ?? ""}
           pathLength="1"
           className="landing-road-highlight__stroke"
         />
+        <circle ref={tipRef} className="landing-road-highlight__tip" r="4" style={{ display: "none" }} />
       </svg>
     </div>
   );

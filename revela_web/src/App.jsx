@@ -12,6 +12,7 @@ import CookiePolicyPage from './components/CookiePolicyPage';
 import DesktopAccessRequired from './components/DesktopAccessRequired';
 import InactivityProvider from './components/InactivityProvider';
 import { useDeviceAccess } from './hooks/useDeviceAccess';
+import { PublicPageTransition } from './components/PublicPageTransition';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const MapPage = lazy(() => import('./pages/MapPage'));
@@ -42,6 +43,7 @@ export default function App() {
         <BrowserRouter>
           {/* Inside the router so route changes count as activity. */}
           <InactivityProvider>
+            <PublicPageTransition>
             <PathnameKeyedRouteErrorBoundary>
               <Suspense
                 fallback={(
@@ -75,6 +77,7 @@ export default function App() {
                 </Routes>
               </Suspense>
             </PathnameKeyedRouteErrorBoundary>
+            </PublicPageTransition>
           </InactivityProvider>
         </BrowserRouter>
       </ThemeProvider>

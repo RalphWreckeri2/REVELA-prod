@@ -44,6 +44,17 @@
   min-height: 0;
 }
 
+/* .saas-content is the page scroller and starts below the app header. A grid
+   item sticks within .map-layout, so it releases before the in-flow footer.
+   The measured class is absent whenever the full workspace would not fit. */
+@media (min-width: 1201px) {
+  .map-layout > .map-workspace.is-sticky {
+    position: sticky;
+    top: 16px;
+    align-self: start;
+  }
+}
+
 /* The map keeps its own comfortable height instead of matching the sidebar,
    whose filters and OPS queue are allowed to make the page taller. */
 .map-canvas-container {
@@ -448,6 +459,8 @@
 .map-sidebar-filters {
   flex: 0 0 auto;
   min-height: 0;
+  max-height: none;
+  overflow: visible;
   padding-right: 2px;
 }
 
@@ -470,6 +483,19 @@
   font-size: 11px;
   color: var(--color-muted);
   line-height: 1.5;
+}
+/* Bounded card list: it scrolls on its own while the count and pagination
+   remain outside the scroll area at their natural height. */
+.map-location-list {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  max-height: clamp(260px, 36vh, 400px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 .map-location-card {
   display: flex;
@@ -1191,6 +1217,8 @@ html.theme-dark .map-detection-toggle-action {
 .map-side-panel > .priority-dispatch-queue {
   flex: 0 0 auto;
   min-height: 0;
+  max-height: none;
+  overflow: visible;
 }
 
 .map-side-panel > .map-side-panel-actions {

@@ -13,14 +13,15 @@ import AnimatePresence from "../components/AnimatePresence";
 import DesktopAccessRequired from "../components/DesktopAccessRequired";
 import LandingIntroReveal from "../components/LandingIntroReveal";
 import LandingRoadHighlight from "../components/LandingRoadHighlight";
+import { usePublicPageTransition } from "../context/publicPageTransitionContext";
 import { useDeviceAccess } from "../hooks/useDeviceAccess";
 import "../styles/LandingPage.css";
 
 const featureCards = [
   {
-    title: "Location-Based",
-    description: "Placeholder: Add a short description of location-based tools.",
-    highlight: "Track and analyze business locations in your area.",
+    title: "Mapped locations",
+    description: "Explore business markers and barangay boundaries together to see where follow-up is needed.",
+    highlight: "See businesses in their local context.",
     icon: (
       <>
         <path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z" />
@@ -29,19 +30,19 @@ const featureCards = [
     ),
   },
   {
-    title: "Data-Driven",
-    description: "Placeholder: Explain how local data supports better decisions.",
-    highlight: "Turn local data into meaningful insights.",
+    title: "Registry review",
+    description: "Compare mapped locations with business records and review possible matches and flagged locations. A flag calls for review; it is not proof of a violation.",
+    highlight: "Check records before drawing conclusions.",
     icon: (
       <>
-        <path d="M4 19V9m6 10V5m6 14v-7m4 7H2" />
+        <path d="M4 5h16v14H4zM8 9h8m-8 4h8m-8 4h5" />
       </>
     ),
   },
   {
-    title: "Smarter Monitoring",
-    description: "Placeholder: Describe the monitoring features of REVELA.",
-    highlight: "Support local growth and development.",
+    title: "Inspection tracking",
+    description: "Assign follow-up inspections and track their progress from assignment through submission and verification.",
+    highlight: "Keep field work moving and visible.",
     icon: (
       <>
         <path d="m12 22 1.5-.7C18 19.2 20 15.4 20 10V5l-8-3-8 3v5c0 5.4 2 9.2 6.5 11.3L12 22Z" />
@@ -50,13 +51,22 @@ const featureCards = [
     ),
   },
   {
-    title: "Stronger Community",
-    description: "Placeholder: Add how the platform benefits the community.",
-    highlight: "Better information for a brighter future.",
+    title: "Clear priorities",
+    description: "Use analytics and explained scoring to compare relative inspection priorities—not to predict guilt or the probability of a violation.",
+    highlight: "Plan inspections with clearer context.",
     icon: (
       <>
         <circle cx="9" cy="8" r="3" />
         <path d="M3 20v-1a6 6 0 0 1 12 0v1H3Zm13-9a3 3 0 1 0-1-5.8M18 14a5 5 0 0 1 3 4.6v1.4h-3" />
+      </>
+    ),
+  },
+  {
+    title: "Reports & exports",
+    description: "Turn monitoring data into shareable reports, charts, and downloadable CSV or PDF files for follow-up work.",
+    icon: (
+      <>
+        <path d="M6 3h9l4 4v14H6zM15 3v5h4M9 12h7m-7 4h7" />
       </>
     ),
   },
@@ -110,6 +120,7 @@ function LandingLegalModal({ title, isClosing, onClose, children }) {
 
 export default function LandingPage() {
   const { isDark } = useTheme();
+  const { toLogin } = usePublicPageTransition();
   const { restricted } = useDeviceAccess();
   const [activeSection, setActiveSection] = useState("home");
   const [isNavbarCompact, setIsNavbarCompact] = useState(false);
@@ -179,6 +190,14 @@ export default function LandingPage() {
 
   const switchLegalDocument = (documentKey) => setActiveModal(documentKey);
   const closeModal = () => setActiveModal(null);
+  const goHome = (event) => {
+    event.preventDefault();
+    setActiveSection("home");
+    document.querySelector(".landing-page")?.scrollTo({
+      top: 0,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  };
 
   if (restricted || isBrowserZoomedOut) {
     return <DesktopAccessRequired mode="landing" />;
@@ -200,7 +219,7 @@ export default function LandingPage() {
             className="landing-brand"
             href="#landing-top"
             aria-label="REVELA home"
-            onClick={() => setActiveSection("home")}
+             onClick={goHome}
           >
             <img className="landing-brand-mark" src={revelaLogo} alt="" />
             <span>REVELA</span>
@@ -211,21 +230,21 @@ export default function LandingPage() {
               ["home", "Home", "#landing-top"],
               ["about", "About", "#about"],
               ["features", "Features", "#features"],
-              ["contact", "Contact", "#contact"],
+               ["contact", "Support", "#contact"],
             ].map(([id, label, href]) => (
               <a
                 key={id}
                 href={href}
                 className={activeSection === id ? "is-active" : ""}
                 aria-current={activeSection === id ? "page" : undefined}
-                onClick={() => setActiveSection(id)}
+                 onClick={id === "home" ? goHome : () => setActiveSection(id)}
               >
                 {label}
               </a>
             ))}
           </nav>
 
-          <Link className="landing-header-login" to="/login">
+           <Link className="landing-header-login" to="/login" onClick={toLogin}>
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="8" r="3.5" />
               <path d="M5 21v-2a7 7 0 0 1 14 0v2H5Z" />
@@ -252,7 +271,7 @@ export default function LandingPage() {
               <p className="landing-description">
                 Supporting local business monitoring through location-based insights.
               </p>
-              <Link className="landing-login landing-login--primary" to="/login">
+               <Link className="landing-login landing-login--primary" to="/login" onClick={toLogin}>
                 Log In
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path d="M5 12h14m-6-6 6 6-6 6" />
@@ -275,7 +294,7 @@ export default function LandingPage() {
             </div>
 
             <div className="landing-highlights" aria-label="REVELA highlights">
-              {featureCards.map(({ title, highlight, icon }) => (
+               {featureCards.filter((card) => card.highlight).map(({ title, highlight, icon }) => (
                 <article className="landing-highlight" key={title}>
                   <span className="landing-highlight-icon">
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">{icon}</svg>
@@ -291,24 +310,29 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="about" className="landing-placeholder-section" aria-labelledby="about-title">
-          <div className="landing-section-inner">
-            <p className="landing-section-kicker">ABOUT REVELA</p>
-            <h2 id="about-title">About</h2>
-            <p className="landing-placeholder-copy">
-              Placeholder content — palitan ito ng inyong opisyal na impormasyon tungkol sa REVELA.
-            </p>
-          </div>
-        </section>
+         <section id="about" className="landing-content-section" aria-labelledby="about-title">
+           <div className="landing-section-inner">
+             <div className="landing-section-lead">
+               <p className="landing-section-kicker">ABOUT REVELA</p>
+               <h2 id="about-title">A clearer view of local business activity.</h2>
+               <p>Built for business monitoring and inspection support in Mataasnakahoy, Batangas.</p>
+             </div>
+             <div className="landing-section-detail">
+               <span className="landing-detail-rule" aria-hidden="true" />
+               <p>REVELA brings business records, mapped locations, review flags, and inspection information into one working view. It helps authorized personnel connect what is on the map with what is in the registry and decide where to focus follow-up work.</p>
+               <p>Operational priorities help organize inspections; the underlying records and field findings still need human review.</p>
+             </div>
+           </div>
+         </section>
 
-        <section id="features" className="landing-placeholder-section landing-placeholder-section--alternate" aria-labelledby="features-title">
-          <div className="landing-section-inner">
-            <p className="landing-section-kicker">WHAT YOU CAN DO</p>
-            <h2 id="features-title">Features</h2>
-            <p className="landing-placeholder-copy">
-              Placeholder content — idagdag o baguhin ang mga detalye ng bawat feature.
-            </p>
-            <div className="landing-feature-grid">
+         <section id="features" className="landing-content-section landing-content-section--alternate" aria-labelledby="features-title">
+           <div className="landing-section-inner">
+             <div className="landing-section-lead">
+               <p className="landing-section-kicker">WHAT YOU CAN DO</p>
+               <h2 id="features-title">From map to next steps.</h2>
+             </div>
+             <p className="landing-section-summary">Explore the area, verify records, coordinate inspections, and share the results—all in one workflow.</p>
+             <div className="landing-feature-grid">
               {featureCards.map(({ title, description, icon }) => (
                 <article className="landing-feature-card" key={title}>
                   <span className="landing-highlight-icon">
@@ -322,13 +346,19 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="contact" className="landing-placeholder-section" aria-labelledby="contact-title">
-          <div className="landing-section-inner">
-            <p className="landing-section-kicker">GET IN TOUCH</p>
-            <h2 id="contact-title">Contact</h2>
-            <p className="landing-placeholder-copy">
-              Placeholder content — ilagay dito ang contact details, office address, at iba pang paraan ng pakikipag-ugnayan.
-            </p>
+         <section id="contact" className="landing-content-section" aria-labelledby="contact-title">
+           <div className="landing-section-inner">
+             <div className="landing-section-lead">
+               <p className="landing-section-kicker">ACCESS & SUPPORT</p>
+               <h2 id="contact-title">Get the help you need.</h2>
+               <p>REVELA is for authorized users. Sign in with your assigned account to access the portal.</p>
+               <Link className="landing-login landing-login--primary" to="/login" onClick={toLogin}>Log In <span aria-hidden="true">→</span></Link>
+             </div>
+             <div className="landing-section-detail landing-support-detail">
+               <span className="landing-detail-rule" aria-hidden="true" />
+               <h3>Questions about access?</h3>
+               <p>Contact your designated system administrator for account assistance. For policy or technical inquiries, the project’s published BPLO contact is <a href="mailto:mkahoy.bplo@gmail.com">mkahoy.bplo@gmail.com</a>.</p>
+             </div>
           </div>
 
           <footer className="landing-footer">
