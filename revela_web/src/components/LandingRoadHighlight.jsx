@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { MAP_WIDTH, MAP_HEIGHT, ROAD_POINTS } from "./landingMapRoad";
+import { MAP_WIDTH, MAP_HEIGHT, ROAD_POINTS, DARK_ROAD_POINTS } from "./landingMapRoad";
+import { useTheme } from "../context/themeContext";
 const TIP_LEAD_RATIO = 0.4;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
@@ -21,7 +22,7 @@ function rectInContent(element, contentRect) {
   };
 }
 
-function buildRoute({ content, hero, about, features, contact, footer }) {
+function buildRoute({ content, hero, about, features, contact, footer, roadPoints }) {
   const contentRect = content.getBoundingClientRect();
   const width = content.clientWidth;
   const height = Math.max(content.clientHeight, content.scrollHeight);
@@ -41,7 +42,7 @@ function buildRoute({ content, hero, about, features, contact, footer }) {
 
   // Transform the traced road into page coordinates and clip it at the bottom
   // of the hero. The continuation starts from that exact intersection.
-  const transformed = ROAD_POINTS.map(([x, y]) => [
+  const transformed = roadPoints.map(([x, y]) => [
     frameLeft + x * scale,
     frameTop + y * scale,
   ]);
@@ -191,6 +192,7 @@ function buildRoute({ content, hero, about, features, contact, footer }) {
 }
 
 export default function LandingRoadHighlight() {
+  const { isDark } = useTheme();
   const hostRef = useRef(null);
   const pathRef = useRef(null);
   const glowRef = useRef(null);
@@ -211,7 +213,7 @@ export default function LandingRoadHighlight() {
     if (!content || !hero || !about || !features || !contact) return undefined;
 
     const measure = () => {
-      const next = buildRoute({ content, hero, about, features, contact, footer });
+      const next = buildRoute({ content, hero, about, features, contact, footer, roadPoints: isDark ? DARK_ROAD_POINTS : ROAD_POINTS });
       if (!next) return;
       setRoute((previous) => (
         previous
@@ -250,7 +252,7 @@ export default function LandingRoadHighlight() {
       observer?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, []);
+  }, [isDark]);
 
   useLayoutEffect(() => {
     const path = pathRef.current;

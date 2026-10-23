@@ -1,5 +1,5 @@
-// North–south road traced in the shared 4096 × 2301 map assets. The landing
-// hero and public sign-in backdrop use these same coordinates.
+// The light map's north–south road in its native 4096 × 2301 coordinates.
+// The dark asset has its own registration and trace below.
 export const MAP_WIDTH = 4096;
 export const MAP_HEIGHT = 2301;
 
@@ -10,6 +10,18 @@ export const ROAD_POINTS = [
   [2702, 1300], [2662, 1400], [2615, 1500], [2563, 1600],
   [2510, 1700], [2464, 1800], [2415, 1900], [2367, 2000],
   [2336, 2100], [2320, 2200], [2316, 2301],
+];
+
+// The dark asset has the same 4096 × 2301 canvas but a different geographic
+// registration (including black padding). These are centers sampled from its
+// own bright north–south road, not offsets applied to the light road.
+export const DARK_ROAD_POINTS = [
+  [2733, 0], [2737, 100], [2737, 200], [2738, 300],
+  [2739, 400], [2737, 500], [2722, 600], [2689, 700],
+  [2656, 800], [2627, 900], [2611, 1000], [2589, 1100],
+  [2566, 1200], [2533, 1300], [2487, 1400], [2437, 1500],
+  [2388, 1600], [2338, 1700], [2290, 1800], [2261, 1900],
+  [2252, 2000], [2247, 2100], [2248, 2200], [2256, 2301],
 ];
 
 // The eastern road runs alongside the sign-in card rather than behind it.

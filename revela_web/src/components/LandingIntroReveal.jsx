@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import revelaLogo from "../assets/logo.png";
 import mapRoads from "../assets/intro-map-roads.png";
+import mapRoadsLarge from "../assets/intro-map-roads-large.png";
 import { ROAD_POINTS } from "./landingMapRoad";
 import { useTheme } from "../context/themeContext";
 import { useLocation } from "react-router-dom";
 
-const SESSION_KEY = "revela.landing.intro.v9";
-const INTRO_FALLBACK_MS = 6100;
+const SESSION_KEY = "revela.landing.intro.v12";
+const INTRO_FALLBACK_MS = 8500;
 let playedWithoutStorage = false;
 
 const prefersReducedMotion = () => (
@@ -115,6 +116,13 @@ export default function LandingIntroReveal({ children }) {
     if (event.animationName === "landing-opening-reveal") setStatus("complete");
   };
 
+  const skipIntro = () => {
+    setStatus("complete");
+    window.requestAnimationFrame(() => document.querySelector(".landing-brand")?.focus({ preventScroll: true }));
+  };
+
+  const roadsImage = { src: mapRoads, srcSet: `${mapRoads} 1200w, ${mapRoadsLarge} 1920w`, sizes: "100vw", alt: "", draggable: false };
+
   return (
     <>
       <div
@@ -125,7 +133,7 @@ export default function LandingIntroReveal({ children }) {
         {children}
       </div>
 
-      {status === "playing" && (
+      {status === "playing" && <>
         <div className="landing-opening" data-theme={isDark ? "dark" : "light"} aria-hidden="true">
           <div className="landing-opening__cover" onAnimationEnd={handleRevealEnd} />
           <div className="landing-opening__disc" />
@@ -133,12 +141,16 @@ export default function LandingIntroReveal({ children }) {
           <div className="landing-opening__scene">
             <div className="landing-opening__map">
               <div className="landing-opening__artwork">
-                <img className="landing-opening__roads" src={mapRoads} alt="" draggable="false" />
-                <svg ref={mapRef} className="landing-opening__road-overlay" viewBox="0 0 1200 675" focusable="false">
+                <div className="landing-opening__map-frame">
+                  <img className="landing-opening__roads" {...roadsImage} />
+                  <img className="landing-opening__branch-light landing-opening__branch-light--first" {...roadsImage} />
+                  <img className="landing-opening__branch-light landing-opening__branch-light--second" {...roadsImage} />
+                  <svg ref={mapRef} className="landing-opening__road-overlay" viewBox="0 0 1200 675" preserveAspectRatio="xMidYMid meet" focusable="false">
                   <path className="landing-opening__main-road landing-opening__main-road--glow" d={highlightedRoad} vectorEffect="non-scaling-stroke" />
                   <path className="landing-opening__main-road" d={highlightedRoad} vectorEffect="non-scaling-stroke" />
                   <circle className="landing-opening__traveler" r="3.5" style={{ offsetPath: `path("${travelingRoad}")` }} />
-                </svg>
+                  </svg>
+                </div>
               </div>
             </div>
           </div>
@@ -159,7 +171,8 @@ export default function LandingIntroReveal({ children }) {
             </div>
           </div>
         </div>
-      )}
+        <button className="landing-opening-skip" type="button" onClick={skipIntro}>Skip intro</button>
+      </>}
     </>
   );
 }

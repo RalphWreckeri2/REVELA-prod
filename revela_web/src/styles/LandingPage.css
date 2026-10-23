@@ -1237,7 +1237,8 @@
   position: fixed;
   z-index: 9999;
   inset: 0;
-  height: 100svh;
+  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   touch-action: none;
   overscroll-behavior: none;
@@ -1278,7 +1279,7 @@
     transparent 0 calc(var(--intro-reveal) - 0.75px),
     #000 var(--intro-reveal)
   );
-  animation: landing-opening-reveal 1s cubic-bezier(0.55, 0, 0.3, 1) 4.46s both;
+  animation: landing-opening-reveal 1s cubic-bezier(0.55, 0, 0.3, 1) 6.93s both;
 }
 
 /* Fills the cover's hole until the logo has returned and the iris begins. */
@@ -1293,7 +1294,7 @@
   margin-top: calc((var(--intro-dot) + 2px) / -2);
   border-radius: 50%;
   background: var(--intro-background);
-  animation: landing-opening-disc-out 0.4s ease-out 4.46s forwards;
+  animation: landing-opening-disc-out 0.4s ease-out 6.93s forwards;
 }
 
 .landing-opening__scene {
@@ -1306,18 +1307,32 @@
 }
 
 .landing-opening__map {
-  width: min(85vw, 950px);
-  aspect-ratio: 1200 / 675;
+  width: 100vw;
+  height: 100dvh;
   transform-origin: center;
-  animation: landing-opening-lines-out 0.38s cubic-bezier(0.45, 0, 0.75, 1) 2.43s forwards;
+  animation: landing-opening-lines-out 0.95s cubic-bezier(0.4, 0.06, 0.75, 1) 4.48s forwards;
 }
 
 .landing-opening__artwork {
   position: relative;
   width: 100%;
   height: 100%;
-  -webkit-mask-image: radial-gradient(ellipse 76% 60% at 55% 48%, #000 28%, transparent 94%);
-  mask-image: radial-gradient(ellipse 76% 60% at 55% 48%, #000 28%, transparent 94%);
+  overflow: hidden;
+  -webkit-mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 0 42%, transparent 74%);
+  mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, #000 0 42%, transparent 74%);
+}
+
+/* A single cover-scaled coordinate frame for both the real roads and SVG.
+   The frame overflows the viewport naturally; neither layer is stretched. */
+.landing-opening__map-frame {
+  --intro-map-x: 50%;
+  --intro-map-shift: -50%;
+  position: absolute;
+  top: 50%;
+  left: var(--intro-map-x);
+  width: max(100vw, 177.7778dvh);
+  height: max(100dvh, 56.25vw);
+  transform: translate(var(--intro-map-shift), -50%);
 }
 
 @property --intro-map-town {
@@ -1340,7 +1355,7 @@
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   opacity: 0;
   -webkit-mask-image:
     radial-gradient(circle at 59% 48%, #000 0 var(--intro-map-town), transparent calc(var(--intro-map-town) + 3%)),
@@ -1351,14 +1366,37 @@
     radial-gradient(circle at 78% 72%, #000 0 var(--intro-map-south), transparent calc(var(--intro-map-south) + 3%)),
     radial-gradient(circle at 22% 44%, #000 0 var(--intro-map-coast), transparent calc(var(--intro-map-coast) + 3%));
   animation:
-    landing-opening-map-appear 0.2s ease-out 0.12s both,
-    landing-opening-map-town 1.35s ease-out 0.18s both,
-    landing-opening-map-south 1.25s ease-out 0.52s both,
-    landing-opening-map-coast 1.25s ease-out 0.68s both;
+    landing-opening-map-appear 0.28s ease-out 0.12s both,
+    landing-opening-map-town 4.05s ease-out 0.2s both,
+    landing-opening-map-south 3.78s ease-out 0.6s both,
+    landing-opening-map-coast 3.58s ease-out 0.9s both;
 }
 
-.landing-opening[data-theme="dark"] .landing-opening__roads {
+.landing-opening[data-theme="dark"] .landing-opening__roads,
+.landing-opening[data-theme="dark"] .landing-opening__branch-light {
   filter: brightness(0) invert(1);
+}
+
+.landing-opening__branch-light {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.landing-opening__branch-light--first {
+  -webkit-mask-image: radial-gradient(circle at 55% 78%, #000 0, transparent 7%);
+  mask-image: radial-gradient(circle at 55% 78%, #000 0, transparent 7%);
+  animation: landing-opening-neighborhood 0.88s ease-in-out 3.13s both;
+}
+
+.landing-opening__branch-light--second {
+  -webkit-mask-image: radial-gradient(circle at 62% 62%, #000 0, transparent 7%);
+  mask-image: radial-gradient(circle at 62% 62%, #000 0, transparent 7%);
+  animation: landing-opening-neighborhood 0.8s ease-in-out 3.59s both;
 }
 
 .landing-opening__road-overlay {
@@ -1378,7 +1416,7 @@
   stroke-dasharray: var(--line-length, 1600px) var(--line-length, 1600px);
   stroke-dashoffset: var(--line-length, 1600px);
   opacity: 0;
-  animation: landing-opening-line 1.48s ease-out 0.24s both;
+  animation: landing-opening-line 2.95s ease-out 0.28s both;
 }
 
 .landing-opening__main-road--glow {
@@ -1392,7 +1430,34 @@
   opacity: 0;
   filter: drop-shadow(0 0 4px var(--intro-primary-glow));
   offset-rotate: 0deg;
-  animation: landing-opening-traveler 1.02s linear 0.83s both;
+  animation: landing-opening-traveler 1.25s linear 3s both;
+}
+
+.landing-opening-skip {
+  position: fixed;
+  z-index: 10000;
+  top: max(18px, env(safe-area-inset-top));
+  right: max(18px, env(safe-area-inset-right));
+  min-height: 40px;
+  padding: 8px 16px;
+  border: 1px solid rgba(13, 73, 56, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #0d4938;
+  font: 600 12px var(--font-base);
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+html.theme-dark .landing-opening-skip {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(16, 21, 18, 0.86);
+  color: #fff;
+}
+
+.landing-opening-skip:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
 }
 
 .landing-opening__portal {
@@ -1417,8 +1482,8 @@
   opacity: 0;
   transform-origin: 50% 50%;
   animation:
-    landing-opening-dot 2s linear 2.46s both,
-    landing-opening-dot-glow 0.58s ease-out 2.52s both;
+    landing-opening-dot 1.61s linear 5.32s both,
+    landing-opening-dot-glow 0.58s ease-out 5.35s both;
 }
 
 .landing-opening__logo {
@@ -1434,7 +1499,7 @@
   width: 100%;
   opacity: 0;
   clip-path: circle(var(--intro-mask-start) at 50% 50%);
-  animation: landing-opening-logo-jump 1.5s linear 2.96s both;
+  animation: landing-opening-logo-jump 1.5s linear 5.43s both;
   will-change: transform, clip-path, opacity;
 }
 
@@ -1470,6 +1535,11 @@
 @keyframes landing-opening-map-coast {
   from { --intro-map-coast: 0%; }
   to { --intro-map-coast: 59%; }
+}
+
+@keyframes landing-opening-neighborhood {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.58; }
 }
 
 @keyframes landing-opening-lines-out {
@@ -1549,7 +1619,10 @@
     --intro-jump: -30px;
   }
 
-  .landing-opening__map { width: min(96vw, 600px); }
+  .landing-opening__map-frame {
+    --intro-map-x: 35%;
+    --intro-map-shift: -35%;
+  }
 }
 
 @keyframes landing-opening-traveler {
