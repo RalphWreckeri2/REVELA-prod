@@ -2285,14 +2285,16 @@ def analytics_chat():
             nearby = spatial.get("nearbyFlaggedGroups", {})
             if nearby:
                 summary_parts.append(
-                    "Nearby flagged spatial groups (DBSCAN; group count is the number of spatial groups, "
+                    "Nearby flagged spatial groups (DBSCAN; analysisAvailable=false means insufficient/unavailable data, "
+                    "not a finding of zero groups; group count is the number of spatial groups, "
                     "recordCount is the number of geospatial records in that group, not distinct businesses): "
                     f"{json.dumps(nearby)}"
                 )
             severe_by_barangay = spatial.get("severeFlagsByBarangay", {})
             if severe_by_barangay:
                 summary_parts.append(
-                    "Severe flags by barangay (distinct geospatial record counts, not spatial groups; "
+                    "Severe flags by barangay (analysisAvailable=false means unavailable, not zero flags; "
+                    "distinct geospatial record counts, not spatial groups; "
                     "highCountBarangayCount is the number of barangays strictly above the chart benchmark): "
                     f"{json.dumps(severe_by_barangay)}"
                 )
@@ -2307,7 +2309,9 @@ def analytics_chat():
         brgy_risk = chart_data.get("barangayRisk", [])
         if brgy_risk:
             summary_parts.append(
-                f"Top Barangay Risk Data: {json.dumps(brgy_risk[:10])}")
+                "Top barangay non-Green flagged-record totals (all non-Green colors; "
+                "separate from the Red/Black geolocated severe-flags chart and from OPS rankings): "
+                f"{json.dumps(brgy_risk[:10])}")
 
         # Sector status metrics use only unique registry matches.
         category_risk_drivers = chart_data.get("categoryRiskDrivers", [])
@@ -2443,8 +2447,9 @@ def analytics_chat():
             "- **Risk Level**: Derived from OPS score — High (>=60), Medium (>=30), Low (<30)\n"
             "- **Dispatch Recommendations**: Deterministic WLC-ranked plans, not AI-generated allocations. High priority starts at OPS 60, Standard at 30, Monitor below 30. Only currently free inspectors are allocated (maximum six). Deferred plans have zero inspectors; never invent staffing or promise a deployment date for them. Black-only barangays and already-assigned targets are skipped: dispatchable_count must be positive for a new field plan. Black flags are administrative risk context, never an authorization for redispatch\n"
             "- **Nearby flagged records (DBSCAN)**: Uses geospatial log records whose effective flag is Red or Black, which have coordinates, and which have a place ID, reporter, stored Orange flag, or linked inspection report. Each dot and each group size count records, not distinct businesses. DBSCAN uses Haversine distance with a 20 m neighborhood and min_samples=3 (including the point itself); connected neighborhoods can extend beyond 20 m end-to-end, and groups may cross barangay boundaries. Isolated records are not part of a group. The number of groups is not the number of records in a group\n"
-            "- **Severe flags by barangay**: Separately counts distinct eligible geospatial log IDs with effective Red or Black flags and coordinates, grouped within barangay boundaries. Its dashed benchmark is the 75th percentile of those counts across geolocated barangays; at least four such barangays are required, and only counts strictly above the benchmark are highlighted. A high count is not a spatial group\n"
-            "- **Filters for these two spatial charts**: Both apply selected barangay, effective flag-color, and detection-date filters. Registry/business and inspection filters do not affect these geospatial calculations\n"
+            "- **Severe flags by barangay**: Separately counts distinct eligible geospatial log IDs with effective Red or Black flags and coordinates, grouped within barangay boundaries. Its dashed benchmark is NumPy's 75th percentile (default linear interpolation) of those counts across geolocated barangays; at least four such barangays are required, and only positive counts strictly above the benchmark are highlighted. A high count is not a spatial group\n"
+            "- **Filters for these two spatial charts**: Both apply selected barangay, effective flag-color, and detection-date filters; a selected flag color further narrows the Red/Black records required by these charts. Registry/business and inspection filters do not affect these geospatial calculations\n"
+            "- **Unavailable chart data**: In spatialDiagnostics, analysisAvailable=false means the corresponding chart could not be calculated from sufficient available data; do not present empty arrays or zero counts as evidence that there were no groups or severe flags\n"
             "- **Keep spatial measures distinct**: Spatial-group count, records per group, number of above-benchmark barangays, and OPS/WLC inspection-priority rankings are different measures. OPS rankings are not calculated from the number of DBSCAN groups or from the chart's above-benchmark count. Neither proximity nor a high count proves a violation or its cause\n"
             "- **Inspector Stats**: Performance metrics for individual inspectors (inspections completed, resolution time, etc.).\n"
             "- **Inspection Status Breakdown**: Distribution of inspection statuses (Pending, In Progress, Completed, etc.).\n\n"

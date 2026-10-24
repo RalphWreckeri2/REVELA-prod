@@ -3,7 +3,7 @@ import revelaLogo from "../assets/logo.png";
 import { useTheme } from "../context/themeContext";
 import "../styles/RevelaLoader.css";
 
-const CYCLE_SECONDS = 2.4;
+const CYCLE_SECONDS = 1.6;
 
 export default function RevelaLoader({ message }) {
   const { isDark } = useTheme();

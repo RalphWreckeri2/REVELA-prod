@@ -1,7 +1,9 @@
 .revela-loader {
   --loader-surface: #fff;
-  --loader-ground: #4e896b;
-  --loader-glow: rgba(78, 137, 107, 0.25);
+  --loader-center: #17412d;
+  --loader-edge: #3b7853;
+  --loader-glow: rgba(63, 146, 89, 0.22);
+  --loader-text: #64748b;
   position: fixed;
   inset: 0;
   z-index: 9999;
@@ -10,105 +12,117 @@
   align-items: center;
   justify-content: center;
   background: var(--loader-surface);
-  color: #1a202c;
+  color: var(--loader-text);
   font: 600 15px/1.5 var(--font-base);
 }
 
 .revela-loader[data-theme="dark"] {
   --loader-surface: #101512;
-  --loader-ground: #5eac7d;
-  --loader-glow: rgba(78, 170, 112, 0.4);
-  color: #f1f5f2;
+  --loader-center: #173e2c;
+  --loader-edge: #67ae79;
+  --loader-glow: rgba(66, 170, 97, 0.3);
+  --loader-text: #cbd5e1;
 }
 
 .revela-loader__scene {
   position: relative;
-  width: 180px;
-  height: 104px;
+  width: 154px;
+  height: 110px;
 }
 
-/* The stage cuts off the returning logos at the ground line; the oval sits
-   above them so the last few pixels actually pass behind its front edge. */
+/* Clip at the opening's center line, not around the flight of the logos. */
 .revela-loader__stage {
   position: absolute;
-  inset: 0 0 19px;
+  inset: 0 0 16px;
   overflow: hidden;
 }
 
 .revela-loader__figure {
   position: absolute;
-  bottom: -43px;
-  width: 28px;
-  height: 81px;
-  --hop: -48px;
+  bottom: -45px;
+  width: 32px;
+  --hop: -90px;
   --delay: var(--loader-phase);
 }
 
-.revela-loader__figure--1 { left: 42px; --hop: -45px; }
-.revela-loader__figure--2 { left: 78px; --hop: -55px; --delay: calc(var(--loader-phase) - 0.8s); }
-.revela-loader__figure--3 { left: 114px; --hop: -49px; --delay: calc(var(--loader-phase) - 1.6s); }
+.revela-loader__figure--1 { left: 30px; --hop: -89px; }
+.revela-loader__figure--2 { left: 61px; --hop: -94px; --delay: calc(var(--loader-phase) - 0.533s); }
+.revela-loader__figure--3 { left: 92px; --hop: -91px; --delay: calc(var(--loader-phase) - 1.067s); }
 
 .revela-loader__jump {
-  position: absolute;
-  bottom: 0;
-  left: 0;
+  display: block;
   width: 100%;
   opacity: 0;
-  animation: revela-loader-hop 2.4s linear var(--delay) infinite;
+  animation: revela-loader-hop 1.6s var(--delay) infinite;
 }
 
 .revela-loader__jump img {
   display: block;
   width: 100%;
   height: auto;
+  user-select: none;
+}
+
+/* A dark opening with a hairline foreground lip, rather than a solid platform. */
+.revela-loader__ground {
+  position: absolute;
+  z-index: 1;
+  bottom: 12px;
+  left: 37px;
+  width: 80px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 50%, var(--loader-center) 10%, var(--loader-edge) 75%, transparent 100%);
+  box-shadow: 0 0 8px 2px var(--loader-glow);
+}
+
+.revela-loader__ground::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  left: 8px;
+  height: 1px;
+  border-radius: 50%;
+  background: var(--loader-edge);
+  opacity: 0.5;
 }
 
 .revela-loader__shadow {
   position: absolute;
   z-index: 2;
-  bottom: 21px;
-  width: 22px;
-  height: 5px;
-  border-radius: 50%;
-  background: rgba(14, 62, 39, 0.35);
-  filter: blur(2px);
-  animation: revela-loader-shadow 2.4s linear var(--delay) infinite;
-}
-
-.revela-loader__shadow--1 { left: 45px; --delay: var(--loader-phase); }
-.revela-loader__shadow--2 { left: 81px; --delay: calc(var(--loader-phase) - 0.8s); }
-.revela-loader__shadow--3 { left: 117px; --delay: calc(var(--loader-phase) - 1.6s); }
-
-.revela-loader__ground {
-  position: absolute;
-  z-index: 1;
   bottom: 14px;
-  left: 21px;
-  width: 138px;
-  height: 20px;
+  width: 14px;
+  height: 2px;
   border-radius: 50%;
-  background: var(--loader-ground);
-  box-shadow: 0 0 14px 4px var(--loader-glow), 0 0 30px 8px var(--loader-glow);
+  background: rgba(8, 41, 26, 0.35);
+  filter: blur(1px);
+  animation: revela-loader-shadow 1.6s var(--delay) infinite;
 }
+
+.revela-loader__shadow--1 { left: 39px; --delay: var(--loader-phase); }
+.revela-loader__shadow--2 { left: 70px; --delay: calc(var(--loader-phase) - 0.533s); }
+.revela-loader__shadow--3 { left: 101px; --delay: calc(var(--loader-phase) - 1.067s); }
 
 .revela-loader__message {
-  margin: 19px 0 0;
+  margin: 6px 0 0;
   text-align: center;
 }
 
 @keyframes revela-loader-hop {
-  0%, 8%, 92%, 100% { transform: translate(0, 0); opacity: 0; }
-  20% { transform: translate(-3px, -30px); opacity: 1; }
-  48% { transform: translate(2px, var(--hop)); opacity: 1; }
-  72% { transform: translate(4px, -31px); opacity: 1; }
-  85% { transform: translate(0, -14px); opacity: 0; }
+  0% { transform: translateY(-38px); opacity: 0; animation-timing-function: cubic-bezier(0.18, 0.72, 0.36, 1); }
+  12% { transform: translateY(-76px); opacity: 1; animation-timing-function: ease-out; }
+  34% { transform: translateY(var(--hop)); opacity: 1; animation-timing-function: ease-in-out; }
+  47% { transform: translateY(calc(var(--hop) + 2px)); opacity: 1; animation-timing-function: ease-in; }
+  68% { transform: translateY(-72px); opacity: 1; animation-timing-function: cubic-bezier(0.55, 0, 0.82, 0.48); }
+  82% { transform: translateY(-38px); opacity: 0; }
+  100% { transform: translateY(-38px); opacity: 0; }
 }
 
 @keyframes revela-loader-shadow {
-  0%, 8%, 92%, 100% { transform: scale(0.5); opacity: 0; }
-  20%, 72% { transform: scale(0.9); opacity: 0.55; }
-  48% { transform: scale(0.6); opacity: 0.25; }
-  85% { transform: scale(0.5); opacity: 0; }
+  0%, 82%, 100% { transform: scale(0.5); opacity: 0; }
+  12%, 68% { transform: scale(0.9); opacity: 0.45; }
+  34%, 47% { transform: scale(0.55); opacity: 0.2; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -116,10 +130,10 @@
   .revela-loader__stage::after {
     content: "";
     position: absolute;
-    bottom: 24px;
-    left: 75px;
-    width: 30px;
-    height: 41px;
+    bottom: 5px;
+    left: 61px;
+    width: 32px;
+    height: 44px;
     background: url("../assets/logo.png") center / contain no-repeat;
   }
 }

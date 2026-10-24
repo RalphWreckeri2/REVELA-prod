@@ -1250,8 +1250,9 @@ export default function AnalyticsPage() {
       audit: data?.descriptive?.audit_summary || {},
       kpis: data?.descriptive?.kpis || {},
       barangayRisk: data?.diagnostic?.barangay_risk_data || [],
-      spatialDiagnostics: {
+      spatialDiagnostics: data?.diagnostic ? {
         nearbyFlaggedGroups: {
+          analysisAvailable: dbscanEntries.length > 0,
           eligibleRecordCount: dbscanEntries.length,
           ungroupedRecordCount: dbscanEntries.filter((entry) => entry.cluster === -1).length,
           groupCount: groupedRecords.size,
@@ -1262,6 +1263,7 @@ export default function AnalyticsPage() {
           })),
         },
         severeFlagsByBarangay: {
+          analysisAvailable: barangayPoints.length > 0,
           benchmark: data?.diagnostic?.morans_data?.threshold ?? 0,
           highCountBarangayCount: barangayPoints.filter((point) => point.is_high_risk).length,
           barangays: barangayPoints.map((point) => ({
@@ -1270,7 +1272,7 @@ export default function AnalyticsPage() {
             aboveBenchmark: point.is_high_risk,
           })),
         },
-      },
+      } : {},
       categoryRiskDrivers: data?.diagnostic?.category_risk_drivers || [],
       categoryLinkageSummary: data?.diagnostic?.category_linkage_summary || {},
       scanHistory: data?.diagnostic?.scan_history || [],
@@ -2301,11 +2303,7 @@ export default function AnalyticsPage() {
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                             <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
                             <YAxis tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                            <Tooltip
-                              cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                              contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
-                              formatter={(value) => [`${value} distinct geospatial records`, "Red/Black flagged records"]}
-                            />
+                            <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }} />
                             <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
                             <Bar dataKey="Active" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
                             <Bar dataKey="Non-Active" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
@@ -2563,7 +2561,7 @@ export default function AnalyticsPage() {
                       <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
                         <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
                         <p style={{ margin: "6px 0 0" }}>
-                          Each dot is one geospatial log record (not necessarily a distinct business) with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report. DBSCAN uses Haversine distance, a 20 m neighborhood, and min_samples=3 (including each record itself); linked neighborhoods can form a group, and groups can cross barangay boundaries. Records outside a group are still shown as ungrouped. This chart and the barangay chart use the selected barangay, effective flag-color, and detection-date filters; registry/business and inspection filters do not apply. Proximity alone does not prove a violation or its cause.
+                          Each dot is one geospatial log record (not necessarily a distinct business) with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report. DBSCAN uses Haversine distance, a 20 m neighborhood, and min_samples=3 (including each record itself); linked neighborhoods can form a group, and groups can cross barangay boundaries. Records outside a group are still shown as ungrouped. This chart and the barangay chart use the selected barangay, effective flag-color, and detection-date filters; a selected flag-color further narrows the Red/Black records. Registry/business and inspection filters do not apply. Proximity alone does not prove a violation or its cause.
                         </p>
                       </details>
                       <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
@@ -2789,10 +2787,11 @@ export default function AnalyticsPage() {
                       <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
                         <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
                         <p style={{ margin: "6px 0 0" }}>
-                          Each bar counts distinct eligible geospatial record IDs with an effective Red or Black flag and coordinates—not distinct businesses. The dashed benchmark is the 75th percentile of these counts across barangays with geolocated records; a barangay is highlighted only when its count is strictly above that benchmark. At least 4 geolocated barangays are needed to calculate the comparison. This chart uses the selected barangay, effective flag-color, and detection-date filters; registry/business and inspection filters do not apply. A high total does not mean records are near one another and does not prove a violation or its cause.
+                          Each bar counts distinct eligible geospatial record IDs with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report—not distinct businesses. The dashed benchmark is NumPy's 75th percentile of those counts across geolocated barangays, using its default linear interpolation; a barangay is highlighted only when its count is strictly above that benchmark. At least 4 geolocated barangays are needed to calculate the comparison. This chart uses the selected barangay, effective flag-color, and detection-date filters; a selected flag-color further narrows the Red/Black records. Registry/business and inspection filters do not apply. A high total does not mean records are near one another and does not prove a violation or its cause.
                         </p>
                       </details>
                       <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
+                        <strong>Regional spacing note (barangay centers, not business clusters):</strong>{" "}
                         {loading ? "Comparing barangays..." : diag?.morans_insight || "Regional comparison is temporarily unavailable."}
                       </p>
 
@@ -2803,7 +2802,11 @@ export default function AnalyticsPage() {
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                               <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
                               <YAxis tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                              <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }} />
+                              <Tooltip
+                                cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                                contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
+                                formatter={(value) => [`${value} distinct geospatial records`, "Red/Black flagged records"]}
+                              />
                               <ReferenceLine y={diag.morans_data.threshold} stroke="#6366f1" strokeDasharray="3 3" label={{ position: 'top', value: 'Upper-quartile benchmark', fill: "#6366f1", fontSize: 9 }} />
                               <Bar dataKey="risk" name="Red/black flagged records" radius={[2, 2, 0, 0]}>
                                 {diag.morans_data.points.map((entry, index) => (
