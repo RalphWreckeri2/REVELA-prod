@@ -42,7 +42,66 @@ const SECTOR_COLORS = [
   "#ec4899", "#14b8a6", "#f97316", "#6366f1", "#06b6d4"
 ];
 
-function CustomChartTooltip({ active, payload, label }) {
+const REGISTRATION_COLORS = { new: "#2563eb", renewal: "#b45309" };
+const CAPTURE_MIN_WIDTH = { size: 520, type: 520, "reg-type": 520, sector: 640, barangay: 720 };
+
+function categoryLabel(name) {
+  const label = String(name || "Unclassified").trim();
+  return label === label.toUpperCase()
+    ? label.toLowerCase().replace(/\b[a-z]/g, (letter) => letter.toUpperCase())
+    : label;
+}
+
+function shareLabel(value, total) {
+  if (!total || !value) return "0%";
+  const percentage = value / total * 100;
+  return percentage < 1 ? "<1%" : `${Math.round(percentage)}%`;
+}
+
+function sectorLabel(name) {
+  const label = String(name || "Unclassified").trim();
+  if (label !== label.toUpperCase()) return label;
+  const acronyms = new Set(["IT", "ICT", "BPO", "SME", "LGU", "OFW", "N.E.C."]);
+  return label.toLowerCase().replace(/\b(?:[a-z]\.){2,}|\b[a-z]+/g, (word, offset) => {
+    const upper = word.toUpperCase();
+    return acronyms.has(upper) ? upper : offset === 0 ? word[0].toUpperCase() + word.slice(1) : word;
+  });
+}
+
+function SectorLegend({ data }) {
+  return (
+    <div className="export-sector-legend" aria-label="Economic sectors">
+      {data.length === 0 ? (
+        <p className="export-doughnut-legend__empty">No commercial sector records reported yet.</p>
+      ) : data.map((item, index) => (
+        <div className="export-sector-legend__row" key={`${item.name}-${index}`}>
+          <span className="export-doughnut-legend__swatch" style={{ backgroundColor: item.fill }} aria-hidden="true" />
+          <span className="export-doughnut-legend__label">{sectorLabel(item.name)}</span>
+          <strong className="export-doughnut-legend__count">{item.value.toLocaleString()}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DoughnutLegend({ data, total, emptyMessage }) {
+  return (
+    <div className="export-doughnut-legend" aria-label="Chart categories">
+      {data.length === 0 ? (
+        <p className="export-doughnut-legend__empty">{emptyMessage}</p>
+      ) : data.map((item, index) => (
+        <div className="export-doughnut-legend__row" key={`${item.name}-${index}`}>
+          <span className="export-doughnut-legend__swatch" style={{ backgroundColor: item.fill }} aria-hidden="true" />
+          <span className="export-doughnut-legend__label">{categoryLabel(item.name)}</span>
+          <strong className="export-doughnut-legend__count">{item.value.toLocaleString()}</strong>
+          <span className="export-doughnut-legend__percent">{shareLabel(item.value, total)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CustomChartTooltip({ active, payload, label, total, formatLabel = categoryLabel }) {
   if (!active || !payload || !payload.length) return null;
   return (
     <div className="export-chart-tooltip"
@@ -56,12 +115,12 @@ function CustomChartTooltip({ active, payload, label }) {
         boxShadow: "0 10px 25px -5px rgba(0,0,0,0.3)"
       }}
     >
-      <p style={{ margin: "0 0 4px 0", fontWeight: 700, color: "#93c5fd" }}>{label || payload[0]?.name}</p>
+      <p style={{ margin: "0 0 4px 0", fontWeight: 700, color: "#93c5fd" }}>{formatLabel(label || payload[0]?.payload?.name || payload[0]?.name, payload)}</p>
       {payload.map((entry, idx) => (
         <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0" }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: entry.color || entry.fill }} />
-          <span style={{ color: "#cbd5e1" }}>{entry.name}:</span>
-          <span style={{ fontWeight: 700, color: "#ffffff" }}>{entry.value}</span>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: entry.payload?.fill || entry.color || entry.fill }} />
+          <span style={{ color: "#cbd5e1" }}>{categoryLabel(entry.name)}:</span>
+          <span style={{ fontWeight: 700, color: "#ffffff" }}>{entry.value}{total ? ` (${shareLabel(Number(entry.value), total)})` : ""}</span>
         </div>
       ))}
     </div>
@@ -247,16 +306,18 @@ export default function ExportReportsPage() {
   const regTypeData = rawRegTypeData.map((r) => ({
     name: r.type_label || "Unspecified",
     value: Number(r.count || 0),
-    fill: r.type_label === "New" ? "#3b82f6" : r.type_label === "Renewal" ? "#8b5cf6" : "#64748b"
+    fill: REGISTRATION_COLORS[String(r.type_label || "").trim().toLowerCase()] || "#64748b"
   }));
   const totalByRegType = regTypeData.reduce((acc, curr) => acc + curr.value, 0);
 
   // 3. Dominant Economic Sectors (Top Lines of Business)
   const rawSectoralData = (desc?.sectoral_distribution || []).filter((r) => r.count > 0);
-  const sectoralData = rawSectoralData.map((r) => ({
+  const sectoralData = rawSectoralData.map((r, index) => ({
     name: r.sector || "Unclassified",
-    value: Number(r.count || 0)
+    value: Number(r.count || 0),
+    fill: SECTOR_COLORS[index % SECTOR_COLORS.length]
   }));
+  const chartSectorData = sectoralData.slice(0, 6);
   const totalBySector = sectoralData.reduce((acc, curr) => acc + curr.value, 0);
 
   // 4. Geographic Spread Across Barangays
@@ -319,6 +380,7 @@ export default function ExportReportsPage() {
 
     const element = chartRefs.current[chartId];
     if (!element) return;
+    const captureWidth = CAPTURE_MIN_WIDTH[chartId] ? Math.max(CAPTURE_MIN_WIDTH[chartId], Math.ceil(element.getBoundingClientRect().width)) : null;
 
     try {
       setExportingImageId(chartId);
@@ -327,6 +389,7 @@ export default function ExportReportsPage() {
         scale: 2, // 2x retina crispness
         useCORS: true,
         backgroundColor: "#ffffff",
+        ...(captureWidth ? { width: captureWidth } : {}),
         logging: false,
         onclone: (clonedDoc) => {
           const actionButtons = clonedDoc.querySelectorAll(".no-export");
@@ -335,6 +398,11 @@ export default function ExportReportsPage() {
           });
           const card = clonedDoc.getElementById(`chart-card-${chartId}`);
           if (card) {
+            if (captureWidth) {
+              card.style.width = `${captureWidth}px`;
+              card.style.maxWidth = "none";
+            }
+            card.classList.add("export-chart-capture");
             card.style.background = "#ffffff";
             card.style.padding = "24px";
             card.style.color = "#0f172a";
@@ -384,6 +452,7 @@ export default function ExportReportsPage() {
 
     const element = chartRefs.current[chartId];
     if (!element) return;
+    const captureWidth = CAPTURE_MIN_WIDTH[chartId] ? Math.max(CAPTURE_MIN_WIDTH[chartId], Math.ceil(element.getBoundingClientRect().width)) : null;
 
     try {
       setExportingPdfId(chartId);
@@ -392,6 +461,7 @@ export default function ExportReportsPage() {
         scale: 2,
         useCORS: true,
         backgroundColor: "#ffffff",
+        ...(captureWidth ? { width: captureWidth } : {}),
         logging: false,
         onclone: (clonedDoc) => {
           const actionButtons = clonedDoc.querySelectorAll(".no-export");
@@ -400,6 +470,11 @@ export default function ExportReportsPage() {
           });
           const card = clonedDoc.getElementById(`chart-card-${chartId}`);
           if (card) {
+            if (captureWidth) {
+              card.style.width = `${captureWidth}px`;
+              card.style.maxWidth = "none";
+            }
+            card.classList.add("export-chart-capture");
             card.style.background = "#ffffff";
             card.style.padding = "20px";
             card.style.color = "#0f172a";
@@ -420,6 +495,8 @@ export default function ExportReportsPage() {
         office: "Business Permits & Licensing Office",
         classification: "Official LGU Demographic Report",
         chartImage,
+        expandedChart: chartId in CAPTURE_MIN_WIDTH,
+        separateSummary: chartId === "sector" || chartId === "barangay",
         summaryTable,
         isLandscape: false
       });
@@ -459,19 +536,19 @@ export default function ExportReportsPage() {
             { Metric: "Overall Municipal Compliance Rate", Value: `${kpis?.compliance_rate ?? 0}%` }
           ],
           sizeDistribution: sizeData.map((s) => ({
-            Classification: s.name,
+            Classification: categoryLabel(s.name),
             Count: s.value,
-            Percentage: `${Math.round((s.value / (totalBySize || 1)) * 100)}%`
+            Percentage: shareLabel(s.value, totalBySize)
           })),
           typeDistribution: typeData.map((t) => ({
-            "Legal Structure": t.name,
+            "Legal Structure": categoryLabel(t.name),
             Count: t.value,
-            Percentage: `${Math.round((t.value / (totalByType || 1)) * 100)}%`
+            Percentage: shareLabel(t.value, totalByType)
           })),
           registrationLifecycle: regTypeData.map((t) => ({
-            Status: t.name,
+            Status: categoryLabel(t.name),
             Count: t.value,
-            Percentage: `${Math.round((t.value / (totalByRegType || 1)) * 100)}%`
+            Percentage: shareLabel(t.value, totalByRegType)
           })),
           registrationTypeAvailable: desc?.registration_type_available !== false,
           topSectors: sectoralData.slice(0, 10).map((sec, idx) => ({
@@ -532,9 +609,9 @@ export default function ExportReportsPage() {
         sizeData.forEach((s) => {
           csvSections.push({
             Section: "Size Classification",
-            Metric: s.name,
+            Metric: categoryLabel(s.name),
             Value: s.value,
-            Share: `${Math.round((s.value / (totalBySize || 1)) * 100)}%`
+            Share: shareLabel(s.value, totalBySize)
           });
         });
       }
@@ -547,9 +624,9 @@ export default function ExportReportsPage() {
         typeData.forEach((t) => {
           csvSections.push({
             Section: "Legal Structure",
-            Metric: t.name,
+            Metric: categoryLabel(t.name),
             Value: t.value,
-            Share: `${Math.round((t.value / (totalByType || 1)) * 100)}%`
+            Share: shareLabel(t.value, totalByType)
           });
         });
       }
@@ -569,9 +646,9 @@ export default function ExportReportsPage() {
         regTypeData.forEach((record) => {
           csvSections.push({
             Section: "Registration Lifecycle",
-            Metric: record.name,
+            Metric: categoryLabel(record.name),
             Value: record.value,
-            Share: `${Math.round((record.value / (totalByRegType || 1)) * 100)}%`
+            Share: shareLabel(record.value, totalByRegType)
           });
         });
       }
@@ -1169,9 +1246,9 @@ export default function ExportReportsPage() {
                           "Business Size Classification",
                           "Official breakdown of registered commercial enterprises categorized by enterprise asset scale",
                           sizeData.map((s) => ({
-                            Category: s.name,
+                             Category: categoryLabel(s.name),
                             Entities: s.value,
-                            Share: `${Math.round((s.value / (totalBySize || 1)) * 100)}%`
+                             Share: shareLabel(s.value, totalBySize)
                           })),
                           sizeData.length > 0
                         )
@@ -1232,51 +1309,13 @@ export default function ExportReportsPage() {
                             <Cell key={`cell-${index}`} fill={entry.fill} />
                           ))}
                         </Pie>
-                        <Tooltip content={<CustomChartTooltip />} />
+                        <Tooltip content={<CustomChartTooltip total={totalBySize} />} />
                       </PieChart>
                     </ResponsiveChart>
                   )}
                 </div>
 
-                {/* Simple Legend with Counts & Percentages */}
-                <div
-                  style={{
-                    marginTop: 14,
-                    paddingTop: 12,
-                    borderTop: "1px solid rgba(226, 232, 240, 0.7)",
-                    display: sizeData.length > 0 ? "grid" : "block",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                    gap: "8px 12px"
-                  }}
-                >
-                  {sizeData.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", textAlign: "center" }}>
-                      No business size records available.
-                    </div>
-                  ) : (
-                    sizeData.map((s, idx) => {
-                      const pct = Math.round((s.value / (totalBySize || 1)) * 100);
-                      return (
-                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-                          <span
-                            style={{
-                              width: 10,
-                              height: 10,
-                              borderRadius: "50%",
-                              background: s.fill,
-                              flexShrink: 0
-                            }}
-                          />
-                          <span style={{ color: "var(--color-muted)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
-                            {s.name}
-                          </span>
-                          <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
-                          <span style={{ fontSize: 11, color: "var(--color-muted)" }}>({pct}%)</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                <DoughnutLegend data={sizeData} total={totalBySize} emptyMessage="No business size records available." />
               </div>
 
               {/* ── CHART 2: Business Legal Structure (Ownership Type) ── */}
@@ -1349,9 +1388,9 @@ export default function ExportReportsPage() {
                           "Business Legal Structure",
                           "Official breakdown of registered commercial enterprises categorized by legal organization structure",
                           typeData.map((t) => ({
-                            Structure: t.name,
+                             Structure: categoryLabel(t.name),
                             Entities: t.value,
-                            Share: `${Math.round((t.value / (totalByType || 1)) * 100)}%`
+                             Share: shareLabel(t.value, totalByType)
                           })),
                           typeData.length > 0
                         )
@@ -1412,51 +1451,13 @@ export default function ExportReportsPage() {
                             <Cell key={`cell-${index}`} fill={entry.fill} />
                           ))}
                         </Pie>
-                        <Tooltip content={<CustomChartTooltip />} />
+                        <Tooltip content={<CustomChartTooltip total={totalByType} />} />
                       </PieChart>
                     </ResponsiveChart>
                   )}
                 </div>
 
-                {/* Simple Legend with Counts & Percentages */}
-                <div
-                  style={{
-                    marginTop: 14,
-                    paddingTop: 12,
-                    borderTop: "1px solid rgba(226, 232, 240, 0.7)",
-                    display: typeData.length > 0 ? "grid" : "block",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                    gap: "8px 12px"
-                  }}
-                >
-                  {typeData.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", textAlign: "center" }}>
-                      No legal structure records available.
-                    </div>
-                  ) : (
-                    typeData.map((t, idx) => {
-                      const pct = Math.round((t.value / (totalByType || 1)) * 100);
-                      return (
-                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-                          <span
-                            style={{
-                              width: 10,
-                              height: 10,
-                              borderRadius: "50%",
-                              background: t.fill,
-                              flexShrink: 0
-                            }}
-                          />
-                          <span style={{ color: "var(--color-muted)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
-                            {t.name}
-                          </span>
-                          <strong style={{ color: "var(--color-ink)" }}>{t.value}</strong>
-                          <span style={{ fontSize: 11, color: "var(--color-muted)" }}>({pct}%)</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                <DoughnutLegend data={typeData} total={totalByType} emptyMessage="No legal structure records available." />
               </div>
 
               {/* ── CHART 2B: Registration Lifecycle (New vs Renewal) ── */}
@@ -1518,9 +1519,9 @@ export default function ExportReportsPage() {
                           "Registration Lifecycle (New vs Renewal)",
                           "Official breakdown of registered commercial enterprises categorized by registration status",
                           regTypeData.map((t) => ({
-                            Status: t.name,
+                             Status: categoryLabel(t.name),
                             Entities: t.value,
-                            Share: `${Math.round((t.value / (totalByRegType || 1)) * 100)}%`
+                             Share: shareLabel(t.value, totalByRegType)
                           })),
                           regTypeData.length > 0
                         )
@@ -1584,50 +1585,13 @@ export default function ExportReportsPage() {
                             <Cell key={`cell-${index}`} fill={entry.fill} />
                           ))}
                         </Pie>
-                        <Tooltip content={<CustomChartTooltip />} />
+                        <Tooltip content={<CustomChartTooltip total={totalByRegType} />} />
                       </PieChart>
                     </ResponsiveChart>
                   )}
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 14,
-                    paddingTop: 12,
-                    borderTop: "1px solid rgba(226, 232, 240, 0.7)",
-                    display: regTypeData.length > 0 ? "grid" : "block",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                    gap: "8px 12px"
-                  }}
-                >
-                  {regTypeData.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", textAlign: "center" }}>
-                      No registration lifecycle records available.
-                    </div>
-                  ) : (
-                    regTypeData.map((t, idx) => {
-                      const pct = Math.round((t.value / (totalByRegType || 1)) * 100);
-                      return (
-                        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
-                          <span
-                            style={{
-                              width: 10,
-                              height: 10,
-                              borderRadius: "50%",
-                              background: t.fill,
-                              flexShrink: 0
-                            }}
-                          />
-                          <span style={{ color: "var(--color-muted)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
-                            {t.name}
-                          </span>
-                          <strong style={{ color: "var(--color-ink)" }}>{t.value}</strong>
-                          <span style={{ fontSize: 11, color: "var(--color-muted)" }}>({pct}%)</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                <DoughnutLegend data={regTypeData} total={totalByRegType} emptyMessage="No registration lifecycle records available." />
               </div>
 
               {/* ── CHART 3: Dominant Economic Sectors ── */}
@@ -1699,11 +1663,11 @@ export default function ExportReportsPage() {
                           "sector",
                           "Dominant Economic Sectors",
                           "Official distribution ranking of commercial enterprises across top industry sectors and lines of business",
-                          sectoralData.slice(0, 8).map((s, idx) => ({
+                          chartSectorData.map((s, idx) => ({
                             Rank: idx + 1,
-                            "Sector / Line of Business": s.name,
+                            "Sector / Line of Business": sectorLabel(s.name),
                             Count: s.value,
-                            Share: `${Math.round((s.value / (totalBySector || 1)) * 100)}%`
+                            Share: shareLabel(s.value, totalBySector)
                           })),
                           sectoralData.length > 0
                         )
@@ -1736,7 +1700,7 @@ export default function ExportReportsPage() {
                 </div>
 
                 {/* Chart Visual / Empty State */}
-                <div style={{ height: 220, width: "100%" }}>
+                <div style={{ height: Math.max(320, chartSectorData.length * 58 + 40), width: "100%" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
                   ) : analyticsError ? (
@@ -1749,10 +1713,10 @@ export default function ExportReportsPage() {
                   ) : (
                     <ResponsiveChart>
                       {({ width }) => {
-                        const labelWidth = Math.min(260, Math.max(160, width * 0.42));
+                         const labelWidth = Math.min(260, Math.max(160, width * 0.44));
                         return (
                       <BarChart
-                        data={sectoralData.slice(0, 6)}
+                        data={chartSectorData}
                         layout="vertical"
                         margin={{ top: 5, right: 25, left: 10, bottom: 5 }}
                       >
@@ -1763,14 +1727,14 @@ export default function ExportReportsPage() {
                           type="category"
                           width={labelWidth}
                           interval={0}
-                          tick={<WrappedAxisTick width={labelWidth - 12} />}
+                          tick={<WrappedAxisTick width={labelWidth - 12} maxLines={3} format={sectorLabel} />}
                           axisLine={false}
                           tickLine={false}
                         />
-                        <Tooltip content={<CustomChartTooltip />} />
+                        <Tooltip content={<CustomChartTooltip formatLabel={sectorLabel} />} />
                         <Bar dataKey="value" name="Registered Count" radius={[0, 4, 4, 0]}>
-                          {sectoralData.slice(0, 6).map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={SECTOR_COLORS[index % SECTOR_COLORS.length]} />
+                          {chartSectorData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.fill} />
                           ))}
                         </Bar>
                       </BarChart>
@@ -1780,31 +1744,7 @@ export default function ExportReportsPage() {
                   )}
                 </div>
 
-                {/* Simple Legend with Top Sectors Summary */}
-                <div
-                  style={{
-                    marginTop: 14,
-                    paddingTop: 12,
-                    borderTop: "1px solid rgba(226, 232, 240, 0.7)",
-                    display: sectoralData.length > 0 ? "flex" : "block",
-                    flexWrap: "wrap",
-                    gap: "8px 16px"
-                  }}
-                >
-                  {sectoralData.length === 0 ? (
-                    <div style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", textAlign: "center" }}>
-                      No commercial sector records reported yet.
-                    </div>
-                  ) : (
-                    sectoralData.slice(0, 4).map((s, idx) => (
-                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: SECTOR_COLORS[idx % SECTOR_COLORS.length] }} />
-                        <span style={{ color: "var(--color-muted)" }}>{s.name}:</span>
-                        <strong style={{ color: "var(--color-ink)" }}>{s.value}</strong>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <SectorLegend data={chartSectorData} />
               </div>
 
               {/* ── CHART 4: Geographic Spread Across Barangays ── */}
@@ -1923,7 +1863,7 @@ export default function ExportReportsPage() {
                       message="Establishment density per barangay will display once location data is mapped."
                     />
                   ) : (
-                    <GeographicBarChart data={barangaySpreadData} seriesName="Registered Establishments" tooltipContent={<CustomChartTooltip />} />
+                    <GeographicBarChart data={barangaySpreadData} seriesName="Registered Establishments" tooltipContent={<CustomChartTooltip formatLabel={(label, entries) => entries?.[0]?.payload?.fullName || label} />} />
                   )}
                 </div>
 
@@ -2529,6 +2469,12 @@ export default function ExportReportsPage() {
                 padding: 0 15mm !important;
               }
 
+              .print-report-separate-summary {
+                break-before: page;
+                page-break-before: always;
+                padding-top: 160px;
+              }
+
               .print-table {
                 width: 100%;
                 border-collapse: collapse;
@@ -2659,7 +2605,7 @@ export default function ExportReportsPage() {
                       alt="Demographic Chart Visual"
                       style={{
                         maxWidth: "100%",
-                        maxHeight: "360px",
+                        maxHeight: printReport.expandedChart ? "600px" : "360px",
                         objectFit: "contain",
                         margin: "0 auto",
                         display: "block",
@@ -2671,7 +2617,7 @@ export default function ExportReportsPage() {
                 )}
 
                 {/* Summary Table with Empty State */}
-                <div className="page-break-avoid">
+                <div className={printReport.separateSummary ? "print-report-separate-summary" : "page-break-avoid"}>
                   <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                     Demographic Breakdown Summary
                   </h3>

@@ -7,7 +7,7 @@ import WrappedAxisTick from "./WrappedAxisTick";
 export default function GeographicBarChart({ data, seriesName = "Total Businesses", tooltipContent }) {
   const needsRows = width => width < data.length * 72 + 80;
   return (
-    <ResponsiveChart height={({ width }) => needsRows(width) ? Math.max(260, data.length * 24 + 40) : 340}>
+    <ResponsiveChart height={({ width }) => needsRows(width) ? Math.max(260, data.length * 32 + 44) : 340}>
       {({ width }) => {
         const rows = needsRows(width);
         const labelWidth = rows ? Math.min(240, Math.max(170, width * 0.32)) : 52;
@@ -23,7 +23,7 @@ export default function GeographicBarChart({ data, seriesName = "Total Businesse
               axisLine={false} tickLine={false} />
             <YAxis type={rows ? "category" : "number"} dataKey={rows ? "barangayName" : undefined}
               width={labelWidth} interval={0}
-              tick={rows ? <WrappedAxisTick width={labelWidth - 12} maxLines={2} format={name => name.replace("Barangay ", "Brgy. ")} /> : { fontSize: 11, fill: "var(--color-muted)" }}
+               tick={rows ? <WrappedAxisTick width={labelWidth - 12} maxLines={2} format={name => name.replace("Barangay ", "Brgy. ")} /> : { fontSize: 11, fill: "var(--color-muted)" }}
               axisLine={false} tickLine={false} />
             <Tooltip content={tooltipContent} labelFormatter={(label, payload) => payload[0]?.payload?.fullName || label}
               cursor={{ fill: "rgba(255,255,255,0.05)" }}

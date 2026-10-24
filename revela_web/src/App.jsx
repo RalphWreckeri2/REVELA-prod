@@ -13,6 +13,7 @@ import DesktopAccessRequired from './components/DesktopAccessRequired';
 import InactivityProvider from './components/InactivityProvider';
 import { useDeviceAccess } from './hooks/useDeviceAccess';
 import { PublicPageTransition } from './components/PublicPageTransition';
+import RevelaLoader from './components/RevelaLoader';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const MapPage = lazy(() => import('./pages/MapPage'));
@@ -46,12 +47,7 @@ export default function App() {
             <PublicPageTransition>
             <PathnameKeyedRouteErrorBoundary>
               <Suspense
-                fallback={(
-                  <div className="route-loading" role="status">
-                    <span className="route-loading-indicator" aria-hidden="true" />
-                    Loading page...
-                  </div>
-                )}
+                fallback={<RevelaLoader message="Loading page…" />}
               >
                 <Routes>
                   {/* Public & Legal */}

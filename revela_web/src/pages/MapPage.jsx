@@ -4,7 +4,7 @@
  * modal, working zoom controls, fixed "See Full List" modal.
  */
 
-import { useState, useEffect, useCallback, useRef, useContext, useMemo, useEffectEvent } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useContext, useMemo, useEffectEvent } from "react";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -203,13 +203,15 @@ const DETECTION_MODES = [
   },
 ];
 
-function DetectionModeDropdown({ value, onChange, disabled }) {
-  const [open, setOpen] = useState(false);
+function DetectionModeDropdown({ value, onChange, disabled, open, setOpen }) {
   const [activeIndex, setActiveIndex] = useState(() =>
     Math.max(0, DETECTION_MODES.findIndex((mode) => mode.value === value)),
   );
+  const [menuPosition, setMenuPosition] = useState(null);
   const rootRef = useRef(null);
   const triggerRef = useRef(null);
+  const menuRef = useRef(null);
+  const activeOptionRef = useRef(null);
   const activeMode = DETECTION_MODES.find((mode) => mode.value === value)
     ?? DETECTION_MODES[0];
   const activeOptionId = `detection-mode-option-${DETECTION_MODES[activeIndex].value}`;
@@ -217,11 +219,69 @@ function DetectionModeDropdown({ value, onChange, disabled }) {
   useEffect(() => {
     if (!open) return undefined;
     const closeOnOutsidePointer = (event) => {
-      if (!rootRef.current?.contains(event.target)) setOpen(false);
+      if (!rootRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false);
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [open, setOpen]);
+
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    let frame = 0;
+    const updatePosition = () => {
+      const trigger = triggerRef.current;
+      const menu = menuRef.current;
+      if (!trigger || !menu) return;
+      const rect = trigger.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      // CSS zoom (including embedded/zoomed hosts) scales DOMRects, while
+      // fixed-position CSS coordinates remain in the unzoomed coordinate space.
+      const zoom = Number.parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+      const top = viewport?.offsetTop ?? 0;
+      const left = viewport?.offsetLeft ?? 0;
+      const right = left + (viewport?.width ?? window.innerWidth);
+      const bottom = top + (viewport?.height ?? window.innerHeight);
+      const gap = 6;
+      const margin = 8;
+      const below = Math.max(0, bottom - rect.bottom - gap - margin);
+      const above = Math.max(0, rect.top - top - gap - margin);
+      const menuHeight = menu.scrollHeight * zoom;
+      const flip = below < menuHeight && above > below;
+      const available = flip ? above : below;
+      const height = Math.min(menuHeight, available);
+      const width = Math.min(rect.width, right - left - margin * 2);
+      setMenuPosition({
+        top: (flip ? rect.top - gap - height : rect.bottom + gap) / zoom,
+        left: Math.max(left + margin, Math.min(rect.left, right - margin - width)) / zoom,
+        width: width / zoom,
+        maxHeight: available / zoom,
+      });
+    };
+    const schedulePosition = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updatePosition);
+    };
+    updatePosition();
+    const observer = new ResizeObserver(schedulePosition);
+    observer.observe(triggerRef.current);
+    observer.observe(menuRef.current);
+    window.addEventListener("resize", schedulePosition);
+    window.addEventListener("scroll", schedulePosition, true);
+    window.visualViewport?.addEventListener("resize", schedulePosition);
+    window.visualViewport?.addEventListener("scroll", schedulePosition);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", schedulePosition);
+      window.removeEventListener("scroll", schedulePosition, true);
+      window.visualViewport?.removeEventListener("resize", schedulePosition);
+      window.visualViewport?.removeEventListener("scroll", schedulePosition);
+    };
   }, [open]);
+
+  useEffect(() => {
+    if (open) activeOptionRef.current?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIndex]);
 
   const handleKeyDown = (event) => {
     if (event.key === "Escape" && open) {
@@ -294,20 +354,24 @@ function DetectionModeDropdown({ value, onChange, disabled }) {
           <path d="m4 6 4 4 4-4" />
         </svg>
       </button>
-      {open && (
+      {open && createPortal(
         <div
+          ref={menuRef}
           id="detection-mode-options"
           className="map-detection-mode-menu"
           role="listbox"
           aria-labelledby="detection-mode-label"
+          style={menuPosition || { visibility: "hidden" }}
         >
           {DETECTION_MODES.map((mode, index) => (
             <div
               id={`detection-mode-option-${mode.value}`}
               key={mode.value}
+              ref={index === activeIndex ? activeOptionRef : undefined}
               className={`map-detection-mode-option${index === activeIndex ? " active" : ""}`}
               role="option"
               aria-selected={mode.value === value}
+              onPointerDown={(event) => event.preventDefault()}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => {
                 onChange(mode.value);
@@ -323,7 +387,8 @@ function DetectionModeDropdown({ value, onChange, disabled }) {
               <span className="map-detection-mode-check" aria-hidden="true">{mode.value === value ? "✓" : ""}</span>
             </div>
           ))}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -2404,6 +2469,7 @@ export default function MapPage() {
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
   const [runDetectionMode, setRunDetectionMode] = useState("quick");
   const [detectionControlsCollapsed, setDetectionControlsCollapsed] = useState(false);
+  const [detectionModeOpen, setDetectionModeOpen] = useState(false);
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
 
@@ -4406,7 +4472,10 @@ export default function MapPage() {
                 type="button"
                 aria-expanded={!detectionControlsCollapsed}
                 aria-controls="map-detection-controls"
-                onClick={() => setDetectionControlsCollapsed(collapsed => !collapsed)}
+                onClick={() => {
+                  setDetectionModeOpen(false);
+                  setDetectionControlsCollapsed(collapsed => !collapsed);
+                }}
               >
                 <span className="map-detection-toggle-icon" aria-hidden="true">
                   <Icon.Radar />
@@ -4445,6 +4514,8 @@ export default function MapPage() {
                   value={runDetectionMode}
                   onChange={setRunDetectionMode}
                   disabled={runDetectionLoading}
+                  open={detectionModeOpen && !detectionControlsCollapsed}
+                  setOpen={setDetectionModeOpen}
                 />
                 <p id="detection-mode-description" className="map-detection-description" aria-live="polite">
                   {selectedDetectionMode.summary}

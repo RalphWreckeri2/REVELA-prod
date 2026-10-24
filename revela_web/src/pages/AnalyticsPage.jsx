@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, memo } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
@@ -519,7 +519,7 @@ const renderMarkdown = (text) => {
   const flushTable = () => {
     if (inTable) {
       elements.push(
-        <div key={`table-${elements.length}`} style={{ overflowX: "auto", margin: "10px 0", borderRadius: 8, border: "1px solid var(--color-border)" }}>
+        <div key={`table-${elements.length}`} className="ai-message-table">
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, textAlign: "left" }}>
             {tableHeader && <thead><tr style={{ background: "color-mix(in srgb, var(--color-ink) 5%, transparent)" }}>
               {tableHeader.map((h, i) => <th key={i} style={{ padding: "8px 12px", borderBottom: "1px solid var(--color-border)", fontWeight: 600 }}>{formatInline(h)}</th>)}
@@ -597,7 +597,8 @@ const renderMarkdown = (text) => {
 };
 
 const GlobalAIAssistant = memo(({ globalData }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [readingMode, setReadingMode] = useState(false);
   const [messages, setMessages] = useState([{
     role: "model",
     content: "I am the REVELA AI Analyst. I have reviewed all the data currently visible on your dashboard. What would you like to know?",
@@ -607,24 +608,67 @@ const GlobalAIAssistant = memo(({ globalData }) => {
   const { token } = useAuth();
   const chatScrollRef = useRef(null);
   const inputRef = useRef(null);
+  const launcherRef = useRef(null);
+  const panelRef = useRef(null);
+  const pendingRef = useRef(false);
+  const followMessagesRef = useRef(true);
+  const savedScrollTopRef = useRef(0);
 
   useEffect(() => {
-    if (!isExpanded) return undefined;
-    const timeoutId = setTimeout(() => inputRef.current?.focus(), 300);
-    return () => clearTimeout(timeoutId);
-  }, [isExpanded]);
+    if (isOpen) inputRef.current?.focus();
+  }, [isOpen]);
 
-  useEffect(() => {
-    if (chatScrollRef.current) {
-      const el = chatScrollRef.current;
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    }
+  useLayoutEffect(() => {
+    const el = chatScrollRef.current;
+    if (!isOpen || !el) return;
+    el.scrollTop = followMessagesRef.current ? el.scrollHeight : savedScrollTopRef.current;
+  }, [isOpen]);
+
+  useLayoutEffect(() => {
+    const el = chatScrollRef.current;
+    if (el && followMessagesRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, loading]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !inputRef.current) return;
+    const textarea = inputRef.current;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 108)}px`;
+  }, [input, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const updateViewport = () => {
+      const viewport = window.visualViewport;
+      const panel = panelRef.current;
+      if (!panel) return;
+      panel.style.setProperty("--ai-visual-top", `${viewport?.offsetTop ?? 0}px`);
+      panel.style.setProperty("--ai-visual-bottom", `${Math.max(0, window.innerHeight - (viewport?.offsetTop ?? 0) - (viewport?.height ?? window.innerHeight))}px`);
+      panel.style.setProperty("--ai-visual-height", `${viewport?.height ?? window.innerHeight}px`);
+    };
+    updateViewport();
+    window.visualViewport?.addEventListener("resize", updateViewport);
+    window.visualViewport?.addEventListener("scroll", updateViewport);
+    window.addEventListener("resize", updateViewport);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateViewport);
+      window.visualViewport?.removeEventListener("scroll", updateViewport);
+      window.removeEventListener("resize", updateViewport);
+    };
+  }, [isOpen]);
+
+  const closePanel = () => {
+    savedScrollTopRef.current = chatScrollRef.current?.scrollTop ?? 0;
+    setReadingMode(false);
+    setIsOpen(false);
+    requestAnimationFrame(() => launcherRef.current?.focus());
+  };
 
   const handleSend = async (e, forcedInput = null) => {
     e?.preventDefault();
     const textToSend = forcedInput !== null ? forcedInput : input;
-    if (!textToSend.trim() || loading) return;
+    if (!textToSend.trim() || pendingRef.current) return;
+    pendingRef.current = true;
 
     const userMsg = { role: "user", content: textToSend.trim() };
     const newMessages = [...messages, userMsg];
@@ -644,45 +688,17 @@ const GlobalAIAssistant = memo(({ globalData }) => {
     } catch (err) {
       setMessages([...newMessages, { role: "model", content: `Error: ${err.message}` }]);
     } finally {
+      pendingRef.current = false;
       setLoading(false);
     }
   };
 
   return (
     <div className="analytics-assistant">
-      <style>{`
-        @keyframes aiChatSlideIn {
-          from { opacity: 0; transform: translateY(20px) scale(0.95); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes aiBubbleFadeIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes aiTypingDot {
-          0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-          30% { opacity: 1; transform: translateY(-4px); }
-        }
-        @keyframes aiPulseGlow {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(16,185,129,0.4); }
-          50% { box-shadow: 0 0 0 10px rgba(16,185,129,0); }
-        }
-        .ai-chat-input:focus {
-          border-color: var(--color-primary) !important;
-          box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent) !important;
-        }
-        .ai-send-btn:hover:not(:disabled) {
-          filter: brightness(1.1);
-          transform: scale(1.03);
-        }
-        .ai-fab:hover {
-          transform: scale(1.05);
-        }
-      `}</style>
-
-      {!isExpanded && (
+      {!isOpen && (
         <button
-          onClick={() => setIsExpanded(true)}
+          ref={launcherRef}
+          onClick={() => setIsOpen(true)}
           className="analytics-assistant-launcher analytics-mascot-launcher"
           aria-label="Open AI Analyst"
           title="Open AI Analyst"
@@ -692,24 +708,10 @@ const GlobalAIAssistant = memo(({ globalData }) => {
         </button>
       )}
 
-      {isExpanded && (
-        <div className="analytics-assistant-panel" style={{
-          borderRadius: 20,
-          background: "var(--color-surface)",
-          border: "1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)",
-          boxShadow: "0 12px 48px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)",
-          display: "flex", flexDirection: "column",
-          overflow: "hidden",
-          animation: "aiChatSlideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards",
-          transformOrigin: "bottom right"
-        }}>
+      {isOpen && (
+        <div ref={panelRef} className={`analytics-assistant-panel${readingMode ? " is-reading" : ""}`} role="dialog" aria-label="REVELA AI Analyst">
           {/* Header */}
-          <div style={{
-            padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
-            borderBottom: "1px solid var(--color-border)",
-            background: "color-mix(in srgb, var(--color-primary) 5%, var(--color-surface))",
-            flexShrink: 0
-          }}>
+          <div className="ai-chat-header">
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{
                 width: 40, height: 40, borderRadius: "50%",
@@ -726,146 +728,80 @@ const GlobalAIAssistant = memo(({ globalData }) => {
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setIsExpanded(false)}
-              aria-label="Close AI Analyst"
-              style={{
-                background: "transparent", border: "none", cursor: "pointer",
-                color: "var(--color-muted)", padding: 4, borderRadius: "50%",
-                display: "flex", alignItems: "center", justifyContent: "center"
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = "var(--color-border)"}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-            >
-              <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
+            <div className="ai-chat-header-actions">
+              <button type="button" className="ai-chat-header-button" onClick={() => setReadingMode(current => !current)}
+                aria-label={readingMode ? "Restore AI Analyst panel" : "Expand AI Analyst panel"} aria-pressed={readingMode}
+                title={readingMode ? "Restore panel" : "Expand panel"}>
+                {readingMode ? "↙" : "⤢"}
+              </button>
+              <button type="button" className="ai-chat-header-button" onClick={closePanel} aria-label="Close AI Analyst" title="Close AI Analyst">
+                <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
-          <div ref={chatScrollRef} style={{
-            padding: "20px 20px", overflowY: "auto", display: "flex",
-            flexDirection: "column", gap: 12, flexGrow: 1
+          <div ref={chatScrollRef} className="ai-chat-conversation" onScroll={event => {
+            const el = event.currentTarget;
+            savedScrollTopRef.current = el.scrollTop;
+            followMessagesRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
           }}>
             {messages.map((m, i) => (
-              <div key={i} style={{
-                alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                animation: "aiBubbleFadeIn 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards",
-                animationDelay: `${i * 0.05}s`,
-                opacity: 0,
-                maxWidth: "85%",
-              }}>
-                <div style={{
-                  background: m.role === "user"
-                    ? "linear-gradient(135deg, var(--color-primary), var(--color-primary-dark))"
-                    : "color-mix(in srgb, var(--color-primary) 6%, var(--color-card-alt))",
-                  color: m.role === "user" ? "#022c22" : "var(--color-ink)",
-                  padding: "12px 16px", borderRadius: 16,
-                  borderBottomRightRadius: m.role === "user" ? 4 : 16,
-                  borderBottomLeftRadius: m.role === "model" ? 4 : 16,
-                  fontSize: 13, lineHeight: 1.6,
-                  border: m.role === "model" ? "1px solid var(--color-border)" : "none",
-                  boxShadow: m.role === "user"
-                    ? "0 4px 12px rgba(16,185,129,0.2)"
-                    : "0 2px 6px rgba(0,0,0,0.04)"
-                }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, marginBottom: 4, opacity: 0.6, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+              <div key={i} className={`ai-chat-message ai-chat-message--${m.role === "user" ? "user" : "model"}`}>
+                <div className="ai-chat-bubble">
+                  <div className="ai-chat-byline">
                     {m.role === "user" ? "You" : "AI Analyst"}
                   </div>
-                  <div style={{ whiteSpace: "pre-wrap" }}>{m.role === "model" ? renderMarkdown(m.content) : m.content}</div>
+                  <div className="ai-message-content">{m.role === "model" ? renderMarkdown(m.content) : m.content}</div>
                 </div>
               </div>
             ))}
             {loading && (
-              <div style={{
-                alignSelf: "flex-start", padding: "14px 20px",
-                background: "color-mix(in srgb, var(--color-primary) 6%, var(--color-card-alt))",
-                borderRadius: 16, borderBottomLeftRadius: 4,
-                border: "1px solid var(--color-border)",
-                display: "flex", alignItems: "center", gap: 6,
-                animation: "aiBubbleFadeIn 0.3s ease forwards"
-              }}>
+              <div className="ai-chat-typing" aria-label="AI Analyst is responding" role="status">
                 {[0, 1, 2].map(n => (
-                  <div key={n} style={{
-                    width: 8, height: 8, borderRadius: "50%",
-                    background: "var(--color-primary)",
-                    animation: `aiTypingDot 1.2s ease-in-out ${n * 0.15}s infinite`
-                  }} />
+                  <span key={n} style={{ animationDelay: `${n * 0.15}s` }} />
+                ))}
+              </div>
+            )}
+
+            {/* Predefined questions stay in the single conversation scroller. */}
+            {messages.length === 1 && !loading && (
+              <div className="ai-chat-suggestions">
+                {[
+                  "What are the main takeaways?",
+                  "Are there any anomalies?",
+                  "How does this compare to expected trends?"
+                ].map((q, idx) => (
+                  <button key={idx} onClick={() => handleSend(null, q)} type="button">{q}</button>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Predefined Questions */}
-          {messages.length === 1 && !loading && (
-            <div style={{
-              display: "flex", gap: 8, padding: "0 20px 14px", flexWrap: "wrap",
-              background: "var(--color-surface)"
-            }}>
-              {[
-                "What are the main takeaways?",
-                "Are there any anomalies?",
-                "How does this compare to expected trends?"
-              ].map((q, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSend(null, q)}
-                  type="button"
-                  style={{
-                    padding: "8px 14px", borderRadius: 16, border: "1px solid var(--color-border)",
-                    background: "var(--color-card-alt)", color: "var(--color-ink)",
-                    fontSize: 12, cursor: "pointer", transition: "all 0.2s ease",
-                    fontWeight: 500
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--color-primary)"; e.currentTarget.style.color = "var(--color-primary)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--color-border)"; e.currentTarget.style.color = "var(--color-ink)"; }}
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          )}
-
           {/* Input */}
-          <form onSubmit={handleSend} style={{
-            display: "flex", gap: 10,
-            borderTop: "1px solid var(--color-border)",
-            padding: "16px 20px",
-            background: "var(--color-surface)",
-            flexShrink: 0
-          }}>
-            <input
+          <form className="ai-chat-composer" onSubmit={handleSend}>
+            <textarea
               ref={inputRef}
-              type="text"
+              rows={1}
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="Ask me anything about this data..."
-              className="ai-chat-input"
-              style={{
-                flexGrow: 1, padding: "10px 16px", border: "1.5px solid var(--color-border)",
-                borderRadius: 24, fontSize: 13, outline: "none",
-                background: "var(--color-card-alt)",
-                color: "var(--color-ink)", fontFamily: "var(--font-base)",
-                transition: "all 0.2s ease"
+              onKeyDown={e => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  handleSend();
+                }
               }}
+              placeholder="Ask me anything about this data..."
+              aria-label="Message the AI Analyst"
+              className="ai-chat-input"
               disabled={loading}
             />
             <button
               type="submit"
               className="ai-send-btn"
               disabled={loading || !input.trim()}
-              style={{
-                padding: "10px 20px", borderRadius: 24, border: "none",
-                background: input.trim() && !loading
-                  ? "linear-gradient(135deg, var(--color-primary), var(--color-primary-dark))"
-                  : "var(--color-border)",
-                color: input.trim() && !loading ? "#022c22" : "var(--color-muted)", fontWeight: 600, fontSize: 13,
-                cursor: input.trim() && !loading ? "pointer" : "not-allowed",
-                transition: "all 0.2s ease", flexShrink: 0,
-                display: "flex", alignItems: "center", gap: 6
-              }}
             >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
@@ -1292,31 +1228,64 @@ export default function AnalyticsPage() {
   );
 
   // ─────────────────────────────────────────────────────────────────────────
-  const globalData = useMemo(() => ({
-    geographic: data?.descriptive?.nature_per_barangay || [],
-    sectoral: data?.descriptive?.sectoral_distribution || [],
-    size: data?.descriptive?.business_size_dist || [],
-    legalStructure: data?.descriptive?.business_type_dist || [],
-    complianceBySize: data?.descriptive?.compliance_by_size || [],
-    complianceTimeline: data?.descriptive?.compliance_timeline || [],
-    enforcement: data?.descriptive?.enforcement_progress || [],
-    audit: data?.descriptive?.audit_summary || {},
-    kpis: data?.descriptive?.kpis || {},
-    barangayRisk: data?.diagnostic?.barangay_risk_data || [],
-    categoryRiskDrivers: data?.diagnostic?.category_risk_drivers || [],
-    categoryLinkageSummary: data?.diagnostic?.category_linkage_summary || {},
-    scanHistory: data?.diagnostic?.scan_history || [],
-    // Prescriptive tier
-    opsRankings: data?.prescriptive?.rankings || [],
-    wlcConfig: data?.prescriptive?.wlc_config || {},
-    wlcModel: data?.prescriptive?.model || {},
-    dispatchWorkforce: data?.prescriptive?.workforce || {},
-    dispatchRecommendations: data?.prescriptive?.dispatch_recommendations || [],
-    // Operations tier
-    inspectorStats: data?.operations?.inspector_stats || [],
-    statusBreakdown: data?.operations?.status_breakdown || [],
-    inspectionTimeline: data?.operations?.inspection_timeline || [],
-  }), [data]);
+  const globalData = useMemo(() => {
+    const dbscanEntries = data?.diagnostic?.dbscan_clusters || [];
+    const groupedRecords = new Map();
+    dbscanEntries.forEach((entry) => {
+      if (entry.cluster === -1) return;
+      const records = groupedRecords.get(entry.cluster) || [];
+      records.push(entry);
+      groupedRecords.set(entry.cluster, records);
+    });
+    const barangayPoints = data?.diagnostic?.morans_data?.points || [];
+
+    return {
+      geographic: data?.descriptive?.nature_per_barangay || [],
+      sectoral: data?.descriptive?.sectoral_distribution || [],
+      size: data?.descriptive?.business_size_dist || [],
+      legalStructure: data?.descriptive?.business_type_dist || [],
+      complianceBySize: data?.descriptive?.compliance_by_size || [],
+      complianceTimeline: data?.descriptive?.compliance_timeline || [],
+      enforcement: data?.descriptive?.enforcement_progress || [],
+      audit: data?.descriptive?.audit_summary || {},
+      kpis: data?.descriptive?.kpis || {},
+      barangayRisk: data?.diagnostic?.barangay_risk_data || [],
+      spatialDiagnostics: {
+        nearbyFlaggedGroups: {
+          eligibleRecordCount: dbscanEntries.length,
+          ungroupedRecordCount: dbscanEntries.filter((entry) => entry.cluster === -1).length,
+          groupCount: groupedRecords.size,
+          groups: [...groupedRecords.entries()].map(([cluster, records]) => ({
+            cluster,
+            recordCount: records.length,
+            barangays: [...new Set(records.map((entry) => entry.barangay).filter(Boolean))],
+          })),
+        },
+        severeFlagsByBarangay: {
+          benchmark: data?.diagnostic?.morans_data?.threshold ?? 0,
+          highCountBarangayCount: barangayPoints.filter((point) => point.is_high_risk).length,
+          barangays: barangayPoints.map((point) => ({
+            barangay: point.barangay,
+            severeFlagRecordCount: point.risk,
+            aboveBenchmark: point.is_high_risk,
+          })),
+        },
+      },
+      categoryRiskDrivers: data?.diagnostic?.category_risk_drivers || [],
+      categoryLinkageSummary: data?.diagnostic?.category_linkage_summary || {},
+      scanHistory: data?.diagnostic?.scan_history || [],
+      // Prescriptive tier
+      opsRankings: data?.prescriptive?.rankings || [],
+      wlcConfig: data?.prescriptive?.wlc_config || {},
+      wlcModel: data?.prescriptive?.model || {},
+      dispatchWorkforce: data?.prescriptive?.workforce || {},
+      dispatchRecommendations: data?.prescriptive?.dispatch_recommendations || [],
+      // Operations tier
+      inspectorStats: data?.operations?.inspector_stats || [],
+      statusBreakdown: data?.operations?.status_breakdown || [],
+      inspectionTimeline: data?.operations?.inspection_timeline || [],
+    };
+  }, [data]);
 
   return (
     <DashboardLayout className={`analytics-page${activeTab === "prescriptive" ? " analytics-page--prescriptive" : ""}`} bottomBar={(
@@ -2332,7 +2301,11 @@ export default function AnalyticsPage() {
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
                             <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
                             <YAxis tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                            <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }} />
+                            <Tooltip
+                              cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                              contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
+                              formatter={(value) => [`${value} distinct geospatial records`, "Red/Black flagged records"]}
+                            />
                             <Legend wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
                             <Bar dataKey="Active" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
                             <Bar dataKey="Non-Active" stackId="a" fill="#ef4444" radius={[4, 4, 0, 0]} />
@@ -2583,10 +2556,18 @@ export default function AnalyticsPage() {
                       </svg>
                     </div>
                     <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Nearby flagged businesses</h3>
-                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: 0, lineHeight: 1.5 }}>
-                        Each dot is a red or black flagged record with a location. Circles mark groups of at least 3 records found within a 20 m neighborhood. A group is a place to consider for inspection, not proof of a violation.
-                        {loading ? " Analyzing nearby records..." : ` ${diag?.dbscan_insight || "Hotspot analysis is temporarily unavailable."}`}
+                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Nearby flagged records</h3>
+                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.5 }}>
+                        Groups geolocated flagged records by proximity, regardless of barangay totals.
+                      </p>
+                      <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
+                        <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
+                        <p style={{ margin: "6px 0 0" }}>
+                          Each dot is one geospatial log record (not necessarily a distinct business) with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report. DBSCAN uses Haversine distance, a 20 m neighborhood, and min_samples=3 (including each record itself); linked neighborhoods can form a group, and groups can cross barangay boundaries. Records outside a group are still shown as ungrouped. This chart and the barangay chart use the selected barangay, effective flag-color, and detection-date filters; registry/business and inspection filters do not apply. Proximity alone does not prove a violation or its cause.
+                        </p>
+                      </details>
+                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
+                        {loading ? "Analyzing nearby records..." : diag?.dbscan_insight || "Hotspot analysis is temporarily unavailable."}
                       </p>
 
                       {diag?.dbscan_clusters && diag.dbscan_clusters.length > 0 && (
@@ -2802,9 +2783,17 @@ export default function AnalyticsPage() {
                     </div>
                     <div style={{ flex: 1 }}>
                       <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Severe flags by barangay</h3>
-                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: 0, lineHeight: 1.5 }}>
-                        Bars count red and black flagged records in each barangay. The dashed line marks the upper-quartile benchmark; bars above it have more severe flags than most barangays. This is a screening comparison, not a measure of cause.
-                        {loading ? " Comparing barangays..." : ` ${diag?.morans_insight || "Regional comparison is temporarily unavailable."}`}
+                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.5 }}>
+                        Compares Red and Black geospatial-record totals within barangay boundaries.
+                      </p>
+                      <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
+                        <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
+                        <p style={{ margin: "6px 0 0" }}>
+                          Each bar counts distinct eligible geospatial record IDs with an effective Red or Black flag and coordinates—not distinct businesses. The dashed benchmark is the 75th percentile of these counts across barangays with geolocated records; a barangay is highlighted only when its count is strictly above that benchmark. At least 4 geolocated barangays are needed to calculate the comparison. This chart uses the selected barangay, effective flag-color, and detection-date filters; registry/business and inspection filters do not apply. A high total does not mean records are near one another and does not prove a violation or its cause.
+                        </p>
+                      </details>
+                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
+                        {loading ? "Comparing barangays..." : diag?.morans_insight || "Regional comparison is temporarily unavailable."}
                       </p>
 
                       {diag?.morans_data?.points && diag.morans_data.points.length > 0 && (
