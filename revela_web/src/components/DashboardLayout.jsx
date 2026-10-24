@@ -150,7 +150,7 @@ function NavBadge({ variant = "red", count }) {
   return <span className={`badge badge--${variant}`}>{count}</span>;
 }
 
-function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin }) {
+function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin, logoutPending }) {
   const location = useLocation();
   const [tooltip, setTooltip] = useState(null);
 
@@ -237,7 +237,7 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin 
 
       {/* Logout & System Info */}
       <div className="sidebar-footer">
-        <button className="logout-btn" onClick={onLogout} {...tooltipProps("Logout")}>
+        <button className="logout-btn" onClick={onLogout} disabled={logoutPending} aria-busy={logoutPending} {...tooltipProps("Logout")}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
@@ -819,6 +819,8 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
   );
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showAboutModal, setShowAboutModal] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const logoutPendingRef = useRef(false);
   const navigate = useNavigate();
   const { user: authUser, logout } = useAuth();
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(authUser?.role);
@@ -829,29 +831,36 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
     return () => window.removeEventListener("revela:open-about", handleOpenAbout);
   }, []);
 
-  const handleLogout = () => {
-    Swal.fire({
-      title: 'Are you sure?',
-      text: "You will be logged out of the system.",
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444',
-      cancelButtoncolor: "var(--color-muted)",
-      confirmButtonText: 'Yes, log out'
-    }).then((result) => {
-      if (result.isConfirmed) {
-        // Match the router's transition priority so the auth guard cannot
-        // redirect to /login before the existing logout destination commits.
-        startTransition(() => {
-          if (typeof onLogout === "function") {
-            onLogout();
-          } else if (logout) {
-            logout();
-          }
-          navigate("/");
-        });
+  const handleLogout = async () => {
+    if (logoutPendingRef.current) return;
+    logoutPendingRef.current = true;
+    try {
+      const result = await Swal.fire({
+        title: 'Are you sure?',
+        text: "You will be logged out of the system.",
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: "var(--color-muted)",
+        confirmButtonText: 'Yes, log out'
+      });
+      if (!result.isConfirmed) return;
+      setLogoutPending(true);
+      if (typeof onLogout === "function") {
+        await onLogout();
+      } else {
+        await logout({ waitForServer: true });
       }
-    });
+      startTransition(() => navigate("/", { replace: true, state: { skipIntro: true } }));
+    } catch (error) {
+      console.error("Could not finish signing out", error);
+      // Even on an unexpected failure, leave the protected route rather than
+      // stranding the user under the sign-out overlay.
+      startTransition(() => navigate("/", { replace: true, state: { skipIntro: true } }));
+    } finally {
+      logoutPendingRef.current = false;
+      setLogoutPending(false);
+    }
   };
   const toggleSidebar = () => {
     setIsSidebarCollapsed((current) => {
@@ -885,6 +894,7 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
       </button>
       <Sidebar
         onLogout={handleLogout}
+        logoutPending={logoutPending}
         onOpenAbout={() => setShowAboutModal(true)}
         collapsed={isSidebarCollapsed}
         onToggleCollapsed={toggleSidebar}

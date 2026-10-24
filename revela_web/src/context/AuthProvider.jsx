@@ -10,6 +10,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => isDevPreviewToken(token)
     ? { id: 1, fullName: "BPLO Administrator", role: "Admin", email: "admin@mataasnakahoy.gov.ph" }
     : null);
+  const [signingOut, setSigningOut] = useState(false);
 
   const setToken = useCallback((newToken) => {
     setTokenState(newToken);
@@ -129,18 +130,40 @@ export function AuthProvider({ children }) {
     };
   }, [token, refreshUser]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async ({ waitForServer = false } = {}) => {
+    if (waitForServer) setSigningOut(true);
     if (token && !isDevPreviewToken(token)) {
-      void logoutRequest(token).catch((error) => {
-        console.error("Failed to revoke server session during logout", error);
-      });
+      if (waitForServer) {
+        // A stalled connection must not leave the full-screen sign-out status up forever.
+        const controller = new AbortController();
+        let timeout;
+        const deadline = new Promise((_, reject) => {
+          timeout = window.setTimeout(() => {
+            controller.abort();
+            reject(new Error("Server logout timed out"));
+          }, 10000);
+        });
+        try {
+          await Promise.race([logoutRequest(token, { signal: controller.signal }), deadline]);
+        } catch (error) {
+          console.error("Failed to revoke server session during logout", error);
+        } finally {
+          window.clearTimeout(timeout);
+        }
+      } else {
+        void logoutRequest(token).catch((error) => {
+          console.error("Failed to revoke server session during logout", error);
+        });
+      }
     }
     setToken(null);
     setUser(null);
   }, [token, setToken]);
 
+  const finishSignOut = useCallback(() => setSigningOut(false), []);
+
   return (
-    <AuthContext.Provider value={{ token, user, login, completeLogin, logout, refreshUser, applyAccountSettings }}>
+    <AuthContext.Provider value={{ token, user, login, completeLogin, logout, signingOut, finishSignOut, refreshUser, applyAccountSettings }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useLayoutEffect } from 'react';
 import { BrowserRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeProvider';
 import { AuthProvider } from './context/AuthProvider';
@@ -14,6 +14,7 @@ import InactivityProvider from './components/InactivityProvider';
 import { useDeviceAccess } from './hooks/useDeviceAccess';
 import { PublicPageTransition } from './components/PublicPageTransition';
 import RevelaLoader from './components/RevelaLoader';
+import { useAuth } from './context/authContext';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const MapPage = lazy(() => import('./pages/MapPage'));
@@ -35,6 +36,19 @@ function PortalDeviceGate() {
   // This still re-evaluates on rotate/resize, so no orientation is stuck.
   const { restricted } = useDeviceAccess();
   return restricted ? <DesktopAccessRequired /> : <Outlet />;
+}
+
+function SignOutOverlay() {
+  const { signingOut, finishSignOut } = useAuth();
+  const { pathname } = useLocation();
+
+  // Keep the loader above the route change; release it only after the public
+  // landing route has committed, so neither the login guard nor the intro flashes.
+  useLayoutEffect(() => {
+    if (signingOut && pathname === '/') finishSignOut();
+  }, [signingOut, pathname, finishSignOut]);
+
+  return signingOut ? <RevelaLoader message="Signing out…" /> : null;
 }
 
 export default function App() {
@@ -75,6 +89,7 @@ export default function App() {
             </PathnameKeyedRouteErrorBoundary>
             </PublicPageTransition>
           </InactivityProvider>
+          <SignOutOverlay />
         </BrowserRouter>
       </ThemeProvider>
     </AuthProvider>

@@ -153,10 +153,11 @@ export async function loginRequest(email, password) {
   }
 }
 
-export async function logoutRequest(token) {
+export async function logoutRequest(token, { signal } = {}) {
   const res = await fetch(`${BASE_URL}/auth/logout`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
+    signal,
   });
   return await handleResponse(res);
 }
