@@ -22,7 +22,7 @@ from api.inspections import service as inspection_service
 class AssignTargetErrorsTests(unittest.TestCase):
     """Service level: the typed errors are actually produced."""
 
-    def _assign(self, *, pin_exists, inspector_exists):
+    def _assign(self, *, pin_exists, inspector_exists, inspector_active=1):
         cursor = MagicMock()
         cursor.lastrowid = 31
 
@@ -37,7 +37,8 @@ class AssignTargetErrorsTests(unittest.TestCase):
             if "FROM users" in sql:
                 if inspector_exists:
                     return {"userID": 9, "fullName": "Ana",
-                            "userRole": "Inspector"}
+                            "userRole": "Inspector",
+                            "isActive": inspector_active}
                 return None
             return None
 
@@ -66,6 +67,14 @@ class AssignTargetErrorsTests(unittest.TestCase):
         self.assertIsInstance(error,
                               inspection_service.InspectionTargetInvalid)
         self.assertIn("userID 9 not found", str(error))
+
+    def test_inactive_inspector_is_invalid(self):
+        result, error = self._assign(
+            pin_exists=True, inspector_exists=True, inspector_active=0)
+        self.assertIsNone(result)
+        self.assertIsInstance(error,
+                              inspection_service.InspectionTargetInvalid)
+        self.assertIn("userID 9 is inactive", str(error))
 
     def test_pin_is_checked_before_the_inspector(self):
         # A bad inspector on a bad pin reports the pin, which is the 404 case.

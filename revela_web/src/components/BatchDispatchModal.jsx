@@ -55,7 +55,11 @@ export default function BatchDispatchModal({ barangays, token, onClose, onSucces
           ? inspectorData
           : (inspectorData.data ?? inspectorData.users ?? []);
         setAllFlags(rawFlags.map(normalizeBatchFlag));
-        setInspectors(list);
+        setInspectors(list.filter(inspector => (
+          inspector.userRole === "Inspector" &&
+          inspector.isActive !== 0 &&
+          inspector.isActive !== false
+        )));
       })
       .catch(err => {
         if (isCurrent) setError(err.message || "Could not load dispatch data.");

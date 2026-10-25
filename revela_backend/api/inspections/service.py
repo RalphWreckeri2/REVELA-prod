@@ -454,7 +454,8 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
 
         # Guard: inspector user exists and has Inspector role
         cursor.execute(
-            "SELECT userID, fullName, userRole FROM users WHERE userID = %s AND userRole = 'Inspector'",
+            "SELECT userID, fullName, userRole, isActive FROM users "
+            "WHERE userID = %s AND userRole = 'Inspector'",
             (inspector_user_id,)
         )
         inspector = cursor.fetchone()
@@ -462,6 +463,10 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
             cursor.close()
             return None, InspectionTargetInvalid(
                 f"Inspector userID {inspector_user_id} not found")
+        if inspector.get("isActive") in (0, False):
+            cursor.close()
+            return None, InspectionTargetInvalid(
+                f"Inspector userID {inspector_user_id} is inactive")
 
         # Check if ANY report already exists for this flag (any status).
         # Re-dispatching reuses the existing row so the count stays correct.

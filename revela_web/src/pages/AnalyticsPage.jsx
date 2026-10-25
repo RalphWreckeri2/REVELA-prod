@@ -2347,19 +2347,30 @@ export default function AnalyticsPage() {
                 </span>
               </div>
 
-              <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Field & Inspection KPIs</h4>
-              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginBottom: 24 }}>
-                <KpiCard iconVariant="red" value={flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black} label="Total Non-Compliant" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="orange" value={dispatchedCount ?? "—"} label="Dispatched" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="gold" value={verifiedReportCount} label="Verified inspection reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="green" value={clearedCount} label="Verified Green reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 0 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="gold" value={`${verifiedReportCount > 0 ? Math.round((clearedCount / verifiedReportCount) * 100) : 0}%`} label="Green share of verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} style={{ padding: "12px 10px" }} />
+              <div className="analytics-field-kpi-group">
+                <div className="analytics-field-kpi-heading">
+                  <h4>Inspection workflow</h4>
+                  <span>Reports and flagged-record counts</span>
+                </div>
+                <div className="analytics-field-kpi-grid analytics-field-kpi-grid--activity">
+                  <KpiCard iconVariant="red" value={flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black} label="Non-compliant records" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="orange" value={dispatchedCount ?? "—"} label="Dispatched" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>} />
+                  <KpiCard iconVariant="gold" value={awaitingCount} label="Awaiting verification reports" />
+                  <KpiCard iconVariant="gold" value={verifiedReportCount} label="Verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="green" value={clearedCount} label="Verified Green reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 0 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} />
+                  <KpiCard iconVariant="gold" value={`${verifiedReportCount > 0 ? Math.round((clearedCount / verifiedReportCount) * 100) : 0}%`} label="Green share of verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} />
+                </div>
               </div>
-              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 16 }}>
-                <KpiCard iconVariant="gold" value={awaitingCount} label="Submitted · awaiting verification (reports)" />
-                <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed compliant (businesses)" />
-                <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified compliant (businesses)" />
-                <KpiCard iconVariant="plain" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed compliant (distinct businesses)" />
+              <div className="analytics-field-kpi-group analytics-field-kpi-group--compliance">
+                <div className="analytics-field-kpi-heading">
+                  <h4>Confirmed compliant businesses</h4>
+                  <span>Distinct businesses · by confirmation source</span>
+                </div>
+                <div className="analytics-field-kpi-grid analytics-field-kpi-grid--compliance">
+                  <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed" />
+                  <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified" />
+                  <KpiCard iconVariant="plain" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed" />
+                </div>
               </div>
               <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 24px" }}>
                 Confirmed-compliance business counts require a current Green original pin and valid office or admin-verification history. They are not a census of all Green registry businesses. {preliminaryGreen} submitted Green {preliminaryGreen === 1 ? "report is" : "reports are"} awaiting admin verification.
