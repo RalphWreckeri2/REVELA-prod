@@ -19,6 +19,8 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [checkedAt, setCheckedAt] = useState(null);
+  const [confirmationSummary, setConfirmationSummary] = useState(null);
+  const [unlinkedVerifiedPinCount, setUnlinkedVerifiedPinCount] = useState(0);
   const report = buildComplianceReport(records, filters, checkedAt);
   const visible = paginateRecords(report.rows, page, 10);
   const barangays = [{ value: "all", label: "All Barangays" }, ...[...new Map(records.map(record =>
@@ -35,6 +37,8 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
       const snapshot = await getInspectionVerifiedCompliantRequest(token);
       if (!Array.isArray(snapshot?.data)) throw new Error("The report API returned no record list.");
       setRecords(snapshot.data);
+      setConfirmationSummary(snapshot.confirmationSummary || null);
+      setUnlinkedVerifiedPinCount(snapshot.unlinkedVerifiedPinCount || 0);
       setCheckedAt(snapshot.generatedAt);
       return snapshot;
     } catch (err) {
@@ -104,6 +108,8 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
       <div>
         <h3>{COMPLIANCE_REPORT_TITLE}</h3>
         <p>{COMPLIANCE_REPORT_DESCRIPTION}</p>
+        {confirmationSummary && <small>Office-confirmed: {confirmationSummary.office_confirmed} · Inspection-verified: {confirmationSummary.inspection_verified} · Combined distinct businesses: {confirmationSummary.total_confirmed}. Counts exclude Green businesses without qualifying confirmation history.</small>}
+        {unlinkedVerifiedPinCount > 0 && <small>{unlinkedVerifiedPinCount} historical inspection-verified unlinked {unlinkedVerifiedPinCount === 1 ? "pin appears" : "pins appear"} in the report list, but not in distinct linked-business counts.</small>}
         <small>{COMPLIANCE_REPORT_SCOPE}</small>
         <small>Downloads use the View List filters. PDF opens the print / Save as PDF dialog.</small>
         {checkedAt && <small>Applied filters: {report.filtersLabel}</small>}

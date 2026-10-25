@@ -273,7 +273,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
         </div>
 
         {loading && <SkeletonDetails rows={5} />}
-        {error && <p style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</p>}
+        {error && <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</p>}
 
         {business && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

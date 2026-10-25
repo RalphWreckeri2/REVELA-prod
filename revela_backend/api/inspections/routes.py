@@ -329,6 +329,9 @@ def submit():
                 "error": str(error),
                 "code": "inspection_submission_conflict",
             }), 409
+        from api.inspections.notes_policy import InspectionNotesInvalid
+        if isinstance(error, InspectionNotesInvalid):
+            return jsonify({"error": str(error), "code": "inspection_notes_invalid"}), 400
         return jsonify({"error": error}), 500
 
     if result.get("alreadyAccepted"):

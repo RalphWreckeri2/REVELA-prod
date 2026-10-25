@@ -4112,6 +4112,10 @@ def escalate_to_black(log_id, actor_user_id):
 
 # ── Delete Flag ───────────────────────────────────────────────────────────────
 
+class PinDeletionConflict(RuntimeError):
+    """A changed or protected pin must not be partially deleted."""
+
+
 def delete_flag(log_id, actor_role=None):
     """
     Delete a single flag.
@@ -4121,19 +4125,34 @@ def delete_flag(log_id, actor_role=None):
       Before deleting geospatial_logs, repoints any inspection_reports / lifecycle events
       to a primary surviving duplicate log if one exists, otherwise removes them.
     """
+    cursor = None
+    committed = False
     try:
         cursor = mysql.connection.cursor()
 
         if log_id < 0:
             biz_id = _registry_business_id_for_virtual_log_id(cursor, log_id)
             if biz_id is None:
-                cursor.close()
+                return False, "Business not found"
+            from api.registry.inspection_link import confirmed_pin_column_available
+            has_confirmed_pin = confirmed_pin_column_available(cursor)
+            cursor.execute("SELECT businessID" + (", confirmedLogID" if has_confirmed_pin else "")
+                           + " FROM official_registry WHERE businessID = %s FOR UPDATE", (biz_id,))
+            registry_row = cursor.fetchone()
+            if not registry_row:
                 return False, "Business not found"
             assert_business_deletable(cursor, biz_id, actor_role)
+            if registry_row.get("confirmedLogID") is not None:
+                raise PinDeletionConflict(
+                    "This registry business now has a confirmed map pin. Refresh the map; the business was not deleted.")
+            cursor.execute("SELECT logID FROM geospatial_logs WHERE businessID = %s LIMIT 1 FOR UPDATE", (biz_id,))
+            if cursor.fetchone():
+                raise PinDeletionConflict(
+                    "This registry business now has a map pin. Refresh the map; the business was not deleted.")
             cursor.execute(
                 "DELETE FROM official_registry WHERE businessID = %s", (biz_id,))
             mysql.connection.commit()
-            cursor.close()
+            committed = True
 
             try:
                 from api.notifications import hub
@@ -4149,13 +4168,12 @@ def delete_flag(log_id, actor_role=None):
         cursor.execute(
             """SELECT logID, businessID, reportID, detectedName, barangayID,
                       placeID, latitude, longitude, flagColor
-               FROM geospatial_logs WHERE logID = %s""",
+               FROM geospatial_logs WHERE logID = %s FOR UPDATE""",
             (log_id,)
         )
         flag = cursor.fetchone()
 
         if not flag:
-            cursor.close()
             return False, "Flag not found"
 
         if (flag.get("flagColor") == "Black"
@@ -4163,6 +4181,12 @@ def delete_flag(log_id, actor_role=None):
                 and is_black_locked(cursor, flag["businessID"]))):
             raise BlackBusinessDeletionForbidden(
                 "Black flags cannot be deleted, including by SUPER_ADMIN.")
+
+        from api.registry.inspection_link import GreenRegistryLinkError, release_confirmed_pin
+        try:
+            release_confirmed_pin(cursor, log_id)
+        except GreenRegistryLinkError as exc:
+            raise PinDeletionConflict(str(exc)) from exc
 
         # Check if there is an explicit surviving duplicate log for this establishment
         surviving_log = None
@@ -4196,13 +4220,10 @@ def delete_flag(log_id, actor_role=None):
                     "UPDATE inspection_reports SET targetID = %s WHERE targetID = %s",
                     (surv_id, log_id)
                 )
-                try:
-                    cursor.execute(
-                        "UPDATE inspection_lifecycle_events SET targetLogID = %s WHERE targetLogID = %s",
-                        (surv_id, log_id)
-                    )
-                except Exception:
-                    pass
+                cursor.execute(
+                    "UPDATE inspection_lifecycle_events SET targetLogID = %s WHERE targetLogID = %s",
+                    (surv_id, log_id)
+                )
                 if flag.get("reportID") and not surviving_log.get("reportID"):
                     cursor.execute(
                         "UPDATE geospatial_logs SET reportID = %s WHERE logID = %s AND reportID IS NULL",
@@ -4217,7 +4238,7 @@ def delete_flag(log_id, actor_role=None):
             "DELETE FROM geospatial_logs WHERE logID = %s", (log_id,))
 
         mysql.connection.commit()
-        cursor.close()
+        committed = True
 
         try:
             from api.notifications import hub
@@ -4230,12 +4251,18 @@ def delete_flag(log_id, actor_role=None):
 
         return True, None
 
-    except BlackBusinessDeletionForbidden as exc:
-        mysql.connection.rollback()
-        cursor.close()
+    except (BlackBusinessDeletionForbidden, PinDeletionConflict) as exc:
         return False, exc
     except Exception as e:
+        if e.args and e.args[0] in (1205, 1213, 1451):
+            return False, PinDeletionConflict(
+                "The pin or a linked record changed during deletion. Refresh and retry.")
         return False, str(e)
+    finally:
+        if cursor is not None:
+            if not committed:
+                mysql.connection.rollback()
+            cursor.close()
 
 
 # ── DBSCAN parameters (recalibrate during testing if over/under-clustering) ───

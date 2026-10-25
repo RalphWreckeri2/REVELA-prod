@@ -25,7 +25,34 @@ def normalize_business_id(value):
 def confirmed_pin_column_available(cursor):
     cursor.execute("SHOW COLUMNS FROM official_registry LIKE 'confirmedLogID'")
     return any((row.get("Field", row.get("name")) if isinstance(row, dict) else row[0]) == "confirmedLogID"
-               for row in cursor.fetchall())
+                for row in cursor.fetchall())
+
+
+def release_confirmed_pin(cursor, log_id, *, expected_business_id=None):
+    """Clear a confirmed reference before intentionally deleting its pin.
+
+    Caller locks the pin first, owns the transaction and must roll back on any
+    failure. The registry-row lock serializes concurrent confirmation/imports.
+    Never delete the registry row as a side effect of deleting a map pin.
+    """
+    if not confirmed_pin_column_available(cursor):
+        return False
+    cursor.execute("SELECT businessID FROM official_registry WHERE confirmedLogID = %s FOR UPDATE",
+                   (log_id,))
+    row = cursor.fetchone()
+    if not row:
+        return False
+    if expected_business_id is not None and row["businessID"] != expected_business_id:
+        raise GreenRegistryLinkError(
+            "This pin is confirmed for another registry business. Refresh and review the link.",
+            conflict=True)
+    cursor.execute("""UPDATE official_registry SET confirmedLogID = NULL
+                      WHERE businessID = %s AND confirmedLogID = %s""",
+                   (row["businessID"], log_id))
+    if cursor.rowcount != 1:
+        raise GreenRegistryLinkError(
+            "The confirmed pin link changed during deletion. Refresh and retry.", conflict=True)
+    return True
 
 
 def _name(value):
@@ -40,8 +67,8 @@ def prepare_green_link(cursor, report, business_id, *, lock=False, required_fiel
     """Read/validate identity and conflicts; the preview and final save share this gate.
 
     A name is never used to find a registry record. Exact Business ID identifies
-    it; name + barangay (or an agreeing Place ID + barangay), and explicit admin
-    attestation establish that it is this establishment.
+    it; name + barangay (or an agreeing Place ID + barangay) and the admin's
+    final confirmation establish that it is this establishment.
     """
     business_id = normalize_business_id(business_id)
     if report.get("targetType", "geospatial_log") != "geospatial_log":

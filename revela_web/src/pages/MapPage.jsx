@@ -15,6 +15,7 @@ import { SkeletonBlock, SkeletonList } from "../components/LoadingSkeleton";
 import "../styles/MapPage.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import BusinessIDReview from "../components/BusinessIDReview";
+import { confirmBusinessID } from "../components/businessIDReviewFlow";
 import BatchDispatchModal from "../components/BatchDispatchModal";
 import ApiUsageSettingsPanel from "../components/ApiUsageSettingsPanel";
 import {
@@ -771,50 +772,48 @@ function normalizeFlag(flag) {
 function OfficeComplianceModal({ flag, token, onClose, onSuccess }) {
   const [businessID, setBusinessID] = useState(flag.businessID || "");
   const [review, setReview] = useState(null);
-  const [confirmed, setConfirmed] = useState(false);
   const [registryFields, setRegistryFields] = useState({});
-  const [reviewing, setReviewing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [reason, setReason] = useState("");
+  const submitInFlight = useRef(false);
   const [error, setError] = useState("");
   const submit = async () => {
-    if (!review || !confirmed || review.missingRequiredFields?.some(field => !String(registryFields[field] || "").trim())) return;
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
     setSaving(true);
     setError("");
     try {
-      await confirmFlagComplianceRequest(flag.id, {
-        businessID: review.businessID, registryReviewToken: review.reviewToken,
-        confirmEstablishment: true, registryFields, reason: reason || null,
-      }, token);
-      await onSuccess(review.businessID);
+      await confirmBusinessID({ businessID, review, registryFields, setReview, setError,
+        preview: id => previewFlagComplianceRequest(flag.id, id, token),
+        save: async current => {
+          await confirmFlagComplianceRequest(flag.id, {
+            businessID: current.businessID, registryReviewToken: current.reviewToken,
+            confirmEstablishment: true, registryFields,
+          }, token);
+          await onSuccess(current.businessID);
+        },
+      });
     } catch (err) {
       setError(err.message || "Could not confirm compliance.");
     } finally {
       setSaving(false);
+      submitInFlight.current = false;
     }
   };
   return createPortal(
-    <div className="modal-backdrop" style={{ ...styles.modalBackdrop, zIndex: 10002 }} onClick={saving || reviewing ? undefined : onClose}>
+    <div className="modal-backdrop" style={{ ...styles.modalBackdrop, zIndex: 10002 }} onClick={saving ? undefined : onClose}>
       <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Confirm compliance"
         style={{ ...styles.detailModal, width: "min(100%, 520px)", padding: 24, maxHeight: "90dvh", overflowY: "auto" }}
         onClick={event => event.stopPropagation()}>
         <h2>Confirm compliance</h2>
-        <p>Office confirmation without a completed field inspection. No inspection or GPS evidence will be created.</p>
         <BusinessIDReview businessID={businessID} setBusinessID={setBusinessID} review={review}
-          setReview={setReview} confirmed={confirmed} setConfirmed={setConfirmed}
+          setReview={setReview}
           registryFields={registryFields} setRegistryFields={setRegistryFields}
-          reviewing={reviewing} setReviewing={setReviewing} busy={saving} setError={setError}
-          initialLinked={Boolean(flag.businessID)}
-          preview={id => previewFlagComplianceRequest(flag.id, id, token)}
-          attestation="I checked the official Business ID and establishment details against the office record. They represent this same establishment." />
-        <label htmlFor="office-compliance-reason">Office evidence/reference (optional)</label>
-        <input id="office-compliance-reason" value={reason} maxLength={255} disabled={saving}
-          onChange={event => setReason(event.target.value)} style={{ display: "block", width: "100%", boxSizing: "border-box" }} />
+          busy={saving} setError={setError} initialLinked={Boolean(flag.businessID)} />
         {error && <p role="alert" style={{ color: "var(--color-danger)" }}>{error}</p>}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 20 }}>
-          <button className="ghost-btn" onClick={onClose} disabled={saving || reviewing}>Cancel</button>
-          <button className="primary-btn" onClick={submit} disabled={!review || !confirmed || saving || reviewing || review.missingRequiredFields?.some(field => !String(registryFields[field] || "").trim())}>
-            {saving ? "Confirming…" : "Confirm and mark Green"}
+          <button className="ghost-btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="primary-btn" onClick={submit} disabled={saving}>
+            {saving ? "Confirming…" : "Confirm compliance"}
           </button>
         </div>
       </div>
@@ -4010,6 +4009,11 @@ export default function MapPage() {
         await fetchFlags();
       } catch (err) {
         setActionError(err.message || "Failed to delete flag.");
+        await Swal.fire({
+          icon: 'error',
+          title: err.status === 409 ? 'Pin changed' : 'Delete failed',
+          text: err.message || 'Failed to delete flag.',
+        });
       } finally {
         setActionLoading(false);
       }

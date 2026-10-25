@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { flushSync } from "react-dom";
 import {
   PieChart,
   Pie,
@@ -44,6 +45,67 @@ const SECTOR_COLORS = [
 
 const REGISTRATION_COLORS = { new: "#2563eb", renewal: "#b45309" };
 const CAPTURE_MIN_WIDTH = { size: 520, type: 520, "reg-type": 520, sector: 640, barangay: 720 };
+
+function demographicView(snapshot) {
+  const desc = snapshot?.descriptive;
+  const kpis = desc?.kpis;
+  const sizeData = (desc?.business_size_dist || []).filter(r => r.count > 0).map((r, i) => ({
+    name: r.size_label || "Unclassified", value: Number(r.count || 0), fill: SIZE_COLORS[i % SIZE_COLORS.length],
+  }));
+  const totalBySize = sizeData.reduce((sum, row) => sum + row.value, 0);
+  const typeData = (desc?.business_type_dist || []).filter(r => r.count > 0).map((r, i) => ({
+    name: r.type_label || "Unclassified", value: Number(r.count || 0), fill: TYPE_COLORS[i % TYPE_COLORS.length],
+  }));
+  const totalByType = typeData.reduce((sum, row) => sum + row.value, 0);
+  const regTypeData = (desc?.registration_type_dist || []).filter(r => r.count > 0).map(r => ({
+    name: r.type_label || "Unspecified", value: Number(r.count || 0),
+    fill: REGISTRATION_COLORS[String(r.type_label || "").trim().toLowerCase()] || "#64748b",
+  }));
+  const totalByRegType = regTypeData.reduce((sum, row) => sum + row.value, 0);
+  const sectoralData = (desc?.sectoral_distribution || []).filter(r => r.count > 0).map((r, i) => ({
+    name: r.sector || "Unclassified", value: Number(r.count || 0), fill: SECTOR_COLORS[i % SECTOR_COLORS.length],
+  }));
+  const chartSectorData = sectoralData.slice(0, 6);
+  const totalBySector = sectoralData.reduce((sum, row) => sum + row.value, 0);
+  const barangaySpreadData = (desc?.nature_per_barangay || []).map(r => ({
+    barangayName: (r.barangayName || "").replace("Barangay ", "Brgy. "),
+    fullName: r.barangayName || "Unknown",
+    total: r.total != null ? Number(r.total) : Object.keys(r).reduce((sum, key) =>
+      key === "barangayName" ? sum : sum + (Number(r[key]) || 0), 0),
+  })).filter(row => row.total > 0);
+  const totalBusinessesAcrossBarangays = barangaySpreadData.reduce((sum, row) => sum + row.total, 0);
+  const complianceBySizeData = (desc?.compliance_by_size || []).map(r => {
+    const active = Number(r.active_count || 0);
+    const nonActive = Number(r.inactive_count || 0);
+    const total = active + nonActive;
+    return { name: r.size_label || "Unclassified", Active: active, "Non-Active": nonActive,
+      total, rate: total ? Math.round(active / total * 100) : 0 };
+  }).filter(row => row.total > 0);
+  const timelineData = (desc?.compliance_timeline || []).map(r => ({
+    month: r.month, Active: Number(r.active_count || 0), "Non-Active": Number(r.non_active_count || 0),
+  }));
+  return { desc, kpis, sizeData, totalBySize, typeData, totalByType, regTypeData, totalByRegType,
+    sectoralData, chartSectorData, totalBySector, barangaySpreadData, totalBusinessesAcrossBarangays,
+    complianceBySizeData, timelineData, confirmedCompliance: desc?.confirmed_compliance,
+    hasTimelineData: timelineData.some(r => r.Active > 0 || r["Non-Active"] > 0),
+    isRegistryEmpty: snapshot != null && (kpis?.total_businesses ?? 0) === 0 };
+}
+
+function chartSummary(view, chartId) {
+  const { sizeData, totalBySize, typeData, totalByType, regTypeData, totalByRegType,
+    chartSectorData, totalBySector, barangaySpreadData, totalBusinessesAcrossBarangays,
+    complianceBySizeData, timelineData } = view;
+  switch (chartId) {
+    case "size": return sizeData.map(s => ({ Category: categoryLabel(s.name), Entities: s.value, Share: shareLabel(s.value, totalBySize) }));
+    case "type": return typeData.map(t => ({ Structure: categoryLabel(t.name), Entities: t.value, Share: shareLabel(t.value, totalByType) }));
+    case "reg-type": return regTypeData.map(t => ({ Status: categoryLabel(t.name), Entities: t.value, Share: shareLabel(t.value, totalByRegType) }));
+    case "sector": return chartSectorData.map((s, idx) => ({ Rank: idx + 1, "Sector / Line of Business": sectorLabel(s.name), Count: s.value, Share: shareLabel(s.value, totalBySector) }));
+    case "barangay": return barangaySpreadData.map(b => ({ Barangay: b.fullName, "Registered Count": b.total, Share: `${Math.round(b.total / (totalBusinessesAcrossBarangays || 1) * 100)}%` }));
+    case "compliance_size": return complianceBySizeData.map(c => ({ Tier: c.name, Active: c.Active, "Non-Active": c["Non-Active"], "Compliance Rate": `${c.rate}%` }));
+    case "timeline": return timelineData.map(t => ({ Month: t.month, "Active Renewals": t.Active, "Non-Active Gap": t["Non-Active"] }));
+    default: return [];
+  }
+}
 
 function categoryLabel(name) {
   const label = String(name || "Unclassified").trim();
@@ -215,7 +277,10 @@ export default function ExportReportsPage() {
   const [analyticsData, setAnalyticsData] = useState(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(true);
   const [analyticsError, setAnalyticsError] = useState("");
-  const [analyticsReloadKey, setAnalyticsReloadKey] = useState(0);
+  const requestRef = useRef({ sequence: 0, controller: null });
+  const exportInProgress = useRef(false);
+  const refreshQueued = useRef(false);
+  const [preparingExport, setPreparingExport] = useState(false);
   const [exportingImageId, setExportingImageId] = useState(null);
   const [exportingPdfId, setExportingPdfId] = useState(null);
   const [operationalLoadingId, setOperationalLoadingId] = useState(null);
@@ -224,41 +289,80 @@ export default function ExportReportsPage() {
   // References for chart DOM elements to capture via html2canvas
   const chartRefs = useRef({});
 
-  // Fetch demographic & operational analytics data
-  useEffect(() => {
-    let cancelled = false;
-    async function loadData() {
-      if (!token) {
-        setLoadingAnalytics(false);
-        return;
+  // A newer request aborts and fences the older response, even if abort arrives
+  // after the server has replied. Exports always consume the returned snapshot.
+  const loadData = useCallback(async ({ forExport = false } = {}) => {
+    if (!token) throw new Error("Missing authentication token.");
+    requestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const sequence = ++requestRef.current.sequence;
+    requestRef.current.controller = controller;
+    setLoadingAnalytics(true);
+    setAnalyticsError("");
+    try {
+      const data = await getDemographicReportsRequest(token, { signal: controller.signal });
+      if (!data?.descriptive) throw new Error("The report API returned no demographic data.");
+      if (sequence !== requestRef.current.sequence || controller.signal.aborted) {
+        throw new Error("The report data changed while refreshing. Retry the export.");
       }
-      setLoadingAnalytics(true);
-      setAnalyticsError("");
-      try {
-        const data = await getDemographicReportsRequest(token);
-        if (!data?.descriptive) {
-          throw new Error("The report API returned no demographic data.");
-        }
-        if (!cancelled) {
-          setAnalyticsData(data);
-        }
-      } catch (err) {
-        console.warn("Analytics overview request failed:", err);
-        if (!cancelled) {
-          setAnalyticsData(null);
-          setAnalyticsError(
-            err.message || "Unable to load official registry report data.",
-          );
-        }
-      } finally {
-        if (!cancelled) setLoadingAnalytics(false);
+      if (forExport) flushSync(() => { setAnalyticsData(data); setLoadingAnalytics(false); });
+      else setAnalyticsData(data);
+      return data;
+    } catch (err) {
+      if (sequence === requestRef.current.sequence && !controller.signal.aborted) {
+        setAnalyticsData(null);
+        setAnalyticsError(err.message || "Unable to load official registry report data.");
+      }
+      if (forExport) throw err;
+      return null;
+    } finally {
+      if (sequence === requestRef.current.sequence) setLoadingAnalytics(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return undefined;
+    let mounted = true;
+    const requestState = requestRef.current;
+    queueMicrotask(() => { if (mounted) void loadData(); });
+    const sync = () => {
+      if (exportInProgress.current) { refreshQueued.current = true; return; }
+      void loadData();
+    };
+    const visible = () => { if (document.visibilityState === "visible") sync(); };
+    const events = ["registry-update", "inspection-update", "flag-update", "global-refresh"];
+    events.forEach(name => window.addEventListener(`revela:${name}`, sync));
+    window.addEventListener("focus", visible);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      mounted = false;
+      requestState.sequence += 1;
+      requestState.controller?.abort();
+      events.forEach(name => window.removeEventListener(`revela:${name}`, sync));
+      window.removeEventListener("focus", visible);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [loadData, token]);
+
+  const withFreshDemographics = async (action) => {
+    if (exportInProgress.current) return;
+    exportInProgress.current = true;
+    setPreparingExport(true);
+    try {
+      const snapshot = await loadData({ forExport: true });
+      await action(snapshot, demographicView(snapshot));
+    } catch (err) {
+      setAnalyticsError(err.message || "Could not refresh the report data.");
+      await Swal.fire({ icon: "error", title: "Report not exported", text: err.message || "Refresh failed. Retry before exporting." });
+    } finally {
+      exportInProgress.current = false;
+      setPreparingExport(false);
+      if (refreshQueued.current) {
+        refreshQueued.current = false;
+        void loadData();
       }
     }
-    loadData();
-    return () => {
-      cancelled = true;
-    };
-  }, [token, analyticsReloadKey]);
+  };
 
   // Handle native printing when printReport state changes
   useEffect(() => {
@@ -280,96 +384,14 @@ export default function ExportReportsPage() {
   }, [printReport]);
 
   // ── Derived Demographic Datasets ───────────────────────────────────────────
-  const desc = analyticsData?.descriptive;
-  const kpis = desc?.kpis;
-
-  // 1. Business Size Profile
-  const rawSizeData = (desc?.business_size_dist || []).filter((r) => r.count > 0);
-  const sizeData = rawSizeData.map((r, i) => ({
-    name: r.size_label || "Unclassified",
-    value: Number(r.count || 0),
-    fill: SIZE_COLORS[i % SIZE_COLORS.length]
-  }));
-  const totalBySize = sizeData.reduce((acc, curr) => acc + curr.value, 0);
-
-  // 2. Legal Structure (Business Type)
-  const rawTypeData = (desc?.business_type_dist || []).filter((r) => r.count > 0);
-  const typeData = rawTypeData.map((r, i) => ({
-    name: r.type_label || "Unclassified",
-    value: Number(r.count || 0),
-    fill: TYPE_COLORS[i % TYPE_COLORS.length]
-  }));
-  const totalByType = typeData.reduce((acc, curr) => acc + curr.value, 0);
-
-  // 2b. Registration Lifecycle (New vs Renewal)
-  const rawRegTypeData = (desc?.registration_type_dist || []).filter((r) => r.count > 0);
-  const regTypeData = rawRegTypeData.map((r) => ({
-    name: r.type_label || "Unspecified",
-    value: Number(r.count || 0),
-    fill: REGISTRATION_COLORS[String(r.type_label || "").trim().toLowerCase()] || "#64748b"
-  }));
-  const totalByRegType = regTypeData.reduce((acc, curr) => acc + curr.value, 0);
-
-  // 3. Dominant Economic Sectors (Top Lines of Business)
-  const rawSectoralData = (desc?.sectoral_distribution || []).filter((r) => r.count > 0);
-  const sectoralData = rawSectoralData.map((r, index) => ({
-    name: r.sector || "Unclassified",
-    value: Number(r.count || 0),
-    fill: SECTOR_COLORS[index % SECTOR_COLORS.length]
-  }));
-  const chartSectorData = sectoralData.slice(0, 6);
-  const totalBySector = sectoralData.reduce((acc, curr) => acc + curr.value, 0);
-
-  // 4. Geographic Spread Across Barangays
-  const naturePerBarangay = desc?.nature_per_barangay || [];
-  const barangaySpreadData = naturePerBarangay
-    .map((r) => {
-      const total = r.total != null
-        ? Number(r.total)
-        : Object.keys(r).reduce((sum, key) => {
-          if (key !== "barangayName") return sum + (Number(r[key]) || 0);
-          return sum;
-        }, 0);
-      return {
-        barangayName: (r.barangayName || "").replace("Barangay ", "Brgy. "),
-        fullName: r.barangayName || "Unknown",
-        total
-      };
-    })
-    .filter((b) => b.total > 0);
-  const totalBusinessesAcrossBarangays = barangaySpreadData.reduce((acc, curr) => acc + curr.total, 0);
-
-  // 5. Compliance by Business Size
-  const complianceBySizeData = (desc?.compliance_by_size || [])
-    .map((r) => {
-      const active = Number(r.active_count || 0);
-      const nonActive = Number(r.inactive_count || 0);
-      const total = active + nonActive;
-      const rate = total > 0 ? Math.round((active / total) * 100) : 0;
-      return {
-        name: r.size_label || "Unclassified",
-        Active: active,
-        "Non-Active": nonActive,
-        total,
-        rate
-      };
-    })
-    .filter((c) => c.total > 0);
-
-  // 6. 12-Month Renewal & Compliance Trajectory
-  const rawTimelineData = desc?.compliance_timeline || [];
-  const timelineData = rawTimelineData.map((r) => ({
-    month: r.month,
-    Active: Number(r.active_count || 0),
-    "Non-Active": Number(r.non_active_count || 0)
-  }));
-  const hasTimelineData = timelineData.some((t) => t.Active > 0 || t["Non-Active"] > 0);
-
-  const isRegistryEmpty = analyticsData != null && (kpis?.total_businesses ?? 0) === 0;
+  const { desc, kpis, sizeData, totalBySize, typeData, totalByType, regTypeData,
+    totalByRegType, sectoralData, chartSectorData, barangaySpreadData,
+    totalBusinessesAcrossBarangays, complianceBySizeData, timelineData, hasTimelineData,
+    isRegistryEmpty } = demographicView(analyticsData);
 
   // ── High-Resolution Image (PNG) Export ──────────────────────────────────────
-  const exportChartAsImage = async (chartId, chartTitle, hasData) => {
-    if (!hasData) {
+  const exportChartAsImage = async (chartId) => withFreshDemographics(async (_snapshot, view) => {
+    if (chartSummary(view, chartId).length === 0) {
       Swal.fire({
         icon: "info",
         title: "No Data to Export",
@@ -378,6 +400,7 @@ export default function ExportReportsPage() {
       return;
     }
 
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const element = chartRefs.current[chartId];
     if (!element) return;
     const captureWidth = CAPTURE_MIN_WIDTH[chartId] ? Math.max(CAPTURE_MIN_WIDTH[chartId], Math.ceil(element.getBoundingClientRect().width)) : null;
@@ -437,11 +460,12 @@ export default function ExportReportsPage() {
     } finally {
       setExportingImageId(null);
     }
-  };
+  });
 
   // ── Single Chart Official PDF Export ────────────────────────────────────────
-  const exportChartAsPdf = async (chartId, chartTitle, chartSubtitle, summaryTable, hasData) => {
-    if (!hasData) {
+  const exportChartAsPdf = async (chartId, chartTitle, chartSubtitle) => withFreshDemographics(async (_snapshot, view) => {
+    const summaryTable = chartSummary(view, chartId);
+    if (summaryTable.length === 0) {
       Swal.fire({
         icon: "info",
         title: "No Data to Export",
@@ -450,6 +474,7 @@ export default function ExportReportsPage() {
       return;
     }
 
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const element = chartRefs.current[chartId];
     if (!element) return;
     const captureWidth = CAPTURE_MIN_WIDTH[chartId] ? Math.max(CAPTURE_MIN_WIDTH[chartId], Math.ceil(element.getBoundingClientRect().width)) : null;
@@ -510,11 +535,13 @@ export default function ExportReportsPage() {
     } finally {
       setExportingPdfId(null);
     }
-  };
+  });
 
   // ── Master Demographic Dossier (Complete PDF) ──────────────────────────────
-  const exportCompleteDemographicPdf = async () => {
-    if (!analyticsData || analyticsError) return;
+  const exportCompleteDemographicPdf = async () => withFreshDemographics(async (_snapshot, view) => {
+    const { desc, kpis, sizeData, totalBySize, typeData, totalByType, regTypeData,
+      totalByRegType, sectoralData, totalBySector, barangaySpreadData,
+      totalBusinessesAcrossBarangays, complianceBySizeData, timelineData, confirmedCompliance } = view;
     try {
       setPrintReport({
         type: "demographic-complete",
@@ -533,7 +560,10 @@ export default function ExportReportsPage() {
             { Metric: "Pending Applications Under Review", Value: kpis?.pending_count ?? 0 },
             { Metric: "Officially Closed Entities", Value: kpis?.closed_count ?? 0 },
             { Metric: "Revoked Business Permits", Value: kpis?.revoked_count ?? 0 },
-            { Metric: "Overall Municipal Compliance Rate", Value: `${kpis?.compliance_rate ?? 0}%` }
+            { Metric: "Overall Municipal Compliance Rate", Value: `${kpis?.compliance_rate ?? 0}%` },
+            { Metric: "Office-confirmed compliant businesses", Value: confirmedCompliance?.office_confirmed ?? 0 },
+            { Metric: "Inspection-verified compliant businesses", Value: confirmedCompliance?.inspection_verified ?? 0 },
+            { Metric: "Total confirmed compliant businesses (not all Green registry businesses)", Value: confirmedCompliance?.total_confirmed ?? 0 }
           ],
           sizeDistribution: sizeData.map((s) => ({
             Classification: categoryLabel(s.name),
@@ -583,11 +613,14 @@ export default function ExportReportsPage() {
         text: "Could not compile the complete demographic report."
       });
     }
-  };
+  });
 
   // ── Master Demographic Raw Data (CSV) Export ───────────────────────────────
-  const exportDemographicCsv = () => {
-    if (!analyticsData || analyticsError) return;
+  const exportDemographicCsv = async () => withFreshDemographics(async (_snapshot, view) => {
+    const { desc, kpis, sizeData, totalBySize, typeData, totalByType, regTypeData,
+      totalByRegType, sectoralData, totalBySector, barangaySpreadData,
+      totalBusinessesAcrossBarangays, complianceBySizeData, timelineData, hasTimelineData,
+      confirmedCompliance } = view;
     try {
       const csvSections = [];
 
@@ -600,6 +633,9 @@ export default function ExportReportsPage() {
       csvSections.push({ Section: "KPI", Metric: "Closed Establishments", Value: kpis?.closed_count ?? 0 });
       csvSections.push({ Section: "KPI", Metric: "Revoked Permits", Value: kpis?.revoked_count ?? 0 });
       csvSections.push({ Section: "KPI", Metric: "Compliance Rate", Value: `${kpis?.compliance_rate ?? 0}%` });
+      csvSections.push({ Section: "KPI", Metric: "Office-confirmed compliant businesses", Value: confirmedCompliance?.office_confirmed ?? 0 });
+      csvSections.push({ Section: "KPI", Metric: "Inspection-verified compliant businesses", Value: confirmedCompliance?.inspection_verified ?? 0 });
+      csvSections.push({ Section: "KPI", Metric: "Total confirmed compliant businesses (not all Green registry businesses)", Value: confirmedCompliance?.total_confirmed ?? 0 });
 
       // Section 2: Business Size
       csvSections.push({ Section: "=== BUSINESS SIZE DISTRIBUTION ===", Metric: "", Value: "" });
@@ -749,7 +785,7 @@ export default function ExportReportsPage() {
         text: "Could not export demographic data as CSV."
       });
     }
-  };
+  });
 
   // ── Operational Report Handlers (Top Unregistered & Inspector Dispatch) ────
   const handleDownloadOperational = async (report) => {
@@ -1076,12 +1112,21 @@ export default function ExportReportsPage() {
                 <button
                   className="secondary-btn"
                   type="button"
-                  onClick={() => setAnalyticsReloadKey((key) => key + 1)}
+                  onClick={() => void loadData()}
                 >
                   Retry
                 </button>
               </div>
             )}
+
+            {preparingExport && <p role="status" style={{ padding: "10px 14px", color: "var(--color-ink)" }}>
+              Refreshing report data and preparing export…
+            </p>}
+            {!loadingAnalytics && !analyticsError && <div className="saas-card frosted-glass" style={{ padding: 16, marginBottom: 20 }}>
+              <strong>Current confirmed compliance (distinct linked businesses)</strong>
+              <p style={{ margin: "8px 0" }}>Office-confirmed compliant: {desc?.confirmed_compliance?.office_confirmed ?? 0} · Inspection-verified compliant: {desc?.confirmed_compliance?.inspection_verified ?? 0} · Combined: {desc?.confirmed_compliance?.total_confirmed ?? 0}</p>
+              <small>Latest qualifying confirmation determines one category per business. These are not counts of every Green registry business.</small>
+            </div>}
 
             {isRegistryEmpty && !loadingAnalytics && (
               <div
@@ -1213,7 +1258,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("size", "Business_Size_Classification", sizeData.length > 0)}
-                      disabled={exportingImageId === "size" || sizeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1244,16 +1289,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "size",
                           "Business Size Classification",
-                          "Official breakdown of registered commercial enterprises categorized by enterprise asset scale",
-                          sizeData.map((s) => ({
-                             Category: categoryLabel(s.name),
-                            Entities: s.value,
-                             Share: shareLabel(s.value, totalBySize)
-                          })),
-                          sizeData.length > 0
+                           "Official breakdown of registered commercial enterprises categorized by enterprise asset scale"
                         )
                       }
-                      disabled={exportingPdfId === "size" || sizeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1355,7 +1394,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("type", "Business_Legal_Structure", typeData.length > 0)}
-                      disabled={exportingImageId === "type" || typeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1386,16 +1425,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "type",
                           "Business Legal Structure",
-                          "Official breakdown of registered commercial enterprises categorized by legal organization structure",
-                          typeData.map((t) => ({
-                             Structure: categoryLabel(t.name),
-                            Entities: t.value,
-                             Share: shareLabel(t.value, totalByType)
-                          })),
-                          typeData.length > 0
+                           "Official breakdown of registered commercial enterprises categorized by legal organization structure"
                         )
                       }
-                      disabled={exportingPdfId === "type" || typeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1487,7 +1520,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("reg-type", "Registration_Lifecycle", regTypeData.length > 0)}
-                      disabled={exportingImageId === "reg-type" || regTypeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1517,16 +1550,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "reg-type",
                           "Registration Lifecycle (New vs Renewal)",
-                          "Official breakdown of registered commercial enterprises categorized by registration status",
-                          regTypeData.map((t) => ({
-                             Status: categoryLabel(t.name),
-                            Entities: t.value,
-                             Share: shareLabel(t.value, totalByRegType)
-                          })),
-                          regTypeData.length > 0
+                           "Official breakdown of registered commercial enterprises categorized by registration status"
                         )
                       }
-                      disabled={exportingPdfId === "reg-type" || regTypeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1631,7 +1658,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("sector", "Top_Economic_Sectors", sectoralData.length > 0)}
-                      disabled={exportingImageId === "sector" || sectoralData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1662,17 +1689,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "sector",
                           "Dominant Economic Sectors",
-                          "Official distribution ranking of commercial enterprises across top industry sectors and lines of business",
-                          chartSectorData.map((s, idx) => ({
-                            Rank: idx + 1,
-                            "Sector / Line of Business": sectorLabel(s.name),
-                            Count: s.value,
-                            Share: shareLabel(s.value, totalBySector)
-                          })),
-                          sectoralData.length > 0
+                           "Official distribution ranking of commercial enterprises across top industry sectors and lines of business"
                         )
                       }
-                      disabled={exportingPdfId === "sector" || sectoralData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1784,7 +1804,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("barangay", "Geographic_Spread_Barangays", barangaySpreadData.length > 0)}
-                      disabled={exportingImageId === "barangay" || barangaySpreadData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1815,16 +1835,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "barangay",
                           "Geographic Spread Across Barangays",
-                          "Official spatial distribution and density analysis of registered commercial entities per Barangay",
-                          barangaySpreadData.map((b) => ({
-                            Barangay: b.fullName,
-                            "Registered Count": b.total,
-                            Share: `${Math.round((b.total / (totalBusinessesAcrossBarangays || 1)) * 100)}%`
-                          })),
-                          barangaySpreadData.length > 0
+                           "Official spatial distribution and density analysis of registered commercial entities per Barangay"
                         )
                       }
-                      disabled={exportingPdfId === "barangay" || barangaySpreadData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1925,7 +1939,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("compliance_size", "Compliance_By_Business_Size", complianceBySizeData.length > 0)}
-                      disabled={exportingImageId === "compliance_size" || complianceBySizeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -1956,17 +1970,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "compliance_size",
                           "Compliance by Business Size",
-                          "Comparative analysis of active permit status versus expired/inactive non-compliance across enterprise size tiers",
-                          complianceBySizeData.map((c) => ({
-                            Tier: c.name,
-                            Active: c.Active,
-                            "Non-Active": c["Non-Active"],
-                            "Compliance Rate": `${c.rate}%`
-                          })),
-                          complianceBySizeData.length > 0
+                           "Comparative analysis of active permit status versus expired/inactive non-compliance across enterprise size tiers"
                         )
                       }
-                      disabled={exportingPdfId === "compliance_size" || complianceBySizeData.length === 0}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -2089,7 +2096,7 @@ export default function ExportReportsPage() {
                       type="button"
                       title="Export chart as high-resolution PNG image"
                       onClick={() => exportChartAsImage("timeline", "Compliance_Timeline_Trend", hasTimelineData)}
-                      disabled={exportingImageId === "timeline" || !hasTimelineData}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -2120,16 +2127,10 @@ export default function ExportReportsPage() {
                         exportChartAsPdf(
                           "timeline",
                           "12-Month Compliance & Renewal Trend",
-                          "Chronological trajectory of monthly business permit renewal volumes and non-renewal intervals over the past 12 months",
-                          timelineData.map((t) => ({
-                            Month: t.month,
-                            "Active Renewals": t.Active,
-                            "Non-Active Gap": t["Non-Active"]
-                          })),
-                          hasTimelineData
+                           "Chronological trajectory of monthly business permit renewal volumes and non-renewal intervals over the past 12 months"
                         )
                       }
-                      disabled={exportingPdfId === "timeline" || !hasTimelineData}
+                      disabled={preparingExport}
                       style={{
                         display: "inline-flex",
                         alignItems: "center",

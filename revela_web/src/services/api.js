@@ -1342,7 +1342,7 @@ export async function getAnalyticsOverviewRequest(arg1, arg2, options = {}) {
   }
 }
 
-export async function getDemographicReportsRequest(token) {
+export async function getDemographicReportsRequest(token, { signal } = {}) {
   try {
     if (!token) {
       throw new Error("Missing authentication token.");
@@ -1350,6 +1350,7 @@ export async function getDemographicReportsRequest(token) {
     const res = await fetch(`${BASE_URL}/analytics/demographic-reports`, {
       method: "GET",
       headers: authHeaders(token),
+      signal,
     });
     return await handleResponse(res);
   } catch (err) {

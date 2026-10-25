@@ -21,7 +21,7 @@ from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
 from api.analytics.scoring import calculate_rankings, select_rankings
 from api.analytics.non_registry import non_registry_monitoring_sql, build_non_registry_monitoring
-from api.flags.compliance import origin_source_sql
+from api.flags.compliance import origin_source_sql, current_confirmation_rows, confirmation_summary
 from api.models.detection_runs import get_recent_detection_runs
 from api.analytics.filters import (
     parse_analytics_filters,
@@ -1393,13 +1393,35 @@ def _get_all_analytics_inner(F=None):
         SELECT ir.inspectionResult, COUNT(*) AS count
         FROM inspection_reports ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
-        WHERE ir.inspectionResult IS NOT NULL {insp_ir} {geo_g}
+        WHERE ir.inspectionResult IS NOT NULL AND ir.verificationStatus = 'Verified' {insp_ir} {geo_g}
         GROUP BY ir.inspectionResult
     """, insp_ir_p + geo_g_p)
     result_breakdown = [
         {"inspectionResult": row["inspectionResult"], "count": row["count"]}
         for row in cur.fetchall()
     ]
+    _execute(cur, "descriptive.submitted_result_breakdown", f"""
+        SELECT ir.inspectionResult, COUNT(*) AS count
+        FROM inspection_reports ir
+        JOIN geospatial_logs g ON ir.targetID = g.logID
+        WHERE ir.inspectionResult IS NOT NULL AND ir.verificationStatus = 'Submitted' {insp_ir} {geo_g}
+        GROUP BY ir.inspectionResult
+    """, insp_ir_p + geo_g_p)
+    submitted_result_breakdown = list(cur.fetchall())
+
+    _execute(cur, "descriptive.inspection_workflow", f"""
+        SELECT
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Submitted' THEN ir.reportID END) AS awaiting_verification,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Verified' THEN ir.reportID END) AS verified_reports,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Submitted' AND ir.inspectionResult = 'Green'
+                  THEN ir.reportID END) AS submitted_green
+        FROM inspection_reports ir
+        JOIN geospatial_logs g ON ir.targetID = g.logID
+        WHERE 1=1 {insp_ir} {geo_g}
+    """, insp_ir_p + geo_g_p)
+    workflow = cur.fetchone() or {}
+    confirmed = confirmation_summary(current_confirmation_rows(
+        cur, ladder=ladder, barangay_ids=Fx.get("barangay_ids")))
 
     # Share Map/report membership and verified-compliance evidence, rather than
     # treating a missing businessID or a Green colour alone as classification.
@@ -1421,7 +1443,13 @@ def _get_all_analytics_inner(F=None):
         "compliance_by_size": compliance_by_size,
         "compliance_timeline": compliance_timeline,
         "audit_summary": {"total_inspections": total_inspections,
-                           "result_breakdown": result_breakdown},
+                           "total_reports": total_inspections,
+                           "verified_reports": workflow.get("verified_reports", 0),
+                           "submitted_green": workflow.get("submitted_green", 0),
+                           "result_breakdown": result_breakdown,
+                           "submitted_result_breakdown": submitted_result_breakdown,
+                           "workflow": workflow},
+        "confirmed_compliance": confirmed,
         "non_registry_monitoring": non_registry_monitoring,
     }
     _publish_analytics_section("descriptive", descriptive)
@@ -1734,7 +1762,9 @@ def _get_all_analytics_inner(F=None):
             u.userID, 
             u.fullName, 
             COUNT(ir.reportID) as total_assigned, 
-            SUM(CASE WHEN ir.verificationStatus IN ('Verified', 'Submitted') THEN 1 ELSE 0 END) as total_completed, 
+            SUM(CASE WHEN ir.verificationStatus IN ('Verified', 'Submitted') THEN 1 ELSE 0 END) as total_submitted,
+            SUM(CASE WHEN ir.verificationStatus = 'Verified' THEN 1 ELSE 0 END) as total_verified,
+            SUM(CASE WHEN ir.verificationStatus IN ('Verified', 'Submitted') THEN 1 ELSE 0 END) as total_completed,
             AVG(ir.resolutionTime) as avg_resolution_time,
             (SELECT COUNT(*) FROM geospatial_logs g2 WHERE g2.reportedByUserID = u.userID AND g2.flagColor = 'Yellow'{geo_g2}) as yellow_flags_reported
         FROM users u
@@ -1742,7 +1772,7 @@ def _get_all_analytics_inner(F=None):
         LEFT JOIN geospatial_logs g ON ir.targetID = g.logID{geo_g}
         WHERE u.userRole = 'Inspector' AND u.isActive = 1
         GROUP BY u.userID
-        ORDER BY total_completed DESC
+        ORDER BY total_verified DESC, total_submitted DESC
     """, geo_g2_p + insp_ir_p + geo_g_p)
     inspector_stats = list(cur.fetchall())
     for stat in inspector_stats:
@@ -2008,6 +2038,9 @@ def get_demographic_reports():
         ]
 
         active_count = status_counts["active_count"]
+        confirmed = confirmation_summary(current_confirmation_rows(
+            cur, ladder=ladder_columns_available(cur),
+            barangay_ids=filters.get("barangay_ids")))
         return jsonify({
             "data_source": "official_registry",
             "descriptive": {
@@ -2031,6 +2064,7 @@ def get_demographic_reports():
                 "nature_per_barangay": nature_per_barangay,
                 "compliance_by_size": compliance_by_size,
                 "compliance_timeline": compliance_timeline,
+                "confirmed_compliance": confirmed,
             },
         }), 200
     except Exception:
@@ -2303,7 +2337,12 @@ def analytics_chat():
         audit = chart_data.get("audit", {})
         if audit:
                 summary_parts.append(
-                    f"Inspection/Audit Summary: {json.dumps(audit)}")
+                    f"Inspection/Audit Summary (total_reports counts all reports; result_breakdown counts admin-verified reports only; workflow separates submitted from verified): {json.dumps(audit)}")
+        confirmed = chart_data.get("confirmedCompliance", {})
+        if confirmed:
+            summary_parts.append(
+                "Current Green businesses with qualifying confirmation history, classified once by their latest valid source (office confirmation is not an inspection; this is not the entire Green registry census): "
+                f"{json.dumps(confirmed)}")
 
         # Barangay risk data (diagnostic) – top 10
         brgy_risk = chart_data.get("barangayRisk", [])

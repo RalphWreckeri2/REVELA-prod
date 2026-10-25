@@ -16,6 +16,7 @@ from api.flags.service import (
     FlagEscalationConflict,
     FlagEscalationNotFound,
     delete_flag,
+    PinDeletionConflict,
     reconcile_existing_flags,
     update_flag_location,
     BarangayChangeConfirmationRequired,
@@ -461,7 +462,6 @@ def confirm_compliance_route(log_id):
         return jsonify({"error": "A JSON object is required"}), 400
     result, error = registry_service.confirm_pin_compliance(
         log_id, data.get("businessID"), get_jwt_identity(),
-        data.get("reason"),
         registry_review_token=data.get("registryReviewToken"),
         confirm_establishment=data.get("confirmEstablishment", False),
         registry_fields=data.get("registryFields"),
@@ -558,11 +558,13 @@ def change_flag_color_route(log_id):
 @flags_bp.route("/<int(signed=True):log_id>", methods=["DELETE"])
 @admin_required()
 def delete_flag_route(log_id):
-    """Delete a specific flag. Also deletes associated registry records if they exist."""
+    """Delete one physical pin; negative virtual IDs retain their registry-only behavior."""
     success, error = delete_flag(log_id, actor_role=get_current_role())
     if error:
         if isinstance(error, BlackBusinessDeletionForbidden):
             return jsonify({"error": str(error), "code": "black_delete_forbidden"}), 403
+        if isinstance(error, PinDeletionConflict):
+            return jsonify({"error": str(error), "code": "pin_delete_conflict"}), 409
         status_code = 404 if error == "Flag not found" else 500
         return jsonify({"error": str(error)}), status_code
     return jsonify({"message": f"Flag #{log_id} deleted successfully"}), 200

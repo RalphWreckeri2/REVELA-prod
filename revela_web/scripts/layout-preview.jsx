@@ -36,7 +36,10 @@ const descriptive = {
   compliance_by_size: empty ? [] : sizes.map((size_label, i) => ({ size_label, active_count: [770, 180, 48, 12][i], inactive_count: [190, 30, 14, 4][i] })),
   compliance_timeline: empty ? [] : ["Oct 2025", "Nov 2025", "Dec 2025", "Jan 2026", "Feb 2026", "Mar 2026", "Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"].map((month, i) => ({ month, active_count: [270, 305, 290, 1010, 960, 860, 740, 660, 590, 440, 370, 310][i], non_active_count: [180, 165, 178, 238, 220, 190, 174, 160, 141, 132, 112, 101][i] })),
   enforcement_progress: empty ? [] : barangays.map((barangayName, i) => ({ barangayName, green_count: 44 + i, red_count: 3 + i, yellow_count: 5, black_count: 1, orange_count: 2, purple_count: 1 })),
-  audit_summary: { total_inspections: empty ? 0 : 96, result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 64 }, { inspectionResult: "Red", count: 22 }, { inspectionResult: "Black", count: 10 }] },
+  audit_summary: { total_inspections: empty ? 0 : 96, result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 64 }, { inspectionResult: "Red", count: 22 }, { inspectionResult: "Black", count: 10 }],
+    submitted_result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 3 }, { inspectionResult: "Red", count: 4 }],
+    workflow: { awaiting_verification: empty ? 0 : 7, verified_reports: empty ? 0 : 96, submitted_green: empty ? 0 : 3 } },
+  confirmed_compliance: { office_confirmed: empty ? 0 : 3, inspection_verified: empty ? 0 : 5, total_confirmed: empty ? 0 : 8 },
   non_registry_monitoring: {
     summary: { total: monitoringRecords.length,
       needs_verification: monitoringRecords.filter(row => ["Red", "Yellow"].includes(row.flagColor)).length,
@@ -56,10 +59,35 @@ const sections = {
 const held = [];
 window.__releaseLayout = () => held.splice(0).forEach(resolve => resolve());
 window.__printCount = 0;
+window.__demographicRequests = 0;
+window.__demographicOverride = null;
+window.__demographicSizeOverride = null;
+window.__failNextDemographic = false;
+window.__holdNextDemographic = false;
+const heldDemographics = [];
+window.__releaseDemographic = () => heldDemographics.splice(0).forEach(resolve => resolve());
 window.print = () => { window.__printCount += 1; };
 window.fetch = async (url, options = {}) => {
   const parsed = new URL(url, location.href);
-  if (parsed.pathname.endsWith("/analytics/all") || parsed.pathname.endsWith("/analytics/demographic-reports")) {
+  if (parsed.pathname.endsWith("/analytics/demographic-reports")) {
+    window.__demographicRequests += 1;
+    const override = window.__demographicOverride;
+    if (window.__holdNextDemographic) {
+      window.__holdNextDemographic = false;
+      await new Promise(resolve => heldDemographics.push(resolve));
+    }
+    if (window.__failNextDemographic) {
+      window.__failNextDemographic = false;
+      return Response.json({ error: "Preview: refresh failed." }, { status: 503 });
+    }
+    if (state === "loading") await new Promise(resolve => held.push(resolve));
+    if (state === "error") return Response.json({ error: "Preview: report service temporarily unavailable." }, { status: 503 });
+    return Response.json({ descriptive: { ...descriptive,
+      kpis: { ...descriptive.kpis, ...(override || {}) },
+      business_size_dist: window.__demographicSizeOverride || descriptive.business_size_dist,
+      confirmed_compliance: descriptive.confirmed_compliance } });
+  }
+  if (parsed.pathname.endsWith("/analytics/all")) {
     if (state === "loading") await new Promise(resolve => held.push(resolve));
     if (state === "error") return Response.json({ error: "Preview: report service temporarily unavailable." }, { status: 503 });
     const section = parsed.searchParams.get("section");

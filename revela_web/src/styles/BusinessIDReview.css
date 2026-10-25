@@ -1,0 +1,54 @@
+.business-id-review {
+  min-width: 0;
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.business-id-review__label {
+  display: block;
+  margin: 0 0 7px;
+  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.business-id-review__input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-input-bg);
+  color: var(--color-ink);
+  font: 500 14px/1.4 var(--font-base);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.business-id-review__input::placeholder { color: var(--color-muted); opacity: 0.8; }
+.business-id-review__input:focus-visible {
+  border-color: var(--color-primary);
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--color-primary-light);
+}
+.business-id-review__input:disabled { opacity: 0.7; cursor: not-allowed; }
+.business-id-review__input[readonly] { cursor: default; }
+.business-id-review__preview {
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 10px;
+  background: var(--color-card-alt);
+}
+.business-id-review__preview p { margin: 7px 0 0; overflow-wrap: anywhere; }
+.business-id-review__preview .business-id-review__label { margin-top: 12px; }
+.business-id-review__hint { margin: 8px 0 0; color: var(--color-muted); font-size: 12px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .business-id-review__input { transition: none; }
+}

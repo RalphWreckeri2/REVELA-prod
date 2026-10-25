@@ -13,7 +13,6 @@ import NonRegistryPinMonitoring from "../components/NonRegistryPinMonitoring";
 import ResponsiveChart from "../components/ResponsiveChart";
 import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
-import { analyticsSnapshotStatus } from "../components/analyticsCachePolicy";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { useAuth } from "../context/authContext";
@@ -315,14 +314,11 @@ const InsightGenerator = {
 
   funnel: (data) => {
     if (!data || data.length < 2) return "Not enough funnel data.";
-    const total = data.find(d => d.step === "Total Non-Compliant")?.value || 0;
-    const cleared = data.find(d => d.step === "Compliant (Cleared)")?.value || 0;
-    const conversion = total > 0 ? Math.round((cleared / total) * 100) : 0;
+    const verified = data.find(d => d.step === "Verified inspection reports")?.value || 0;
+    const green = data.find(d => d.step === "Verified Green reports")?.value || 0;
+    const share = verified > 0 ? Math.round((green / verified) * 100) : 0;
 
-    if (conversion < 10) {
-      return `We're seeing a very low end-to-end clearance rate of just ${conversion}%. This means the vast majority of non-compliant entities are getting stuck somewhere in the audit process or ignoring warnings. We need to streamline field inspections.`;
-    }
-    return `About ${conversion}% of all non-compliant entities successfully make it through to full clearance.`;
+    return `${green} of ${verified} admin-verified inspection reports are Green (${share}%). This report-based share counts verified reports, not distinct businesses; submitted reports awaiting verification are excluded.`;
   },
 
   sectoral: (data) => {
@@ -421,11 +417,11 @@ const InsightGenerator = {
 
   inspectorPerformance: (data) => {
     if (!data || data.length === 0) return "No inspector data available.";
-    const topPerformer = [...data].sort((a, b) => b.total_completed - a.total_completed)[0];
-    if (topPerformer && topPerformer.total_completed > 0) {
-      return `Inspector ${topPerformer.fullName} is leading with ${topPerformer.total_completed} completed inspections. Keep up the momentum!`;
+    const topPerformer = [...data].sort((a, b) => b.total_verified - a.total_verified)[0];
+    if (topPerformer && topPerformer.total_verified > 0) {
+      return `Inspector ${topPerformer.fullName} has ${topPerformer.total_verified} admin-verified reports. Submitted work awaiting verification is shown separately.`;
     }
-    return "No completed inspections yet in the selected criteria.";
+    return "No admin-verified reports yet. Submitted reports may still be awaiting review.";
   },
 
   redFlagTrend: (data) => {
@@ -1082,7 +1078,11 @@ export default function AnalyticsPage() {
 
   const auditBreakdown = desc?.audit_summary?.result_breakdown || [];
   const inspectedCount = auditBreakdown.reduce((sum, r) => sum + r.count, 0);
-  const clearedCount = auditBreakdown.find(r => r.inspectionResult === 'Green' || r.inspectionResult === 'Compliant')?.count || 0;
+  const verifiedReportCount = Number(desc?.audit_summary?.workflow?.verified_reports ?? inspectedCount);
+  const clearedCount = auditBreakdown.filter(r => r.inspectionResult === 'Green' || r.inspectionResult === 'Compliant').reduce((sum, r) => sum + r.count, 0);
+  const awaitingCount = Number(desc?.audit_summary?.workflow?.awaiting_verification || 0);
+  const preliminaryGreen = Number(desc?.audit_summary?.workflow?.submitted_green || 0);
+  const confirmedCompliance = desc?.confirmed_compliance;
 
   const dispatchedCount = useMemo(() => {
     const breakdown = data.operations?.status_breakdown || [];
@@ -1113,10 +1113,10 @@ export default function AnalyticsPage() {
   }, [desc?.enforcement_progress]);
 
   const funnelData = [
-    { step: "Total Flags", value: flagCounts.total, color: "var(--color-ink)" },
-    { step: "Total Non-Compliant", value: flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black, color: "#f43f5e" },
-    { step: "Total Inspected", value: inspectedCount, color: "#8b5cf6" },
-    { step: "Compliant (Cleared)", value: clearedCount, color: "#10b981" },
+    { step: "Flagged pins (all)", value: flagCounts.total, color: "var(--color-ink)" },
+    { step: "Non-Green pins", value: flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black, color: "#f43f5e" },
+    { step: "Verified inspection reports", value: verifiedReportCount, color: "#8b5cf6" },
+    { step: "Verified Green reports", value: clearedCount, color: "#10b981" },
   ];
 
 
@@ -1248,6 +1248,7 @@ export default function AnalyticsPage() {
       complianceTimeline: data?.descriptive?.compliance_timeline || [],
       enforcement: data?.descriptive?.enforcement_progress || [],
       audit: data?.descriptive?.audit_summary || {},
+      confirmedCompliance: data?.descriptive?.confirmed_compliance || {},
       kpis: data?.descriptive?.kpis || {},
       barangayRisk: data?.diagnostic?.barangay_risk_data || [],
       spatialDiagnostics: data?.diagnostic ? {
@@ -1644,16 +1645,6 @@ export default function AnalyticsPage() {
             </button>
           </div>
         </div>
-
-        {cacheMetadata?.computed_at && (
-          <p role="status" style={{ color: "var(--color-muted)", fontSize: 12, margin: "-16px 0 24px" }}>
-            Barangay rankings computed {" "}
-            <time dateTime={cacheMetadata.computed_at}>
-              {new Date(cacheMetadata.computed_at).toLocaleString()}
-            </time>
-            {" · "}{analyticsSnapshotStatus({ ...cacheMetadata, expired: snapshotIsExpired })}
-          </p>
-        )}
 
         {/* ANALYTICS FILTERS — redesigned: chips + accordion + sticky footer */}
         <div className="saas-card frosted-glass" style={{ marginBottom: 24, padding: "20px 22px", maxHeight: showFilters ? "85vh" : "auto", overflowY: showFilters ? "auto" : "visible" }}>
@@ -2360,10 +2351,19 @@ export default function AnalyticsPage() {
               <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10, marginBottom: 24 }}>
                 <KpiCard iconVariant="red" value={flagCounts.red + flagCounts.yellow + flagCounts.orange + flagCounts.black} label="Total Non-Compliant" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="orange" value={dispatchedCount ?? "—"} label="Dispatched" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="gold" value={inspectedCount ?? "—"} label="Total Inspected" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="green" value={clearedCount ?? "—"} label="Compliant (Cleared)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="gold" value={`${inspectedCount > 0 ? Math.round((clearedCount / inspectedCount) * 100) : 0}%`} label="Clearance Rate" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="gold" value={verifiedReportCount} label="Verified inspection reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="green" value={clearedCount} label="Verified Green reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 0 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="gold" value={`${verifiedReportCount > 0 ? Math.round((clearedCount / verifiedReportCount) * 100) : 0}%`} label="Green share of verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} style={{ padding: "12px 10px" }} />
               </div>
+              <div className="kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10, marginBottom: 16 }}>
+                <KpiCard iconVariant="gold" value={awaitingCount} label="Submitted · awaiting verification (reports)" />
+                <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed compliant (businesses)" />
+                <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified compliant (businesses)" />
+                <KpiCard iconVariant="plain" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed compliant (distinct businesses)" />
+              </div>
+              <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 24px" }}>
+                Confirmed-compliance business counts require a current Green original pin and valid office or admin-verification history. They are not a census of all Green registry businesses. {preliminaryGreen} submitted Green {preliminaryGreen === 1 ? "report is" : "reports are"} awaiting admin verification.
+              </p>
 
               {/* Non-registry monitoring, inside Section B after its KPIs */}
               <NonRegistryPinMonitoring snapshot={desc?.non_registry_monitoring} refreshing={backgroundRefreshing} />
@@ -2388,9 +2388,9 @@ export default function AnalyticsPage() {
                   </div>
 
                   <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>End-to-End Clearance Rate</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {funnelData[0]?.value > 0 ? `${Math.round((clearedCount / funnelData[0].value) * 100)}% of total detected` : "N/A"}
+                      <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Verified Green report share</p>
+                      <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {verifiedReportCount > 0 ? `${Math.round((clearedCount / verifiedReportCount) * 100)}% of verified reports` : "N/A"}
                     </p>
                   </div>
 
@@ -2483,7 +2483,7 @@ export default function AnalyticsPage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Inspection Result Breakdown</h3>
-                  <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Distribution of audit outcomes for verified businesses.</p>
+                  <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Admin-verified inspection reports only. {awaitingCount} submitted {awaitingCount === 1 ? "report awaits" : "reports await"} verification; {preliminaryGreen} preliminary Green.</p>
                   {loading ? <Skeleton h={260} /> : auditData.length === 0 ? (
                     <EmptyState h={260} title="No Audit Data" />
                   ) : (
@@ -2506,7 +2506,7 @@ export default function AnalyticsPage() {
                 </div>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, display: "flex", flexDirection: "column" }}>
                   <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Enforcement Funnel</h3>
-                  <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Actual conversion of detected entities through the audit process.</p>
+                  <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 16px 0" }}>Pins and reports are different units: the first two steps count map pins; the last two count admin-verified reports.</p>
                   <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", gap: 12, marginTop: 24, justifyContent: "center" }}>
                     {funnelData.map((f, i) => {
                       const maxVal = Math.max(...funnelData.map(d => d.value)) || 1;
@@ -3425,7 +3425,8 @@ export default function AnalyticsPage() {
                         <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 10 }}>
                           <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
                             <th style={{ padding: "10px 12px", fontWeight: 700 }}>Inspector</th>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Completed</th>
+                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Work submitted</th>
+                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Admin-verified</th>
                             <th style={{ padding: "10px 12px", fontWeight: 700 }}>Assigned</th>
                             <th style={{ padding: "10px 12px", fontWeight: 700 }}>Yellow Flags Reported</th>
                             <th style={{ padding: "10px 12px", fontWeight: 700 }}>Avg Time (Days)</th>
@@ -3438,8 +3439,9 @@ export default function AnalyticsPage() {
                                 {row.fullName}
                               </td>
                               <td style={{ padding: "12px", fontWeight: 700, color: COLOR.green, fontSize: 13 }}>
-                                {row.total_completed}
+                                {row.total_submitted ?? row.total_completed}
                               </td>
+                              <td style={{ padding: "12px", fontWeight: 700, color: COLOR.green, fontSize: 13 }}>{row.total_verified ?? 0}</td>
                               <td style={{ padding: "12px", color: "var(--color-muted)", fontSize: 13 }}>
                                 {row.total_assigned}
                               </td>
@@ -3453,7 +3455,7 @@ export default function AnalyticsPage() {
                           ))}
                           {(!data?.operations?.inspector_stats || data.operations.inspector_stats.length === 0) && (
                             <tr>
-                              <td colSpan="5" style={{ padding: "24px" }}>
+                              <td colSpan="6" style={{ padding: "24px" }}>
                                 <EmptyState h={160} title="No Inspector Data" message="No operations found for these criteria." />
                               </td>
                             </tr>

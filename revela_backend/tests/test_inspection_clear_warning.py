@@ -144,7 +144,7 @@ def test_office_confirms_red_or_yellow_without_dispatching_inspection(db, color)
     review, error = registry.preview_pin_compliance(30, "OFFICE-30")
     assert error is None
     result, error = registry.confirm_pin_compliance(
-        30, "OFFICE-30", 2, "Office renewal record",
+        30, "OFFICE-30", 2,
         registry_review_token=review["reviewToken"],
         confirm_establishment=True,
     )
@@ -156,6 +156,7 @@ def test_office_confirms_red_or_yellow_without_dispatching_inspection(db, color)
         "applicationStatus": "Active",
         "flagColor": "Green",
         "complianceConfirmed": True,
+        "registryCreated": True,
     }
     assert db.rows("SELECT businessID, flagColor FROM geospatial_logs WHERE logID=30") == [
         {"businessID": "OFFICE-30", "flagColor": "Green"}]
@@ -165,8 +166,31 @@ def test_office_confirms_red_or_yellow_without_dispatching_inspection(db, color)
         {"lastRenewalDate": None}]
     assert db.rows("SELECT subjectType, subjectID, eventType, actorUserID, reason FROM enforcement_events") == [
         {"subjectType": "business", "subjectID": "OFFICE-30",
-         "eventType": "compliance_confirmed", "actorUserID": 2,
-         "reason": "Office renewal record"}]
+          "eventType": "compliance_confirmed", "actorUserID": 2,
+         "reason": "Office confirmation: Business ID OFFICE-30 created in registry for original pin #30"}]
+
+
+def test_office_route_ignores_submitted_evidence_text_and_records_server_audit(db):
+    db.db.execute("""INSERT INTO geospatial_logs
+        (logID,barangayID,detectedName,flagColor,latitude,longitude)
+        VALUES (30,1,'OFFICE SHOP','Yellow',13.9667,121.1167)""")
+    db.commit()
+    review, error = registry.preview_pin_compliance(30, "OFFICE-30")
+    assert error is None
+    app = Flask(__name__)
+    app.config["JWT_SECRET_KEY"] = "isolated-registry-test-secret-key-32-chars"
+    JWTManager(app)
+    app.register_blueprint(flags_bp, url_prefix="/api/flags")
+    with app.app_context():
+        token = create_access_token(identity="2", additional_claims={"role": "Admin"})
+    with patch("api.middleware.decorators._verify_user_and_session", return_value=None):
+        response = app.test_client().post("/api/flags/30/confirm-compliance", json={
+            "businessID": "OFFICE-30", "registryReviewToken": review["reviewToken"],
+            "confirmEstablishment": True, "reason": "client-supplied reference must be ignored",
+        }, headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert db.rows("SELECT actorUserID, reason FROM enforcement_events") == [
+        {"actorUserID": 2, "reason": "Office confirmation: Business ID OFFICE-30 created in registry for original pin #30"}]
 
 
 def test_office_compliance_confirmation_rejects_stale_business_id_review(db):
@@ -205,7 +229,7 @@ def test_purple_pin_reactivation_preserves_documented_renewal_date(db):
     review, error = registry.preview_pin_compliance(30, "CLOSED-1")
     assert error is None
     result, error = registry.confirm_pin_compliance(
-        30, "CLOSED-1", 2, "Office reactivation",
+        30, "CLOSED-1", 2,
         registry_review_token=review["reviewToken"],
         confirm_establishment=True,
     )

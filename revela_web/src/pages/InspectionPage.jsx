@@ -27,6 +27,7 @@ import Swal from "sweetalert2";
 import AnimatePresence from "../components/AnimatePresence";
 import InspectionDialog from "../components/InspectionDialog";
 import BusinessIDReview from "../components/BusinessIDReview";
+import { confirmBusinessID } from "../components/businessIDReviewFlow";
 import {
   canFollowUpInspection,
   canReassignInspection,
@@ -343,9 +344,8 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
   const isGreen = report.inspectionResult === "Green";
   const [businessID, setBusinessID] = useState(report.linkedBusinessID || "");
   const [linkReview, setLinkReview] = useState(null);
-  const [reviewing, setReviewing] = useState(false);
-  const [confirmEstablishment, setConfirmEstablishment] = useState(false);
   const [registryFields, setRegistryFields] = useState({});
+  const submitInFlight = useRef(false);
   const gpsLat = finiteNumberOrNaN(report.verifiedLatitude);
   const gpsLng = finiteNumberOrNaN(report.verifiedLongitude);
   const pinLat = finiteNumberOrNaN(report.latitude);
@@ -375,28 +375,40 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
         : { text: "Far from pin", color: "#b91c1c", background: "#fef2f2" };
 
   const handleVerify = async () => {
-    if (isGreen && (!linkReview || !confirmEstablishment)) return;
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
     setLoading(true);
     setError("");
     try {
-      await verifyInspectionRequest(report.reportID, token, updateLocation, isGreen ? {
-        businessID: linkReview.businessID,
-        confirmEstablishment,
-        registryReviewToken: linkReview.reviewToken,
-        registryFields,
-      } : {});
-      onSuccess();
-      onClose();
+      if (isGreen) {
+        await confirmBusinessID({ businessID, review: linkReview, registryFields,
+          setReview: setLinkReview, setError,
+          preview: id => previewGreenRegistryLinkRequest(report.reportID, id, token),
+          save: async current => {
+            await verifyInspectionRequest(report.reportID, token, false, {
+              businessID: current.businessID, confirmEstablishment: true,
+              registryReviewToken: current.reviewToken, registryFields,
+            });
+            onSuccess();
+            onClose();
+          },
+        });
+      } else {
+        await verifyInspectionRequest(report.reportID, token, updateLocation);
+        onSuccess();
+        onClose();
+      }
     } catch (err) {
       setError(err.message || "Verification failed.");
     } finally {
       setLoading(false);
+      submitInFlight.current = false;
     }
   };
 
   return (
     <InspectionDialog
-      title="Verify Inspection" onClose={onClose} busy={loading || reviewing} isClosing={isClosing} layer={10001}
+      title="Verify Inspection" onClose={onClose} busy={loading} isClosing={isClosing} layer={10001}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
 
@@ -419,12 +431,10 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
         {isGreen && (
           <section style={{ ...s.remarksBox, marginBottom: 16 }} aria-label="Official registry link">
             <BusinessIDReview businessID={businessID} setBusinessID={setBusinessID}
-              review={linkReview} setReview={setLinkReview} confirmed={confirmEstablishment}
-              setConfirmed={setConfirmEstablishment} reviewing={reviewing} setReviewing={setReviewing}
+              review={linkReview} setReview={setLinkReview}
               registryFields={registryFields} setRegistryFields={setRegistryFields}
-              busy={loading} setError={setError} initialLinked={Boolean(report.linkedBusinessID)}
-              preview={id => previewGreenRegistryLinkRequest(report.reportID, id, token)}
-              attestation="I checked the official Business ID and establishment details against the inspection evidence. They represent this same establishment." />
+              busy={loading} setError={setError} initialLinked={Boolean(report.linkedBusinessID)} />
+            {error && <p role="alert" style={{ ...s.errorBanner, marginTop: 12 }}><Icon.AlertCircle /> &nbsp;{error}</p>}
           </section>
         )}
 
@@ -548,7 +558,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
           </p>
         )}
 
-        {error && (
+        {!isGreen && error && (
           <div style={s.errorBanner}><Icon.AlertCircle /> &nbsp;{error}</div>
         )}
 
@@ -559,11 +569,9 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
         </p>
 
         <div style={s.modalFooter}>
-          <button className="ghost-btn" onClick={onClose} disabled={loading || reviewing}>Cancel</button>
-          <button className="primary-btn" onClick={handleVerify} disabled={loading || reviewing || (isGreen && (
-            !linkReview || !confirmEstablishment || linkReview.missingRequiredFields?.some(field => !String(registryFields[field] || "").trim())
-          ))}>
-            {loading ? "Verifying…" : <><Icon.Check /> Confirm & Verify</>}
+          <button className="ghost-btn" onClick={onClose} disabled={loading}>Cancel</button>
+          <button className="primary-btn" onClick={handleVerify} disabled={loading}>
+            {loading ? "Verifying…" : <><Icon.Check /> Confirm &amp; verify</>}
           </button>
         </div>
     </InspectionDialog>

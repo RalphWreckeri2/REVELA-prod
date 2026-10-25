@@ -32,8 +32,8 @@ export const MAP_REGISTRY_LINK_OPTIONS = Object.freeze([
 ]);
 export const UNLINKED_COMPLIANCE_TEXT = "Inspection-verified compliant · Not yet in imported registry";
 export const COMPLIANCE_REPORT_TITLE = "Inspection-Verified Compliant Businesses";
-export const COMPLIANCE_REPORT_DESCRIPTION = "Businesses identified through Business Detection or an unlinked Inspector Report and subsequently verified as compliant. Includes their current registry-link status.";
-export const COMPLIANCE_REPORT_SCOPE = "Current compliance only: effective Green with applicable admin-verified Green inspection evidence. Historical Green results alone are excluded.";
+export const COMPLIANCE_REPORT_DESCRIPTION = "Current admin-verified Green inspections, including linked manual-origin pins and historical unlinked pin references. Linked businesses are classified by their latest valid confirmation.";
+export const COMPLIANCE_REPORT_SCOPE = "Distinct confirmed registry businesses with effective Green status and current admin-verification evidence. Office-confirmed businesses are counted separately; Green color alone is not sufficient.";
 export const COMPLIANCE_COLUMNS = Object.freeze([
   "Pin Reference", "Business Name", "Barangay", "Address", "Verified On", "Registry Link",
 ]);

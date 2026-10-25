@@ -1906,7 +1906,7 @@ def preview_pin_compliance(log_id, business_id):
         cursor.close()
 
 
-def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
+def confirm_pin_compliance(log_id, business_id, actor_user_id, *,
                            registry_review_token=None,
                            confirm_establishment=False, registry_fields=None):
     """Atomically link and mark an office-confirmed pin compliant."""
@@ -1922,7 +1922,7 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
             return None, _ladder_not_migrated("Compliance confirmation")
         if confirm_establishment is not True:
             raise GreenRegistryLinkError(
-                "Review the Business ID and confirm the office record matches this establishment.")
+                "Explicit admin confirmation is required to link this Business ID.")
 
         from api.registry.inspection_link import prepare_green_link, save_green_link
 
@@ -2036,7 +2036,10 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
         record_enforcement_event(
             cursor, business_id=business_id,
             event_type=COMPLIANCE_CONFIRMED, actor_user_id=actor_user_id,
-            reason=reason, previous_level=0, new_level=0,
+            reason=(f"Office confirmation: Business ID {business_id} "
+                    f"{'linked to existing registry record' if registry else 'created in registry'} "
+                    f"for original pin #{log_id}"),
+            previous_level=0, new_level=0,
             previous_black=0, new_black=0,
         )
         mysql.connection.commit()
@@ -2054,6 +2057,7 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
             "applicationStatus": "Active",
             "flagColor": "Green",
             "complianceConfirmed": True,
+            "registryCreated": registry is None,
         }, None
     except (RegistryLadderConflict, RegistryLadderUnavailable,
             GreenRegistryLinkError) as exc:
@@ -4026,14 +4030,20 @@ def update_business(business_id, data: dict):
         return False, str(e)
 
 
+class RegistryDeletionConflict(RuntimeError):
+    """A concurrent or protected relationship prevents deleting this record."""
+
+
 def delete_business(business_id, actor_role=None):
     """Delete a business from the registry."""
     try:
         cursor = mysql.connection.cursor()
 
+        has_confirmed_pin = confirmed_pin_column_available(cursor)
         cursor.execute(
-            """SELECT businessID, businessName, barangayID, latitude, longitude, placeID
-               FROM official_registry WHERE businessID = %s FOR UPDATE""",
+            """SELECT businessID, businessName, barangayID, latitude, longitude, placeID"""
+            + (", confirmedLogID" if has_confirmed_pin else "")
+            + " FROM official_registry WHERE businessID = %s FOR UPDATE",
             (business_id,)
         )
         row = cursor.fetchone()
@@ -4045,11 +4055,13 @@ def delete_business(business_id, actor_role=None):
 
         # Identify logs strictly tied to THIS business (avoid broad delete across same-named branches)
         target_log_ids = set()
+        if row.get("confirmedLogID") is not None:
+            target_log_ids.add(row["confirmedLogID"])
 
         # Check if businessID column exists in geospatial_logs (post-migration)
         try:
             cursor.execute(
-                "SELECT logID FROM geospatial_logs WHERE businessID = %s", (business_id,))
+                "SELECT logID FROM geospatial_logs WHERE businessID = %s FOR UPDATE", (business_id,))
             for l in cursor.fetchall():
                 target_log_ids.add(l["logID"])
         except Exception:
@@ -4058,14 +4070,23 @@ def delete_business(business_id, actor_role=None):
         # If not matched by businessID, match by placeID (if present)
         if not target_log_ids and row.get("placeID"):
             cursor.execute(
-                "SELECT logID FROM geospatial_logs WHERE placeID = %s AND barangayID = %s",
+                "SELECT logID FROM geospatial_logs WHERE placeID = %s AND barangayID = %s FOR UPDATE",
                 (row["placeID"], row["barangayID"])
             )
             for l in cursor.fetchall():
                 target_log_ids.add(l["logID"])
 
-        # Delete only inspection reports and geospatial logs specifically tied to this business
-        for target_id in target_log_ids:
+        # Release only this business's confirmed references before deleting
+        # their original pins. All changes, reports and pins share one commit.
+        from api.registry.inspection_link import release_confirmed_pin
+        for target_id in sorted(target_log_ids):
+            cursor.execute("SELECT logID FROM geospatial_logs WHERE logID = %s FOR UPDATE", (target_id,))
+            if not cursor.fetchone():
+                raise RegistryDeletionConflict("A linked map pin changed during deletion. Refresh and retry.")
+            try:
+                release_confirmed_pin(cursor, target_id, expected_business_id=business_id)
+            except GreenRegistryLinkError as exc:
+                raise RegistryDeletionConflict(str(exc)) from exc
             cursor.execute(
                 "DELETE FROM inspection_reports WHERE targetID = %s", (target_id,))
             cursor.execute(
@@ -4086,12 +4107,21 @@ def delete_business(business_id, actor_role=None):
             pass
 
         return True, None
-    except BlackBusinessDeletionForbidden as exc:
+    except (BlackBusinessDeletionForbidden, RegistryDeletionConflict) as exc:
         mysql.connection.rollback()
         cursor.close()
         return False, exc
     except Exception as e:
         mysql.connection.rollback()
+        cursor.close()
+        # A concurrent confirmation or another protected pin can still make a
+        # delete hit an InnoDB FK. Never return a raw database error to a client.
+        if e.args and e.args[0] == 1451:
+            return False, RegistryDeletionConflict(
+                "A linked map pin or related record changed during deletion. Refresh and retry.")
+        if e.args and e.args[0] in (1205, 1213):
+            return False, RegistryDeletionConflict(
+                "Deletion conflicted with another update. Nothing was deleted; refresh and try again.")
         return False, str(e)
 
 

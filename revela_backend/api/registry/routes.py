@@ -13,6 +13,7 @@ from api.registry.service import (
     get_business_by_id,
     update_business,
     delete_business,
+    RegistryDeletionConflict,
     snap_unresolved_pins,
     RegistryValidationError,
     RegistryNotFoundError,
@@ -658,6 +659,8 @@ def delete_business_route(business_id):
     if error:
         if isinstance(error, BlackBusinessDeletionForbidden):
             return jsonify({"error": str(error), "code": "black_delete_forbidden"}), 403
+        if isinstance(error, RegistryDeletionConflict):
+            return jsonify({"error": str(error), "code": "registry_delete_conflict"}), 409
         status_code = 404 if error == "Business not found" else 500
         return jsonify({"error": str(error)}), status_code
 

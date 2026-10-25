@@ -626,6 +626,11 @@ def submit_inspection(log_id, user_id, inspection_result,
     GPS coordinates are stored separately; nearestLandmark retains the legacy
     coordinate string for compatibility with older report readers.
     """
+    from api.inspections.notes_policy import InspectionNotesInvalid, validate_inspection_notes
+    try:
+        validate_inspection_notes(notes)
+    except InspectionNotesInvalid as exc:
+        return None, exc
     try:
         cursor = mysql.connection.cursor()
         _ensure_gps_columns(cursor)
@@ -1081,7 +1086,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             if update_location:
                 raise GreenRegistryLinkError("Green confirmation preserves the original pin location. Leave updateLocation disabled.")
             if confirm_establishment is not True:
-                raise GreenRegistryLinkError("Review the Business ID and confirm it represents the inspected establishment.")
+                raise GreenRegistryLinkError("Explicit admin confirmation is required to link this Business ID.")
             green_link = prepare_green_link(cursor, report, business_id, lock=True,
                                             required_fields=registry_fields if report["verificationStatus"] == "Submitted" else None)
             if (report["verificationStatus"] == "Verified"
@@ -1618,10 +1623,10 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 )
             cursor.execute(
                 """INSERT INTO enforcement_events (
-                       subjectType, subjectID, eventType, actorUserID, reason,
-                       previousLevel, newLevel, previousBlack, newBlack
-                   ) VALUES ('geospatial_log', %s, 'warning_issued', %s, NULL,
-                             %s, %s, 0, 0)""",
+                    subjectType, subjectID, eventType, actorUserID, reason,
+                    previousLevel, newLevel, previousBlack, newBlack, createdAt
+                    ) VALUES ('geospatial_log', %s, 'warning_issued', %s, NULL,
+                              %s, %s, 0, 0, UTC_TIMESTAMP(6))""",
                 (str(report["targetID"]), verified_by_user_id,
                  previous_level, notice_level),
             )
@@ -1650,7 +1655,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             assigned_to_user_id=report["userID"],
             flag_color_at_event=geo_flag["flagColor"] if geo_flag else None,
             inspection_result=report["inspectionResult"],
-            remarks=(f"Business ID {pin_business_id} confirmed and linked to original pin" if green_link else
+            remarks=(f"Business ID {pin_business_id} {'created in registry' if not green_link['registry'] else 'linked to existing registry record'} and linked to original pin" if green_link else
                      "Map location updated to inspector GPS" if location_updated
                      else registry_warning),
             cycle_id=cycle_id,

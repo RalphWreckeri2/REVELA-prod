@@ -100,8 +100,57 @@ def decorate_compliance(row):
 
 def is_report_compliant(row):
     origin = row.get("originSource")
-    eligible_origin = (
-        origin == "detection"
-        or (origin == "manual" and row.get("registryLinked") is False)
-    )
+    eligible_origin = origin in ("detection", "manual")
     return eligible_origin and row.get("inspectionVerifiedCompliant") is True
+
+
+def current_confirmation_rows(cursor, *, ladder=False, barangay_ids=None):
+    """One row per confirmed registry business, never one row per report/event.
+
+    Office history has no structured pin FK. Only the server-written audit
+    suffix identifying this *current* canonical pin is sufficient evidence;
+    older free-text events cannot safely be assigned to a different pin.
+    """
+    from api.registry.colors import _effective_flag_color_sql
+
+    office_at = """(SELECT e.createdAt FROM enforcement_events e
+        WHERE e.subjectType = 'business' AND e.subjectID = CAST(r.businessID AS CHAR)
+          AND e.eventType = 'compliance_confirmed'
+          AND e.reason LIKE CONCAT('% for original pin #', g.logID)
+          AND NOT EXISTS (SELECT 1 FROM enforcement_events later
+              WHERE later.eventType IN ('warning_issued', 'black_locked')
+                AND later.createdAt > e.createdAt
+                AND ((later.subjectType = 'business' AND later.subjectID = CAST(r.businessID AS CHAR))
+                  OR (later.subjectType = 'geospatial_log' AND later.subjectID = CAST(g.logID AS CHAR))))
+        ORDER BY e.createdAt DESC, e.eventID DESC LIMIT 1)"""
+    cursor.execute(f"""SELECT r.businessID, g.logID, g.detectedName, g.barangayID,
+                    b.barangayName, COALESCE(NULLIF(g.nearestLandmark, ''), r.businessAddress, '') AS address,
+                    {_effective_flag_color_sql('g', ladder=ladder)} AS flagColor,
+                    {office_at} AS officeAt,
+                    {verified_green_at_sql('g', ladder=ladder)} AS inspectionAt
+             FROM official_registry r
+             JOIN geospatial_logs g ON g.logID = r.confirmedLogID AND g.businessID = r.businessID
+             LEFT JOIN barangays b ON b.barangayID = g.barangayID""")
+    rows = []
+    for row in cursor.fetchall():
+        if row["flagColor"] != "Green" or (barangay_ids and row["barangayID"] not in barangay_ids):
+            continue
+        office, inspection = utc_iso(row.get("officeAt")), utc_iso(row.get("inspectionAt"))
+        if office and inspection:
+            # An exact timestamp tie cannot order separate tables; choose the
+            # verified event deterministically, never count the business twice.
+            source = "inspection" if inspection >= office else "office"
+        else:
+            source = "inspection" if inspection else "office" if office else None
+        if not source:
+            continue
+        rows.append({**row, "confirmationSource": source,
+                     "confirmedAt": inspection if source == "inspection" else office})
+    return rows
+
+
+def confirmation_summary(rows):
+    office = sum(row["confirmationSource"] == "office" for row in rows)
+    inspection = sum(row["confirmationSource"] == "inspection" for row in rows)
+    return {"office_confirmed": office, "inspection_verified": inspection,
+            "total_confirmed": len(rows), "count_unit": "distinct confirmed registry businesses"}

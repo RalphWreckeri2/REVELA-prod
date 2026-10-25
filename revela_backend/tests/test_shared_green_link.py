@@ -1,4 +1,4 @@
-"""Both Green transitions require an existing official record; synthetic DB only."""
+"""Both Green transitions link by office-issued ID or create a minimal record; synthetic DB only."""
 from unittest.mock import patch
 from datetime import date
 from io import BytesIO
@@ -65,10 +65,14 @@ def test_existing_record_linked_without_new_pin_or_inspection(path, db):
         result, error = inspections.verify_inspection(31, 2, business_id="official-1",
             registry_review_token=plan["reviewToken"], confirm_establishment=True)
     else:
-        result, error = registry.confirm_pin_compliance(30, "official-1", 2, "Office record",
+        result, error = registry.confirm_pin_compliance(30, "official-1", 2,
             registry_review_token=plan["reviewToken"], confirm_establishment=True)
     assert error is None, error
     assert result["businessID"] == "OFFICIAL-1"
+    if path == "office":
+        assert result["registryCreated"] is False
+        assert "Business ID OFFICIAL-1 linked to existing registry record" in db.rows(
+            "SELECT reason FROM enforcement_events")[0]["reason"]
     assert db.rows("SELECT logID,businessID,flagColor,latitude,longitude,source FROM geospatial_logs") == [
         {"logID": 30, "businessID": "OFFICIAL-1", "flagColor": "Green",
          "latitude": 13.9667, "longitude": 121.1167, "source": "detection"}]
@@ -78,6 +82,9 @@ def test_existing_record_linked_without_new_pin_or_inspection(path, db):
         [{"verificationStatus": "Verified"}] if path == "inspection" else [])
     assert len(db.rows("SELECT * FROM inspection_lifecycle_events")) == (1 if path == "inspection" else 0)
     assert len(db.rows("SELECT * FROM enforcement_events")) == (0 if path == "inspection" else 1)
+    if path == "inspection":
+        assert "linked to existing registry record" in db.rows(
+            "SELECT remarks FROM inspection_lifecycle_events")[0]["remarks"]
 
 
 @pytest.mark.parametrize("path", ["inspection", "office"])
@@ -108,6 +115,13 @@ def test_office_issued_id_creates_minimal_record_then_import_enriches_without_mo
             registry_review_token=plan["reviewToken"], confirm_establishment=True)
     assert error is None, error
     assert result["businessID"] == "OFFICE-1"
+    if path == "office":
+        assert result["registryCreated"] is True
+        assert "Business ID OFFICE-1 created in registry" in db.rows(
+            "SELECT reason FROM enforcement_events")[0]["reason"]
+    else:
+        assert "created in registry" in db.rows(
+            "SELECT remarks FROM inspection_lifecycle_events")[0]["remarks"]
     created = db.rows("SELECT * FROM official_registry")
     assert len(created) == 1 and created[0]["confirmedLogID"] == 30
     for key in ("businessAddress", "businessType", "lineOfBusiness", "businessSize", "registrationType", "lastRenewalDate"):

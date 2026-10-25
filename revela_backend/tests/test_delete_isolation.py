@@ -31,8 +31,12 @@ class DeleteIsolationTests(unittest.TestCase):
 
         # 2. Query geospatial_logs by businessID returns strictly Branch A's log (100)
         mock_cursor.fetchall.side_effect = [
+            # Compatibility probe: existing fixtures have no confirmed-pin column.
+            [],
             # businessID query returns Branch A
-            [{"logID": 100}]
+            [{"logID": 100}],
+            # Compatibility probe when releasing a candidate pin link.
+            [],
         ]
 
         success, err = delete_business("BIZ-7E-A")
@@ -115,6 +119,8 @@ class DeleteIsolationTests(unittest.TestCase):
                 "latitude": 13.961,
                 "longitude": 121.111
             },
+            # Black-lock protection checks the linked Registry business first.
+            {"blackLocked": 0, "applicationStatus": "Active"},
             # Surviving duplicate check by businessID: None
             None,
             # Surviving duplicate check by placeID: None
@@ -156,6 +162,7 @@ class DeleteIsolationTests(unittest.TestCase):
                 "latitude": 13.965,
                 "longitude": 121.115
             },
+            {"blackLocked": 0, "applicationStatus": "Active"},
             # Surviving duplicate log found by businessID: 102
             {
                 "logID": 102,
@@ -236,7 +243,7 @@ class DeleteIsolationTests(unittest.TestCase):
 
         reg_deletes = [call for call in db.calls if "DELETE FROM official_registry" in call[0]]
         self.assertEqual(len(reg_deletes), 1)
-        self.assertEqual(reg_deletes[0][1][0], 88)
+        self.assertEqual(reg_deletes[0][1][0], "88")
         self.assertEqual(db.rows("SELECT * FROM official_registry"), [])
 
 

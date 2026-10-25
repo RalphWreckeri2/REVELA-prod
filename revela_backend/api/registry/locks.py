@@ -112,8 +112,8 @@ ENFORCEMENT_EVENT_TYPES = (
 
 _INSERT_ENFORCEMENT_EVENT_SQL = """INSERT INTO enforcement_events (
     subjectType, subjectID, eventType, actorUserID, reason,
-    previousLevel, newLevel, previousBlack, newBlack
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+    previousLevel, newLevel, previousBlack, newBlack, createdAt
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, UTC_TIMESTAMP(6))"""
 
 
 def record_enforcement_event(cursor, *, business_id=None, subject_type="business",

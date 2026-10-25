@@ -7,6 +7,7 @@ import '../service/inspection_service.dart';
 import '../service/inspection_location_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/image_compressor.dart';
+import '../utils/inspection_notes.dart';
 
 class InspectionModal extends StatefulWidget {
   final InspectionTask task;
@@ -182,6 +183,21 @@ class _InspectionModalState extends State<InspectionModal> {
       return;
     }
 
+    final remarks = buildStoredInspectionNotes(
+      _remarksController.text,
+      _noticeLevel,
+    );
+    if (remarks.runes.length > maxInspectionRemarksCharacters) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Notes, including the notice label, must be $maxInspectionRemarksCharacters characters or fewer. Your notes have been kept.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
     try {
       _preWarmLocation();
@@ -200,25 +216,6 @@ class _InspectionModalState extends State<InspectionModal> {
             ),
           );
         }
-      }
-
-      String remarks = _remarksController.text.trim();
-      if (_noticeLevel == 1) {
-        remarks = remarks.isEmpty
-            ? '[1st Notice Issued]'
-            : '[1st Notice Issued] $remarks';
-      } else if (_noticeLevel == 2) {
-        remarks = remarks.isEmpty
-            ? '[2nd Notice Issued]'
-            : '[2nd Notice Issued] $remarks';
-      } else if (_noticeLevel == 3) {
-        remarks = remarks.isEmpty
-            ? '[3rd Notice Issued]'
-            : '[3rd Notice Issued] $remarks';
-      } else if (_noticeLevel == 4) {
-        remarks = remarks.isEmpty
-            ? '[Escalated to Black]'
-            : '[Escalated to Black] $remarks';
       }
 
       final result = await InspectionService().submitInspection(
@@ -1126,6 +1123,7 @@ class _InspectionModalState extends State<InspectionModal> {
                     TextField(
                       controller: _remarksController,
                       maxLines: 5,
+                      onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(
                         hintText:
                             'e.g., Owner requested a follow up next week...',
@@ -1149,6 +1147,21 @@ class _InspectionModalState extends State<InspectionModal> {
                             color: context.adaptivePrimary,
                           ),
                         ),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${storedInspectionNotesLength(_remarksController.text, _noticeLevel)}/$maxInspectionRemarksCharacters stored characters · ${availableInspectionNoteCharacters(_noticeLevel)} available for notes${inspectionNoticePrefix(_noticeLevel).isEmpty ? '' : ' with this notice label'}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            storedInspectionNotesLength(
+                                  _remarksController.text,
+                                  _noticeLevel,
+                                ) >
+                                maxInspectionRemarksCharacters
+                            ? Colors.red.shade700
+                            : context.adaptiveTextDark,
                       ),
                     ),
                     const SizedBox(height: 24),

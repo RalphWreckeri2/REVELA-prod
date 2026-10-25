@@ -81,17 +81,25 @@ def pin(db, log_id=17, *, source="detection", linked=False, color="Red", name="L
 
 
 def verify_green(db, log_id=17):
+    """Persist read-side Green evidence, including legacy confirmed/unlinked histories.
+
+    The interactive Green workflow now requires an explicit reviewed Business ID;
+    that write path is covered separately. These fixtures exercise the shared
+    eligibility readers, so an already-verified report/event pair is written
+    directly (and confirmedLogID is set for linked pins).
+    """
     db.db.execute("""INSERT INTO inspection_reports
         (reportID,targetID,targetType,userID,verificationStatus,inspectionResult,noticeLevel,
          irTimestamp,submittedAt,submissionReceivedAt)
-        VALUES (?, ?, 'geospatial_log',9,'Submitted','Green',0,
+        VALUES (?, ?, 'geospatial_log',9,'Verified','Green',0,
                 '2001-01-01','2002-02-02','2003-03-03')""", (log_id, log_id))
-    db.commit()
-    result, error = inspections.verify_inspection(log_id, verified_by_user_id=2)
-    assert error is None
-    assert result["status"] == "Verified"
-    db.db.execute("UPDATE inspection_lifecycle_events SET eventTimestamp=? WHERE reportID=?",
-                  (VERIFIED_AT, log_id))
+    db.db.execute("""INSERT INTO inspection_lifecycle_events
+        (reportID,targetLogID,eventType,inspectionResult,actorUserID,eventTimestamp)
+        VALUES (?,?,'verified','Green',2,?)""", (log_id, log_id, VERIFIED_AT))
+    db.db.execute("UPDATE geospatial_logs SET flagColor='Green' WHERE logID=?", (log_id,))
+    db.db.execute("""UPDATE official_registry SET confirmedLogID=?
+                     WHERE businessID=(SELECT businessID FROM geospatial_logs WHERE logID=?)""",
+                  (log_id, log_id))
     db.commit()
 
 
@@ -120,13 +128,14 @@ def test_verified_detection_is_current_compliant_with_independent_link(db, linke
 
 
 @pytest.mark.parametrize("linked", [False, True])
-def test_verified_manual_report_is_included_only_when_not_registry_linked(db, linked):
+def test_verified_manual_report_qualifies_whether_or_not_registry_linked(db, linked):
+    """Linking a formerly non-registry manual pin must not disqualify it."""
     pin(db, source="manual", linked=linked)
     verify_green(db)
     row = map_pin()
     assert row["originSource"] == "manual"
     assert row["inspectionVerifiedCompliant"] is True
-    assert report_ids() == ([] if linked else [17])
+    assert report_ids() == [17]
 
 
 def test_green_without_qualifying_verification_is_not_evidence(db):
@@ -262,17 +271,26 @@ def test_verified_on_is_actual_admin_event_time_in_utc(db):
 
 
 @pytest.mark.parametrize("mode", ["upload", "sync"])
-def test_import_links_existing_detection_without_duplicate_or_lost_provenance(db, mode):
+def test_import_updates_confirmed_detection_without_duplicate_or_lost_provenance(db, mode):
     pin(db)
+    db.db.execute("UPDATE geospatial_logs SET businessID='IMPORTED-17' WHERE logID=17")
+    db.db.execute("""INSERT INTO official_registry
+        (businessID,businessName,barangayID,applicationStatus,businessAddress,
+         latitude,longitude,confirmedLogID)
+        VALUES ('IMPORTED-17','L & U BIGASAN',1,'Active','1 MAIN STREET',
+                13.9667,121.1167,17)""")
+    db.commit()
     verify_green(db)
     events_before = db.rows("SELECT * FROM inspection_lifecycle_events")
     csv = ("Business ID,businessName,barangay,businessAddress,Status,lastRenewalDate,Latitude,Longitude\n"
-           f"IMPORTED-17,L & U BIGASAN,Barangay I,1 MAIN STREET,Active,{date.today().year}-01-01,13.9667,121.1167\n")
+           f"IMPORTED-17,L & U BIGASAN,Barangay I,1 MAIN STREET,Active,{date.today().year}-01-01,14.1,121.2\n")
     result, error = (registry.upload_registry if mode == "upload" else registry.sync_registry)(BytesIO(csv.encode()), ".csv")
     assert error is None, error
-    assert result["inserted"] == 1
-    assert db.rows("SELECT logID,businessID,source FROM geospatial_logs") == [
-        {"logID": 17, "businessID": "IMPORTED-17", "source": "detection"}]
+    assert result["inserted"] == 0
+    assert result["updated"] == 1
+    assert db.rows("SELECT logID,businessID,source,latitude,longitude FROM geospatial_logs") == [
+        {"logID": 17, "businessID": "IMPORTED-17", "source": "detection",
+         "latitude": 13.9667, "longitude": 121.1167}]
     assert db.rows("SELECT * FROM inspection_lifecycle_events") == events_before
     payload, error = flags.get_flags()
     assert error is None
