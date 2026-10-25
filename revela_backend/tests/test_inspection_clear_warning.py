@@ -83,27 +83,23 @@ def test_unregistered_pin_warning_survives_later_green_and_clears_to_base(db):
         (reportID, targetID, targetType, userID, verificationStatus, inspectionResult, noticeLevel)
         VALUES (21, 20, 'geospatial_log', 9, 'Submitted', 'Green', 1)""")
     db.commit()
-    # A Green finding alone no longer verifies an unregistered pin. It needs
-    # an explicit official ID review, then retains its existing warning.
+    # A Green finding cannot bypass an active warning or invent a registry row.
     db.db.execute("UPDATE geospatial_logs SET latitude=13.9667, longitude=121.1167 WHERE logID=20")
     db.commit()
     review, error = inspections.preview_green_registry_link(21, "FIELD-20")
     assert error is None
     result, error = inspections.verify_inspection(21, verified_by_user_id=2,
         business_id="FIELD-20", confirm_establishment=True, registry_review_token=review["reviewToken"])
-    assert error is None
+    assert result is None
+    assert isinstance(error, registry.GreenRegistryLinkError)
     payload, error = inspections.get_all_inspections()
     assert error is None
     latest = next(row for row in payload["data"] if row["reportID"] == 21)
     assert latest["flagColor"] == "Orange"
     assert latest["warningLevel"] == 1
     assert latest["warningBaseColor"] == "Yellow"
-
-    result, error = registry.clear_warning("FIELD-20", 2, "Complied")
-    assert error is None
-    assert result["warningCleared"]
-    assert db.rows("SELECT flagColor, noticeLevel FROM geospatial_logs WHERE logID = 20") == [
-        {"flagColor": "Green", "noticeLevel": 0}]
+    assert db.rows("SELECT verificationStatus FROM inspection_reports WHERE reportID = 21") == [
+        {"verificationStatus": "Submitted"}]
 
 
 def test_unregistered_pin_clear_links_id_activates_and_audits_reason(db):
@@ -166,7 +162,7 @@ def test_office_confirms_red_or_yellow_without_dispatching_inspection(db, color)
     assert db.rows("SELECT applicationStatus, confirmedLogID FROM official_registry WHERE businessID='OFFICE-30'") == [
         {"applicationStatus": "Active", "confirmedLogID": 30}]
     assert db.rows("SELECT lastRenewalDate FROM official_registry WHERE businessID='OFFICE-30'") == [
-        {"lastRenewalDate": database_current_date(db)}]
+        {"lastRenewalDate": None}]
     assert db.rows("SELECT subjectType, subjectID, eventType, actorUserID, reason FROM enforcement_events") == [
         {"subjectType": "business", "subjectID": "OFFICE-30",
          "eventType": "compliance_confirmed", "actorUserID": 2,
@@ -196,7 +192,7 @@ def test_office_compliance_confirmation_rejects_stale_business_id_review(db):
     assert db.rows("SELECT * FROM enforcement_events") == []
 
 
-def test_purple_pin_reactivation_allows_closed_registry_and_refreshes_renewal_date(db):
+def test_purple_pin_reactivation_preserves_documented_renewal_date(db):
     db.db.execute("""INSERT INTO official_registry
         (businessID,businessName,barangayID,applicationStatus,lastRenewalDate,
          latitude,longitude)
@@ -218,7 +214,7 @@ def test_purple_pin_reactivation_allows_closed_registry_and_refreshes_renewal_da
     assert result["flagColor"] == "Green"
     assert db.rows("SELECT applicationStatus,lastRenewalDate FROM official_registry WHERE businessID='CLOSED-1'") == [
         {"applicationStatus": "Active",
-         "lastRenewalDate": database_current_date(db)}]
+         "lastRenewalDate": "2020-01-01"}]
     assert db.rows("SELECT flagColor FROM geospatial_logs WHERE logID=30") == [
         {"flagColor": "Green"}]
 

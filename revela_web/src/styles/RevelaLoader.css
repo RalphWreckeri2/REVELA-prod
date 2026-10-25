@@ -1,9 +1,9 @@
 .revela-loader {
   --loader-surface: #fff;
-  --loader-center: #17412d;
-  --loader-edge: #3b7853;
-  --loader-glow: rgba(63, 146, 89, 0.22);
-  --loader-text: #64748b;
+  --loader-route: #197451;
+  --loader-roads: rgba(13, 73, 56, 0.25);
+  --loader-glow: rgba(28, 140, 92, 0.22);
+  --loader-text: #52645f;
   position: fixed;
   inset: 0;
   z-index: 9999;
@@ -18,122 +18,123 @@
 
 .revela-loader[data-theme="dark"] {
   --loader-surface: #101512;
-  --loader-center: #173e2c;
-  --loader-edge: #67ae79;
-  --loader-glow: rgba(66, 170, 97, 0.3);
+  --loader-route: #fff;
+  --loader-roads: rgba(255, 255, 255, 0.28);
+  --loader-glow: rgba(255, 255, 255, 0.22);
   --loader-text: #cbd5e1;
 }
 
-.revela-loader__scene {
-  position: relative;
-  width: 154px;
-  height: 110px;
-}
-
-/* Clip at the opening's center line, not around the flight of the logos. */
-.revela-loader__stage {
-  position: absolute;
-  inset: 0 0 16px;
-  overflow: hidden;
-}
-
-.revela-loader__figure {
-  position: absolute;
-  bottom: -45px;
-  width: 32px;
-  --hop: -90px;
-  --delay: var(--loader-phase);
-}
-
-.revela-loader__figure--1 { left: 30px; --hop: -89px; }
-.revela-loader__figure--2 { left: 61px; --hop: -94px; --delay: calc(var(--loader-phase) - 0.533s); }
-.revela-loader__figure--3 { left: 92px; --hop: -91px; --delay: calc(var(--loader-phase) - 1.067s); }
-
-.revela-loader__jump {
+.revela-loader__map {
   display: block;
-  width: 100%;
-  opacity: 0;
-  animation: revela-loader-hop 1.6s var(--delay) infinite;
-}
-
-.revela-loader__jump img {
-  display: block;
-  width: 100%;
+  width: min(220px, calc(100vw - 40px));
   height: auto;
-  user-select: none;
+  overflow: visible;
 }
 
-/* A dark opening with a hairline foreground lip, rather than a solid platform. */
-.revela-loader__ground {
-  position: absolute;
-  z-index: 1;
-  bottom: 12px;
-  left: 37px;
-  width: 80px;
-  height: 7px;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 50%, var(--loader-center) 10%, var(--loader-edge) 75%, transparent 100%);
-  box-shadow: 0 0 8px 2px var(--loader-glow);
+.revela-loader__streets path,
+.revela-loader__junction,
+.revela-loader__trail,
+.revela-loader__trail-glow {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.revela-loader__ground::after {
-  content: "";
-  position: absolute;
-  right: 8px;
-  bottom: 0;
-  left: 8px;
-  height: 1px;
-  border-radius: 50%;
-  background: var(--loader-edge);
-  opacity: 0.5;
+.revela-loader__streets path {
+  stroke: var(--loader-roads);
+  stroke-width: 2.3;
 }
 
-.revela-loader__shadow {
-  position: absolute;
-  z-index: 2;
-  bottom: 14px;
-  width: 14px;
-  height: 2px;
-  border-radius: 50%;
-  background: rgba(8, 41, 26, 0.35);
-  filter: blur(1px);
-  animation: revela-loader-shadow 1.6s var(--delay) infinite;
+.revela-loader__junction {
+  stroke: var(--loader-route);
+  stroke-width: 2.5;
+  opacity: 0;
+  animation: revela-loader-first-branch 3.2s var(--loader-phase) linear infinite;
 }
 
-.revela-loader__shadow--1 { left: 39px; --delay: var(--loader-phase); }
-.revela-loader__shadow--2 { left: 70px; --delay: calc(var(--loader-phase) - 0.533s); }
-.revela-loader__shadow--3 { left: 101px; --delay: calc(var(--loader-phase) - 1.067s); }
-
-.revela-loader__message {
-  margin: 6px 0 0;
-  text-align: center;
+.revela-loader__junction--second {
+  animation-name: revela-loader-second-branch;
 }
 
-@keyframes revela-loader-hop {
-  0% { transform: translateY(-38px); opacity: 0; animation-timing-function: cubic-bezier(0.18, 0.72, 0.36, 1); }
-  12% { transform: translateY(-76px); opacity: 1; animation-timing-function: ease-out; }
-  34% { transform: translateY(var(--hop)); opacity: 1; animation-timing-function: ease-in-out; }
-  47% { transform: translateY(calc(var(--hop) + 2px)); opacity: 1; animation-timing-function: ease-in; }
-  68% { transform: translateY(-72px); opacity: 1; animation-timing-function: cubic-bezier(0.55, 0, 0.82, 0.48); }
-  82% { transform: translateY(-38px); opacity: 0; }
-  100% { transform: translateY(-38px); opacity: 0; }
+.revela-loader__trail,
+.revela-loader__trail-glow {
+  stroke: var(--loader-route);
+  stroke-width: 2.7;
+  /* Gap exceeds the normalized path length, so the outgoing dash cannot
+     wrap around and flash at the start of the road before the next loop. */
+  stroke-dasharray: 7 100;
+  stroke-dashoffset: 0;
+  animation: revela-loader-trail 3.2s var(--loader-phase) linear infinite;
 }
 
-@keyframes revela-loader-shadow {
-  0%, 82%, 100% { transform: scale(0.5); opacity: 0; }
-  12%, 68% { transform: scale(0.9); opacity: 0.45; }
-  34%, 47% { transform: scale(0.55); opacity: 0.2; }
+.revela-loader__trail-glow {
+  stroke: var(--loader-glow);
+  stroke-width: 10;
+}
+
+.revela-loader__traveler {
+  animation: revela-loader-appear 3.2s var(--loader-phase) linear infinite;
+}
+
+.revela-loader__halo { fill: var(--loader-glow); }
+.revela-loader__point, .revela-loader__static-point { fill: var(--loader-route); }
+.revela-loader__static-point { display: none; }
+
+.revela-loader__scan {
+  fill: none;
+  stroke: var(--loader-route);
+  stroke-width: 1.4;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: revela-loader-first-scan 3.2s var(--loader-phase) ease-out infinite;
+}
+
+.revela-loader__scan--second { animation-name: revela-loader-second-scan; }
+
+.revela-loader__message { margin: 14px 0 0; text-align: center; }
+
+/* The path-length-normalized dash stays just behind the paced traveler. Both
+   fade at the ends so returning to the start never looks like teleportation. */
+@keyframes revela-loader-trail {
+  0% { stroke-dashoffset: 0; opacity: 0; }
+  7% { opacity: 0.85; }
+  90% { opacity: 0.85; }
+  100% { stroke-dashoffset: -100; opacity: 0; }
+}
+
+@keyframes revela-loader-appear {
+  0%, 100% { opacity: 0; }
+  7%, 90% { opacity: 1; }
+}
+
+@keyframes revela-loader-first-branch {
+  0%, 11%, 39%, 100% { opacity: 0; }
+  17%, 30% { opacity: 0.7; }
+}
+
+@keyframes revela-loader-second-branch {
+  0%, 51%, 86%, 100% { opacity: 0; }
+  59%, 77% { opacity: 0.7; }
+}
+
+@keyframes revela-loader-first-scan {
+  0%, 13%, 27%, 100% { opacity: 0; transform: scale(0.5); }
+  16% { opacity: 0.5; transform: scale(0.6); }
+  25% { opacity: 0; transform: scale(2.2); }
+}
+
+@keyframes revela-loader-second-scan {
+  0%, 56%, 72%, 100% { opacity: 0; transform: scale(0.5); }
+  59% { opacity: 0.5; transform: scale(0.6); }
+  70% { opacity: 0; transform: scale(2.2); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .revela-loader__figure, .revela-loader__shadow { display: none; }
-  .revela-loader__stage::after {
-    content: "";
-    position: absolute;
-    bottom: 5px;
-    left: 61px;
-    width: 32px;
-    height: 44px;
-    background: url("../assets/logo.png") center / contain no-repeat;
-  }
+  .revela-loader__traveler,
+  .revela-loader__trail,
+  .revela-loader__trail-glow,
+  .revela-loader__junction,
+  .revela-loader__scan { display: none; animation: none; }
+  .revela-loader__static-point { display: block; }
 }

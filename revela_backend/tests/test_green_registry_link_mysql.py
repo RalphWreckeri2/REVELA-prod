@@ -61,7 +61,7 @@ class GreenRegistryLinkTests(unittest.TestCase):
         audit.RegistryInspectionSyncTests.setUp(self)
 
     def seed(self, *, business_id="BPLO-001", existing=False, linked=False,
-             source="manual", name="ISOLATED SHOP BPLO-001", result="Green", status="Submitted"):
+              source="manual", name="ISOLATED SHOP BPLO-001", result="Green", status="Submitted"):
         if existing or linked:
             self.query("""INSERT INTO official_registry
                 (businessID, businessName, barangayID, applicationStatus, latitude, longitude, coordSource)
@@ -147,6 +147,35 @@ class GreenRegistryLinkTests(unittest.TestCase):
             self.assertIsNone(row[key], key)
         self.assertEqual(row["businessName"], "ISOLATED SHOP BPLO-001")
         self.assertEqual(self.assert_one_original_marker(log_id)["flagSource"], "detection")
+
+    def test_office_creates_minimal_record_and_import_enriches_same_id_without_moving_pin(self):
+        log_id = self.query("""INSERT INTO geospatial_logs
+            (barangayID,detectedName,latitude,longitude,flagColor,source,notes)
+            VALUES (1,'ISOLATED SHOP BPLO-001',13.9667,121.1167,'Yellow','detection','Original scan')""")
+        self.db.commit()
+        review, error = registry.preview_pin_compliance(log_id, "BPLO-001")
+        self.assertIsNone(error, error)
+        self.assertFalse(review["registryExists"])
+        result, error = registry.confirm_pin_compliance(
+            log_id, "BPLO-001", 9, "Office record",
+            registry_review_token=review["reviewToken"], confirm_establishment=True)
+        self.assertIsNone(error, error)
+        self.assertEqual(result["flagColor"], "Green")
+        original = self.query("SELECT * FROM geospatial_logs WHERE logID=%s", (log_id,))[0]
+        official = self.query("SELECT * FROM official_registry WHERE businessID='BPLO-001'")[0]
+        self.assertEqual(official["confirmedLogID"], log_id)
+        for field in ("businessAddress", "businessType", "lineOfBusiness", "businessSize", "registrationType", "lastRenewalDate"):
+            self.assertIsNone(official[field])
+        self.assertFalse(self.query("SELECT * FROM inspection_reports"))
+        row = self.frame_row("BPLO-001", **{"Business Address": "Office street", "Latitude": "13.9750", "Longitude": "121.1250"})
+        for workflow in (registry.upload_registry, registry.sync_registry):
+            summary, error = workflow(self.import_file(row), ".csv")
+            self.assertIsNone(error, error)
+            self.assertEqual(summary["inserted"], 0)
+            self.assertEqual(self.query("SELECT * FROM geospatial_logs WHERE logID=%s", (log_id,))[0], original)
+            self.assertEqual(self.query("SELECT confirmedLogID,latitude,longitude FROM official_registry WHERE businessID='BPLO-001'")[0]["confirmedLogID"], log_id)
+        self.assertEqual(len(self.query("SELECT * FROM official_registry")), 1)
+        self.assert_one_original_marker(log_id)
 
     def test_missing_required_name_requested_then_saved_without_guessing(self):
         log_id, report_id = self.seed(name=None)
@@ -350,7 +379,7 @@ class GreenRegistryLinkTests(unittest.TestCase):
         before = self.snapshot()
         result, error = self.confirm(report_id, review=review)
         self.assertIsNone(result)
-        self.assertIsInstance(error, inspections.InspectionVerificationConflict)
+        self.assertIsInstance(error, GreenRegistryLinkError)
         self.assertEqual(self.snapshot(), before)
 
     def test_legacy_black_dispatch_grant_records_green_without_moving_or_recolouring(self):
@@ -395,9 +424,9 @@ class GreenRegistryLinkTests(unittest.TestCase):
         self.query("UPDATE enforcement_state SET blackLocked=0")
         self.db.commit()
         result, error = self.confirm(report_id, review=review)
-        self.assertIsNone(error, error)
+        self.assertIsNone(result)
+        self.assertTrue(error.conflict)
         self.assertEqual(self.assert_one_original_marker(log_id)["flagColor"], "Orange")
-        self.assertEqual(self.query("SELECT warningLevel FROM enforcement_state WHERE subjectType='business'")[0]["warningLevel"], 2)
         self.assertFalse(self.query("SELECT * FROM enforcement_events"))
 
     def test_existing_link_is_shown_and_validated(self):

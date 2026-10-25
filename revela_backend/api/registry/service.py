@@ -1035,7 +1035,7 @@ def _registry_sync_business_fields_changed(existing, incoming):
     return False
 
 
-def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None, *, skip_open_unlinked=False):
+def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None, *, skip_open_unlinked=False, preserve_detected_name=False):
     """
     Propagate a registry permit-status change to the business's map pin
     using the explicit businessID link.
@@ -1092,10 +1092,10 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
                 businessID = COALESCE(businessID, %s),
                 latitude = COALESCE(latitude, %s),
                 longitude = COALESCE(longitude, %s),
-                detectedName = %s
+                 detectedName = CASE WHEN %s THEN detectedName ELSE %s END
             WHERE logID = %s
             """,
-            (flag_color, business_id, lat, lng, name_clean,
+            (flag_color, business_id, lat, lng, int(preserve_detected_name), name_clean,
              existing_pin["logID"]),
         )
         return True
@@ -1159,7 +1159,8 @@ def _update_confirmed_registry_import(cursor, existing, row, barangay_id, name, 
             latitude = %s, longitude = %s WHERE businessID = %s""",
             tuple(incoming.values()) + (pin["latitude"], pin["longitude"], business_id))
     cleared = status == "Active" and _clear_warning_for_active_import(cursor, business_id) is not None
-    _sync_flag_color(cursor, barangay_id, name, status, pin["latitude"], pin["longitude"], address, business_id=business_id)
+    _sync_flag_color(cursor, barangay_id, name, status, pin["latitude"], pin["longitude"], address,
+                     business_id=business_id, preserve_detected_name=True)
     return "updated" if changed else "unchanged", cleared
 
 
@@ -1821,9 +1822,9 @@ def preview_pin_compliance(log_id, business_id):
         if not pin:
             raise GreenRegistryLinkError(
                 f"Detection pin #{log_id} not found.", conflict=True)
-        if pin.get("flagColor") not in ("Red", "Yellow", "Purple"):
+        if pin.get("flagColor") not in ("Red", "Yellow", "Purple", "Green"):
             raise GreenRegistryLinkError(
-                "Office compliance confirmation is available only for Red, Yellow, or Purple pins.",
+                "Office compliance confirmation is available only for Red, Yellow, Purple, or previously confirmed Green pins.",
                 conflict=True,
             )
 
@@ -1847,6 +1848,13 @@ def preview_pin_compliance(log_id, business_id):
             business_id,
         )
         registry = plan["registry"]
+        if pin.get("flagColor") == "Green" and not (
+                registry and registry.get("confirmedLogID") == log_id
+                and plan["pin"].get("businessID") == plan["businessID"]
+                and registry.get("applicationStatus") == "Active"):
+            raise GreenRegistryLinkError(
+                "This Green pin has no matching confirmed registry link. Resolve the link before confirming again.",
+                conflict=True)
         if registry and registry.get("applicationStatus") in (
                 "Revoked", "Blacklisted"):
             raise GreenRegistryLinkError(
@@ -1877,15 +1885,19 @@ def preview_pin_compliance(log_id, business_id):
                     "This Registry business has an active warning or Black lock; use the warning workflow instead.",
                     conflict=True,
                 )
+        cursor.execute("SELECT barangayID, barangayName FROM barangays ORDER BY barangayName")
+        barangays = cursor.fetchall()
         return {
             "businessID": plan["businessID"],
             "reviewToken": plan["reviewToken"],
             "registryExists": registry is not None,
             "registry": ({key: registry.get(key) for key in (
-                "businessID", "businessName", "barangayID", "applicationStatus")}
+                "businessID", "businessName", "businessAddress", "barangayID", "applicationStatus")}
                 if registry else plan["newFields"]),
             "pin": {key: plan["pin"].get(key) for key in (
-                "logID", "detectedName", "barangayID", "latitude", "longitude")},
+                "logID", "businessID", "detectedName", "barangayID", "latitude", "longitude", "source")},
+            "barangays": barangays,
+            "missingRequiredFields": plan["missingRequiredFields"],
         }, None
     except GreenRegistryLinkError as exc:
         return None, exc
@@ -1896,7 +1908,7 @@ def preview_pin_compliance(log_id, business_id):
 
 def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
                            registry_review_token=None,
-                           confirm_establishment=False):
+                           confirm_establishment=False, registry_fields=None):
     """Atomically link and mark an office-confirmed pin compliant."""
     cursor = None
     try:
@@ -1919,11 +1931,17 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
             {"targetID": log_id, "targetType": "geospatial_log"},
             business_id,
             lock=True,
+            required_fields=registry_fields,
         )
         pin, registry = plan["pin"], plan["registry"]
-        if pin.get("flagColor") not in ("Red", "Yellow", "Purple"):
+        already_confirmed = (pin.get("flagColor") == "Green"
+                             and registry is not None
+                             and registry.get("confirmedLogID") == log_id
+                             and pin.get("businessID") == plan["businessID"]
+                             and registry.get("applicationStatus") == "Active")
+        if pin.get("flagColor") not in ("Red", "Yellow", "Purple") and not already_confirmed:
             raise GreenRegistryLinkError(
-                "This pin is no longer Red, Yellow, or Purple; refresh and review it again.",
+                "This pin is no longer eligible for office compliance confirmation; refresh and review it again.",
                 conflict=True,
             )
         if registry and registry.get("applicationStatus") in (
@@ -1932,7 +1950,7 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
                 "A revoked or Black-locked Registry business cannot be reopened by this compliance action.",
                 conflict=True,
             )
-        if registry_review_token != plan["reviewToken"]:
+        if registry_review_token != plan["reviewToken"] and not already_confirmed:
             raise GreenRegistryLinkError(
                 "Registry or pin details changed. Review the Business ID again before confirming.",
                 conflict=True,
@@ -1981,15 +1999,21 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
                 conflict=True,
             )
 
+        if already_confirmed:
+            mysql.connection.rollback()
+            cursor.close()
+            return {"businessID": business_id, "logID": log_id,
+                    "applicationStatus": "Active", "flagColor": "Green",
+                    "complianceConfirmed": True, "alreadyConfirmed": True}, None
+
         save_green_link(cursor, plan)
         cursor.execute(
             """UPDATE official_registry
-               SET applicationStatus = 'Active',
-                   lastRenewalDate = CURDATE()
+               SET applicationStatus = 'Active'
                WHERE businessID = %s""",
             (business_id,),
         )
-        if cursor.rowcount != 1 and registry is None:
+        if cursor.rowcount != 1 and (registry is None or registry.get("applicationStatus") != "Active"):
             raise RegistryLadderConflict(
                 "The Registry permit could not be activated; no changes were saved.")
         cursor.execute(
@@ -2041,6 +2065,10 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, reason=None, *,
         mysql.connection.rollback()
         if cursor is not None:
             cursor.close()
+        if exc.args and exc.args[0] in (1062, 1205, 1213):
+            return None, GreenRegistryLinkError(
+                "The Business ID or pin was changed by another request. Review the link and retry.",
+                conflict=True)
         return None, str(exc)
 
 

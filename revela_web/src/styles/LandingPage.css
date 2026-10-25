@@ -1,4 +1,5 @@
 .landing-page {
+  --landing-header-clearance: 84px;
   --landing-surface: #fff;
   --landing-hero-surface: #f7f8f3;
   --landing-ink: #0d4938;
@@ -19,7 +20,9 @@
   height: 100vh;
   height: 100svh;
   overflow-x: hidden;
+  height: 100dvh;
   overflow-y: auto;
+  scroll-snap-type: y proximity;
   scroll-behavior: smooth;
   background: var(--landing-surface);
   color: var(--landing-ink);
@@ -245,10 +248,10 @@
 .landing-page .landing-hero {
   --landing-map-position: 56%;
   position: relative;
-  height: 100vh;
-  height: 100svh;
+  box-sizing: border-box;
   min-height: 100vh;
-  min-height: 100svh;
+  min-height: 100dvh;
+  scroll-snap-align: start;
   background-color: var(--landing-hero-surface);
   background-image: var(--landing-overlay), var(--landing-backdrop);
   background-position: center, var(--landing-map-position) center;
@@ -325,6 +328,13 @@
   filter: drop-shadow(0 0 5px var(--landing-route));
 }
 
+.landing-page .landing-road-highlight__destination {
+  fill: var(--landing-route-glow);
+  stroke: var(--landing-route);
+  stroke-width: 1;
+  filter: drop-shadow(0 0 5px var(--landing-route-glow));
+}
+
 .landing-page[data-theme="dark"] .landing-road-highlight__tip {
   fill: #fff;
   stroke: #fff;
@@ -338,9 +348,10 @@
   flex-direction: column;
   justify-content: center;
   width: min(100% - 64px, 1240px);
-  height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
   margin-inline: auto;
-  padding: 58px 0 34px;
+  padding: var(--landing-header-clearance) 0 48px;
 }
 
 .landing-page .landing-intro {
@@ -585,12 +596,15 @@
 .landing-page .landing-content-section {
   position: relative;
   display: flex;
-  min-height: 75svh;
+  box-sizing: border-box;
+  min-height: 100vh;
+  min-height: 100dvh;
   align-items: center;
-  padding: 150px 48px;
+  padding: max(var(--landing-header-clearance), 10dvh) 48px 10dvh;
   background: var(--landing-surface);
   color: var(--landing-ink);
   scroll-margin-top: 0;
+  scroll-snap-align: start;
 }
 
 .landing-page .landing-content-section--alternate {
@@ -723,7 +737,7 @@
 }
 
 .landing-page #contact {
-  padding-bottom: 180px;
+  padding-bottom: 110px;
 }
 
 .landing-page .landing-section-kicker {
@@ -961,12 +975,12 @@
 }
 
 @media (max-width: 640px) {
+  .landing-page { --landing-header-clearance: 76px; }
   .landing-page .landing-content-section {
-    min-height: 0;
-    padding: 110px 22px 120px 50px;
+    padding: max(var(--landing-header-clearance), 9dvh) 22px 80px 50px;
   }
 
-  .landing-page #contact { padding-bottom: 180px; }
+  .landing-page #contact { padding-bottom: 125px; }
 
   .landing-page .landing-section-inner { display: block; }
 
@@ -1065,8 +1079,6 @@
   }
 
   .landing-page .landing-hero {
-    min-height: 100vh;
-    min-height: 100svh;
     --landing-map-position: 70%;
     --landing-overlay: linear-gradient(
         180deg,
@@ -1082,9 +1094,7 @@
 
   .landing-page .landing-hero-inner {
     width: calc(100% - 40px);
-    min-height: 100vh;
-    min-height: 100svh;
-    padding: 112px 0 30px;
+    padding: 96px 0 40px;
   }
 
   .landing-page .landing-intro {
@@ -1121,14 +1131,10 @@
   }
 
   .landing-page .landing-highlights {
-    position: absolute;
-    right: 0;
-    bottom: 58px;
-    left: 0;
     width: 100%;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 20px 14px;
-    margin: 0;
+    margin-top: 48px;
   }
 
   .landing-page .landing-highlight-icon {
@@ -1151,11 +1157,10 @@
   }
 
   .landing-page .landing-hero-feature-link {
-    position: absolute;
-    right: 0;
-    bottom: 18px;
     display: inline-flex;
+    align-self: flex-end;
     gap: 8px;
+    margin-top: 28px;
     color: var(--landing-ink);
     font-size: 11px;
     font-weight: 600;
@@ -1193,7 +1198,14 @@
   }
 }
 
+/* Short and narrow viewports (including zoomed layouts) need free scrolling
+   through sections that grow beyond a single screen. */
+@media (max-width: 640px), (max-height: 800px) {
+  .landing-page { scroll-snap-type: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .landing-page { scroll-behavior: auto; scroll-snap-type: none; }
   .landing-page *,
   .landing-page *::before,
   .landing-page *::after {
@@ -1212,6 +1224,7 @@
   .landing-page .landing-road-highlight__branch-glow { opacity: 0.1 !important; }
 
   .landing-page .landing-road-highlight__tip { display: none !important; }
+  .landing-page .landing-road-highlight__destination { opacity: 1 !important; }
 }
 
 /* Map lines converge into a small portal, the mark springs out and back,

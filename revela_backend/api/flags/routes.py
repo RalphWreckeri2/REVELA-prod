@@ -464,6 +464,7 @@ def confirm_compliance_route(log_id):
         data.get("reason"),
         registry_review_token=data.get("registryReviewToken"),
         confirm_establishment=data.get("confirmEstablishment", False),
+        registry_fields=data.get("registryFields"),
     )
     if error:
         if isinstance(error, registry_service.GreenRegistryLinkError):

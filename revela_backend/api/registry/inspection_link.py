@@ -41,19 +41,19 @@ def prepare_green_link(cursor, report, business_id, *, lock=False, required_fiel
 
     A name is never used to find a registry record. Exact Business ID identifies
     it; name + barangay (or an agreeing Place ID + barangay), and explicit admin
-    attestation establish that it is the establishment inspected.
+    attestation establish that it is this establishment.
     """
     business_id = normalize_business_id(business_id)
     if report.get("targetType", "geospatial_log") != "geospatial_log":
-        _conflict("Green registry linking requires an inspection of the original map pin.")
+        _conflict("Green registry linking requires the original map pin.")
     if not confirmed_pin_column_available(cursor):
-        _conflict("Apply the confirmed registry pin migration before verifying Green results.")
+        _conflict("Apply the confirmed registry pin migration before confirming Green.")
     suffix = " FOR UPDATE" if lock else ""
     cursor.execute("SELECT * FROM geospatial_logs WHERE logID = %s" + suffix,
                    (report["targetID"],))
     pin = cursor.fetchone()
     if not pin:
-        _conflict("The original inspection pin no longer exists.")
+        _conflict("The original map pin no longer exists.")
     if pin.get("businessID") and normalize_business_id(pin["businessID"]) != business_id:
         _conflict(f"This pin is already linked to Business ID {pin['businessID']}.")
     try:
@@ -73,12 +73,12 @@ def prepare_green_link(cursor, report, business_id, *, lock=False, required_fiel
         if registry.get("confirmedLogID") not in (None, pin["logID"]):
             _conflict("This Business ID is already confirmed against a different pin.")
         if registry.get("barangayID") != pin.get("barangayID"):
-            _conflict("The registry barangay does not match the inspected establishment. Resolve the identity mismatch first.")
+            _conflict("The registry barangay does not match this establishment. Resolve the identity mismatch first.")
         same_place = bool(pin.get("placeID") and pin["placeID"] == registry.get("placeID"))
         if (pin.get("placeID") and registry.get("placeID") and not same_place):
-            _conflict("The registry and inspection pin have conflicting Place IDs.")
+            _conflict("The registry and original pin have conflicting Place IDs.")
         if not same_place and _name(registry.get("businessName")) != _name(pin.get("detectedName")):
-            _conflict("The registry business name does not match the inspected establishment. Resolve the identity mismatch first.")
+            _conflict("The registry business name does not match this establishment. Resolve the identity mismatch first.")
     cursor.execute("""SELECT businessID FROM official_registry
                       WHERE confirmedLogID = %s AND businessID <> %s""" + suffix,
                    (pin["logID"], business_id))
@@ -104,7 +104,11 @@ def prepare_green_link(cursor, report, business_id, *, lock=False, required_fiel
     new_fields = {"businessName": pin.get("detectedName"), "barangayID": pin.get("barangayID")}
     missing = [key for key, value in new_fields.items() if not value or (key == "businessName" and not _name(value))]
     if registry and details:
-        raise GreenRegistryLinkError("The existing registry record already supplies the required fields.")
+        # An identical retry of a newly created link is safe; changing the
+        # submitted identity fields after creation requires a fresh review.
+        if (registry.get("confirmedLogID") != pin["logID"]
+                or any(registry.get(key) != value for key, value in details.items())):
+            _conflict("The official registry record changed. Review the Business ID again.")
     if not registry:
         for key, value in details.items():
             if key not in missing:

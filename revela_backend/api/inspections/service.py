@@ -1180,6 +1180,13 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
         if green_link:
             if not ladder_available:
                 raise GreenRegistryLinkError("Apply the enforcement-state migration before linking a Green inspection.", conflict=True)
+            if (registry_enforcement_state
+                    and not _coerce_notice_level(registry_enforcement_state.get("blackDispatchUnlocked"))
+                    and (_coerce_notice_level(registry_enforcement_state.get("warningLevel")) > 0
+                         or _coerce_notice_level(registry_enforcement_state.get("blackLocked")))):
+                raise GreenRegistryLinkError(
+                    "This Registry business has an active warning or Black lock; resolve enforcement before confirming Green.",
+                    conflict=True)
             cursor.execute("""SELECT warningLevel, blackLocked, warningBaseColor
                               FROM enforcement_state
                               WHERE subjectType = 'geospatial_log' AND subjectID = %s FOR UPDATE""",
@@ -1188,6 +1195,10 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
             if (pin_enforcement_state and _coerce_notice_level(pin_enforcement_state.get("blackLocked"))
                     or geo_flag and geo_flag.get("flagColor") == "Black" and not report.get("businessID")):
                 raise GreenRegistryLinkError("The original pin is Black locked and cannot be linked by a Green confirmation.", conflict=True)
+            if (pin_enforcement_state
+                    and _coerce_notice_level(pin_enforcement_state.get("warningLevel")) > 0):
+                raise GreenRegistryLinkError(
+                    "The original pin has an active warning; resolve it before confirming Green.", conflict=True)
             linked_pin_warning = bool(
                 pin_enforcement_state
                 and _coerce_notice_level(pin_enforcement_state.get("warningLevel"))
@@ -1666,6 +1677,11 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
                 else None,
                 "blackLocked": result_color == "Black",
             })
+            if green_link and not dispatch_unlocked:
+                hub.publish_to_admins({
+                    "type": "registry_updated", "businessID": pin_business_id,
+                    "logID": report["targetID"],
+                })
         except Exception:
             pass
 

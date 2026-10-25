@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MAP_WIDTH, MAP_HEIGHT, ROAD_POINTS, DARK_ROAD_POINTS } from "./landingMapRoad";
 import { useTheme } from "../context/themeContext";
 const TIP_LEAD_RATIO = 0.4;
+const FOOTER_CLEARANCE = 80;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const format = (value) => (Number.isFinite(value) ? value.toFixed(2) : "0");
@@ -107,7 +108,9 @@ function buildRoute({ content, hero, about, features, contact, footer, roadPoint
   const columnGap = inner ? parseFloat(window.getComputedStyle(inner).columnGap) : 130;
   const amplitude = mobile ? 7 : Math.min(34, Math.max(20, columnGap / 2 - 27));
   const x = (factor) => center + factor * amplitude;
-  const endY = footerRect ? footerRect.top - 36 : contactRect.top + contactRect.height - 38;
+  // Finish inside Support, not at the section boundary. This leaves a visible
+  // destination above the real footer without changing the section's height.
+  const endY = footerRect ? footerRect.top - FOOTER_CLEARANCE : contactRect.top + contactRect.height - FOOTER_CLEARANCE;
   const cardRects = [...features.querySelectorAll(".landing-feature-card")]
     .map((card) => rectInContent(card, contentRect));
   const cardRows = [...new Set(cardRects.map((rect) => Math.round(rect.top)))].map((top) => {
@@ -188,7 +191,9 @@ function buildRoute({ content, hero, about, features, contact, footer, roadPoint
     };
   });
 
-  return { width, height, path, branches, branchSignature: branches.map(({ path: d }) => d).join("|") };
+  return { width, height, endY, endX: nodes.at(-1)[0],
+    finalApproachY: featuresRect.top + featuresRect.height * 0.6,
+    path, branches, branchSignature: branches.map(({ path: d }) => d).join("|") };
 }
 
 export default function LandingRoadHighlight() {
@@ -197,6 +202,7 @@ export default function LandingRoadHighlight() {
   const pathRef = useRef(null);
   const glowRef = useRef(null);
   const tipRef = useRef(null);
+  const destinationRef = useRef(null);
   const updateProgressRef = useRef(null);
   const branchDistancesRef = useRef([]);
   const branchNodesRef = useRef([]);
@@ -278,6 +284,7 @@ export default function LandingRoadHighlight() {
     const path = pathRef.current;
     const glow = glowRef.current;
     const tip = tipRef.current;
+    const destination = destinationRef.current;
     if (!scroller || !path) return undefined;
 
     const motion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
@@ -285,10 +292,12 @@ export default function LandingRoadHighlight() {
 
     const update = () => {
       animationFrame = 0;
+      if (!path.getAttribute("d")) return;
       if (motion?.matches) {
         path.style.strokeDashoffset = "0";
         if (glow) glow.style.strokeDashoffset = "0";
         if (tip) tip.style.display = "none";
+        if (destination) destination.style.opacity = "1";
         branchNodesRef.current.forEach((node) => {
           const core = node.querySelector(".landing-road-highlight__branch-core");
           const aura = node.querySelector(".landing-road-highlight__branch-glow");
@@ -301,14 +310,30 @@ export default function LandingRoadHighlight() {
       }
 
       const viewportHeight = scroller.clientHeight;
-      const maxScroll = Math.max(1, scroller.scrollHeight - viewportHeight);
-      const lead = Math.min(scroller.scrollTop, viewportHeight * TIP_LEAD_RATIO);
-      const progress = clamp01(
-        (scroller.scrollTop + lead) / (maxScroll + viewportHeight * TIP_LEAD_RATIO),
-      );
+      const length = path.getAttribute("d") ? path.getTotalLength() : 0;
+      if (!length) return;
+      // Follow measured page coordinates. During the final approach move the
+      // drawing horizon gradually down the viewport; at max scroll it must be
+      // the footer-clear endpoint, even when Support is exactly one viewport.
+      const maxScroll = Math.max(0, scroller.scrollHeight - viewportHeight);
+      const approachStart = Math.min(route.finalApproachY, maxScroll - viewportHeight * 0.6);
+      const approach = clamp01((scroller.scrollTop - approachStart) / Math.max(1, maxScroll - approachStart));
+      const horizon = scroller.scrollTop + viewportHeight * TIP_LEAD_RATIO;
+      const targetY = scroller.scrollTop === 0
+        ? 0
+        : Math.min(route.endY, horizon + approach * (route.endY - (maxScroll + viewportHeight * TIP_LEAD_RATIO)));
+      let low = 0;
+      let high = length;
+      for (let index = 0; index < 24; index += 1) {
+        const middle = (low + high) / 2;
+        if (path.getPointAtLength(middle).y < targetY) low = middle;
+        else high = middle;
+      }
+      const progress = scroller.scrollTop >= maxScroll - 1
+        ? 1
+        : clamp01((low + high) / (2 * length));
       path.style.strokeDashoffset = String(1 - progress);
       if (glow) glow.style.strokeDashoffset = String(1 - progress);
-      const length = path.getAttribute("d") ? path.getTotalLength() : 0;
       branchNodesRef.current.forEach((node, index) => {
         const core = node.querySelector(".landing-road-highlight__branch-core");
         const aura = node.querySelector(".landing-road-highlight__branch-glow");
@@ -321,8 +346,8 @@ export default function LandingRoadHighlight() {
         aura.style.opacity = reveal ? String(0.09 + 0.42 * pulse) : "0";
       });
       if (tip) {
-        tip.style.display = progress > 0 && progress < 1 ? "" : "none";
-        if (progress > 0 && progress < 1 && path.getAttribute("d")) {
+        tip.style.display = progress > 0 ? "" : "none";
+        if (progress > 0 && path.getAttribute("d")) {
           const point = path.getPointAtLength(length * progress);
           tip.setAttribute("cx", String(point.x));
           tip.setAttribute("cy", String(point.y));
@@ -330,6 +355,7 @@ export default function LandingRoadHighlight() {
           tip.style.display = "none";
         }
       }
+      if (destination) destination.style.opacity = String(clamp01((progress - 0.96) / 0.04));
     };
 
     const schedule = () => {
@@ -374,6 +400,8 @@ export default function LandingRoadHighlight() {
           pathLength="1"
           className="landing-road-highlight__stroke"
         />
+        <circle ref={destinationRef} className="landing-road-highlight__destination"
+          cx={route?.endX ?? 0} cy={route?.endY ?? 0} r="7" style={{ opacity: 0 }} />
         <circle ref={tipRef} className="landing-road-highlight__tip" r="4" style={{ display: "none" }} />
       </svg>
     </div>

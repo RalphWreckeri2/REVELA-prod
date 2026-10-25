@@ -14,6 +14,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock, SkeletonList } from "../components/LoadingSkeleton";
 import "../styles/MapPage.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
+import BusinessIDReview from "../components/BusinessIDReview";
 import BatchDispatchModal from "../components/BatchDispatchModal";
 import ApiUsageSettingsPanel from "../components/ApiUsageSettingsPanel";
 import {
@@ -767,6 +768,60 @@ function normalizeFlag(flag) {
 }
 
 // â”€â”€ Flag Detail Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+function OfficeComplianceModal({ flag, token, onClose, onSuccess }) {
+  const [businessID, setBusinessID] = useState(flag.businessID || "");
+  const [review, setReview] = useState(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [registryFields, setRegistryFields] = useState({});
+  const [reviewing, setReviewing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const submit = async () => {
+    if (!review || !confirmed || review.missingRequiredFields?.some(field => !String(registryFields[field] || "").trim())) return;
+    setSaving(true);
+    setError("");
+    try {
+      await confirmFlagComplianceRequest(flag.id, {
+        businessID: review.businessID, registryReviewToken: review.reviewToken,
+        confirmEstablishment: true, registryFields, reason: reason || null,
+      }, token);
+      await onSuccess(review.businessID);
+    } catch (err) {
+      setError(err.message || "Could not confirm compliance.");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return createPortal(
+    <div className="modal-backdrop" style={{ ...styles.modalBackdrop, zIndex: 10002 }} onClick={saving || reviewing ? undefined : onClose}>
+      <div className="modal-panel" role="dialog" aria-modal="true" aria-label="Confirm compliance"
+        style={{ ...styles.detailModal, width: "min(100%, 520px)", padding: 24, maxHeight: "90dvh", overflowY: "auto" }}
+        onClick={event => event.stopPropagation()}>
+        <h2>Confirm compliance</h2>
+        <p>Office confirmation without a completed field inspection. No inspection or GPS evidence will be created.</p>
+        <BusinessIDReview businessID={businessID} setBusinessID={setBusinessID} review={review}
+          setReview={setReview} confirmed={confirmed} setConfirmed={setConfirmed}
+          registryFields={registryFields} setRegistryFields={setRegistryFields}
+          reviewing={reviewing} setReviewing={setReviewing} busy={saving} setError={setError}
+          initialLinked={Boolean(flag.businessID)}
+          preview={id => previewFlagComplianceRequest(flag.id, id, token)}
+          attestation="I checked the official Business ID and establishment details against the office record. They represent this same establishment." />
+        <label htmlFor="office-compliance-reason">Office evidence/reference (optional)</label>
+        <input id="office-compliance-reason" value={reason} maxLength={255} disabled={saving}
+          onChange={event => setReason(event.target.value)} style={{ display: "block", width: "100%", boxSizing: "border-box" }} />
+        {error && <p role="alert" style={{ color: "var(--color-danger)" }}>{error}</p>}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 20 }}>
+          <button className="ghost-btn" onClick={onClose} disabled={saving || reviewing}>Cancel</button>
+          <button className="primary-btn" onClick={submit} disabled={!review || !confirmed || saving || reviewing || review.missingRequiredFields?.some(field => !String(registryFields[field] || "").trim())}>
+            {saving ? "Confirming…" : "Confirm and mark Green"}
+          </button>
+        </div>
+      </div>
+    </div>, document.body,
+  );
+}
+
 function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, onConfirmCompliance, onReviewLocation, isAdmin, actionLoading, isClosing }) {
   const [showMoreActions, setShowMoreActions] = useState(false);
   const fc = getFlagColor(flag.color);
@@ -2613,6 +2668,7 @@ export default function MapPage() {
   const [layers, setLayers] = useState({ base: true, flags: true, barangay: false, diagnostics: false });
   const [selectedFlag, setSelectedFlag] = useState(null);   // logID of selected flag
   const [modalFlag, setModalFlag] = useState(null);   // flag object shown in detail modal
+  const [complianceFlag, setComplianceFlag] = useState(null);
   const location = useLocation();
   const handledUrlFlagRef = useRef(null);
 
@@ -3074,62 +3130,7 @@ export default function MapPage() {
     }
   };
 
-  const handleConfirmCompliance = async (flag) => {
-    try {
-      let businessID = flag.businessID;
-      if (!businessID) {
-        const idPrompt = await Swal.fire({
-          title: "Business ID required",
-          text: "Enter the official Business ID from the office record.",
-          input: "text",
-          inputPlaceholder: "Official Business ID",
-          inputValidator: (value) => value?.trim() ? undefined : "Business ID is required.",
-          showCancelButton: true,
-          confirmButtonText: "Review Business ID",
-        });
-        if (!idPrompt.isConfirmed) return;
-        businessID = idPrompt.value.trim();
-      }
-
-      setActionLoading(true);
-      setActionError("");
-      const review = await previewFlagComplianceRequest(flag.id, businessID, token);
-      const identityName = review.registry.businessName || flag.name;
-      const confirmation = await Swal.fire({
-        title: "Confirm compliance?",
-        text: `${review.registryExists ? "Existing registry record" : "New registry record"}: ${identityName}\nBusiness ID: ${review.businessID}\nThis will link the original pin and set the permit to Active / Green.`,
-        input: "text",
-        inputLabel: "Office evidence/reference (optional)",
-        inputPlaceholder: "Reason or office record reference",
-        showCancelButton: true,
-        confirmButtonText: "Confirm and mark Green",
-      });
-      if (!confirmation.isConfirmed) return;
-
-      await confirmFlagComplianceRequest(flag.id, {
-        businessID: review.businessID,
-        registryReviewToken: review.reviewToken,
-        confirmEstablishment: true,
-        reason: confirmation.value || null,
-      }, token);
-      handleCloseDetailModal();
-      await fetchFlags();
-      await Swal.fire({
-        icon: "success",
-        title: "Compliance confirmed",
-        text: `${review.businessID} is now Active / Green.`,
-      });
-    } catch (err) {
-      setActionError(err.message || "Could not confirm compliance.");
-      await Swal.fire({
-        icon: "error",
-        title: "Compliance not confirmed",
-        text: err.message || "Could not confirm compliance.",
-      });
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  const handleConfirmCompliance = (flag) => setComplianceFlag(flag);
 
   const handleRunDetection = async () => {
     // The scan limit comes from the backend quota config, not a hardcoded 2.
@@ -4922,6 +4923,21 @@ export default function MapPage() {
           actionLoading={actionLoading}
         />
       </AnimatePresence>
+
+      {complianceFlag && <OfficeComplianceModal flag={complianceFlag} token={token}
+        onClose={() => setComplianceFlag(null)}
+        onSuccess={async businessID => {
+          setComplianceFlag(null);
+          handleCloseDetailModal();
+          await fetchFlags();
+          window.dispatchEvent(new CustomEvent("revela:registry-update", {
+            detail: { businessID, logID: complianceFlag.id },
+          }));
+          await Swal.fire({
+            icon: "success", title: "Compliance confirmed",
+            text: `${businessID} is now Active / Green.`,
+          });
+        }} />}
 
 
 
