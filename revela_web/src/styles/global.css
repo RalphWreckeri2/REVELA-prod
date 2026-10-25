@@ -457,7 +457,8 @@ body {
   height: 100%;
   min-height: 0;
   flex: 0 0 var(--sidebar-width);
-  transition: width 0.2s ease;
+  transition: width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    flex-basis 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -476,11 +477,18 @@ body {
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid var(--color-border-soft);
+  transition: padding 0.28s ease, gap 0.28s ease;
 }
 .sidebar-brand h2 {
   white-space: nowrap;
+  max-width: 150px;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  transition: max-width 0.24s ease, opacity 0.18s ease, transform 0.24s ease;
 }
 .sidebar-collapse-toggle {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -494,13 +502,21 @@ body {
   color: var(--color-muted);
   cursor: pointer;
   flex-shrink: 0;
+  transition: background var(--duration-fast), color var(--duration-fast), transform 0.24s ease;
 }
 .sidebar-collapse-toggle svg {
   width: 16px;
   height: 16px;
+  transition: opacity 0.18s ease, transform 0.28s ease;
 }
 .sidebar-collapse-toggle .sidebar-toggle-logo {
-  display: none;
+  position: absolute;
+  inset: 5px;
+  width: auto;
+  height: auto;
+  opacity: 0;
+  transform: scale(0.78);
+  transition: opacity 0.18s ease, transform 0.28s ease;
 }
 .sidebar-collapse-toggle:hover {
   background: var(--color-hover);
@@ -543,6 +559,7 @@ body {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  transition: opacity 0.18s ease, transform 0.24s ease, flex-basis 0.24s ease, width 0.24s ease;
 }
 .logo-img {
   width: 100%;
@@ -569,6 +586,10 @@ body {
   text-transform: uppercase;
   color: var(--color-subtle);
   padding: 12px 24px 6px;
+  max-height: 36px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height 0.24s ease, opacity 0.16s ease, padding 0.24s ease;
 }
 
 .menu-divider {
@@ -587,13 +608,20 @@ body {
   font-size: 14px;
   font-weight: 500;
   position: relative;
-  transition: all var(--duration-fast);
+  transition: background var(--duration-fast), color var(--duration-fast),
+    padding 0.28s ease, gap 0.28s ease;
 }
 .menu-item-label {
+  display: block;
+  flex: 0 1 auto;
+  max-width: 180px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  opacity: 1;
+  transform: translateX(0);
+  transition: max-width 0.24s ease, opacity 0.16s ease, transform 0.24s ease;
 }
 .menu-item svg {
   width: 18px;
@@ -621,12 +649,23 @@ body {
 /* Badge inside nav item — pull to far right */
 .menu-item .badge {
   margin-left: auto;
+  max-width: 100px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-width 0.24s ease, opacity 0.16s ease, margin 0.24s ease;
 }
 
 .sidebar-footer {
   flex-shrink: 0;
   padding: 16px 24px;
   border-top: 1px solid var(--color-border-soft);
+  transition: padding 0.28s ease;
+}
+.sidebar-footer > div {
+  max-height: 48px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height 0.24s ease, opacity 0.16s ease, margin 0.24s ease;
 }
 .logout-btn {
   display: flex;
@@ -641,7 +680,7 @@ body {
   cursor: pointer;
   padding: 8px 0;
   font-family: var(--font-base);
-  transition: color var(--duration-fast);
+  transition: color var(--duration-fast), padding 0.28s ease, gap 0.28s ease;
 }
 .logout-btn svg {
   width: 18px;
@@ -670,15 +709,48 @@ body {
   .saas-root.sidebar-collapsed .sidebar-brand {
     justify-content: center;
     padding: 0 8px;
+    gap: 0;
   }
-  .saas-root.sidebar-collapsed .sidebar-brand-logo,
-  .saas-root.sidebar-collapsed .sidebar-brand h2,
-  .saas-root.sidebar-collapsed .menu-group-label,
-  .saas-root.sidebar-collapsed .menu-item-label,
-  .saas-root.sidebar-collapsed .menu-item .badge,
-  .saas-root.sidebar-collapsed .sidebar-footer > div,
+  .saas-root.sidebar-collapsed .sidebar-brand-logo {
+    flex-basis: 0;
+    width: 0;
+    opacity: 0;
+    transform: scale(0.7);
+    overflow: hidden;
+  }
+  .saas-root.sidebar-collapsed .sidebar-brand h2 {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  .saas-root.sidebar-collapsed .menu-group-label {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+  }
+  .saas-root.sidebar-collapsed .menu-item-label {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  .saas-root.sidebar-collapsed .menu-item .badge {
+    max-width: 0;
+    margin-left: 0;
+    opacity: 0;
+  }
+  .saas-root.sidebar-collapsed .sidebar-footer > div {
+    max-height: 0;
+    margin-top: 0 !important;
+    opacity: 0;
+  }
   .saas-root.sidebar-collapsed .sidebar-collapse-toggle svg {
-    display: none;
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.75);
+  }
+  .saas-root.sidebar-collapsed .sidebar-collapse-toggle .sidebar-toggle-logo {
+    opacity: 1;
+    transform: scale(1);
   }
   .saas-root.sidebar-collapsed .sidebar-collapse-toggle {
     margin-left: 0;
@@ -689,6 +761,7 @@ body {
   .saas-root.sidebar-collapsed .menu-item {
     justify-content: center;
     padding: 12px 8px;
+    gap: 0;
   }
   .saas-root.sidebar-collapsed .menu-item svg,
   .saas-root.sidebar-collapsed .logout-btn svg {
@@ -700,6 +773,25 @@ body {
   }
   .saas-root.sidebar-collapsed .logout-btn {
     justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .saas-sidebar,
+  .sidebar-brand,
+  .sidebar-brand h2,
+  .sidebar-collapse-toggle,
+  .sidebar-collapse-toggle svg,
+  .sidebar-collapse-toggle .sidebar-toggle-logo,
+  .brand-logo,
+  .menu-group-label,
+  .menu-item,
+  .menu-item-label,
+  .menu-item .badge,
+  .sidebar-footer,
+  .sidebar-footer > div,
+  .logout-btn {
+    transition-duration: 0.01ms !important;
   }
 }
 
