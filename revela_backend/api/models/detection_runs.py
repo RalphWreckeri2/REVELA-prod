@@ -77,7 +77,7 @@ def create_detection_run(user_id=None):
     cur = mysql.connection.cursor()
     cur.execute("""
         INSERT INTO detection_runs (triggeredByUserID, startedAt, status)
-        VALUES (%s, NOW(), 'running')
+        VALUES (%s, UTC_TIMESTAMP(), 'running')
     """, (user_id,))
     mysql.connection.commit()
     run_id = cur.lastrowid
@@ -96,7 +96,7 @@ def update_detection_run_status(run_id, status, new_flags=0, total_checked=0):
     cur.execute("""
         UPDATE detection_runs
         SET status = %s,
-            completedAt = NOW(),
+            completedAt = UTC_TIMESTAMP(),
             newFlags = %s,
             totalChecked = %s
         WHERE runID = %s
@@ -139,7 +139,7 @@ def get_recent_detection_runs(limit=10):
 
     def format_datetime(value):
         if hasattr(value, "strftime"):
-            return value.strftime("%Y-%m-%d %H:%M")
+            return value.strftime("%Y-%m-%dT%H:%M:%SZ")
         return value
 
     return [

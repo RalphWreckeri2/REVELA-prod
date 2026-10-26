@@ -691,6 +691,13 @@ class RunDetectionGridTests(unittest.TestCase):
             service._places_run_state.work_budget_reason, "time_limit"
         )
 
+    def test_work_limit_metrics_report_effective_admin_request_cap(self):
+        with quota_overrides(**{"run_detection.max_requests": 60}), \
+                patch.object(service.test_mode, "is_enabled", return_value=False):
+            metrics = service._detection_work_limit_metrics()
+
+        self.assertEqual(metrics["work_budget_max_requests"], 60)
+
     def _scan_one_request_response(self, places, points=None):
         response = MagicMock(status_code=200)
         response.json.return_value = {"places": places}

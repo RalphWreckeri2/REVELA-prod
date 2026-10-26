@@ -13,6 +13,7 @@ import NonRegistryPinMonitoring from "../components/NonRegistryPinMonitoring";
 import ResponsiveChart from "../components/ResponsiveChart";
 import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
+import { formatScanHistoryTimestamp } from "../components/scanHistory";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { useAuth } from "../context/authContext";
@@ -2868,7 +2869,7 @@ export default function AnalyticsPage() {
                               : "—";
                             return (
                               <tr key={run.run_id} style={{ borderBottom: "1px solid rgba(226,232,240,0.35)" }}>
-                                <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{run.started_at || "—"}</td>
+                                <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{formatScanHistoryTimestamp(run.started_at)}</td>
                                 <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: SCAN_STATUS_COLOR[run.status] || COLOR.orange, whiteSpace: "nowrap" }}>{SCAN_STATUS_LABEL[run.status] || run.status}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{checked}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{newFlags}</td>

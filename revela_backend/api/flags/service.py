@@ -1595,12 +1595,35 @@ def _detection_work_budget_reached():
     max_seconds, max_requests = _detection_work_limits()
     time_limit_hit = elapsed_seconds >= max_seconds
     request_limit_hit = request_count >= max_requests
-    if time_limit_hit or request_limit_hit:
+    if (time_limit_hit or request_limit_hit) and not getattr(
+        _places_run_state, "work_budget_exhausted", False
+    ):
         _places_run_state.work_budget_exhausted = True
         _places_run_state.work_budget_reason = (
             "time_limit" if time_limit_hit else "request_limit"
         )
+        _places_run_state.work_budget_max_seconds = max_seconds
+        _places_run_state.work_budget_max_requests = max_requests
     return time_limit_hit or request_limit_hit
+
+
+def _detection_work_limit_metrics():
+    """Report the limits that governed the run, not import-time defaults."""
+    max_seconds, max_requests = _detection_work_limits()
+    recorded_seconds = getattr(
+        _places_run_state, "work_budget_max_seconds", None
+    )
+    recorded_requests = getattr(
+        _places_run_state, "work_budget_max_requests", None
+    )
+    return {
+        "work_budget_max_seconds": (
+            max_seconds if recorded_seconds is None else recorded_seconds
+        ),
+        "work_budget_max_requests": (
+            max_requests if recorded_requests is None else recorded_requests
+        ),
+    }
 
 
 def _detection_result_processing_stopped():
@@ -2540,6 +2563,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
     _places_run_state.registry_match_time_seconds = 0.0
     _places_run_state.work_budget_exhausted = False
     _places_run_state.work_budget_reason = None
+    _places_run_state.work_budget_max_seconds = None
+    _places_run_state.work_budget_max_requests = None
 
     quota_info = get_detection_quota_info()
     if quota_info.get("is_limit_reached"):
@@ -2889,8 +2914,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "work_budget_reason": getattr(
                     _places_run_state, "work_budget_reason", None
                 ),
-                "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
-                "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
+                **_detection_work_limit_metrics(),
                 **elapsed,
                 **_detection_performance_metrics(
                     counters, registry, registry_match_index
@@ -2948,8 +2972,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "work_budget_reason": getattr(
                     _places_run_state, "work_budget_reason", None
                 ),
-                "work_budget_max_seconds": RUN_DETECTION_MAX_SECONDS,
-                "work_budget_max_requests": RUN_DETECTION_MAX_REQUESTS,
+                **_detection_work_limit_metrics(),
                 **_detection_elapsed_metrics(request_started_at),
                 **_detection_performance_metrics(
                     counters, registry, registry_match_index

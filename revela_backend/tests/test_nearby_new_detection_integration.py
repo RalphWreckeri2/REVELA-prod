@@ -458,6 +458,9 @@ class DetectionBudgetRollbackTests(unittest.TestCase):
         self.assertEqual(result["attempted_points"], 9)  # Previous counter includes the four saved cells.
         self.assertEqual(result["run_summary"]["api_requests_consumed"], 5)
         self.assertEqual(result["run_summary"]["work_budget_reason"], "request_limit")
+        self.assertEqual(
+            result["run_summary"]["work_budget_max_requests"], 5
+        )
         self.assertEqual(result["quota"]["remaining_this_month"], 5)
         self.assertEqual(self.get.call_count, 5)
         self.assertEqual(self.reserve.call_count, 5)
