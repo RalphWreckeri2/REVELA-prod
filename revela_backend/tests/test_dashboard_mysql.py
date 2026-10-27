@@ -161,6 +161,7 @@ class DashboardMySQLTests(unittest.TestCase):
                     summary = build_summary(rows, self.as_of, hidden)
                     self.assertEqual({row["reportID"] for row in rows}, set(range(2, 12)))
                     self.assertEqual((summary["open"], summary["overdue"], summary["older_hidden_open_reports"]), (4, 1, 1))
+                    self.assertEqual(summary["awaiting_verification"], 3)
                     self.assertEqual(summary["oldest_report_id"], 4)
                     self.assertEqual(summary["age_groups"], {"0-3": 1, "4-7": 0, "8-14": 1, "15+": 1})
                     self.assertEqual(summary["age_unavailable"], 1)
@@ -168,6 +169,7 @@ class DashboardMySQLTests(unittest.TestCase):
                                       summary["average_resolution_minutes"]), (2, 1, 10.0))
                     self.assertEqual(summary["missing_submission_received"], 1)
                     for view, count in (("open", summary["open"]), ("overdue", summary["overdue"]),
+                                        ("awaiting_verification", summary["awaiting_verification"]),
                                         ("resolution", summary["resolution_sample_size"]),
                                         ("age_0-3", 1), ("age_8-14", 1), ("age_15+", 1),
                                         ("age_unavailable", 1), ("deadline_missing", 1)):

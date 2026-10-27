@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableNumber, dateQuery, deadlinePresentation, formatOverviewNumber, manilaGreeting, weatherPresentation } from "./overviewPresentation.js";
+import { availableNumber, dateQuery, deadlinePresentation, formatOverviewNumber, formatOverviewUpdatedAt, manilaGreeting, weatherPresentation } from "./overviewPresentation.js";
+
+test("summary update time is readable Manila local time, never guessed for an unzoned value", () => {
+  assert.equal(formatOverviewUpdatedAt("2026-10-27T14:37:00Z"), "Updated Oct 27, 10:37 PM");
+  assert.equal(formatOverviewUpdatedAt("2026-10-27T16:37:00Z"), "Updated Oct 28, 12:37 AM");
+  assert.equal(formatOverviewUpdatedAt("2026-10-27T22:37:00+08:00"), "Updated Oct 27, 10:37 PM");
+  for (const value of [null, "", "2026-10-27T14:37:00", "invalidZ"]) {
+    assert.equal(formatOverviewUpdatedAt(value), null);
+  }
+});
 
 test("reported zeros stay distinct from unavailable or malformed metric fields", () => {
   assert.equal(formatOverviewNumber(0), "0");

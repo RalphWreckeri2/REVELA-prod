@@ -22,6 +22,18 @@ export function manilaGreeting(now = new Date()) {
   return hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
 }
 
+const updatedAtFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila", month: "short", day: "numeric",
+  hour: "numeric", minute: "2-digit", hour12: true,
+});
+
+export function formatOverviewUpdatedAt(value) {
+  // The workload API supplies an ISO UTC instant; reject timezone-less values.
+  if (typeof value !== "string" || !/(Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? `Updated ${updatedAtFormat.format(timestamp)}` : null;
+}
+
 // WMO codes supplied by the existing Open-Meteo integration.
 const WEATHER_CODES = {
   0: ["Clear sky", "sun"],

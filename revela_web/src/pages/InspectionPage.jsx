@@ -35,6 +35,7 @@ import {
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
 import { inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, matchesDispatchSearch, matchesGridSearch } from "./inspectionPresentation";
+import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
 const formatResult = (val) => {
@@ -555,7 +556,7 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 
         {report.resolutionTime != null && (
           <p style={{ fontSize: 12, color: "var(--color-muted)", marginBottom: 16, display: "flex", alignItems: "center", gap: 5 }}>
-            <Icon.Clock /> Resolved in {report.resolutionTime} min
+            <Icon.Clock /> Resolved in {formatElapsedMinutes(report.resolutionTime)}
           </p>
         )}
 
@@ -720,7 +721,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
                 {report.resolutionTime != null && (
                   <div style={{ flex: 1, padding: "12px 16px", borderRight: report.deadline ? "1px solid var(--color-border)" : "none" }}>
                     <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Resolution Time</span>
-                    <span style={{ fontSize: 14, color: "var(--color-ink)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Icon.Clock size={14} /> {report.resolutionTime} min</span>
+                    <span style={{ fontSize: 14, color: "var(--color-ink)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Icon.Clock size={14} /> {formatElapsedMinutes(report.resolutionTime)}</span>
                   </div>
                 )}
                 {report.deadline && (
@@ -999,7 +1000,7 @@ function KanbanColumn({ status, reports, onViewDetail, isCollapsed, onToggleColl
 export default function InspectionPage() {
   const { token, user } = useContext(AuthContext);
   const [searchParams, setSearchParams] = useSearchParams();
-  const view = ["open", "overdue", "oldest", "resolution", "age_0-3", "age_4-7", "age_8-14", "age_15+", "age_unavailable", "deadline_missing", "deadline_day"].includes(searchParams.get("view")) ? searchParams.get("view") : "all";
+  const view = ["open", "overdue", "awaiting_verification", "oldest", "resolution", "age_0-3", "age_4-7", "age_8-14", "age_15+", "age_unavailable", "deadline_missing", "deadline_day"].includes(searchParams.get("view")) ? searchParams.get("view") : "all";
   const page = Math.max(1, Number.parseInt(searchParams.get("page"), 10) || 1);
   const reportID = /^\d+$/.test(searchParams.get("reportID") || "") ? searchParams.get("reportID") : null;
   const deadlineDate = searchParams.get("deadlineDate");

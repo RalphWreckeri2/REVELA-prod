@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 OPEN = ("Assigned", "Reassigned")
 GROUPS = ("0-3", "4-7", "8-14", "15+")
-VIEWS = ("all", "open", "overdue", "oldest", "resolution", "age_0-3",
+VIEWS = ("all", "open", "overdue", "awaiting_verification", "oldest", "resolution", "age_0-3",
          "age_4-7", "age_8-14", "age_15+", "age_unavailable", "deadline_missing", "deadline_day")
 
 
@@ -75,6 +75,8 @@ def list_page(cursor, as_of, view, page, limit, barangay_id=None, report_id=None
         add("assignment.submissionReceivedAt >= %s AND assignment.submissionReceivedAt < %s",
             as_of - timedelta(days=30), as_of)
         add("assignment.resolutionTime IS NOT NULL AND assignment.resolutionTime >= 0")
+    if view == "awaiting_verification":
+        add("assignment.verificationStatus = 'Submitted'")
     base = f"SELECT assignment.* FROM ({CURRENT_SELECT}) assignment"
     if where: base += " WHERE " + " AND ".join(f"({part})" for part in where)
     cursor.execute(f"SELECT COUNT(*) AS n FROM ({base}) filtered", params)
@@ -125,6 +127,7 @@ def matches(row, classification, view, *, report_id=None, deadline_date=None):
         return False
     if view == "open": return classification["open"]
     if view == "overdue": return classification["overdue"]
+    if view == "awaiting_verification": return row["verificationStatus"] == "Submitted"
     if view == "oldest": return classification["open"] and classification["age"] is not None
     if view == "resolution": return classification["resolution_window"] and classification["valid_duration"]
     if view == "deadline_missing": return classification["missing_deadline"]
@@ -146,6 +149,7 @@ def build_summary(rows, as_of, hidden=0):
         "as_of": as_of.isoformat() + "Z", "period_from": (as_of - timedelta(days=30)).isoformat() + "Z",
         "period_to": as_of.isoformat() + "Z",
         "open": len(open_rows), "overdue": sum(info["overdue"] for _, info in open_rows),
+        "awaiting_verification": sum(row["verificationStatus"] == "Submitted" for row, _ in tagged),
         "oldest_open_days": oldest[1]["age"] if oldest else None,
         "oldest_report_id": oldest[0]["reportID"] if oldest else None,
         "average_resolution_minutes": round(sum(durations) / len(durations), 1) if durations else None,

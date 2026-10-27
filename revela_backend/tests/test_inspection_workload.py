@@ -39,6 +39,7 @@ def test_summary_list_agreement_and_reassignment_cycle():
     assert summary["ambiguous_deadlines"] == 2
     assert summary["older_hidden_open_reports"] == 2
     assert summary["resolution_sample_size"] == len(select_rows(rows, AS_OF, "resolution")) == 2
+    assert summary["awaiting_verification"] == len(select_rows(rows, AS_OF, "awaiting_verification")) == 2
     assert summary["resolution_excluded"] == 1
     assert summary["average_resolution_minutes"] == 30
     assert [r["reportID"] for r in select_rows(rows, AS_OF, "oldest", report_id=1)] == [1]
@@ -102,12 +103,14 @@ def test_sql_population_pagination_and_duplicate_events():
     assert summary["open"] == 2 and summary["overdue"] == 1
     assert summary["age_groups"]["0-3"] == 1 and summary["age_unavailable"] == 1
     assert summary["resolution_sample_size"] == 1
+    assert summary["awaiting_verification"] == 1
     total, first = list_page(cursor, AS_OF, "open", page=1, limit=1)
     _, second = list_page(cursor, AS_OF, "open", page=2, limit=1)
     assert total == 2 and set(first + second) == {2, 4}
     overdue_total, overdue_ids = list_page(cursor, AS_OF, "overdue", page=1, limit=20)
     assert overdue_total == summary["overdue"] and overdue_ids == [2]
     assert list_page(cursor, AS_OF, "resolution", 1, 20)[0] == summary["resolution_sample_size"]
+    assert list_page(cursor, AS_OF, "awaiting_verification", 1, 20) == (1, [3])
     assert list_page(cursor, AS_OF, "age_0-3", 1, 20)[0] == summary["age_groups"]["0-3"]
     assert list_page(cursor, AS_OF, "age_unavailable", 1, 20)[0] == summary["age_unavailable"]
     assert list_page(cursor, AS_OF, "deadline_day", 1, 20, deadline_date=datetime(2026, 10, 26).date())[1] == [2]

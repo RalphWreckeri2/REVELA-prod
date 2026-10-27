@@ -20,7 +20,8 @@ import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getRegist
 import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
-import { dateQuery, deadlinePresentation, formatOverviewNumber, manilaGreeting, weatherPresentation } from "./overviewPresentation";
+import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
+import { dateQuery, deadlinePresentation, formatOverviewNumber, formatOverviewUpdatedAt, manilaGreeting, weatherPresentation } from "./overviewPresentation";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 import "../styles/OverviewDashboard.css";
@@ -54,12 +55,8 @@ const shortBarangay = (name = "") => String(name ?? "").replace("Barangay ", "Br
 function OverviewIcon({ kind, className = "" }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
-      {kind === "registry" && <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6M8 13h8M8 17h6" /></>}
-      {kind === "map" && <path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6zM9 3v15M15 6v15" />}
-      {kind === "inspection" && <><rect x="4" y="4" width="16" height="18" rx="2" /><path d="M9 2h6v4H9zM8 13l3 3 5-6" /></>}
       {kind === "clock" && <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>}
       {kind === "arrow" && <path d="M5 12h14m-6-6 6 6-6 6" />}
-      {kind === "refresh" && <path d="M20 3v5h-5M20 8a9 9 0 1 0 1 7" />}
     </svg>
   );
 }
@@ -85,7 +82,7 @@ function PersonalizedGreeting({ user }) {
     ? user.fullName.trim().split(/\s+/)[0] : "Admin";
   return (
     <h1 className="hero-greeting" id="overview-greeting">
-      {greeting},<br />
+      {greeting},{" "}
       <span className="hero-greeting-name">{firstName}</span>{" "}
       <span className="hero-wave" role="img" aria-label="waving hand">👋</span>
     </h1>
@@ -182,10 +179,10 @@ function HeroBanner({ user }) {
   );
 }
 
-function ActionCard({ label, value, to, note, state, suffix = "", empty = "No data" }) {
+function ActionCard({ label, value, to, note, state, suffix = "", empty = "No data", formatValue, tone = "neutral" }) {
   const shown = !state.hasResult ? state.error ? "Could not load" : "Loading…"
-    : value === null || value === undefined ? empty : `${formatOverviewNumber(value)}${suffix}`;
-  return <Link className="overview-action-card" to={to} aria-label={`${label}: ${shown}. ${note}`}>
+    : formatValue ? formatValue(value) : value === null || value === undefined ? empty : `${formatOverviewNumber(value)}${suffix}`;
+  return <Link className={`overview-action-card is-${tone}`} to={to} aria-label={`${label}: ${shown}. ${note}`}>
     <span className="overview-action-label">{label}</span><strong>{shown}</strong>
     <small>{note}{state.error && state.hasResult ? " · Last loaded data" : ""}</small>
     <OverviewIcon kind="arrow" className="overview-action-arrow" />
@@ -197,44 +194,76 @@ const workloadPath = (view, reportID) => `/inspections?view=${encodeURIComponent
 
 function SourceCards({ sources, states }) {
   const cards = [
-    ["Registry Businesses", sources.registry?.total, "/registry", "Official registry IDs", states.registry],
-    ["Unlinked Detection Records", sources.detection?.total, sourcePath("detection"), "Unlinked detection pins", states.detection],
-    ["Unlinked Manual Records", sources.manual?.total, sourcePath("manual"), "Unlinked inspector-reported pins", states.manual],
+    ["Registry Businesses", sources.registry?.total, "/registry", "Official registry IDs", states.registry, "registry"],
+    ["Unlinked Detection Records", sources.detection?.total, sourcePath("detection"), "Unlinked detection pins", states.detection, "detection"],
+    ["Unlinked Manual Records", sources.manual?.total, sourcePath("manual"), "Inspector-reported pins", states.manual, "manual"],
   ];
   if (sources.unclassified?.total > 0 || states.unclassified.error) cards.push(
-    ["Unclassified Records", sources.unclassified?.total, sourcePath("unclassified"), "Origin unknown or unsupported", states.unclassified]);
-  return <section className="overview-surface" aria-labelledby="overview-source-title">
+    ["Unclassified Records", sources.unclassified?.total, sourcePath("unclassified"), "Origin unknown or unsupported", states.unclassified, "unclassified"]);
+  return <section className="overview-surface overview-business-records" aria-labelledby="overview-source-title">
     <div className="overview-section-heading"><h2 id="overview-source-title">Business Records</h2></div>
-    <div className="overview-action-grid source-grid">{cards.map(([label, value, to, note, state]) =>
-      <ActionCard key={label} {...{ label, value, to, note, state }} />)}</div>
+    <div className="overview-action-grid source-grid">{cards.map(([label, value, to, note, state, tone]) =>
+      <ActionCard key={label} {...{ label, value, to, note, state, tone }} />)}</div>
     <details className="overview-explanation"><summary>About these counts</summary>
       <p>Registry IDs count businesses; unlinked pins count records, not confirmed distinct businesses. Linked detections and manual pins belong to the registry population. Unknown origins remain unclassified. These are not a distinct-business total.</p>
     </details>
   </section>;
 }
 
-function WorkloadCards({ data, state }) {
-  const groups = data?.age_groups || {};
-  const period = data?.period_from && data?.period_to
-    ? `${data.period_from.slice(0, 16).replace("T", " ")} – ${data.period_to.slice(0, 16).replace("T", " ")} UTC` : "Trailing 30 days";
-  return <section className="overview-surface overview-workload" aria-labelledby="overview-workload-title">
-    <div className="overview-section-heading"><h2 id="overview-workload-title">Inspection Workload</h2></div>
+function NeedsAttention({ data, state }) {
+  const updatedAt = formatOverviewUpdatedAt(data?.as_of);
+  return <section className="overview-surface overview-attention" aria-labelledby="overview-attention-title">
+    <div className="overview-section-heading"><h2 id="overview-attention-title">Needs Attention</h2>
+      {data && <span className="overview-updated-at">{updatedAt ?? "Update time unavailable"}</span>}</div>
     <RequestFeedback state={state} label="inspection workload" />
-    {data?.as_of && <p className="overview-scope-note">As of {data.as_of.replace("T", " ")} · UTC</p>}
-    <div className="overview-action-grid">
-      <ActionCard label="Open Assignments" value={data?.open} to={workloadPath("open")} note="Assigned or reassigned" state={state} />
-      <ActionCard label="Overdue Assignments" value={data?.overdue} to={workloadPath("overdue")} note="Open · past deadline" state={state} />
-      <ActionCard label="Oldest Open Assignment" value={data?.oldest_open_days} empty={data?.open === 0 ? "None open" : "Age unavailable"} suffix=" days" to={workloadPath("oldest", data?.oldest_report_id)} note="Current assignment-cycle age" state={state} />
-      <ActionCard label="Average Resolution Time" value={data?.average_resolution_minutes} suffix=" min" to={workloadPath("resolution")} note={`${period} · ${data?.resolution_sample_size ?? "—"} valid submissions`} state={state} />
+    <div className="overview-action-grid attention-grid">
+      <ActionCard label="Overdue Assignments" value={data?.overdue} empty="Unavailable" to={workloadPath("overdue")}
+        note={data?.overdue === 0 ? "None overdue" : "Open · past deadline"} state={state} tone={data?.overdue > 0 ? "warning" : "neutral"} />
+      <ActionCard label="Awaiting Verification" value={data?.awaiting_verification} empty="Unavailable" to={workloadPath("awaiting_verification")}
+        note={data?.awaiting_verification === 0 ? "None awaiting review" : "Submitted · admin review"} state={state} tone={data?.awaiting_verification > 0 ? "review" : "neutral"} />
+      <ActionCard label="Open 15+ Days" value={data?.age_groups?.["15+"]} empty="Unavailable" to={workloadPath("age_15+")}
+        note={data?.age_groups?.["15+"] === 0 ? "None pending 15+ days" : "Current assignment-cycle age"} state={state} tone={data?.age_groups?.["15+"] > 0 ? "warning" : "neutral"} />
     </div>
-    <h3 className="overview-age-title">Open assignment age · whole days</h3>
-    <div className="overview-action-grid age-grid">{["0-3", "4-7", "8-14", "15+"].map(group =>
-      <ActionCard key={group} label={`${group} days`} value={groups[group]} to={workloadPath(`age_${group}`)} note="Current cycle" state={state} />)}
-      <ActionCard label="Age unavailable" value={data?.age_unavailable} to={workloadPath("age_unavailable")} note="No trustworthy start" state={state} />
+  </section>;
+}
+
+function InspectionSnapshot({ data, state }) {
+  const groups = data?.age_groups || {};
+  const qualityItems = data ? [
+    data.missing_deadlines > 0 && `${data.missing_deadlines} missing deadlines`,
+    data.age_unavailable > 0 && `${data.age_unavailable} unavailable ages`,
+    data.older_hidden_open_reports > 0 && `${data.older_hidden_open_reports} older hidden open`,
+    data.invalid_deadlines > 0 && `${data.invalid_deadlines} invalid deadlines`,
+    data.ambiguous_deadlines > 0 && `${data.ambiguous_deadlines} timezone-unverified deadlines`,
+    data.legacy_in_progress > 0 && `${data.legacy_in_progress} legacy In Progress reports`,
+    data.missing_submission_received > 0 && `${data.missing_submission_received} missing receipt times`,
+    data.resolution_excluded > 0 && `${data.resolution_excluded} excluded durations`,
+  ].filter(Boolean) : [];
+  return <section className="overview-surface overview-workload" aria-labelledby="overview-workload-title">
+    <div className="overview-section-heading"><h2 id="overview-workload-title">Inspection Snapshot</h2></div>
+    <div className="overview-action-grid workload-grid">
+      <ActionCard label="Open Assignments" value={data?.open} to={workloadPath("open")} note="Assigned or reassigned" state={state} />
+      <ActionCard label="Oldest Open" value={data?.oldest_open_days} empty={data?.open === 0 ? "None open" : "Age unavailable"} formatValue={days => days == null ? data?.open === 0 ? "None open" : "Age unavailable" : `${formatOverviewNumber(days)} ${days === 1 ? "day" : "days"}`} to={workloadPath("oldest", data?.oldest_report_id)} note="Current assignment-cycle age" state={state} />
+      <ActionCard label="Average Resolution Time" value={data?.average_resolution_minutes} formatValue={formatElapsedMinutes} to={workloadPath("resolution")} note={`Last 30 days · ${formatOverviewNumber(data?.resolution_sample_size)} ${data?.resolution_sample_size === 1 ? "submission" : "submissions"}`} state={state} tone="duration" />
+    </div>
+    <div className="overview-pending-age">
+      <div className="overview-pending-heading"><h3>Pending age</h3><span>Whole days since latest dispatch</span></div>
+      <nav aria-label="Open assignment age ranges" className="overview-age-segments">
+        {["0-3", "4-7", "8-14"].map(group => {
+          const count = !state.hasResult ? state.error ? "Unavailable" : "Loading…" : formatOverviewNumber(groups[group]);
+          return <Link key={group} className="overview-age-chip" to={workloadPath(`age_${group}`)} aria-label={`${group} days: ${count} open assignments`}>
+            <span>{group.replace("-", "–")} days</span><strong>{count}</strong>
+          </Link>;
+        })}
+      </nav>
+      <Link className="overview-age-unavailable" to={workloadPath("age_unavailable")}>Age unavailable <strong>{!state.hasResult ? state.error ? "Unavailable" : "Loading…" : formatOverviewNumber(data?.age_unavailable)}</strong><OverviewIcon kind="arrow" /></Link>
     </div>
     {data && <details className="overview-explanation overview-quality">
-      <summary>Data quality · {data.missing_deadlines} missing deadlines · {data.age_unavailable} unavailable ages · {data.older_hidden_open_reports} older hidden open reports</summary>
+      <summary>{qualityItems.length ? `Data quality · ${qualityItems.join(" · ")}` : "Data quality · no known exceptions"}</summary>
       <p><Link to={workloadPath("deadline_missing")}>{data.missing_deadlines} open assignments without deadlines</Link>; <Link to={workloadPath("age_unavailable")}>{data.age_unavailable} without trustworthy starts</Link>; {data.invalid_deadlines} invalid deadlines; {data.ambiguous_deadlines} deadlines lack timezone evidence (Manila wall-time convention); {data.older_hidden_open_reports} older open reports hidden by current-target selection; {data.legacy_in_progress} legacy In Progress reports outside the open KPI; {data.missing_submission_received} completed reports without receipt timestamps; {data.resolution_excluded} in-period submissions excluded for invalid/missing duration.</p>
+    </details>}
+    {data && <details className="overview-explanation overview-methodology"><summary>Timing and reporting details</summary>
+      <p>Exact as-of: {data.as_of ?? "Unavailable"}. Submission receipt window: {data.period_from ?? "Unavailable"} to {data.period_to ?? "Unavailable"} (UTC). Average uses {formatOverviewNumber(data.resolution_sample_size)} valid current Submitted/Verified reports and excludes {formatOverviewNumber(data.resolution_excluded)} invalid or missing durations. Pending age counts whole days from the latest recorded dispatch/reassignment event—not completed resolution time. Deadlines use the Manila wall-time convention; historical timezone evidence is unavailable.</p>
     </details>}
   </section>;
 }
@@ -924,11 +953,12 @@ export default function HomePage() {
       )}
       {/* Main Layout: 2 Columns */}
       <div className="overview-dashboard-layout">
+        <HeroBanner user={user} />
 
         {/* Left Column (Main Content) */}
         <div className="overview-main-column">
-          <HeroBanner user={user} />
-          <WorkloadCards data={workload} state={requestStates.workload} />
+          <NeedsAttention data={workload} state={requestStates.workload} />
+          <InspectionSnapshot data={workload} state={requestStates.workload} />
           <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
 
           {/* Map */}

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "vite";
 
@@ -57,11 +57,14 @@ try {
     ? [[1440, 900], [820, 1000], [768, 600], [1280, 480]]
       .flatMap(([width, height]) => ["light", "dark"].map(theme => ({ width, height, theme })))
     : smokePage === "actionable-smoke"
-      ? [[1440, 900], [820, 1000], [768, 600]].map(([width, height]) => ({ width, height, theme: "light" }))
+      ? [...[[1440, 900], [820, 1000], [768, 600]]
+        .flatMap(([width, height]) => (process.env.REVELA_LAYOUT_CAPTURE ? ["light", "dark"] : ["light"])
+          .map(theme => ({ width, height, theme }))),
+        { width: 1440, height: 900, theme: "light", attentionZero: true }]
     : [{ width: 820, height: 1000, theme: "light" }];
-  for (const { width, height, theme } of scenarios) {
+  for (const { width, height, theme, attentionZero } of scenarios) {
     await call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);
-    const url = `http://127.0.0.1:${port}/scripts/${smokePage}.html?theme=${theme}&viewport=${width}x${height}`;
+    const url = `http://127.0.0.1:${port}/scripts/${smokePage}.html?theme=${theme}&viewport=${width}x${height}${process.env.REVELA_LAYOUT_CAPTURE ? "&capture=1" : ""}${attentionZero ? "&attentionZero=1" : ""}`;
     await call("Page.navigate", { url }, sessionId);
     let parsed;
     for (let attempt = 0; attempt < 400; attempt += 1) {
@@ -75,6 +78,12 @@ try {
     if (!parsed) throw new Error("Browser did not finish the smoke checks");
     console.log(JSON.stringify({ width, height, theme, ...parsed }, null, 2));
     if (parsed.failed) { process.exitCode = 1; break; }
+    if (process.env.REVELA_LAYOUT_CAPTURE && smokePage === "actionable-smoke") {
+      const screenshot = await call("Page.captureScreenshot", { format: "png" }, sessionId);
+      const output = join(tempRoot, `revela-overview-${process.pid}-${width}x${height}-${theme}${attentionZero ? "-zero" : ""}.png`);
+      await writeFile(output, Buffer.from(screenshot.data, "base64"));
+      console.log(`Local layout screenshot: ${output}`);
+    }
   }
   await Promise.race([call("Browser.close").catch(() => {}), sleep(2000)]);
 } finally {
