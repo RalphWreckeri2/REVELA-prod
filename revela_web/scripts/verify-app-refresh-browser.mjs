@@ -739,28 +739,59 @@ try {
     fixture.delayRegistryMs = 0;
   }
 
-   const layout = async () => evaluate(`(() => { const nav=document.querySelector('.top-navbar'); const rect=e=>({left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom}); return {viewport:innerWidth, nav:rect(nav), scroll:nav.scrollWidth, client:nav.clientWidth, children:[...nav.children].filter(e=>e.getBoundingClientRect().width).map(rect), actions:[...document.querySelectorAll('.app-refresh-main > *, .top-nav-separator, .notification-wrapper, .nav-profile, .nav-logout')].map(rect), title:document.querySelector('.top-nav-title')?.textContent}; })()`);
+    const layout = async () => evaluate(`(() => { const nav=document.querySelector('.top-navbar'); const rect=e=>({left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right,top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom}); return {viewport:innerWidth, nav:rect(nav), scroll:nav.scrollWidth, client:nav.clientWidth, actions:[...document.querySelectorAll('.app-refresh-details > summary, .quick-refresh-icon-btn, .top-nav-separator, .notification-wrapper > button, .nav-profile, .nav-logout')].map(rect), title:document.querySelector('.top-nav-title')?.textContent}; })()`);
    const fits = view => view.actions.every(rect => rect.left >= view.nav.left - 1 && rect.right <= view.viewport + 1 && rect.top >= view.nav.top - 1 && rect.bottom <= view.nav.bottom + 1);
    const overlaps = view => view.actions.some((rect, index) => view.actions.slice(index + 1).some(other =>
      Math.min(rect.right, other.right) - Math.max(rect.left, other.left) > 1 &&
      Math.min(rect.bottom, other.bottom) - Math.max(rect.top, other.top) > 1));
    for (const width of [1500, 820, 560]) {
      await metrics(width); await sleep(250);
-     const view = await layout();
-     assert.ok(fits(view) && !overlaps(view) && view.scroll <= view.client + 1, JSON.stringify(view));
-     assert.ok(await evaluate("document.querySelector('.nav-logout')?.getBoundingClientRect().width > 0 && document.querySelector('.notification-wrapper > button')?.getBoundingClientRect().width > 0"));
+      const view = await layout();
+      assert.ok(fits(view) && !overlaps(view) && view.scroll <= view.client + 1, JSON.stringify(view));
+      assert.equal(view.title, undefined, "page title must remain in page content, not navbar");
+      assert.ok(await evaluate("document.querySelector('.nav-logout')?.getBoundingClientRect().width > 0 && document.querySelector('.notification-wrapper > button')?.getBoundingClientRect().width > 0"));
      if (captures) {
        const { data } = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
        writeFileSync(join(captures, `navbar-${width}.png`), Buffer.from(data, "base64"));
-     }
-     console.log(`PASS browser navbar layout: ${width}px`, view);
+      }
+      await evaluate("document.querySelector('.app-refresh-details summary').click()");
+      const popover = await evaluate(`(() => { const r=document.querySelector('.app-refresh-popover').getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:r.width, height:r.height }; })()`);
+      assert.ok(popover.left >= 0 && popover.right <= width && popover.top >= view.actions[0].bottom && popover.bottom <= 900, JSON.stringify({ width, popover }));
+      assert.ok(await evaluate("Boolean(document.querySelector('.app-refresh-details').open && document.querySelector('.app-refresh-popover').textContent.includes('Last successful refresh:') && document.querySelector('.app-refresh-popover #app-refresh-mode').options.length === 4 && document.querySelector('.app-refresh-now'))"));
+      if (captures) {
+        const { data } = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        writeFileSync(join(captures, `navbar-${width}-open.png`), Buffer.from(data, "base64"));
+      }
+      await evaluate("document.querySelector('.top-navbar').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))");
+      assert.equal(await evaluate("document.querySelector('.app-refresh-details').open"), false, "outside pointer dismisses Sync");
+      console.log(`PASS browser navbar layout: ${width}px`, view);
    }
    if (captures) console.log("Local navbar screenshots:", captures);
-   await evaluate("document.querySelector('.app-refresh-details summary').click()");
-   assert.ok(await evaluate("document.querySelector('.app-refresh-details').open && document.querySelector('.app-refresh-popover').textContent.includes('Last successful refresh:')"));
-   await evaluate("document.querySelector('.app-refresh-details summary').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))");
-   assert.equal(await evaluate("document.querySelector('.app-refresh-details').open"), false);
-   await evaluate("document.querySelector('.notification-wrapper > button').click()");
+    await evaluate("document.querySelector('.app-refresh-details summary').click()");
+    await evaluate("document.querySelector('.app-refresh-details summary').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))");
+    assert.equal(await evaluate("document.querySelector('.app-refresh-details').open"), false);
+    await evaluate("document.querySelector('.app-refresh-details summary').click()");
+    const beforePopoverRefresh = count("/api/registry/");
+    await evaluate("document.querySelector('.app-refresh-now').click()");
+    await waitForCalls(() => count("/api/registry/") > beforePopoverRefresh, "Sync popover manual refresh");
+    await wait("document.querySelector('.app-refresh-controls [role=status]')?.textContent?.startsWith('Next refresh in')", "Sync popover refresh complete");
+    await evaluate("document.querySelector('.top-navbar').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))");
+    if (captures) {
+      await evaluate("localStorage.setItem('revela-theme','light')");
+      await call("Page.reload", { ignoreCache: true });
+      await wait("document.querySelector('.app-refresh-details') && !document.documentElement.classList.contains('theme-dark')", "light theme navbar");
+      for (const width of [1500, 560]) {
+        await metrics(width); await sleep(200);
+        await evaluate("document.querySelector('.app-refresh-details summary').click()");
+        const { data } = await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+        writeFileSync(join(captures, `navbar-${width}-light-open.png`), Buffer.from(data, "base64"));
+        await evaluate("document.querySelector('.top-navbar').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}))");
+      }
+      await evaluate("localStorage.setItem('revela-theme','dark')");
+      await call("Page.reload", { ignoreCache: true });
+      await wait("document.querySelector('.app-refresh-details') && document.documentElement.classList.contains('theme-dark')", "dark theme restored");
+    }
+    await evaluate("document.querySelector('.notification-wrapper > button').click()");
    await wait("document.querySelector('.notification-connection')?.textContent.includes('Notification stream connected')", "notification connection label");
    await evaluate("document.querySelector('.notification-wrapper > button').click()");
   await metrics(390);

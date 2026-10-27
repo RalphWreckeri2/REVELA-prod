@@ -302,9 +302,6 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
   const notificationButtonRef = useRef(null);
   const notificationPopoverRef = useRef(null);
   const refreshDetailsRef = useRef(null);
-  const location = useLocation();
-  const pageTitle = location.pathname === "/inspections/calendar" ? "Inspection Calendar" :
-    NAV_ITEMS.flatMap(group => group.items).find(item => item.path === location.pathname)?.label;
   const navigate = useNavigate();
   const appRefresh = useRefreshCoordinator();
   const refreshState = useRefreshSnapshot();
@@ -507,8 +504,8 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
       }
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("pointerdown", handleClickOutside);
+    return () => document.removeEventListener("pointerdown", handleClickOutside);
   }, [showNotifications]);
 
   const toggleNotifications = async () => {
@@ -566,65 +563,42 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   return (
     <header className="top-navbar frosted-glass">
-      {/*<div className="search-bar">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <input type="text" placeholder="Search businesses, barangays..." />
-      </div>*/}
-
-      {pageTitle && <span className="top-nav-title">{pageTitle}</span>}
       <div className="top-nav-right">
         <div className="app-refresh-controls" role="group" aria-label="Application data refresh">
-          <div className="app-refresh-main">
-          <label className="sr-only" htmlFor="app-refresh-mode">Auto refresh interval</label>
-          <select id="app-refresh-mode" value={refreshState?.mode ?? "medium"}
-            onChange={event => appRefresh?.setMode(event.target.value)}>
-            {Object.entries(REFRESH_MODES).map(([name, ms]) =>
-              <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)} · {ms === 60000 ? "1 min" : ms === 900000 ? "15 min" : ms === 3600000 ? "1 hour" : "24 hours"}</option>)}
-          </select>
-          <button
-          className="quick-refresh-icon-btn"
-          type="button"
-          aria-label="Refresh Data"
-          title="Refresh data now"
-          onClick={handleGlobalSync}
-          disabled={isSyncing}
-        >
-          <svg
-            className={isSyncing ? "spin-icon" : ""}
-            viewBox="0 0 24 24"
-            width="15"
-            height="15"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-          </svg>
-          </button>
-          <details className={`app-refresh-details${["failure", "partial-failure"].includes(refreshState?.status) ? " app-refresh-details--error" : ""}`} ref={refreshDetailsRef} onKeyDown={event => {
+          <details className={`app-refresh-details${["failure", "partial-failure"].includes(refreshState?.status) ? " app-refresh-details--error" : ""}${isSyncing ? " app-refresh-details--loading" : ""}`} ref={refreshDetailsRef} onKeyDown={event => {
             if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
           }}>
-            <summary aria-label={`Refresh details: ${refreshStatus}`} title="Refresh details">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
+            <summary aria-label={`Sync. ${refreshStatus}. Open refresh details`} title={`Sync · ${refreshStatus}`}>
+              <svg className={isSyncing ? "spin-icon" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
+              </svg>
+              <span>Sync</span>
             </summary>
             <div className="app-refresh-popover">
               <strong>Data refresh</strong>
+              <label htmlFor="app-refresh-mode">Auto-refresh mode</label>
+              <select id="app-refresh-mode" value={refreshState?.mode ?? "medium"}
+                onChange={event => appRefresh?.setMode(event.target.value)}>
+                {Object.entries(REFRESH_MODES).map(([name, ms]) =>
+                  <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)} · {ms === 60000 ? "1 min" : ms === 900000 ? "15 min" : ms === 3600000 ? "1 hour" : "24 hours"}</option>)}
+              </select>
               <p>Last successful refresh: {lastSuccess}</p>
-              <p>{refreshStatus}</p>
+              <p role="status" aria-live="polite">{refreshStatus}</p>
+              {!refreshStatus.startsWith("Next refresh in") && <p>Next refresh: {countdown}</p>}
               {refreshState?.errors?.length > 0 && <div className="app-refresh-errors" role="alert">{refreshState.errors.map((error, index) => <p key={index}>{error}</p>)}</div>}
+              <button className="app-refresh-now" type="button" onClick={handleGlobalSync} disabled={isSyncing}>Refresh now</button>
             </div>
           </details>
-          </div>
-          <span className={`app-refresh-status${["failure", "partial-failure"].includes(refreshState?.status) ? " app-refresh-status--error" : ""}`} role="status" aria-live="polite">{refreshStatus}</span>
+          <button className="quick-refresh-icon-btn" type="button" aria-label="Refresh Data" title="Refresh data now" onClick={handleGlobalSync} disabled={isSyncing}>
+            <svg className={isSyncing ? "spin-icon" : ""} viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
+            </svg>
+          </button>
         </div>
 
         <span className="top-nav-separator" aria-hidden="true" />
 
+        <div className="top-nav-account">
         <div className="notification-wrapper" style={{ position: "relative" }}>
           <button
             ref={notificationButtonRef}
@@ -802,6 +776,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           </svg>
           Logout
         </button>
+        </div>
       </div>
     </header>
   );
