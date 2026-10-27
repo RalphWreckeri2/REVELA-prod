@@ -1,7 +1,7 @@
 import { useState, useEffect, useContext, useCallback } from "react";
 import { useTheme } from "../context/themeContext";
 import DashboardLayout from "../components/DashboardLayout";
-import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, rebalanceWlcWeight } from "../components/wlcPolicy";
 import { AuthContext } from "../context/authContext";
 import { changePasswordRequest, setup2faRequest, verify2faSetupRequest } from "../services/authService";
@@ -376,9 +376,9 @@ export default function SettingsPage() {
   const [savingPreferences, setSavingPreferences] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [preferencesError, setPreferencesError] = useState("");
-  const [policyLoading, setPolicyLoading] = useState(true);
+  const [savedPolicy, setSavedPolicy] = useSessionDataset("settings", "policy", null);
+  const [policyLoading, setPolicyLoading] = useState(() => !savedPolicy);
   const [policyError, setPolicyError] = useState("");
-  const [savedPolicy, setSavedPolicy] = useState(null);
 
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -400,12 +400,12 @@ export default function SettingsPage() {
     setShowPrivacyDoc(docKey === "privacy");
     setShowCookieDoc(docKey === "cookies");
   };
-  const [wlcConfig, setWlcConfig] = useState({ ...DEFAULT_WLC_WEIGHTS, bplo_lat: 13.960413, bplo_lng: 121.114547 });
+  const [wlcConfig, setWlcConfig] = useState(() => savedPolicy ?? { ...DEFAULT_WLC_WEIGHTS, bplo_lat: 13.960413, bplo_lng: 121.114547 });
   const policyValidationError = wlcPolicyError(wlcConfig);
 
   // Evidence Storage & Archival states
-  const [storageStats, setStorageStats] = useState(null);
-  const [storageLoading, setStorageLoading] = useState(false);
+  const [storageStats, setStorageStats, hasStorage] = useSessionDataset("settings", "storage", null);
+  const [storageLoading, setStorageLoading] = useState(() => !hasStorage);
   const [storageError, setStorageError] = useState("");
   const [storageWarning, setStorageWarning] = useState("");
   const [selectedFilter, setSelectedFilter] = useState("older_180d");
@@ -417,7 +417,7 @@ export default function SettingsPage() {
   // stats on each one.
   const fetchStorageStats = useCallback(() => {
     if (token) {
-      setStorageLoading(true);
+      setStorageLoading(!hasStorage);
       setStorageError("");
       return getEvidenceStorageStatsRequest(token)
         .then(data => {
@@ -437,10 +437,10 @@ export default function SettingsPage() {
         .finally(() => setStorageLoading(false));
     }
     return Promise.resolve(false);
-  }, [token]);
+  }, [token, hasStorage, setStorageStats]);
 
   const loadPolicy = useCallback(async () => {
-    setPolicyLoading(true);
+    setPolicyLoading(!savedPolicy);
     setPolicyError("");
     try {
       const data = await getWlcConfigRequest(token);
@@ -454,7 +454,7 @@ export default function SettingsPage() {
       console.error(err);
       return false;
     } finally { setPolicyLoading(false); }
-  }, [token, savedPolicy]);
+  }, [token, savedPolicy, setSavedPolicy]);
   useAppDataRefresh("settings", () => refreshResults([loadPolicy(), fetchStorageStats()]));
   useEffect(() => () => setPreviewTheme(null), [setPreviewTheme]);
 
@@ -619,6 +619,7 @@ export default function SettingsPage() {
       delete policyPayload.sectors;
 
       await updateWlcConfigRequest(policyPayload, token);
+      window.dispatchEvent(new CustomEvent("revela:policy-update", { detail: { localMutation: true, policy: policyPayload } }));
       setSavedPolicy(policyPayload);
       Swal.fire({ icon: 'success', title: 'Saved', text: 'Settings updated successfully.', timer: 2000, showConfirmButton: false });
     } catch (err) {

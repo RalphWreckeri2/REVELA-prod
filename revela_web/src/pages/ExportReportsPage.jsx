@@ -14,7 +14,7 @@ import {
   Area
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
-import { useAppDataRefresh } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import ResponsiveChart from "../components/ResponsiveChart";
 import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
@@ -275,9 +275,10 @@ function ChartEmptyState({
 
 export default function ExportReportsPage() {
   const { token, user } = useAuth();
-  const [analyticsData, setAnalyticsData] = useState(null);
-  const [loadedAt, setLoadedAt] = useState(null);
-  const [loadingAnalytics, setLoadingAnalytics] = useState(true);
+  const [reportSnapshot, setReportSnapshot, hasReport] = useSessionDataset("reports", "demographics", null);
+  const analyticsData = reportSnapshot?.data ?? null;
+  const loadedAt = reportSnapshot?.loadedAt ?? null;
+  const [loadingAnalytics, setLoadingAnalytics] = useState(() => !hasReport);
   const [analyticsError, setAnalyticsError] = useState("");
   const requestRef = useRef({ sequence: 0, controller: null });
   const exportInProgress = useRef(false);
@@ -299,7 +300,7 @@ export default function ExportReportsPage() {
     const controller = new AbortController();
     const sequence = ++requestRef.current.sequence;
     requestRef.current.controller = controller;
-    setLoadingAnalytics(true);
+    setLoadingAnalytics(!hasReport);
     setAnalyticsError("");
     try {
       const data = await getDemographicReportsRequest(token, { signal: controller.signal });
@@ -307,8 +308,8 @@ export default function ExportReportsPage() {
       if (sequence !== requestRef.current.sequence || controller.signal.aborted) {
         throw new Error("The report data changed while refreshing. Retry the export.");
       }
-      if (forExport) flushSync(() => { setAnalyticsData(data); setLoadedAt(Date.now()); setLoadingAnalytics(false); });
-      else { setAnalyticsData(data); setLoadedAt(Date.now()); }
+      if (forExport) flushSync(() => { setReportSnapshot({ data, loadedAt: Date.now() }); setLoadingAnalytics(false); });
+      else setReportSnapshot({ data, loadedAt: Date.now() });
       return data;
     } catch (err) {
       if (sequence === requestRef.current.sequence && !controller.signal.aborted) {
@@ -318,7 +319,7 @@ export default function ExportReportsPage() {
     } finally {
       if (sequence === requestRef.current.sequence) setLoadingAnalytics(false);
     }
-  }, [token]);
+  }, [token, hasReport, setReportSnapshot]);
 
   const refreshView = useAppDataRefresh("reports", async () => {
     if (exportInProgress.current) await exportFinished.current;

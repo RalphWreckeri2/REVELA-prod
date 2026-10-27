@@ -15,6 +15,7 @@ import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
 import { formatScanHistoryTimestamp } from "../components/scanHistory";
 import { useAnalyticsData } from "../components/useAnalyticsData";
+import { useSessionDataset } from "../components/useAppDataRefresh";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { useAuth } from "../context/authContext";
 import {
@@ -25,6 +26,7 @@ import {
   sendAnalyticsChatRequest,
 } from "../services/api";
 
+const EMPTY_FILTER_BARANGAYS = Object.freeze([]);
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
 const COLOR = {
   green: "#10b981", // elegant emerald
@@ -822,17 +824,21 @@ export default function AnalyticsPage() {
   const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
   const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
 
-  const [wlcConfig, setWlcConfig] = useState({ ...DEFAULT_WLC_WEIGHTS });
+  const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
+  const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
+  const [wlcSnapshot, setWlcSnapshot] = useSessionDataset("analytics:settings", "wlc", null,
+    `analytics:${JSON.stringify(appliedFilters)}`);
+  const [wlcConfig, setWlcConfig] = useState(() => wlcSnapshot ?? { ...DEFAULT_WLC_WEIGHTS });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
   const [savingWlc, setSavingWlc] = useState(false);
   const [wlcSaveError, setWlcSaveError] = useState("");
-  const [wlcConfigReady, setWlcConfigReady] = useState(false);
+  const [wlcConfigReady, setWlcConfigReady] = useState(() => Boolean(wlcSnapshot));
   const wlcValidationError = wlcPolicyError(wlcConfig);
   const [expandedDispatch, setExpandedDispatch] = useState({});
-  const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
-  const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
-  const [filterMeta, setFilterMeta] = useState(null);
-  const [barangaysList, setBarangaysList] = useState([]);
+  const [filterOptions, setFilterOptions] = useSessionDataset("analytics:options", "filters", null,
+    `analytics:${JSON.stringify(appliedFilters)}`);
+  const filterMeta = filterOptions?.meta ?? null;
+  const barangaysList = filterOptions?.barangays ?? EMPTY_FILTER_BARANGAYS;
   const [filterMetaError, setFilterMetaError] = useState(false);
   const [filterRetry, setFilterRetry] = useState(0);
   const loadFilterOptions = useCallback(async () => {
@@ -844,16 +850,16 @@ export default function AnalyticsPage() {
         getAnalyticsFilterMetadataRequest(token, { signal: controller.signal }),
         getBarangaysRequest(token, { signal: controller.signal }),
       ]);
-      if (meta.status === "fulfilled") setFilterMeta(meta.value);
+      if (meta.status === "fulfilled") setFilterOptions(previous => ({ ...previous, meta: meta.value }));
       if (brgy.status === "fulfilled") {
         const value = brgy.value;
-        setBarangaysList(Array.isArray(value) ? value : (Array.isArray(value?.data) ? value.data : []));
+        setFilterOptions(previous => ({ ...previous, barangays: Array.isArray(value) ? value : (Array.isArray(value?.data) ? value.data : []) }));
       }
       const failed = meta.status === "rejected" || brgy.status === "rejected";
       setFilterMetaError(failed);
       return !failed;
     } finally { window.clearTimeout(timer); }
-  }, [token]);
+  }, [token, setFilterOptions]);
   const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, appliedFilters, undefined, "analytics", () => loadFilterOptions());
   const currentSection = sections[activeTab];
   const data = useMemo(() => Object.fromEntries(
@@ -891,13 +897,14 @@ export default function AnalyticsPage() {
       const res = await getWlcConfigRequest(token);
       if (res) {
         setWlcConfig({ w1_risk: res.w1_risk ?? DEFAULT_WLC_WEIGHTS.w1_risk, w2_sector: res.w2_sector ?? DEFAULT_WLC_WEIGHTS.w2_sector, w3_distance: res.w3_distance ?? DEFAULT_WLC_WEIGHTS.w3_distance });
+        setWlcSnapshot(res);
         setWlcConfigReady(true);
         setWlcSaveError("");
       }
     } catch (e) {
       setWlcSaveError(e.message || "Could not load saved WLC weights. Reopen Quick Adjust to retry.");
     }
-  }, [token]);
+  }, [token, setWlcSnapshot]);
 
   const handleSaveWlc = async () => {
     if (!wlcConfigReady) return;
@@ -909,6 +916,7 @@ export default function AnalyticsPage() {
     setSavingWlc(true);
     try {
       await updateWlcConfigRequest(wlcConfig, token);
+      window.dispatchEvent(new CustomEvent("revela:policy-update", { detail: { localMutation: true, policy: wlcConfig } }));
       await fetchAnalytics();
       setShowWlcConfig(false);
     } catch (e) {
@@ -934,9 +942,9 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     let current = true;
-    queueMicrotask(() => { if (current) void fetchWlcConfig(); });
+    queueMicrotask(() => { if (current && !wlcSnapshot) void fetchWlcConfig(); });
     return () => { current = false; };
-  }, [fetchWlcConfig]);
+  }, [fetchWlcConfig, wlcSnapshot]);
 
   useEffect(() => {
     if (filterRetry) void loadFilterOptions();

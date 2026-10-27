@@ -11,7 +11,8 @@ test("required reads are awaited; partial failures do not claim success", async 
   await Promise.resolve();
   assert.equal(completed, false);
   finish(false);
-  assert.deepEqual(await result, { ok: false, status: "partial-failure" });
-  assert.deepEqual(await refreshResults([Promise.resolve(false), Promise.reject(new Error("network"))]), { ok: false, status: "failure" });
-  assert.deepEqual(await refreshResults([Promise.resolve(true), Promise.resolve({ ok: true })]), { ok: true, status: "success" });
+  assert.deepEqual(await result, { ok: false, status: "partial-failure", errors: ["Request 2: Could not update"] });
+  assert.deepEqual(await refreshResults([Promise.resolve(false), Promise.reject(new Error("network"))]),
+    { ok: false, status: "failure", errors: ["Request 1: Could not update", "Request 2: network"] });
+  assert.deepEqual(await refreshResults([Promise.resolve(true), Promise.resolve({ ok: true })]), { ok: true, status: "success", errors: [] });
 });

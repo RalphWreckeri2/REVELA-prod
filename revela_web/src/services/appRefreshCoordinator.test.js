@@ -106,14 +106,16 @@ test("manual joins active work, waits for completion and only all-success resets
   const previous = f.coordinator.snapshot().lastSuccess;
   await f.advance(10_000);
   const partial = f.coordinator.run("manual");
-  resolve({ ok: false, status: "partial-failure" });
+  resolve({ ok: false, status: "partial-failure", errors: ["Request 2: unavailable"] });
   await partial;
   assert.equal(f.coordinator.snapshot().status, "partial-failure");
+  assert.deepEqual(f.coordinator.snapshot().errors, ["Request 2: unavailable"]);
   assert.equal(f.coordinator.snapshot().lastSuccess, previous);
   const failure = f.coordinator.run("manual");
   resolve({ ok: false, status: "failure" });
   await failure;
   assert.equal(f.coordinator.snapshot().status, "failure");
+  assert.ok(f.coordinator.snapshot().errors.length, "failures without details still offer guidance");
   assert.equal(f.coordinator.snapshot().lastSuccess, previous);
   f.coordinator.dispose();
 });
@@ -153,4 +155,101 @@ test("an old query's late completion cannot refresh the new query; events during
   assert.equal(f.coordinator.snapshot().stale, true);
   assert.equal(f.coordinator.snapshot().lastSuccess, f.now());
   f.coordinator.dispose();
+});
+
+test("a fresh cached route paints without a remount GET or a new deadline; a due route keeps data during refresh", async () => {
+  const f = fixture();
+  const key = "registry:[1]";
+  let calls = 0;
+  let finish;
+  const operation = async () => {
+    calls++;
+    if (calls === 1) {
+      f.coordinator.writeData(key, "list", { data: ["first"] });
+      return { ok: true };
+    }
+    return new Promise(resolve => { finish = resolve; });
+  };
+  let remove = f.coordinator.register(key, operation);
+  await flush();
+  const last = f.coordinator.snapshot().lastSuccess;
+  assert.deepEqual(f.coordinator.readData(key, "list").data, ["first"]);
+  remove();
+  await f.advance(2 * 60_000);
+  remove = f.coordinator.register(key, operation);
+  await flush();
+  assert.equal(calls, 1);
+  assert.equal(f.coordinator.snapshot().lastSuccess, last);
+  assert.deepEqual(f.coordinator.readData(key, "list").data, ["first"]);
+  remove();
+  await f.advance(14 * 60_000);
+  remove = f.coordinator.register(key, operation);
+  await flush();
+  assert.equal(calls, 2);
+  assert.equal(f.coordinator.snapshot().status, "loading");
+  assert.deepEqual(f.coordinator.readData(key, "list").data, ["first"]);
+  assert.equal(f.coordinator.snapshot().lastSuccess, last);
+  f.coordinator.writeData(key, "list", { data: ["new"] });
+  finish({ ok: true });
+  await flush();
+  assert.deepEqual(f.coordinator.readData(key, "list").data, ["new"]);
+  assert.equal(f.coordinator.snapshot().lastSuccess, f.now());
+  remove(); f.coordinator.dispose();
+});
+
+test("query identity, passive events, local invalidation and late responses respect session cache", async () => {
+  const f = fixture();
+  const old = "registry:old";
+  let remove = f.coordinator.register(old, async () => {
+    f.coordinator.writeData(old, "list", { data: [1] });
+    return { ok: true };
+  });
+  await flush();
+  remove();
+  let newerCalls = 0;
+  let finishNew;
+  remove = f.coordinator.register("registry:new", () => {
+    newerCalls++;
+    return new Promise(resolve => { finishNew = resolve; });
+  });
+  await flush();
+  assert.equal(f.coordinator.readData("registry:new", "list"), undefined);
+  assert.equal(f.coordinator.writeData(old, "list", { data: [99] }), false, "old response cannot overwrite a cache after navigation");
+  finishNew({ ok: true });
+  await flush();
+  remove();
+  f.coordinator.markStale(["registry"]);
+  remove = f.coordinator.register(old, () => { throw new Error("passive event caused a read"); });
+  await flush();
+  assert.deepEqual(f.coordinator.readData(old, "list").data, [1]);
+  remove();
+  f.coordinator.invalidate(["registry"]);
+  remove = f.coordinator.register(old, async () => { newerCalls++; return { ok: true }; });
+  await flush();
+  assert.equal(newerCalls, 2, "successful local mutation forces one due read");
+  remove(); f.coordinator.dispose();
+  assert.equal(f.coordinator.readData(old, "list"), undefined);
+});
+
+test("a cached view retains its failure indicator and backoff across navigation", async () => {
+  const f = fixture();
+  const key = "reports";
+  let calls = 0;
+  let remove = f.coordinator.register(key, async () => {
+    calls++;
+    f.coordinator.writeData(key, "snapshot", { rows: [1] });
+    return { ok: calls === 1 };
+  });
+  await flush();
+  const first = f.coordinator.snapshot().lastSuccess;
+  await f.coordinator.run("manual");
+  assert.equal(f.coordinator.snapshot().status, "failure");
+  remove();
+  remove = f.coordinator.register(key, async () => { calls++; return { ok: true }; });
+  await flush();
+  assert.equal(calls, 2);
+  assert.equal(f.coordinator.snapshot().status, "failure");
+  assert.equal(f.coordinator.snapshot().lastSuccess, first);
+  assert.deepEqual(f.coordinator.readData(key, "snapshot").rows, [1]);
+  remove(); f.coordinator.dispose();
 });

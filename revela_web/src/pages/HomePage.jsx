@@ -14,7 +14,7 @@ import Footer from "../components/Footer";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useAnalyticsData } from "../components/useAnalyticsData";
-import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
@@ -819,14 +819,14 @@ export default function HomePage() {
   const rollover = summary.data?.new_year_rollover;
 
   // Flags
-  const [allFlags, setAllFlags] = useState([]);
-
-  const [inspections, setInspections] = useState([]);
-  const [inspectors, setInspectors] = useState([]);
+  const [allFlags, setAllFlags, hasFlags] = useSessionDataset("home", "flags", []);
+  const [inspections, setInspections, hasInspections] = useSessionDataset("home", "inspections", []);
+  const [inspectors, setInspectors, hasInspectors] = useSessionDataset("home", "inspectors", []);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
   const [auxiliaryRefreshing, setAuxiliaryRefreshing] = useState(false);
   const [auxiliaryStates, setAuxiliaryStates] = useState(() => Object.fromEntries(
-    ["flags", "inspections", "inspectors"].map(key => [key, { loading: true, error: false, hasResult: false }]),
+    Object.entries({ flags: hasFlags, inspections: hasInspections, inspectors: hasInspectors })
+      .map(([key, hasResult]) => [key, { loading: !hasResult, error: false, hasResult }]),
   ));
   const sectionState = (section, valid) => ({
     loading: section.status === "loading" || section.updating,
@@ -865,7 +865,7 @@ export default function HomePage() {
     if (!isSilent) {
       setAuxiliaryRefreshing(true);
     }
-    setAuxiliaryStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: true, error: false }])));
+    setAuxiliaryStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: !state.hasResult, error: false }])));
 
     const load = async (key, request, select, commit) => {
       const attempt = new AbortController();
@@ -901,7 +901,7 @@ export default function HomePage() {
       }
     });
     return controller.promise;
-  }, [token]);
+  }, [token, setAllFlags, setInspections, setInspectors]);
   const refreshView = useAppDataRefresh("home", reason => refreshResults([
     refreshAnalytics(), fetchDashboardData(reason === "scheduled"),
   ]));

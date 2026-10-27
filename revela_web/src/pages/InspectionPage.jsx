@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback, useContext, useRef, useId } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { useAppDataRefresh } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { SkeletonKanbanBoard } from "../components/LoadingSkeleton";
 import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
@@ -637,7 +637,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
         request: clearWarningRequest,
         refresh: onWarningCleared,
         onChanged: () => window.dispatchEvent(new CustomEvent("revela:registry-update", {
-          detail: { businessID, logID: report.logID },
+           detail: { localMutation: true, businessID, logID: report.logID },
         })),
       });
     } catch (err) {
@@ -1001,12 +1001,6 @@ export default function InspectionPage() {
   const [searchParams] = useSearchParams();
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
 
-  const [reports,   setReports]   = useState([]);
-  const [total,     setTotal]     = useState(0);
-  // All report rows in the DB (incl. older revisions collapsed by the
-  // latest-per-target query) — lets the UI disclose hidden history.
-  const [totalRows, setTotalRows] = useState(0);
-  const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState("");
 
   // Kanban View Optimization State
@@ -1035,6 +1029,12 @@ export default function InspectionPage() {
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const requestKey = `inspections:${isAdmin ? filterStatus : "tasks"}`;
+  const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
+  const reports = reportData?.data ?? [];
+  const total = reportData?.total ?? 0;
+  // Includes older revisions collapsed by the latest-per-target query.
+  const totalRows = reportData?.total_rows ?? total;
+  const [loading, setLoading] = useState(() => !hasReports);
   const currentRequestKey = useRef(requestKey);
   const reportRequestSequence = useRef(0);
   useEffect(() => { currentRequestKey.current = requestKey; }, [requestKey]);
@@ -1045,7 +1045,7 @@ export default function InspectionPage() {
     const key = requestKey;
     const sequence = ++reportRequestSequence.current;
     if (!isSilent) {
-      setLoading(true);
+      setLoading(!hasReports);
       setIsRefreshing(true);
     }
     setError("");
@@ -1057,16 +1057,11 @@ export default function InspectionPage() {
           token
         );
         if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
-        setReports(result.data ?? []);
-        setTotal(result.total ?? 0);
-        setTotalRows(result.total_rows ?? result.total ?? 0);
       } else {
         result = await getInspectorTasksRequest(token);
         if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
-        setReports(result.data ?? []);
-        setTotal(result.total ?? 0);
-        setTotalRows(result.total_rows ?? result.total ?? 0);
       }
+      setReportData({ data: result.data ?? [], total: result.total ?? 0, total_rows: result.total_rows ?? result.total ?? 0 });
       setDetailTarget(current => current
         ? (result.data ?? []).find(row => row.reportID === current.reportID) ?? current
         : null);
@@ -1079,7 +1074,7 @@ export default function InspectionPage() {
     } finally {
       if (currentRequestKey.current === key && sequence === reportRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
-  }, [token, isAdmin, filterStatus, requestKey]);
+  }, [token, isAdmin, filterStatus, requestKey, hasReports, setReportData]);
   const refreshView = useAppDataRefresh(requestKey, async reason => {
     const ok = await fetchReports(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };
@@ -1171,7 +1166,7 @@ export default function InspectionPage() {
           </div>
         )}
         <div className="dispatch-results-summary" role="status">
-          {loading ? <span className="ui-skeleton" style={{ display: "inline-block", width: 190 }} aria-hidden="true" /> : (
+          {loading && !hasReports ? <span className="ui-skeleton" style={{ display: "inline-block", width: 190 }} aria-hidden="true" /> : (
             <>
               <span><strong>{filteredReports.length}</strong> matching loaded reports</span>
               <span><strong>{reports.length}</strong> loaded of <strong>{total}</strong> matching in {isAdmin ? "the database" : "your tasks"}{filterStatus ? ` (${filterStatus})` : ""}</span>
@@ -1187,7 +1182,7 @@ export default function InspectionPage() {
         </div>
       )}
 
-      {loading ? (
+      {loading && !hasReports ? (
         <SkeletonKanbanBoard columns={visibleCols.length} />
       ) : (
         <div>
@@ -1231,7 +1226,7 @@ export default function InspectionPage() {
           report={assignTarget}
           token={token}
           onClose={() => setAssignTarget(null)}
-          onSuccess={fetchReports}
+          onSuccess={() => { window.dispatchEvent(new CustomEvent("revela:inspection-update", { detail: { localMutation: true } })); return fetchReports(); }}
           returnFocusRef={actionReturnRef} fallbackFocusRef={searchRef}
         />
       </AnimatePresence>
@@ -1242,7 +1237,7 @@ export default function InspectionPage() {
           report={verifyTarget}
           token={token}
           onClose={() => setVerifyTarget(null)}
-          onSuccess={fetchReports}
+          onSuccess={() => { window.dispatchEvent(new CustomEvent("revela:inspection-update", { detail: { localMutation: true } })); return fetchReports(); }}
           returnFocusRef={actionReturnRef} fallbackFocusRef={searchRef}
         />
       </AnimatePresence>

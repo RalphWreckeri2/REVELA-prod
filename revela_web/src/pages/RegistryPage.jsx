@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useContext, useRef } from "react";
-import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
 import { UploadModal } from "../components/UploadModal";
@@ -230,7 +230,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
       const data = await getBusinessByIdRequest(businessId, token);
       setBusiness(data);
       if (onSuccess) onSuccess();
-      window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { timestamp: Date.now() } }));
+      window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { localMutation: true, timestamp: Date.now() } }));
     } catch (err) {
       Swal.fire({ icon: 'error', title: 'Error', text: err.message || 'Failed to update.' });
     } finally {
@@ -256,7 +256,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
         await deleteBusinessRequest(businessId, token);
         Swal.fire({ icon: 'success', title: 'Deleted', text: 'Business deleted successfully.', timer: 1500, showConfirmButton: false });
         if (onSuccess) onSuccess();
-        window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { timestamp: Date.now() } }));
+        window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { localMutation: true, timestamp: Date.now() } }));
         onClose();
       } catch (err) {
         setError(err.message || "Failed to delete business.");
@@ -419,10 +419,6 @@ export default function RegistryPage() {
   const { token, user } = useContext(AuthContext);
   const isAdmin = user?.role === "Admin" || user?.role === "SUPER_ADMIN";
 
-  const [businesses, setBusinesses] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const [search, setSearch] = useState("");
@@ -436,8 +432,15 @@ export default function RegistryPage() {
   const [showImport, setShowImport] = useState(false);
   const [detailId, setDetailId] = useState(null);
 
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(t);
+  }, [search]);
+  const query = JSON.stringify([page, pageSize, debouncedSearch, barangay, status, regType]);
   // Dynamic barangay list loaded from API
-  const [barangays, setBarangays] = useState([]);
+  const viewKey = `registry:${query}`;
+  const [barangays, setBarangays, hasBarangays] = useSessionDataset("registry:options", "barangays", [], viewKey);
   const loadBarangays = useCallback(async () => {
       try {
         const data = await getBarangaysRequest(token);
@@ -455,17 +458,14 @@ export default function RegistryPage() {
         console.error("Failed to load barangays", err);
         return false;
       }
-  }, [token]);
-
-  // Debounced search — wait 400ms after typing before firing the request
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 400);
-    return () => clearTimeout(t);
-  }, [search]);
+  }, [token, setBarangays]);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const query = JSON.stringify([page, pageSize, debouncedSearch, barangay, status, regType]);
+  const [list, setList, hasList] = useSessionDataset(viewKey, "list", null);
+  const businesses = list?.data ?? [];
+  const total = list?.total ?? 0;
+  const totalPages = list?.pages ?? 1;
+  const [loading, setLoading] = useState(() => !hasList);
   const currentQuery = useRef(query);
   const registryRequestSequence = useRef(0);
   useEffect(() => { currentQuery.current = query; }, [query]);
@@ -475,7 +475,7 @@ export default function RegistryPage() {
     const requestQuery = query;
     const sequence = ++registryRequestSequence.current;
     if (!isSilent) {
-      setLoading(true);
+      setLoading(!hasList);
       setIsRefreshing(true);
     }
     setError("");
@@ -489,9 +489,8 @@ export default function RegistryPage() {
 
       const result = await getRegistryRequest(params, token);
       if (currentQuery.current !== requestQuery || sequence !== registryRequestSequence.current) return false;
-      setBusinesses(result.data ?? []);
-      setTotal(result.total ?? 0);
-      setTotalPages(Math.max(1, result.pages ?? Math.ceil((result.total ?? 0) / pageSize)));
+      setList({ data: result.data ?? [], total: result.total ?? 0,
+        pages: Math.max(1, result.pages ?? Math.ceil((result.total ?? 0) / pageSize)) });
       return true;
     } catch (err) {
       if (!isSilent && currentQuery.current === requestQuery && sequence === registryRequestSequence.current) {
@@ -501,9 +500,9 @@ export default function RegistryPage() {
     } finally {
       if (currentQuery.current === requestQuery && sequence === registryRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
-  }, [page, debouncedSearch, barangay, status, regType, pageSize, token, query]);
-  const refreshView = useAppDataRefresh(`registry:${query}`, reason => refreshResults([
-    fetchBusinesses(reason === "scheduled"), loadBarangays(),
+  }, [page, debouncedSearch, barangay, status, regType, pageSize, token, query, hasList, setList]);
+  const refreshView = useAppDataRefresh(viewKey, reason => refreshResults([
+    fetchBusinesses(reason !== "initial"), reason === "initial" && hasBarangays ? true : loadBarangays(),
   ]));
 
   // ── Export CSV Handler ───────────────────────────────────────────────────
@@ -905,7 +904,7 @@ export default function RegistryPage() {
         <UploadModal
           token={token}
           onClose={() => setShowUpload(false)}
-          onSuccess={() => { fetchBusinesses(); setShowUpload(false); }}
+          onSuccess={() => { window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { localMutation: true } })); fetchBusinesses(); setShowUpload(false); }}
         />
       </AnimatePresence>
 
@@ -914,7 +913,7 @@ export default function RegistryPage() {
           variant="sync"
           token={token}
           onClose={() => setShowImport(false)}
-          onSuccess={() => { fetchBusinesses(); setShowImport(false); }}
+          onSuccess={() => { window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { localMutation: true } })); fetchBusinesses(); setShowImport(false); }}
         />
       </AnimatePresence>
 

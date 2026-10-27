@@ -133,6 +133,17 @@ export function createAnalyticsLoader({
   return {
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     getSnapshot: () => state,
+    recheck() {
+      sectionNames.forEach((name) => {
+        expire(name);
+        const section = state.sections[name];
+        clearTimeout(expiryTimers.get(name));
+        if (section.data && section.status !== "expired") {
+          const remaining = Math.min(section.expiresAt - now(), section.wallExpiresAt - Date.now());
+          expiryTimers.set(name, setTimeout(() => expire(name), Math.max(1, remaining + 1)));
+        }
+      });
+    },
     refresh(force = false) {
       sectionNames.forEach(expire);
       if (!isOnline()) { this.connectionChanged(); return Promise.resolve(); }

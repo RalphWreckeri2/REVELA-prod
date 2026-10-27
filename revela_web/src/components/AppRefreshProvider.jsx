@@ -11,14 +11,16 @@ const EVENT_VIEWS = {
   "registry-progress": ["registry"],
   "user-update": ["home", "map", "analytics", "inspections", "users"],
   "password-reset": ["users"],
+  "policy-update": ["home", "map", "analytics", "settings"],
 };
 
 export function AppRefreshProvider({ children }) {
   const { user } = useAuth();
   const userId = user?.id ?? user?.userID;
-  const coordinator = useMemo(() => userId == null ? null : createAppRefreshCoordinator({
+  const scope = userId == null ? null : `${userId}:${user?.role ?? ""}:${user?.barangayID ?? ""}`;
+  const coordinator = useMemo(() => scope == null ? null : createAppRefreshCoordinator({
     userId, storage: window.localStorage,
-  }), [userId]);
+  }), [scope, userId]);
   useEffect(() => {
     if (!coordinator) return undefined;
     const check = () => coordinator.availabilityChanged();
@@ -26,7 +28,16 @@ export function AppRefreshProvider({ children }) {
     window.addEventListener("online", check);
     document.addEventListener("visibilitychange", check);
     const handlers = Object.entries(EVENT_VIEWS).map(([event, views]) => {
-      const handler = () => coordinator.markStale(views);
+      const handler = message => {
+        if (message.detail?.localMutation === true) {
+          coordinator.invalidate(views);
+          if (event === "policy-update" && message.detail.policy) {
+            const owner = coordinator.snapshot().activeKey;
+            coordinator.writeData("analytics:settings", "wlc", message.detail.policy, owner);
+            coordinator.writeData("settings", "policy", message.detail.policy, owner);
+          }
+        } else coordinator.markStale(views);
+      };
       window.addEventListener(`revela:${event}`, handler);
       return [event, handler];
     });

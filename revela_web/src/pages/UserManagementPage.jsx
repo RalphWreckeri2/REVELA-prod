@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import DashboardLayout from "../components/DashboardLayout";
-import { useAppDataRefresh } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { useAuth } from "../context/authContext";
 import { SkeletonTableRows } from "../components/LoadingSkeleton";
 import {
@@ -136,7 +136,7 @@ function CreateUserModal({ onClose, onSuccess, token }) {
     try {
       const result = await createUserRequest({ ...formData, password }, token);
       if (onSuccess) onSuccess();
-      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { localMutation: true, timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'User Created',
@@ -244,7 +244,7 @@ function EditUserModal({ user, onClose, onSuccess, token }) {
     try {
       await updateUserRequest(user.userID, formData, token);
       if (onSuccess) onSuccess();
-      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { localMutation: true, timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'User Updated',
@@ -337,7 +337,7 @@ function DeleteUserModal({ targetUser, onClose, onSuccess, token }) {
     try {
       await deleteUserRequest(targetUser.userID, token);
       if (onSuccess) onSuccess();
-      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { localMutation: true, timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'User Removed',
@@ -414,7 +414,7 @@ function ResetPasswordModal({ targetUser, onClose, onSuccess, token }) {
       if (!res.ok) throw new Error(data?.error || "Failed to reset password.");
       setNewPass(data.tempPassword);
       if (onSuccess) onSuccess();
-      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { timestamp: Date.now() } }));
+      window.dispatchEvent(new CustomEvent("revela:user-update", { detail: { localMutation: true, timestamp: Date.now() } }));
       Swal.fire({
         icon: 'success',
         title: 'Password Reset',
@@ -480,8 +480,8 @@ function ResetPasswordModal({ targetUser, onClose, onSuccess, token }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function UserManagementPage() {
   const { token, user } = useAuth();
-  const [users,          setUsers]          = useState([]);
-  const [loading,        setLoading]        = useState(true);
+  const [users, setUsers, hasUsers] = useSessionDataset("users", "list", []);
+  const [loading,        setLoading]        = useState(() => !hasUsers);
   const [showCreate,     setShowCreate]     = useState(false);
   const [editingUser,    setEditingUser]    = useState(null);
   const [userToDelete,   setUserToDelete]   = useState(null);
@@ -495,7 +495,7 @@ export default function UserManagementPage() {
     if (!token) return;
     const sequence = ++userRequestSequence.current;
     if (!isSilent) {
-      setLoading(true);
+      setLoading(!hasUsers);
       setIsRefreshing(true);
     }
     try {
@@ -515,7 +515,7 @@ export default function UserManagementPage() {
     } finally {
       if (sequence === userRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
-  }, [token]);
+  }, [token, hasUsers, setUsers]);
   const refreshView = useAppDataRefresh(user?.role === "SUPER_ADMIN" ? "users" : null, async reason => {
     const ok = await fetchUsers(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };

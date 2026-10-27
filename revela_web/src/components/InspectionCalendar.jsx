@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { getInspectionCalendarRequest, getInspectionsRequest } from "../services/api";
-import { useAppDataRefresh } from "./useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset } from "./useAppDataRefresh";
 import { deadlineGroups, deadlineStatusCounts, loadLatestAssignments, manilaToday } from "./deadlineCalendar";
 import "../styles/InspectionCalendar.css";
 
@@ -242,16 +242,16 @@ export default function InspectionCalendar({ token, initialDate }) {
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
   const [selectedDate, setSelectedDate] = useState(() => initialDate || manilaToday());
-  const [calendar, setCalendar] = useState(null);
   const [requestState, setRequestState] = useState(null);
   const refreshVersion = 0;
   const deadlineVersion = 0;
-  const [deadlineData, setDeadlineData] = useState(null);
   const [deadlineRequest, setDeadlineRequest] = useState(null);
   const todayIso = deadlines ? manilaToday() : toIsoDate(new Date());
   const monthIso = `${visibleMonth.getFullYear()}-${String(visibleMonth.getMonth() + 1).padStart(2, "0")}`;
   const monthLabel = formatMonth(visibleMonth);
   const queryKey = deadlines ? "calendar:deadlines" : `calendar:activity:${monthIso}:${selectedDate}`;
+  const [calendar, setCalendar] = useSessionDataset(`calendar:activity:${monthIso}:${selectedDate}`, "snapshot", null);
+  const [deadlineData, setDeadlineData] = useSessionDataset("calendar:deadlines", "snapshot", null);
   const currentQuery = useRef(queryKey);
   useEffect(() => { currentQuery.current = queryKey; }, [queryKey]);
 
@@ -305,12 +305,12 @@ export default function InspectionCalendar({ token, initialDate }) {
   const requestMatches = requestState?.token === token &&
     requestState?.month === monthIso && requestState?.date === selectedDate &&
     requestState?.refreshVersion === refreshVersion;
-  const activityLoading = !requestMatches || requestState.status === "loading";
   const activityError = requestMatches ? requestState.error : "";
   // Monthly counts can stay visible while another day in the same month loads.
   // Day details are never rendered until the response matches the current date.
   const monthData = calendar?.token === token && calendar?.data.month === monthIso &&
     calendar?.refreshVersion === refreshVersion ? calendar.data : null;
+  const activityLoading = !monthData && (!requestMatches || requestState.status === "loading");
   const dayReady = !activityLoading && monthData?.selectedDate === selectedDate;
   const activities = dayReady ? monthData.activities : NO_ACTIVITIES;
 
@@ -324,7 +324,7 @@ export default function InspectionCalendar({ token, initialDate }) {
   const latestActiveDate = [...activityDayCounts.keys()].sort().at(-1);
   const deadlineRequestMatches = deadlineRequest?.token === token && deadlineRequest?.version === deadlineVersion;
   const deadlineReady = deadlineData?.token === token && deadlineData?.version === deadlineVersion;
-  const deadlineLoading = !deadlineRequestMatches || deadlineRequest.status === "loading";
+  const deadlineLoading = !deadlineReady && (!deadlineRequestMatches || deadlineRequest.status === "loading");
   const groups = useMemo(() => deadlineGroups(deadlineReady ? deadlineData.rows : []), [deadlineReady, deadlineData]);
   const deadlineDayCounts = useMemo(() => new Map([...groups.days].filter(([date]) => date.startsWith(`${monthIso}-`)).map(([date, rows]) => [date, rows.length])), [groups, monthIso]);
   const monthlyDeadlines = [...deadlineDayCounts.values()].reduce((sum, count) => sum + count, 0);

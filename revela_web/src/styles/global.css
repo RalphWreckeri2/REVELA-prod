@@ -820,7 +820,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 40px;
+  padding: 0 32px;
   position: sticky;
   top: 0;
   z-index: 20;
@@ -864,7 +864,44 @@ body {
 
 .notification-wrapper {
   position: relative;
+  flex: none;
 }
+.notification-connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 24px;
+  color: var(--color-muted);
+  font-size: 12px;
+  border-bottom: 1px solid var(--color-border-soft);
+}
+.notification-connection-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--color-primary-dark);
+}
+.notification-connection-dot--offline { background: var(--color-muted); }
+.notification-snippet {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 30;
+  width: 210px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-modal-bg);
+  color: var(--color-ink);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .09);
+  cursor: pointer;
+}
+.notification-snippet:focus-visible, .notification-snippet button:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 2px; }
+.notification-snippet-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--color-primary-dark); font-size: 10px; font-weight: 700; }
+.notification-snippet-header button { border: 0; background: transparent; color: var(--color-muted); cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.notification-snippet-header button:hover { background: var(--color-surface); color: var(--color-ink); }
+.notification-snippet strong { display: block; font-size: 12px; font-weight: 600; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .notification-popover {
   position: absolute;
@@ -963,12 +1000,132 @@ body {
 .top-nav-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   margin-left: auto;
+  flex: none;
 }
-
+.top-nav-title {
+  color: var(--color-ink);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  margin-right: 16px;
+}
+.top-nav-separator {
+  width: 1px;
+  height: 26px;
+  background: var(--color-border);
+  flex: none;
+}
+.app-refresh-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  position: relative;
+  color: var(--color-muted);
+}
+.app-refresh-main { display: flex; align-items: center; gap: 6px; }
+#app-refresh-mode, .app-refresh-details summary, .quick-refresh-icon-btn, .notification-wrapper > .icon-btn, .nav-profile, .nav-logout {
+  height: 36px;
+}
+#app-refresh-mode {
+  width: 143px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.app-refresh-status {
+  font-size: 12px;
+  line-height: 1.2;
+  padding-left: 2px;
+  white-space: nowrap;
+}
+.app-refresh-status--error { color: var(--color-danger); font-weight: 600; }
+.app-refresh-details { position: relative; }
+.app-refresh-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  border-radius: 8px;
+  color: var(--color-muted);
+  cursor: pointer;
+  list-style: none;
+}
+.app-refresh-details summary::-webkit-details-marker { display: none; }
+.app-refresh-details summary:hover, .app-refresh-details[open] summary { background: var(--color-surface); color: var(--color-primary-dark); }
+.app-refresh-details--error summary, .app-refresh-details--error summary:hover { color: var(--color-danger); background: var(--color-danger-light); }
+.app-refresh-details svg, .nav-logout svg { width: 17px; height: 17px; flex: none; }
+.app-refresh-popover {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 35;
+  width: 260px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-modal-bg);
+  color: var(--color-ink);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.09);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.app-refresh-popover p { margin: 6px 0 0; overflow-wrap: anywhere; }
+.app-refresh-errors { color: var(--color-danger); border-top: 1px solid var(--color-border-soft); margin-top: 10px; padding-top: 4px; }
+.app-refresh-details summary:focus-visible, #app-refresh-mode:focus-visible,
+.quick-refresh-icon-btn:focus-visible, .notification-wrapper > .icon-btn:focus-visible,
+.nav-logout:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 2px; }
+.nav-logout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav-logout:hover:not(:disabled), .nav-logout:focus-visible {
+  background: var(--color-danger-light);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+.nav-logout:disabled { opacity: .6; cursor: not-allowed; }
+.notification-wrapper > .icon-btn { width: 36px; align-items: center; justify-content: center; border-radius: 8px; }
+.notification-wrapper > .icon-btn:hover { background: var(--color-surface); color: var(--color-primary-dark); }
+@media (max-width: 1100px) {
+  .top-navbar .nav-user-info, .nav-profile-chevron, .app-refresh-status { display: none; }
+  .top-nav-right { gap: 8px; }
+}
+@media (max-width: 900px) {
+  .top-nav-title { display: none; }
+  .notification-snippet { right: -80px; }
+}
 @media (max-width: 640px) {
-  .top-nav-right { gap: 6px; }
+  .top-navbar { padding: 0 12px 0 60px; }
+  .top-nav-right { gap: 5px; }
+  #app-refresh-mode { width: 125px; }
+  .app-refresh-main { gap: 3px; }
+  .top-nav-separator { margin: 0 2px; }
+  .notification-popover { right: -108px; width: min(360px, calc(100vw - 24px)); }
 }
 
 .nav-badge {
@@ -987,12 +1144,15 @@ body {
   align-items: center;
   gap: 10px;
   cursor: pointer;
-  border: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
-  padding: 0;
+  padding: 0 4px;
   color: inherit;
   font: inherit;
 }
+.nav-profile:hover { background: var(--color-surface); }
+.nav-profile-chevron { color: var(--color-muted); font-size: 18px; line-height: 1; }
 
 .nav-profile:focus-visible {
   outline: 2px solid rgba(86, 171, 47, 0.45);
@@ -1013,13 +1173,10 @@ body {
   flex-shrink: 0;
 }
 .nav-user-info {
-  display: flex;
-  flex-direction: column;
-}
-.welcome-text {
-  font-size: 11px;
-  color: var(--color-subtle);
-  line-height: 1;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .user-name {
   font-size: 13px;
@@ -2614,43 +2771,6 @@ html.theme-dark .legal-action-pill-btn:hover {
   animation: spinSync 0.75s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-.live-sync-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 12px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border-soft);
-  border-radius: 9999px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--color-ink);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.02);
-  user-select: none;
-  transition:
-    background 0.2s,
-    border-color 0.2s;
-}
-
-.live-dot {
-  width: 7.5px;
-  height: 7.5px;
-  border-radius: 50%;
-  background: #22c55e;
-  display: inline-block;
-  animation: liveDotPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-.live-dot.live-dot--syncing {
-  background: var(--color-gold);
-  box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7);
-}
-
-.live-dot.live-dot--offline {
-  background: var(--color-muted);
-  animation: none;
-}
-
 .quick-refresh-btn {
   display: inline-flex;
   align-items: center;
@@ -2720,8 +2840,8 @@ html.theme-dark .legal-action-pill-btn:hover {
 }
 
 .quick-refresh-icon-btn {
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border-radius: 8px;
   border: 1px solid var(--color-border-soft);

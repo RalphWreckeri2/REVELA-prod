@@ -35,7 +35,7 @@ import {
   businessSourceLabel, businessDetailsInfo, matchesMapFilters, paginateRecords,
 } from "../components/businessCompliance";
 import { AuthContext } from "../context/authContext";
-import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
+import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark, mapReady } from "../services/responsivenessBenchmark";
@@ -2574,10 +2574,10 @@ export default function MapPage() {
   const detailModalCameraRef = useRef(null);
   const workflowSummaryShownRef = useRef(true);
 
-  const [flags, setFlags] = useState([]);
+  const [flags, setFlags, hasFlags] = useSessionDataset("map", "flags", []);
   const [municipalBounds, setMunicipalBounds] = useState(null);
-  const [barangayRiskLevels, setBarangayRiskLevels] = useState({});
-  const [loadingFlags, setLoadingFlags] = useState(false);
+  const [barangayRiskLevels, setBarangayRiskLevels] = useSessionDataset("map", "riskLevels", {});
+  const [loadingFlags, setLoadingFlags] = useState(() => !hasFlags);
   const [flagsError, setFlagsError] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
@@ -2601,16 +2601,16 @@ export default function MapPage() {
   const [reviewQueueNotice, setReviewQueueNotice] = useState("");
   const [reviewQueueActionId, setReviewQueueActionId] = useState(null);
   const [reviewLocationChoices, setReviewLocationChoices] = useState({});
-  const [detectionQuota, setDetectionQuota] = useState(null);
-  const [detectionQuotaLoading, setDetectionQuotaLoading] = useState(true);
+  const [detectionQuota, setDetectionQuota, hasQuota] = useSessionDataset("map", "quota", null);
+  const [detectionQuotaLoading, setDetectionQuotaLoading] = useState(() => !hasQuota);
   const [detectionQuotaError, setDetectionQuotaError] = useState("");
-  const [placesUsage, setPlacesUsage] = useState(null);
-  const [placesUsageLoading, setPlacesUsageLoading] = useState(true);
+  const [placesUsage, setPlacesUsage, hasUsage] = useSessionDataset("map", "usage", null);
+  const [placesUsageLoading, setPlacesUsageLoading] = useState(() => !hasUsage);
   const [placesUsageError, setPlacesUsageError] = useState("");
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
-  const [opsRankings, setOpsRankings] = useState([]);
+  const [opsRankings, setOpsRankings] = useSessionDataset("map", "rankings", []);
 
   useEffect(() => {
     const workspace = mapWorkspaceRef.current;
@@ -2805,7 +2805,7 @@ export default function MapPage() {
   const [showYellowModal, setShowYellowModal] = useState(false);
   const [isPickingYellowLocation, setIsPickingYellowLocation] = useState(false);
   const [yellowDraft, setYellowDraft] = useState(null);
-  const [barangays, setBarangays] = useState([]);
+  const [barangays, setBarangays] = useSessionDataset("map", "barangays", []);
   const [clusters, setClusters] = useState([]);
   const [clustersLoading, setClustersLoading] = useState(false);
   const geoJsonFeaturesRef = useRef(null); // cached GeoJSON features for PiP checks
@@ -2828,7 +2828,7 @@ export default function MapPage() {
     const controller = new AbortController();
     flagsRequestController.current = controller;
     if (!isSilent) {
-      setLoadingFlags(true);
+      setLoadingFlags(!hasFlags);
       setIsRefreshing(true);
     }
     setFlagsError("");
@@ -2913,7 +2913,7 @@ export default function MapPage() {
       if (flagsRequestController.current === controller) flagsRequestController.current = null;
       if (sequence === flagsRequestSequence.current) { setLoadingFlags(false); setIsRefreshing(false); }
     }
-  }, [token, benchmarkTrial]);
+  }, [token, benchmarkTrial, hasFlags, setFlags, setOpsRankings, setBarangayRiskLevels]);
 
   // Count Red Flags per barangay from the already-loaded flags array.
   // Used when prescriptive rankings omit a barangay (unranked tier on the map).
@@ -2946,7 +2946,7 @@ export default function MapPage() {
     } finally {
       setDetectionQuotaLoading(false);
     }
-  }, [token, isAdmin]);
+  }, [token, isAdmin, setDetectionQuota]);
 
   const fetchPlacesUsage = useCallback(async () => {
     if (!token || !isAdmin) return;
@@ -2965,7 +2965,7 @@ export default function MapPage() {
     } finally {
       setPlacesUsageLoading(false);
     }
-  }, [token, isAdmin]);
+  }, [token, isAdmin, setPlacesUsage]);
 
   const loadRegistryReviewQueue = async (page = 1, search = reviewQueueSearch) => {
     if (!token || !isAdmin) return;
@@ -3004,7 +3004,7 @@ export default function MapPage() {
       console.error("Failed to load barangays", err);
       return false;
     }
-  }, [token]);
+  }, [token, setBarangays]);
 
   // Pre-fetch GeoJSON once so handleMapClick can do real point-in-polygon
   // checks and the map can derive its municipal navigation limits from the
@@ -3024,7 +3024,7 @@ export default function MapPage() {
     return () => { cancelled = true; };
   }, []);
 
-  const [inspectors, setInspectors] = useState([]);
+  const [inspectors, setInspectors] = useSessionDataset("map", "inspectors", []);
   const loadMapInspectors = useCallback(async () => {
     try {
       const data = await getInspectorsRequest(token);
@@ -3032,7 +3032,7 @@ export default function MapPage() {
       setInspectors(list.filter(u => u.isActive !== 0 && u.isActive !== false && u.userRole === 'Inspector'));
       return true;
     } catch { return false; }
-  }, [token]);
+  }, [token, setInspectors]);
   const refreshView = useAppDataRefresh("map", reason => refreshResults([
     fetchFlags(reason === "scheduled"), loadMapBarangays(), loadMapInspectors(),
     ...(isAdmin ? [fetchDetectionQuota(), fetchPlacesUsage()] : []),
@@ -3159,6 +3159,7 @@ export default function MapPage() {
     setActionError("");
     try {
       await escalateFlagToBlackRequest(logId, token);
+      window.dispatchEvent(new CustomEvent("revela:flag-update", { detail: { localMutation: true } }));
       handleCloseDetailModal();
       await fetchFlags();
       Swal.fire({
@@ -3185,6 +3186,7 @@ export default function MapPage() {
     setActionError("");
     try {
       await updateFlagColorRequest(logId, color, token);
+      window.dispatchEvent(new CustomEvent("revela:flag-update", { detail: { localMutation: true } }));
       handleCloseDetailModal();
       await fetchFlags();
       Swal.fire({
@@ -4030,6 +4032,7 @@ export default function MapPage() {
           adjustingLatLng.lng,
           token,
         );
+        window.dispatchEvent(new CustomEvent("revela:flag-update", { detail: { localMutation: true } }));
       } catch (err) {
         if (err.code !== "barangay_change_confirmation_required") throw err;
 
@@ -4103,6 +4106,7 @@ export default function MapPage() {
       setActionError("");
       try {
         await deleteFlagRequest(logId, token);
+        window.dispatchEvent(new CustomEvent("revela:flag-update", { detail: { localMutation: true } }));
         Swal.fire({ icon: 'success', title: 'Deleted', text: 'Flag deleted successfully.', timer: 1500, showConfirmButton: false });
         handleCloseDetailModal();
         await fetchFlags();
@@ -4947,7 +4951,7 @@ export default function MapPage() {
               <span style={styles.countBadge} aria-live="polite">
                 {loadingFlags
                   ? <SkeletonBlock statusLabel="Loading location count" style={{ width: 20, height: 13 }} />
-                  : flagsError ? "—" : visibleFlags.length}
+                  : flagsError && !hasFlags ? "—" : visibleFlags.length}
               </span>
             </div>
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
@@ -4965,7 +4969,7 @@ export default function MapPage() {
           </div>
 
           <div className="map-location-results" aria-busy={loadingFlags}>
-            {loadingFlags ? <SkeletonList rows={5} /> : flagsError ? (
+            {loadingFlags && !hasFlags ? <SkeletonList rows={5} /> : flagsError && !hasFlags ? (
               <div role="alert"><p>Locations could not be refreshed. {flagsError}</p>
                 <button type="button" className="ghost-btn" onClick={() => fetchFlags(false)}>Retry</button></div>
             ) : visibleFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
@@ -5035,7 +5039,7 @@ export default function MapPage() {
           handleCloseDetailModal();
           await fetchFlags();
           window.dispatchEvent(new CustomEvent("revela:registry-update", {
-            detail: { businessID, logID: complianceFlag.id },
+             detail: { localMutation: true, businessID, logID: complianceFlag.id },
           }));
           await Swal.fire({
             icon: "success", title: "Compliance confirmed",
@@ -5051,6 +5055,7 @@ export default function MapPage() {
           token={token}
           onClose={() => setDispatchTarget(null)}
           onSuccess={() => {
+            window.dispatchEvent(new CustomEvent("revela:inspection-update", { detail: { localMutation: true } }));
             setDispatchTarget(null);
             handleCloseDetailModal();
             fetchFlags();
@@ -5063,7 +5068,7 @@ export default function MapPage() {
           barangays={barangays}
           token={token}
           onClose={() => setIsBatchDispatchOpen(false)}
-          onSuccess={() => fetchFlags()}
+          onSuccess={() => { window.dispatchEvent(new CustomEvent("revela:inspection-update", { detail: { localMutation: true } })); fetchFlags(); }}
         />
       </AnimatePresence>
 
@@ -5078,7 +5083,7 @@ export default function MapPage() {
             setIsPickingYellowLocation(true);
           }}
           onClose={() => setShowYellowModal(false)}
-          onSuccess={() => { setShowYellowModal(false); setYellowDraft(null); fetchFlags(); }}
+          onSuccess={() => { window.dispatchEvent(new CustomEvent("revela:yellow-flag", { detail: { localMutation: true } })); setShowYellowModal(false); setYellowDraft(null); fetchFlags(); }}
         />
       </AnimatePresence>
 

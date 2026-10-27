@@ -296,11 +296,15 @@ function formatTimeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick }) {
+function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick, onLogout, logoutPending }) {
   const { token, user: authUser, refreshUser } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationButtonRef = useRef(null);
   const notificationPopoverRef = useRef(null);
+  const refreshDetailsRef = useRef(null);
+  const location = useLocation();
+  const pageTitle = location.pathname === "/inspections/calendar" ? "Inspection Calendar" :
+    NAV_ITEMS.flatMap(group => group.items).find(item => item.path === location.pathname)?.label;
   const navigate = useNavigate();
   const appRefresh = useRefreshCoordinator();
   const refreshState = useRefreshSnapshot();
@@ -350,6 +354,10 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
   const remaining = refreshState?.nextRefresh == null || !clock ? null : Math.max(0, refreshState.nextRefresh - clock);
   const countdown = remaining == null ? "After first sync" : remaining === 0 ? "Due" :
     `${Math.floor(remaining / 3600000)}:${String(Math.floor(remaining / 60000) % 60).padStart(2, "0")}:${String(Math.floor(remaining / 1000) % 60).padStart(2, "0")}`;
+  const refreshStatus = isSyncing ? "Refreshing…" : refreshState?.status === "partial-failure" ? "Partially updated" :
+    refreshState?.status === "failure" ? "Refresh failed" : refreshState?.stale ? "Changes available" :
+    remaining == null ? "Waiting for first refresh" : `Next refresh in ${countdown}`;
+  const lastSuccess = refreshState?.lastSuccess ? new Date(refreshState.lastSuccess).toLocaleString() : "No successful refresh yet";
 
   useEffect(() => {
     if (!token || !isAdmin) return undefined;
@@ -485,6 +493,9 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   useEffect(() => {
     const handleClickOutside = (event) => {
+      if (refreshDetailsRef.current?.open && !refreshDetailsRef.current.contains(event.target)) {
+        refreshDetailsRef.current.open = false;
+      }
       if (
         showNotifications &&
         notificationPopoverRef.current &&
@@ -555,18 +566,6 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   return (
     <header className="top-navbar frosted-glass">
-      <style>{`
-        @keyframes snippetBounce {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-4px); }
-        }
-        @keyframes snippetPulse {
-          0% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.6; transform: scale(0.9); }
-          100% { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
-
       {/*<div className="search-bar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <circle cx="11" cy="11" r="8" />
@@ -575,35 +574,21 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
         <input type="text" placeholder="Search businesses, barangays..." />
       </div>*/}
 
+      {pageTitle && <span className="top-nav-title">{pageTitle}</span>}
       <div className="top-nav-right">
-        {/* Live sync pill badge */}
-        <div
-          className="live-sync-badge"
-          title={`Server Sync Status: ${isLiveConnected ? "Connected (Real-time SSE active)" : "Polling (Auto-reconnecting)"}`}
-        >
-          <span className={`live-dot ${isLiveConnected ? "" : "live-dot--offline"}`} />
-          <span>{isLiveConnected ? "Live Sync" : "Syncing…"}</span>
-        </div>
-
-        {/* Instant manual sync button */}
-        <div className="app-refresh-controls" role="group" aria-label="Application data refresh" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "var(--color-muted)" }}>
-          <label htmlFor="app-refresh-mode">Auto refresh</label>
+        <div className="app-refresh-controls" role="group" aria-label="Application data refresh">
+          <div className="app-refresh-main">
+          <label className="sr-only" htmlFor="app-refresh-mode">Auto refresh interval</label>
           <select id="app-refresh-mode" value={refreshState?.mode ?? "medium"}
-            onChange={event => appRefresh?.setMode(event.target.value)}
-            style={{ background: "var(--color-surface)", color: "var(--color-ink)", border: "1px solid var(--color-border)", borderRadius: 7, padding: "5px 7px" }}>
+            onChange={event => appRefresh?.setMode(event.target.value)}>
             {Object.entries(REFRESH_MODES).map(([name, ms]) =>
               <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)} · {ms === 60000 ? "1 min" : ms === 900000 ? "15 min" : ms === 3600000 ? "1 hour" : "24 hours"}</option>)}
           </select>
-          <span title={refreshState?.lastSuccess ? new Date(refreshState.lastSuccess).toLocaleString() : "No successful sync yet"}>
-            Last: {refreshState?.lastSuccess ? new Date(refreshState.lastSuccess).toLocaleTimeString() : "—"} · Next: {countdown}{refreshState?.stale ? " · Changed" : ""}
-          </span>
-          <span role="status" aria-live="polite">{refreshState?.status === "idle" ? "" : refreshState?.status === "loading" ? "Syncing…" : refreshState?.status === "success" ? "Synced" : refreshState?.status === "partial-failure" ? "Partially updated" : "Sync failed"}</span>
-        </div>
-        <button
+          <button
           className="quick-refresh-icon-btn"
           type="button"
           aria-label="Refresh Data"
-          title="Refresh All Data (In-Place)"
+          title="Refresh data now"
           onClick={handleGlobalSync}
           disabled={isSyncing}
         >
@@ -620,7 +605,25 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           >
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
           </svg>
-        </button>
+          </button>
+          <details className={`app-refresh-details${["failure", "partial-failure"].includes(refreshState?.status) ? " app-refresh-details--error" : ""}`} ref={refreshDetailsRef} onKeyDown={event => {
+            if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
+          }}>
+            <summary aria-label={`Refresh details: ${refreshStatus}`} title="Refresh details">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>
+            </summary>
+            <div className="app-refresh-popover">
+              <strong>Data refresh</strong>
+              <p>Last successful refresh: {lastSuccess}</p>
+              <p>{refreshStatus}</p>
+              {refreshState?.errors?.length > 0 && <div className="app-refresh-errors" role="alert">{refreshState.errors.map((error, index) => <p key={index}>{error}</p>)}</div>}
+            </div>
+          </details>
+          </div>
+          <span className={`app-refresh-status${["failure", "partial-failure"].includes(refreshState?.status) ? " app-refresh-status--error" : ""}`} role="status" aria-live="polite">{refreshStatus}</span>
+        </div>
+
+        <span className="top-nav-separator" aria-hidden="true" />
 
         <div className="notification-wrapper" style={{ position: "relative" }}>
           <button
@@ -629,6 +632,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
             type="button"
             aria-label="Notifications"
             aria-expanded={showNotifications}
+            aria-controls="notification-panel"
             onClick={toggleNotifications}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -641,77 +645,36 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           </button>
 
           {isAdmin && unreadCount > 0 && showSnippet && !showNotifications && notifications.length > 0 && (
-            <div 
+            <div
+              className="notification-snippet"
               onClick={toggleNotifications}
-              style={{
-                position: "absolute",
-                top: "calc(100% + 14px)",
-                right: "-6px",
-                background: "var(--color-primary)",
-                color: "#fff",
-                padding: "10px 14px",
-                borderRadius: "var(--radius-md)",
-                boxShadow: "0 10px 25px rgba(86,171,47,0.35)",
-                cursor: "pointer",
-                zIndex: 90,
-                animation: "snippetBounce 3s ease-in-out infinite",
-                border: "1px solid rgba(255,255,255,0.2)",
-                minWidth: "max-content",
-                maxWidth: "280px"
-              }}
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleNotifications(); } }}
+              role="button"
+              tabIndex={0}
+              aria-label={`${unreadCount} new notification${unreadCount > 1 ? "s" : ""}. Open notifications`}
             >
-              {/* Pointer triangle */}
-              <div style={{
-                position: "absolute",
-                top: "-6px",
-                right: "18px",
-                width: 0,
-                height: 0,
-                borderLeft: "6px solid transparent",
-                borderRight: "6px solid transparent",
-                borderBottom: "6px solid var(--color-primary)"
-              }}></div>
-              
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.9, fontWeight: 700 }}>
+              <div className="notification-snippet-header">
+                <span>
                   {unreadCount} New Alert{unreadCount > 1 ? 's' : ''}
-                </div>
+                </span>
                 <button
                   type="button"
                   aria-label="Dismiss alert popup"
                   title="Dismiss"
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "rgba(255,255,255,0.85)",
-                    cursor: "pointer",
-                    fontSize: "11px",
-                    lineHeight: 1,
-                    padding: "2px 4px",
-                    marginLeft: "8px",
-                    borderRadius: "3px"
-                  }}
                   onClick={(e) => {
                     e.stopPropagation();
                     setDismissedAlertId(notifications[0]?.id ?? null);
                   }}
-                  onMouseEnter={(e) => e.currentTarget.style.color = "#fff"}
-                  onMouseLeave={(e) => e.currentTarget.style.color = "rgba(255,255,255,0.85)"}
                 >
                   ✕
                 </button>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--color-modal-bg)", display: "inline-block", animation: "snippetPulse 2s infinite", flexShrink: 0 }}></span>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {notifications[0].title}
-                </span>
-              </div>
+              <strong>{notifications[0].title}</strong>
             </div>
           )}
 
           {showNotifications && (
-            <div className="notification-popover" ref={notificationPopoverRef}>
+            <div className="notification-popover" id="notification-panel" ref={notificationPopoverRef}>
               <div className="notification-popover__header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span>Notifications</span>
                 <div style={{ display: "flex", gap: 4, marginTop: -2 }}>
@@ -741,6 +704,10 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
                     </svg>
                   </button>
                 </div>
+              </div>
+              <div className="notification-connection" role="status">
+                <span className={`notification-connection-dot${isLiveConnected ? "" : " notification-connection-dot--offline"}`} aria-hidden="true" />
+                {isAdmin ? isLiveConnected ? "Notification stream connected" : "Notification stream reconnecting · alerts checked periodically" : "Notification stream unavailable for this account"}
               </div>
               <div className="notification-list" style={{ maxHeight: "560px", overflowY: "auto", overscrollBehavior: "contain" }}>
                 {!isAdmin && (
@@ -821,12 +788,19 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           className="nav-profile"
           type="button"
           onClick={onProfileClick}
+          aria-label={`Account: ${user.name}. Open profile`}
         >
           <div className="nav-avatar">{user.initials}</div>
           <div className="nav-user-info">
-            <span className="welcome-text">Welcome</span>
-            <span className="user-name">{user.name} ▾</span>
+            <span className="user-name">{user.name}</span>
           </div>
+          <span className="nav-profile-chevron" aria-hidden="true">⌄</span>
+        </button>
+        <button className="nav-logout" type="button" onClick={onLogout} disabled={logoutPending} aria-busy={logoutPending}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" />
+          </svg>
+          Logout
         </button>
       </div>
     </header>
@@ -929,7 +903,7 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
 
       <div className="saas-main">
         <div className="ambient-bg-mesh" />
-        <TopNavbar user={displayUser} onProfileClick={() => setShowProfileModal(true)} />
+        <TopNavbar user={displayUser} onProfileClick={() => setShowProfileModal(true)} onLogout={handleLogout} logoutPending={logoutPending} />
 
         {/* Each page owns its .saas-content padding via this wrapper */}
         <main className="saas-content">
