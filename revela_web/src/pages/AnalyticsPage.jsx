@@ -1,4 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useSearchParams } from "react-router-dom";
+import { analyticsRoute } from "./analyticsNavigation";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
@@ -818,16 +820,32 @@ const GlobalAIAssistant = memo(({ globalData }) => {
 export default function AnalyticsPage() {
   const { token, user } = useAuth();
   const canEditWlc = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
-  const [activeTab, setActiveTab] = useState("descriptive");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const route = analyticsRoute(searchParams);
+  const activeTab = route.tab;
+  const setActiveTab = (tab) => setSearchParams(previous => {
+    const next = new URLSearchParams(previous);
+    next.set("tab", tab);
+    return next;
+  });
   const [showFloatingNav, setShowFloatingNav] = useState(false);
   const sectionNavRef = useRef(null);
   const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
   const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
 
-  const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
-  const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
+  const [draftFilters, setDraftFilters] = useState(() => ({ ...createEmptyFilters(), barangay_ids: route.barangayId ? [route.barangayId] : [] }));
+  const [appliedFilters, setAppliedFilters] = useState(() => ({ ...createEmptyFilters(), barangay_ids: route.barangayId ? [route.barangayId] : [] }));
+  const routeBarangay = route.barangayId;
+  const [lastRouteBarangay, setLastRouteBarangay] = useState(routeBarangay);
+  if (lastRouteBarangay !== routeBarangay) {
+    setLastRouteBarangay(routeBarangay);
+    setDraftFilters(previous => ({ ...previous, barangay_ids: routeBarangay ? [routeBarangay] : [] }));
+    setAppliedFilters(previous => ({ ...previous, barangay_ids: routeBarangay ? [routeBarangay] : [] }));
+  }
+  const effectiveFilters = useMemo(() => activeTab === "prescriptive"
+    ? { barangay_ids: appliedFilters.barangay_ids } : appliedFilters, [activeTab, appliedFilters]);
   const [wlcSnapshot, setWlcSnapshot] = useSessionDataset("analytics:settings", "wlc", null,
-    `analytics:${JSON.stringify(appliedFilters)}`);
+    `analytics:${JSON.stringify(effectiveFilters)}`);
   const [wlcConfig, setWlcConfig] = useState(() => wlcSnapshot ?? { ...DEFAULT_WLC_WEIGHTS });
   const [showWlcConfig, setShowWlcConfig] = useState(false);
   const [savingWlc, setSavingWlc] = useState(false);
@@ -836,7 +854,7 @@ export default function AnalyticsPage() {
   const wlcValidationError = wlcPolicyError(wlcConfig);
   const [expandedDispatch, setExpandedDispatch] = useState({});
   const [filterOptions, setFilterOptions] = useSessionDataset("analytics:options", "filters", null,
-    `analytics:${JSON.stringify(appliedFilters)}`);
+    `analytics:${JSON.stringify(effectiveFilters)}`);
   const filterMeta = filterOptions?.meta ?? null;
   const barangaysList = filterOptions?.barangays ?? EMPTY_FILTER_BARANGAYS;
   const [filterMetaError, setFilterMetaError] = useState(false);
@@ -860,7 +878,7 @@ export default function AnalyticsPage() {
       return !failed;
     } finally { window.clearTimeout(timer); }
   }, [token, setFilterOptions]);
-  const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, appliedFilters, undefined, "analytics", () => loadFilterOptions());
+  const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, effectiveFilters, undefined, "analytics", () => loadFilterOptions());
   const currentSection = sections[activeTab];
   const data = useMemo(() => Object.fromEntries(
     Object.entries(sections).map(([name, section]) => [name, section.data]),
@@ -1145,6 +1163,12 @@ export default function AnalyticsPage() {
   const activeFilterCount = countActiveBackendFilters(appliedFilters);
 
   const handleApplyFilters = () => {
+    if (activeTab === "prescriptive") {
+      const next = new URLSearchParams(searchParams);
+      if (draftFilters.barangay_ids[0]) next.set("barangay_id", String(draftFilters.barangay_ids[0]));
+      else next.delete("barangay_id");
+      setSearchParams(next);
+    }
     setAppliedFilters({
       ...draftFilters,
       barangay_ids: [...draftFilters.barangay_ids],
@@ -1152,6 +1176,9 @@ export default function AnalyticsPage() {
   };
 
   const handleClearFilters = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("barangay_id");
+    setSearchParams(next);
     const empty = createEmptyFilters();
     setDraftFilters(empty);
     setAppliedFilters(empty);
@@ -1716,6 +1743,12 @@ export default function AnalyticsPage() {
                       const newIds = val ? [parseInt(val, 10)] : [];
                       setDraftFilters((d) => ({ ...d, barangay_ids: newIds }));
                       setAppliedFilters((a) => ({ ...a, barangay_ids: newIds }));
+                      if (activeTab === "prescriptive") {
+                        const next = new URLSearchParams(searchParams);
+                        if (newIds[0]) next.set("barangay_id", String(newIds[0]));
+                        else next.delete("barangay_id");
+                        setSearchParams(next);
+                      }
                     }}
                     style={filterInputStyle}
                   >

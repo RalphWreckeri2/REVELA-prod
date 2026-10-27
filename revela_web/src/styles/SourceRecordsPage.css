@@ -1,0 +1,13 @@
+.source-records-page .saas-content { padding: 28px 32px; }
+.source-records-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+.source-records-header h1 { margin: 0; font-size: 23px; }
+.source-records-header p { margin: 6px 0; color: var(--color-muted); }
+.source-records-header a, .source-records-list a { color: var(--color-ink); }
+.source-records-list { list-style: none; padding: 0; display: grid; gap: 8px; }
+.source-records-list a { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 14px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-card-alt); text-decoration: none; }
+.source-records-list a:hover, .source-records-list a:focus-visible { border-color: var(--color-primary); outline-offset: 2px; }
+.source-records-pagination { display: flex; gap: 10px; }
+.source-records-pagination button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--color-border); color: var(--color-ink); background: var(--color-card-alt); cursor: pointer; }
+.source-records-pagination button:disabled { opacity: .5; cursor: default; }
+.source-records-pagination button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+@media (max-width: 768px) { .source-records-page .saas-content { padding: 72px 16px 24px; } }

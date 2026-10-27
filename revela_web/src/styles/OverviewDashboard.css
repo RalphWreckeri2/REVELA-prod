@@ -150,8 +150,7 @@
   flex-shrink: 0;
 }
 
-/* Welcome hero: keep the greeting and independent shortcuts on the left,
-   clock/weather side by side on the right, with system status underneath. */
+/* Compact welcome; operational cards carry the primary visual weight. */
 .overview-page .hero-banner {
   position: relative;
   display: grid;
@@ -208,68 +207,6 @@
   line-height: 1.65;
 }
 
-.overview-page .hero-shortcuts {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.overview-page .hero-shortcut {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  min-width: 0;
-  padding: 6px 12px 6px 7px;
-  border: 1px solid rgb(77 113 50 / 9%);
-  border-radius: 11px;
-  background: rgb(255 255 255 / 68%);
-  color: var(--color-ink);
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 600;
-  text-decoration: none;
-  transition: background 150ms ease, border-color 150ms ease;
-}
-
-.overview-page .hero-shortcut:hover {
-  background: var(--overview-surface);
-  border-color: rgb(77 113 50 / 22%);
-}
-
-.overview-page .hero-shortcut-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  background: var(--color-primary-light);
-  color: var(--overview-accent);
-}
-
-.overview-page .hero-shortcut-icon.is-registry {
-  background: var(--color-gold-light);
-  color: #876216;
-}
-
-.overview-page .hero-shortcut-arrow {
-  margin-left: auto;
-  color: var(--overview-muted);
-}
-
-.overview-page .overview-refresh {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.overview-page .overview-refresh:disabled {
-  color: var(--overview-muted);
-  cursor: wait;
-}
-
 .overview-page .hero-right {
   display: flex;
   flex-direction: column;
@@ -284,8 +221,7 @@
   flex: initial;
 }
 
-.overview-page .hero-card,
-.overview-page .hero-status-card {
+.overview-page .hero-card {
   min-width: 0;
   margin: 0;
   padding: 15px;
@@ -389,132 +325,6 @@
 .overview-page .hero-weather-icon:is(.is-cloud, .is-fog, .is-rain, .is-snow, .is-thunderstorm, .is-unknown) {
   background: var(--color-card-alt);
   color: var(--overview-muted);
-}
-
-.overview-page .hero-status-card {
-  display: block;
-  flex: initial;
-}
-
-.overview-page .hero-status-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px 12px;
-  margin-bottom: 12px;
-}
-
-.overview-page .hero-status-card h2 {
-  margin: 0;
-  color: var(--color-ink);
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 700;
-}
-
-.overview-page .hero-status-card dl {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin: 0;
-}
-
-.overview-page .hero-status-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 3px 12px;
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.overview-page .hero-status-row dt {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--overview-muted);
-}
-
-.overview-page .hero-status-row dd {
-  margin: 0 0 0 auto;
-  color: var(--color-ink);
-  font-weight: 600;
-}
-
-.overview-page .hero-status-dot {
-  width: 6px;
-  height: 6px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--color-subtle);
-  box-shadow: none;
-  animation: none;
-}
-
-.overview-page .hero-status-row.is-ready .hero-status-dot { background: var(--color-primary); }
-.overview-page .hero-status-row.is-wait .hero-status-dot { background: var(--color-warning); }
-.overview-page .hero-status-row.is-error .hero-status-dot { background: var(--color-danger); }
-.overview-page .hero-status-row.is-ready dd { color: var(--overview-accent); }
-.overview-page .hero-status-row.is-error dd { color: var(--overview-danger); }
-
-/* A single KPI summary with primary and supporting emphasis. */
-.overview-page .overview-kpis-primary,
-.overview-page .overview-kpis-supporting {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-template-rows: auto auto auto;
-  gap: 0;
-  margin: 20px 0 0;
-}
-
-.overview-page .overview-kpis-supporting {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--overview-border);
-}
-
-.overview-page .overview-metric {
-  display: grid;
-  grid-template-rows: subgrid;
-  grid-row: span 3;
-  min-width: 0;
-  padding: 0 18px;
-}
-
-.overview-page .overview-metric:first-child { padding-left: 0; }
-.overview-page .overview-metric:last-child { padding-right: 0; }
-.overview-page .overview-metric + .overview-metric { border-left: 1px solid var(--overview-border); }
-
-.overview-page .overview-metric dt {
-  color: var(--overview-muted);
-  font-size: 13px;
-  line-height: 1.5;
-  font-weight: 600;
-}
-
-.overview-page .overview-metric dd {
-  margin: 6px 0;
-  color: var(--color-ink);
-  font-size: 36px;
-  line-height: 1.2;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.8px;
-  overflow-wrap: anywhere;
-}
-
-.overview-page .overview-metric.metric-1 dd { color: var(--overview-accent); }
-.overview-page .overview-kpis-supporting dd { font-size: 25px; }
-.overview-page .overview-metric.metric-4 dd { color: var(--overview-danger); }
-
-.overview-page .overview-metric p {
-  margin: 0;
-  color: var(--overview-muted);
-  font-size: 12px;
-  line-height: 1.6;
 }
 
 .overview-page .overview-explanation {
@@ -744,20 +554,6 @@
 @container overview-main (max-width: 680px) {
   .overview-page .hero-banner { grid-template-columns: minmax(0, 1fr); }
   .overview-page .hero-sub { max-width: 60ch; }
-  .overview-page .hero-shortcuts { max-width: 100%; }
-}
-
-@container overview-main (max-width: 480px) {
-  .overview-page .overview-kpis-supporting { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; gap: 14px; }
-  .overview-page .overview-kpis-supporting .overview-metric { display: block; grid-row: auto; padding: 0; border-left: 0; }
-  .overview-page .overview-kpis-supporting .overview-metric + .overview-metric { padding-top: 14px; border-top: 1px solid var(--overview-border); }
-}
-
-@container overview-main (max-width: 370px) {
-  .overview-page .hero-cards,
-  .overview-page .overview-kpis-primary { grid-template-columns: minmax(0, 1fr); }
-  .overview-page .overview-kpis-primary { grid-template-rows: none; gap: 16px; }
-  .overview-page .overview-kpis-primary .overview-metric { display: block; grid-row: auto; padding: 0; border-left: 0; }
 }
 
 @media (max-width: 1200px) {
@@ -783,16 +579,75 @@ html.theme-dark .overview-page {
 }
 
 html.theme-dark .overview-page .hero-banner { background: linear-gradient(115deg, #15271d 0%, #1c2b22 52%, #302d1b 100%); border-color: var(--overview-border); box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%); }
-html.theme-dark .overview-page .hero-card,
-html.theme-dark .overview-page .hero-status-card,
-html.theme-dark .overview-page .hero-shortcut { background: rgb(255 255 255 / 4%); border-color: rgb(255 255 255 / 8%); }
-html.theme-dark .overview-page .hero-shortcut:hover { background: rgb(255 255 255 / 8%); }
+html.theme-dark .overview-page .hero-card { background: rgb(255 255 255 / 4%); border-color: rgb(255 255 255 / 8%); }
 html.theme-dark .overview-page .hero-card-foot { border-color: rgb(255 255 255 / 10%); }
-html.theme-dark .overview-page .hero-shortcut-icon.is-registry,
 html.theme-dark .overview-page .hero-weather-icon { color: var(--color-gold); }
 html.theme-dark .overview-page .hero-weather-icon:is(.is-cloud, .is-fog, .is-rain, .is-snow, .is-thunderstorm, .is-unknown) { color: var(--overview-muted); }
 html.theme-dark .overview-page .overview-priority-category.is-medium { color: var(--flag-yellow-text); }
 html.theme-dark .overview-page .calendar-widget-day.is-selected { color: #102019; }
+
+.overview-page .hero-banner {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+}
+.overview-page .hero-greeting { margin: 3px 0; font-size: clamp(21px, 2vw, 28px); }
+.overview-page .hero-greeting br { display: none; }
+.overview-page .hero-sub { margin: 0; font-size: 12px; }
+.overview-page .hero-cards { gap: 8px; }
+.overview-page .hero-card { padding: 9px 12px; gap: 2px; }
+.overview-page .hero-card-foot, .overview-page .hero-card-loc { display: none; }
+.overview-page .hero-clock { margin: 0; font-size: 20px; }
+.overview-page .hero-temp { font-size: 21px; }
+.overview-page .hero-weather-icon { width: 28px; height: 28px; }
+.overview-page .hero-weather-icon svg { width: 20px; height: 20px; }
+.overview-page .overview-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.overview-page .source-grid, .overview-page .age-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.overview-page .overview-action-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 98px;
+  min-width: 0;
+  padding: 14px 38px 12px 14px;
+  border: 1px solid var(--overview-border);
+  border-radius: 12px;
+  background: var(--color-card-alt);
+  color: var(--color-ink);
+  text-decoration: none;
+  transition: border-color 150ms ease, transform 150ms ease, background 150ms ease;
+}
+.overview-page .overview-action-card:hover, .overview-page .overview-action-card:focus-visible {
+  border-color: var(--overview-accent);
+  background: var(--color-hover);
+  transform: translateY(-2px);
+}
+.overview-page .overview-action-label { font-size: 12px; font-weight: 650; }
+.overview-page .overview-action-card strong { margin: 6px 0 3px; font-size: 25px; line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.overview-page .overview-action-card small { color: var(--overview-muted); font-size: 11px; line-height: 1.35; }
+.overview-page .overview-action-arrow { position: absolute; top: 17px; right: 12px; width: 16px; color: var(--overview-accent); }
+.overview-page .overview-age-title { margin: 18px 0 0; font-size: 13px; }
+.overview-page .overview-scope-note a { color: var(--overview-accent); }
+.dispatch-workload-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin: 10px 0; font-size: 13px; }
+.dispatch-workload-navigation button { padding: 5px 10px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-ink); background: var(--color-card-alt); cursor: pointer; }
+.dispatch-workload-navigation button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.dispatch-workload-navigation button:disabled { opacity: .5; cursor: default; }
+@container overview-main (max-width: 560px) {
+  .overview-page .source-grid, .overview-page .age-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container overview-main (max-width: 390px) {
+  .overview-page .hero-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-page .overview-action-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 680px) {
+  .overview-page .hero-banner { grid-template-columns: minmax(0, 1fr); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .overview-page .overview-dashboard-layout *,

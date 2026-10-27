@@ -530,6 +530,58 @@ def get_inspections():
     return jsonify(result), 200
 
 
+@inspections_bp.route("/workload", methods=["GET"])
+@admin_required()
+def inspection_workload():
+    """Shared current-report population for the dashboard and Dispatch drill-down."""
+    from datetime import datetime, timedelta
+    from app import mysql
+    from api.inspections.workload import (
+        VIEWS, build_summary, current_rows, hidden_open_count, list_page,
+    )
+
+    view = request.args.get("view", "all")
+    if view not in VIEWS:
+        return jsonify({"error": "Invalid workload view"}), 400
+    page = request.args.get("page", 1, type=int)
+    limit = request.args.get("limit", 20, type=int)
+    if page < 1 or not 1 <= limit <= 100:
+        return jsonify({"error": "Invalid pagination"}), 400
+    report_id = request.args.get("reportID", type=int)
+    barangay_id = request.args.get("barangayID", type=int)
+    status = request.args.get("status")
+    if status and status not in ("Assigned", "Reassigned", "Submitted", "Verified", "In Progress"):
+        return jsonify({"error": "Invalid status"}), 400
+    deadline_date = None
+    if view == "deadline_day":
+        try:
+            deadline_date = datetime.strptime(request.args.get("deadlineDate", ""), "%Y-%m-%d").date()
+        except ValueError:
+            return jsonify({"error": "Invalid deadline date"}), 400
+    # MySQL's UTC clock matches the inspection event/submission write contract.
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute("SELECT UTC_TIMESTAMP(6) AS as_of")
+        as_of = cursor.fetchone()["as_of"]
+        if request.args.get("summary") == "1":
+            rows = current_rows(cursor)
+            scoped = [r for r in rows if barangay_id is None or r["barangayID"] == barangay_id]
+            hidden = hidden_open_count(cursor, barangay_id)
+            return jsonify(build_summary(scoped, as_of, hidden)), 200
+        total, ids = list_page(cursor, as_of, view, page, limit, barangay_id, report_id, deadline_date, status)
+    finally:
+        cursor.close()
+    result, error = get_all_inspections(report_ids=ids, per_page=max(len(ids), 1))
+    if error:
+        return jsonify({"error": error}), 500
+    by_id = {row["reportID"]: row for row in result["data"]}
+    result.update(data=[by_id[key] for key in ids if key in by_id], total=total,
+                  page=page, per_page=limit, pages=max(1, -(-total // limit)),
+                  as_of=as_of.isoformat() + "Z",
+                  period_from=(as_of - timedelta(days=30)).isoformat() + "Z" if view == "resolution" else None)
+    return jsonify(result), 200
+
+
 # ── GET /api/inspections/evidence-storage-stats ──────────────────────────────
 @inspections_bp.route("/evidence-storage-stats", methods=["GET", "OPTIONS"])
 @admin_required()

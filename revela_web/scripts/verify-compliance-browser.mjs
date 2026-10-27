@@ -56,6 +56,8 @@ try {
   const scenarios = smokePage === "compliance-smoke"
     ? [[1440, 900], [820, 1000], [768, 600], [1280, 480]]
       .flatMap(([width, height]) => ["light", "dark"].map(theme => ({ width, height, theme })))
+    : smokePage === "actionable-smoke"
+      ? [[1440, 900], [820, 1000], [768, 600]].map(([width, height]) => ({ width, height, theme: "light" }))
     : [{ width: 820, height: 1000, theme: "light" }];
   for (const { width, height, theme } of scenarios) {
     await call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);

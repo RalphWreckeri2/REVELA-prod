@@ -13,7 +13,7 @@ import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
 import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
 import {
-  getInspectionsRequest,
+  getInspectionWorkloadRequest,
   getInspectorTasksRequest,
   assignInspectionRequest,
   reassignSubmittedInspectionRequest,
@@ -998,7 +998,18 @@ function KanbanColumn({ status, reports, onViewDetail, isCollapsed, onToggleColl
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function InspectionPage() {
   const { token, user } = useContext(AuthContext);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = ["open", "overdue", "oldest", "resolution", "age_0-3", "age_4-7", "age_8-14", "age_15+", "age_unavailable", "deadline_missing", "deadline_day"].includes(searchParams.get("view")) ? searchParams.get("view") : "all";
+  const page = Math.max(1, Number.parseInt(searchParams.get("page"), 10) || 1);
+  const reportID = /^\d+$/.test(searchParams.get("reportID") || "") ? searchParams.get("reportID") : null;
+  const deadlineDate = searchParams.get("deadlineDate");
+  const changeParams = (changes) => setSearchParams(previous => {
+    const next = new URLSearchParams(previous);
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null || value === "") next.delete(key); else next.set(key, String(value));
+    }
+    return next;
+  });
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
 
   const [error,     setError]     = useState("");
@@ -1025,10 +1036,12 @@ export default function InspectionPage() {
   const [detailTarget, setDetailTarget] = useState(null);
 
   // Filter state (admin only)
-  const [filterStatus, setFilterStatus] = useState("");
+  const filterStatus = searchParams.get("status") || "";
+  const setFilterStatus = status => changeParams({ status, view: null, page: null, reportID: null, deadlineDate: null });
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
+  useEffect(() => { setSearch(searchParams.get("search") || ""); }, [searchParams]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const requestKey = `inspections:${isAdmin ? filterStatus : "tasks"}`;
+  const requestKey = `inspections:${isAdmin ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}` : "tasks"}`;
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
   const reports = reportData?.data ?? [];
   const total = reportData?.total ?? 0;
@@ -1052,8 +1065,8 @@ export default function InspectionPage() {
     try {
       let result;
       if (isAdmin) {
-        result = await getInspectionsRequest(
-          { status: filterStatus || undefined, limit: 100 },
+        result = await getInspectionWorkloadRequest(
+          { status: filterStatus || undefined, view, page, reportID, deadlineDate, limit: 20 },
           token
         );
         if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
@@ -1061,7 +1074,8 @@ export default function InspectionPage() {
         result = await getInspectorTasksRequest(token);
         if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
       }
-      setReportData({ data: result.data ?? [], total: result.total ?? 0, total_rows: result.total_rows ?? result.total ?? 0 });
+      setReportData({ data: result.data ?? [], total: result.total ?? 0, total_rows: result.total_rows ?? result.total ?? 0,
+        as_of: result.as_of, period_from: result.period_from });
       setDetailTarget(current => current
         ? (result.data ?? []).find(row => row.reportID === current.reportID) ?? current
         : null);
@@ -1074,7 +1088,7 @@ export default function InspectionPage() {
     } finally {
       if (currentRequestKey.current === key && sequence === reportRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
-  }, [token, isAdmin, filterStatus, requestKey, hasReports, setReportData]);
+  }, [token, isAdmin, filterStatus, requestKey, hasReports, setReportData, view, page, reportID, deadlineDate]);
   const refreshView = useAppDataRefresh(requestKey, async reason => {
     const ok = await fetchReports(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };
@@ -1089,7 +1103,8 @@ export default function InspectionPage() {
 
   // Admin sees all 4 columns; inspectors only see Assigned + Reassigned
   const visibleCols = isAdmin
-    ? STATUS_COLS
+    ? (filterStatus === "In Progress" || reports.some(row => row.verificationStatus === "In Progress")
+      ? [...STATUS_COLS, "In Progress"] : STATUS_COLS)
     : ["Assigned", "Reassigned"];
 
   const openDetail = (report, trigger) => {
@@ -1152,8 +1167,8 @@ export default function InspectionPage() {
           <label htmlFor="dispatch-search">Search loaded inspections</label>
           <div className="dispatch-search-input">
             <Icon.Search />
-            <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, or area..." value={search} onChange={event => setSearch(event.target.value)} />
-            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); searchRef.current.focus(); }}><Icon.X /></button>}
+            <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, or area..." value={search} onChange={event => { setSearch(event.target.value); changeParams({ search: event.target.value }); }} />
+            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); changeParams({ search: null }); searchRef.current.focus(); }}><Icon.X /></button>}
           </div>
         </div>
         {isAdmin && (
@@ -1162,6 +1177,7 @@ export default function InspectionPage() {
             <select id="dispatch-status" value={filterStatus} onChange={event => setFilterStatus(event.target.value)}>
               <option value="">All Statuses</option>
               {STATUS_COLS.map(status => <option key={status} value={status}>{status}</option>)}
+              <option value="In Progress">In Progress (legacy)</option>
             </select>
           </div>
         )}
@@ -1175,6 +1191,15 @@ export default function InspectionPage() {
           )}
         </div>
       </div>
+
+      {isAdmin && <nav className="dispatch-workload-navigation" aria-label="Inspection results pagination">
+        <span>{view !== "all" ? `View: ${view.replaceAll("_", " ")} · ` : ""}{reportID ? `Report #${reportID} · ` : ""}Page {page} of {Math.max(1, Math.ceil(total / 20))}{reportData?.as_of ? ` · As of ${reportData.as_of} UTC` : ""}</span>
+        {view !== "all" && <button type="button" onClick={() => changeParams({ view: null, reportID: null, deadlineDate: null, page: null })}>Clear workload filter</button>}
+        <button type="button" disabled={page <= 1} onClick={() => changeParams({ page: page - 1 })}>Previous</button>
+        <button type="button" disabled={page * 20 >= total} onClick={() => changeParams({ page: page + 1 })}>Next</button>
+      </nav>}
+      {isAdmin && reportID && !loading && hasReports && total === 0 && <p role="status">This report no longer matches the current filter. Results were recalculated when this page opened.</p>}
+      {isAdmin && view === "resolution" && reportData?.period_from && <p role="status">Submissions received {reportData.period_from} to {reportData.as_of} · UTC · {total} valid reports</p>}
 
       {error && (
         <div style={s.errorBanner} role="alert">

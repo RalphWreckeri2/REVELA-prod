@@ -1737,7 +1737,7 @@ def verify_inspection(report_id, verified_by_user_id=None, update_location=False
 
 # ── Get all inspections (admin) ───────────────────────────────────────────────
 
-def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
+def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20, report_ids=None):
     """
     Admin view: paginated inspection reports with flag + inspector details.
     Filterable by verificationStatus and barangayID.
@@ -1756,6 +1756,14 @@ def get_all_inspections(status=None, barangay_id=None, page=1, per_page=20):
         if barangay_id:
             conditions.append("g.barangayID = %s")
             params.append(barangay_id)
+
+        if report_ids is not None:
+            if not report_ids:
+                cursor.close()
+                return {"data": [], "total": 0, "total_rows": 0, "page": page,
+                        "per_page": per_page, "pages": 1}, None
+            conditions.append("ir.reportID IN (" + ",".join(["%s"] * len(report_ids)) + ")")
+            params.extend(report_ids)
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
         offset = (page - 1) * per_page

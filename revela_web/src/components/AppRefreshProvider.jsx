@@ -4,10 +4,10 @@ import { createAppRefreshCoordinator } from "../services/appRefreshCoordinator";
 import { RefreshContext } from "./appRefreshContext";
 
 const EVENT_VIEWS = {
-  "inspection-update": ["home", "map", "analytics", "inspections", "reports", "calendar"],
-  "yellow-flag": ["home", "map", "analytics"],
-  "flag-update": ["home", "map", "analytics", "inspections", "reports"],
-  "registry-update": ["home", "map", "analytics", "registry", "inspections", "reports"],
+  "inspection-update": ["home", "map", "source-records", "analytics", "inspections", "reports", "calendar"],
+  "yellow-flag": ["home", "map", "source-records", "analytics"],
+  "flag-update": ["home", "map", "source-records", "analytics", "inspections", "reports"],
+  "registry-update": ["home", "map", "source-records", "analytics", "registry", "inspections", "reports"],
   "registry-progress": ["registry"],
   "user-update": ["home", "map", "analytics", "inspections", "users"],
   "password-reset": ["users"],

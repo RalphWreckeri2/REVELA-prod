@@ -499,6 +499,7 @@ export async function getRegistryRequest(params = {}, token) {
     const res = await fetch(`${BASE_URL}/registry/?${qs.toString()}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
+      signal: params.signal,
     });
     return await handleResponse(res);
   } catch (err) {
@@ -647,6 +648,8 @@ export async function getFlagsRequest(params = {}, token) {
     if (params.limit) qs.set("limit", params.limit);
     if (params.color) qs.set("color", params.color);
     if (params.barangayID) qs.set("barangayID", params.barangayID);
+    if (params.origin) qs.set("origin", params.origin);
+    if (params.registryLink) qs.set("registryLink", params.registryLink);
 
     const res = await fetch(`${BASE_URL}/flags/?${qs.toString()}`, {
       method: "GET",
@@ -1138,6 +1141,17 @@ export async function getInspectionsRequest(params = {}, token) {
   } catch (err) {
     connectionGuard(err);
   }
+}
+
+export async function getInspectionWorkloadRequest(params = {}, token) {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (key !== "signal" && value !== undefined && value !== null && value !== "") qs.set(key, value);
+  }
+  const res = await fetch(`${BASE_URL}/inspections/workload?${qs}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: params.signal,
+  });
+  return handleResponse(res);
 }
 
 export async function getInspectionCalendarRequest(month, date, token) {

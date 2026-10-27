@@ -18,7 +18,7 @@ test("Map dropdowns have the requested defaults and exact option order", () => {
   assert.deepEqual(STATUS_OPTIONS.map(option => option.value),
     ["all", "in_inspection", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"]);
   assert.deepEqual(BUSINESS_SOURCE_OPTIONS.map(option => option.label),
-    ["All Sources", "Business Detection", "Inspector Report", "Official BPLO Registry"]);
+    ["All Sources", "Business Detection", "Inspector Report", "Official BPLO Registry", "Unclassified Origin"]);
   assert.deepEqual(MAP_REGISTRY_LINK_OPTIONS.map(option => option.label),
     ["All", "Linked to Registry", "Not in Registry", "Inspection-verified compliant · Not in Registry"]);
 });
@@ -100,7 +100,7 @@ test("View List, CSV and PDF share all filtered records, including beyond page o
   assert.equal(pdf.data.rows.at(-1)["Pin Reference"], "30");
   assert.equal(pdf.data.count, csv.data.length);
   assert.match(pdf.title, /Inspection-Verified Compliant Businesses/);
-  assert.match(pdf.subtitle, /Current compliance only/);
+  assert.match(pdf.subtitle, /current admin-verification evidence/);
   assert.match(pdf.date, /Asia\/Manila/);
   assert.match(pdf.data.filtersLabel, /Barangay I.*Not in Registry/);
   assert.ok(!report.columns.includes("Business ID"));

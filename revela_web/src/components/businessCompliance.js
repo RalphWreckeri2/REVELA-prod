@@ -19,6 +19,7 @@ export const BUSINESS_SOURCE_OPTIONS = Object.freeze([
   { value: "detection", label: "Business Detection" },
   { value: "manual", label: "Inspector Report" },
   { value: "registry", label: "Official BPLO Registry" },
+  { value: "unclassified", label: "Unclassified Origin" },
 ]);
 
 export const REGISTRY_LINK_OPTIONS = Object.freeze([
@@ -78,6 +79,7 @@ export function matchesMapFilters(record, {
       : color === status);
   const origin = record.originSource ?? record.source ?? "unknown";
   const sourceMatches = source === "all" || origin === source
+    || (source === "unclassified" && !["manual", "detection"].includes(origin))
     || (source === "registry" && origin === "registry_detected");
   const q = search.trim().toLowerCase();
   const referenceQuery = q.startsWith("#") ? q.slice(1).trim() : q;

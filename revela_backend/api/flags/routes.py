@@ -204,6 +204,12 @@ def get_flags_route():
     page = request.args.get("page",  1,  type=int)
     per_page = request.args.get("limit", 50, type=int)
     reported_by_user_id = request.args.get("reportedByUserID", type=int)
+    origin = request.args.get("origin")
+    registry_link = request.args.get("registryLink")
+    if origin is not None and origin not in ("detection", "manual", "unclassified"):
+        return jsonify({"error": "Invalid origin"}), 400
+    if registry_link is not None and registry_link != "unlinked":
+        return jsonify({"error": "Invalid registry link"}), 400
 
     result, error = get_flags(
         color=color,
@@ -211,6 +217,8 @@ def get_flags_route():
         page=page,
         per_page=per_page,
         reported_by_user_id=reported_by_user_id,
+        origin=origin,
+        registry_link=registry_link,
     )
     if error:
         return jsonify({"error": error}), 500

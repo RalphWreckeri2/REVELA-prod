@@ -3039,7 +3039,8 @@ def _registry_row_flag_color_sql(alias="r", *, ladder=False):
     return registry_row_color_sql(alias, ladder=ladder)
 
 
-def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_user_id=None):
+def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_user_id=None,
+              origin=None, registry_link=None):
     """
     Return paginated flag entries with optional filters.
 
@@ -3099,6 +3100,19 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             geo_conditions.append("g.reportedByUserID = %s")
             geo_params.append(reported_by_user_id)
             # When filtering by reporter, registry-only rows should be excluded
+            reg_conditions.append("FALSE")
+
+        # Source cards count pins with a persisted, non-registry origin only.
+        # Do not infer origin from place IDs, names, coordinates or reporter IDs.
+        if origin in ("detection", "manual", "unclassified"):
+            if origin == "unclassified":
+                geo_conditions.append(f"{origin_source_sql('g', cursor)} NOT IN ('detection', 'manual')")
+            else:
+                geo_conditions.append(f"{origin_source_sql('g', cursor)} = %s")
+                geo_params.append(origin)
+            reg_conditions.append("FALSE")
+        if registry_link == "unlinked":
+            geo_conditions.append(f"NOT ({registry_link_sql('g')})")
             reg_conditions.append("FALSE")
 
         if color:

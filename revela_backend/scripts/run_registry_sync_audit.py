@@ -89,6 +89,11 @@ def main():
                     guards.enter_context(patch.object(app, "create_app", forbidden))
                     guards.enter_context(patch("apscheduler.schedulers.background.BackgroundScheduler.start", forbidden))
                     from tests import test_registry_inspection_sync as integration
+                    # Additional read-only dashboard regressions use the same guarded,
+                    # disposable connection factory; never app environment credentials.
+                    if args.test and any(name.startswith("tests.test_dashboard_mysql") for name in args.test):
+                        from tests import test_dashboard_mysql as dashboard
+                        dashboard.connect_to_disposable_mysql = isolated_connect
                     if args.baseline:
                         from api.analytics import routes as analytics
                         for module, path in (

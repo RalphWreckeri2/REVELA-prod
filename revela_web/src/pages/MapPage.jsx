@@ -760,6 +760,7 @@ function normalizeFlag(flag) {
     address: flag.resolvedAddress ?? flag.nearestLandmark ?? "",
     notes: flag.notes || "",
     source: flag.originSource ?? "unknown",
+    registryLinked: flag.registryLinked === true || flag.registryLinked === 1,
     size: flag.businessSize ?? "—",
     coords,
     latitude: lat,
@@ -2792,8 +2793,9 @@ export default function MapPage() {
   const [filterBarangay, setFilterBarangay] = useState("all");
   const [search, setSearch] = useState("");
   const [satellite, setSatellite] = useState(false);
-  const [filterSource, setFilterSource] = useState("all");
-  const [filterRegistryLink, setFilterRegistryLink] = useState("all");
+  const mapParams = new URLSearchParams(location.search);
+  const filterSource = BUSINESS_SOURCE_OPTIONS.some(option => option.value === mapParams.get("source")) ? mapParams.get("source") : "all";
+  const filterRegistryLink = MAP_REGISTRY_LINK_OPTIONS.some(option => option.value === mapParams.get("registryLink")) ? mapParams.get("registryLink") : "all";
   const [locationsPage, setLocationsPage] = useState(1);
 
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
@@ -4283,8 +4285,11 @@ export default function MapPage() {
   const filteredCounts = Object.fromEntries(["Green", "Orange", "Red", "Yellow", "Purple", "Black"]
     .map(color => [color, visibleFlags.filter(flag => flag.color === color).length]));
   const clearViewFilters = () => {
-    setFilterBarangay("all"); setFilterColor("all"); setFilterSource("all"); setFilterRegistryLink("all");
+    setFilterBarangay("all"); setFilterColor("all");
     setSearch(""); setLocationsPage(1);
+    const params = new URLSearchParams(location.search);
+    params.delete("source"); params.delete("registryLink");
+    navigate({ pathname: location.pathname, search: params.toString() });
   };
 
   const panToSearchResults = useEffectEvent(() => {
@@ -4962,9 +4967,15 @@ export default function MapPage() {
               <FilterDropdown label="Status" value={filterColor} options={STATUS_OPTIONS}
                 onChange={value => { setFilterColor(value); setLocationsPage(1); }} />
               <FilterDropdown label="Source" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
-                onChange={value => { setFilterSource(value); setLocationsPage(1); }} />
+                onChange={value => { setLocationsPage(1);
+                  const params = new URLSearchParams(location.search);
+                  if (value === "all") params.delete("source"); else params.set("source", value);
+                  navigate({ pathname: location.pathname, search: params.toString() }); }} />
               <FilterDropdown label="Registry Link" value={filterRegistryLink} options={MAP_REGISTRY_LINK_OPTIONS}
-                onChange={value => { setFilterRegistryLink(value); setLocationsPage(1); }} />
+                onChange={value => { setLocationsPage(1);
+                  const params = new URLSearchParams(location.search);
+                  if (value === "all") params.delete("registryLink"); else params.set("registryLink", value);
+                  navigate({ pathname: location.pathname, search: params.toString() }); }} />
             </div>
           </div>
 

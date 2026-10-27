@@ -16,11 +16,11 @@ import { useTheme } from "../context/themeContext";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
-import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
+import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getRegistryRequest, getInspectionWorkloadRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
-import { availableNumber, dateQuery, deadlinePresentation, formatOverviewNumber, manilaGreeting, weatherPresentation } from "./overviewPresentation";
+import { dateQuery, deadlinePresentation, formatOverviewNumber, manilaGreeting, weatherPresentation } from "./overviewPresentation";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 import "../styles/OverviewDashboard.css";
@@ -51,12 +51,6 @@ const parseColor = (f) => {
 const shortBarangay = (name = "") => String(name ?? "").replace("Barangay ", "Brgy.");
 
 // ── Hero Banner ───────────────────────────────────────────────────────────────
-const HERO_SHORTCUTS = [
-  { icon: "registry", label: "Open Registry", to: "/registry" },
-  { icon: "map", label: "Review Geospatial Flags", to: "/map" },
-  { icon: "inspection", label: "Manage Inspections", to: "/inspections" },
-];
-
 function OverviewIcon({ kind, className = "" }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" width="18" height="18" aria-hidden="true">
@@ -137,16 +131,7 @@ function WeatherIcon({ kind }) {
   );
 }
 
-function SystemStatusRow({ label, value, tone = "neutral" }) {
-  return (
-    <div className={`hero-status-row is-${tone}`}>
-      <dt><span className="hero-status-dot" aria-hidden="true" />{label}</dt>
-      <dd>{value}</dd>
-    </div>
-  );
-}
-
-function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh, isRefreshing }) {
+function HeroBanner({ user }) {
   const [weather, setWeather] = useState(null);
   const [weatherState, setWeatherState] = useState("loading");
   useEffect(() => {
@@ -169,33 +154,12 @@ function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh
     return () => { cancelled = true; };
   }, []);
 
-  const states = Object.values(requestStates);
-  const dashboardLoading = states.some(state => state.loading);
-  const dashboardError = states.some(state => state.error);
-  const hasResult = states.some(state => state.hasResult);
-  const metricsPartial = kpis && [kpis.total_businesses, kpis.compliance_rate,
-    kpis.current_year_registered_count ?? kpis.current_year_count,
-    kpis.upcoming_year_renewal_count, kpis.total_flagged].some(value => availableNumber(value) === null);
-  const dashboardValue = dashboardLoading ? (hasResult ? "Refreshing…" : "Loading…")
-    : dashboardError || metricsPartial ? (hasResult ? "Partial data" : "Unavailable") : "Loaded";
-  const weatherValue = { loading: "Loading…", ready: "Loaded", partial: "Partial data", error: "Unavailable" }[weatherState];
-  const registry = formatOverviewNumber(kpis?.total_businesses);
-
   return (
     <section className="hero-banner" aria-labelledby="overview-greeting">
       <div className="hero-left">
         <p className="hero-eyebrow">Mataasnakahoy · BPLO</p>
         <PersonalizedGreeting user={user} />
-        <p className="hero-sub">Your municipal overview for registry records, geospatial flags, and outstanding inspection assignments.</p>
-        <nav className="hero-shortcuts" aria-label="Workflow shortcuts">
-          {HERO_SHORTCUTS.map(({ icon, label, to }) => (
-            <Link key={to} className="hero-shortcut" to={to}>
-              <span className={`hero-shortcut-icon is-${icon}`}><OverviewIcon kind={icon} /></span>
-              <span>{label}</span>
-              <OverviewIcon kind="arrow" className="hero-shortcut-arrow" />
-            </Link>
-          ))}
-        </nav>
+        <p className="hero-sub">Municipal fieldwork at a glance.</p>
       </div>
 
       <div className="hero-right">
@@ -213,65 +177,66 @@ function HeroBanner({ user, kpis, requestStates, mapsReady, mapsError, onRefresh
           </div>
         </div>
 
-        <section className="hero-status-card" aria-labelledby="overview-system-status">
-          <div className="hero-status-header">
-            <h2 id="overview-system-status">System Status</h2>
-            <button className="overview-refresh" type="button" onClick={onRefresh} disabled={isRefreshing}>
-              <OverviewIcon kind="refresh" />
-              <span>{isRefreshing ? "Refreshing dashboard…" : "Refresh dashboard"}</span>
-            </button>
-          </div>
-          <dl>
-            <SystemStatusRow label="Dashboard data" value={dashboardValue} tone={dashboardLoading ? "wait" : dashboardError || metricsPartial ? "error" : "ready"} />
-            <SystemStatusRow label="Maps library" value={mapsError ? "Unavailable" : mapsReady ? "Ready" : "Loading…"} tone={mapsError ? "error" : mapsReady ? "ready" : "wait"} />
-            <SystemStatusRow label="Weather feed" value={weatherValue} tone={weatherState === "ready" ? "ready" : weatherState === "loading" ? "wait" : "error"} />
-            <SystemStatusRow label="Registry records" value={registry === "—" ? "Unavailable" : `${registry}${requestStates.kpis.error ? " · stale" : ""}`} />
-          </dl>
-        </section>
       </div>
     </section>
   );
 }
 
-function KpiSummary({ kpis, state, onRetry }) {
-  const measures = [
-    { label: "Total registry records", value: kpis?.total_businesses, note: "All records in the official registry." },
-    { label: "Active share of registry", value: kpis?.compliance_rate, suffix: "%", note: "Active records as a share of all registry records." },
-    { label: "Renewal/issue-year records", value: kpis?.current_year_registered_count ?? kpis?.current_year_count, note: "Renewal/issue date in the backend’s current year." },
-    { label: "Next-year renewal basis — derived", value: kpis?.upcoming_year_renewal_count, note: "Current-year active and next-year dated records." },
-    { label: "Non-green map locations", value: kpis?.total_flagged, note: "Non-green logs and registry-only locations shown on the Map." },
+function ActionCard({ label, value, to, note, state, suffix = "", empty = "No data" }) {
+  const shown = !state.hasResult ? state.error ? "Could not load" : "Loading…"
+    : value === null || value === undefined ? empty : `${formatOverviewNumber(value)}${suffix}`;
+  return <Link className="overview-action-card" to={to} aria-label={`${label}: ${shown}. ${note}`}>
+    <span className="overview-action-label">{label}</span><strong>{shown}</strong>
+    <small>{note}{state.error && state.hasResult ? " · Last loaded data" : ""}</small>
+    <OverviewIcon kind="arrow" className="overview-action-arrow" />
+  </Link>;
+}
+
+const sourcePath = source => `/map/records?origin=${source}&registryLink=unlinked`;
+const workloadPath = (view, reportID) => `/inspections?view=${encodeURIComponent(view)}${reportID ? `&reportID=${reportID}` : ""}`;
+
+function SourceCards({ sources, states }) {
+  const cards = [
+    ["Registry Businesses", sources.registry?.total, "/registry", "Official registry IDs", states.registry],
+    ["Unlinked Detection Records", sources.detection?.total, sourcePath("detection"), "Unlinked detection pins", states.detection],
+    ["Unlinked Manual Records", sources.manual?.total, sourcePath("manual"), "Unlinked inspector-reported pins", states.manual],
   ];
-  const partial = state.hasResult && measures.some(measure => availableNumber(measure.value) === null);
-  const metric = ({ label, value, suffix, note }, index) => (
-    <div className={`overview-metric metric-${index}`} key={label}>
-      <dt>{label}</dt>
-      <dd aria-label={availableNumber(value) === null ? "Unavailable" : undefined}>
-        {state.loading && !state.hasResult
-          ? <SkeletonBlock style={{ width: 84, height: 24, margin: "0 auto" }} />
-          : formatOverviewNumber(value, suffix)}
-      </dd>
-      <p>{note}</p>
+  if (sources.unclassified?.total > 0 || states.unclassified.error) cards.push(
+    ["Unclassified Records", sources.unclassified?.total, sourcePath("unclassified"), "Origin unknown or unsupported", states.unclassified]);
+  return <section className="overview-surface" aria-labelledby="overview-source-title">
+    <div className="overview-section-heading"><h2 id="overview-source-title">Business Records</h2></div>
+    <div className="overview-action-grid source-grid">{cards.map(([label, value, to, note, state]) =>
+      <ActionCard key={label} {...{ label, value, to, note, state }} />)}</div>
+    <details className="overview-explanation"><summary>About these counts</summary>
+      <p>Registry IDs count businesses; unlinked pins count records, not confirmed distinct businesses. Linked detections and manual pins belong to the registry population. Unknown origins remain unclassified. These are not a distinct-business total.</p>
+    </details>
+  </section>;
+}
+
+function WorkloadCards({ data, state }) {
+  const groups = data?.age_groups || {};
+  const period = data?.period_from && data?.period_to
+    ? `${data.period_from.slice(0, 16).replace("T", " ")} – ${data.period_to.slice(0, 16).replace("T", " ")} UTC` : "Trailing 30 days";
+  return <section className="overview-surface overview-workload" aria-labelledby="overview-workload-title">
+    <div className="overview-section-heading"><h2 id="overview-workload-title">Inspection Workload</h2></div>
+    <RequestFeedback state={state} label="inspection workload" />
+    {data?.as_of && <p className="overview-scope-note">As of {data.as_of.replace("T", " ")} · UTC</p>}
+    <div className="overview-action-grid">
+      <ActionCard label="Open Assignments" value={data?.open} to={workloadPath("open")} note="Assigned or reassigned" state={state} />
+      <ActionCard label="Overdue Assignments" value={data?.overdue} to={workloadPath("overdue")} note="Open · past deadline" state={state} />
+      <ActionCard label="Oldest Open Assignment" value={data?.oldest_open_days} empty={data?.open === 0 ? "None open" : "Age unavailable"} suffix=" days" to={workloadPath("oldest", data?.oldest_report_id)} note="Current assignment-cycle age" state={state} />
+      <ActionCard label="Average Resolution Time" value={data?.average_resolution_minutes} suffix=" min" to={workloadPath("resolution")} note={`${period} · ${data?.resolution_sample_size ?? "—"} valid submissions`} state={state} />
     </div>
-  );
-  return (
-    <section className="overview-surface overview-kpis" aria-labelledby="overview-kpi-title" aria-busy={state.loading}>
-      <div className="overview-section-heading">
-        <h2 id="overview-kpi-title">Registry &amp; Flag Summary</h2>
-        <span className="overview-section-kicker">Overview</span>
-      </div>
-      <RequestFeedback state={state} label="summary metrics" />
-      {state.error && !state.loading && <button type="button" className="overview-inline-action" onClick={onRetry}>Retry summary</button>}
-      {partial && !state.error && <p className="overview-feedback" role="status">Some metric values are unavailable.</p>}
-      <dl className="overview-kpis-primary">{measures.slice(0, 2).map(metric)}</dl>
-      <dl className="overview-kpis-supporting">{measures.slice(2).map((measure, index) => metric(measure, index + 2))}</dl>
-      <details className="overview-explanation">
-        <summary>About these measures</summary>
-        <p>Active share describes registry status, not municipality-wide compliance. The next-year basis is a derived count, not a renewal schedule.</p>
-        <p>Current-year and next-year wording follows the backend’s reporting period{kpis?.reporting_year ? ` (${kpis.reporting_year})` : ""}, using each record’s renewal/issue date.</p>
-        <p>This count includes non-green logs and non-green registry locations without a matching log, using the same population as the Map. Missing values appear as —; zero is a reported value.</p>
-      </details>
-    </section>
-  );
+    <h3 className="overview-age-title">Open assignment age · whole days</h3>
+    <div className="overview-action-grid age-grid">{["0-3", "4-7", "8-14", "15+"].map(group =>
+      <ActionCard key={group} label={`${group} days`} value={groups[group]} to={workloadPath(`age_${group}`)} note="Current cycle" state={state} />)}
+      <ActionCard label="Age unavailable" value={data?.age_unavailable} to={workloadPath("age_unavailable")} note="No trustworthy start" state={state} />
+    </div>
+    {data && <details className="overview-explanation overview-quality">
+      <summary>Data quality · {data.missing_deadlines} missing deadlines · {data.age_unavailable} unavailable ages · {data.older_hidden_open_reports} older hidden open reports</summary>
+      <p><Link to={workloadPath("deadline_missing")}>{data.missing_deadlines} open assignments without deadlines</Link>; <Link to={workloadPath("age_unavailable")}>{data.age_unavailable} without trustworthy starts</Link>; {data.invalid_deadlines} invalid deadlines; {data.ambiguous_deadlines} deadlines lack timezone evidence (Manila wall-time convention); {data.older_hidden_open_reports} older open reports hidden by current-target selection; {data.legacy_in_progress} legacy In Progress reports outside the open KPI; {data.missing_submission_received} completed reports without receipt timestamps; {data.resolution_excluded} in-period submissions excluded for invalid/missing duration.</p>
+    </details>}
+  </section>;
 }
 
 function BarangayPrioritiesWidget({ opsRankings, state }) {
@@ -297,7 +262,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
           const categoryClass = ["High", "Medium", "Low"].includes(category) ? category.toLowerCase() : "unknown";
           return (
             <li key={b.barangayID}>
-              <Link className="overview-priority" to="/analytics" title="View Analytics">
+              <Link className="overview-priority" to={`/analytics?tab=prescriptive&barangay_id=${encodeURIComponent(b.barangayID)}`} title="View Prescriptive Analytics">
                 <span className="overview-priority-rank" aria-label={`Rank ${formatOverviewNumber(b.rank)}`}>{formatOverviewNumber(b.rank)}</span>
                 <span className="overview-priority-main">
                   <span className="overview-priority-name">{shortBarangay(b.barangayName) || "Unknown barangay"}</span>
@@ -314,7 +279,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
         <p>OPS combines weighted flag burden, optional sector scores and proximity. Red, Yellow and Black flags supply risk context. New field plans skip Black-only barangays and already-assigned targets; the remaining destinations retain their municipal ranks.</p>
         <p>High: 60–100 · Medium: 30–below 60 · Low: below 30. These are barangay priorities, not counts of unassigned tasks.</p>
       </details>
-      <Link className="overview-section-link" to="/analytics">View Analytics <OverviewIcon kind="arrow" /></Link>
+      <Link className="overview-section-link" to="/analytics?tab=prescriptive">View Prescriptive Analytics <OverviewIcon kind="arrow" /></Link>
     </section>
   );
 }
@@ -572,7 +537,7 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
               key={day}
               type="button"
               className={classes}
-              onClick={() => setSelectedDay(day === selectedDay ? null : day)}
+              onClick={() => taskCount ? navigate(`/inspections?view=deadline_day&deadlineDate=${dateQuery(new Date(currentDate.getFullYear(), currentDate.getMonth(), day))}`) : setSelectedDay(day === selectedDay ? null : day)}
               aria-pressed={isSelected}
               aria-current={isToday ? "date" : undefined}
               aria-label={`${monthName} ${day}${isToday ? " (today)" : ""}, ${
@@ -615,7 +580,7 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
                 type="button"
                 key={task.reportID}
                 className={`calendar-widget-task${isOverdue ? " is-overdue" : ""}`}
-                onClick={() => navigate('/inspections')}
+                 onClick={() => navigate(`/inspections?view=open&reportID=${task.reportID}`)}
                 title="Open Inspection Dispatch"
               >
                 <span className="calendar-widget-task-main">
@@ -822,10 +787,16 @@ export default function HomePage() {
   const [allFlags, setAllFlags, hasFlags] = useSessionDataset("home", "flags", []);
   const [inspections, setInspections, hasInspections] = useSessionDataset("home", "inspections", []);
   const [inspectors, setInspectors, hasInspectors] = useSessionDataset("home", "inspectors", []);
+  const [workload, setWorkload, hasWorkload] = useSessionDataset("home", "workload", null);
+  const [registryCount, setRegistryCount, hasRegistryCount] = useSessionDataset("home", "registry-count", null);
+  const [detectionCount, setDetectionCount, hasDetectionCount] = useSessionDataset("home", "detection-count", null);
+  const [manualCount, setManualCount, hasManualCount] = useSessionDataset("home", "manual-count", null);
+  const [unclassifiedCount, setUnclassifiedCount, hasUnclassifiedCount] = useSessionDataset("home", "unclassified-count", null);
   const [isInspectorModalOpen, setIsInspectorModalOpen] = useState(false);
-  const [auxiliaryRefreshing, setAuxiliaryRefreshing] = useState(false);
   const [auxiliaryStates, setAuxiliaryStates] = useState(() => Object.fromEntries(
-    Object.entries({ flags: hasFlags, inspections: hasInspections, inspectors: hasInspectors })
+    Object.entries({ flags: hasFlags, inspections: hasInspections, inspectors: hasInspectors,
+      workload: hasWorkload, registry: hasRegistryCount, detection: hasDetectionCount,
+      manual: hasManualCount, unclassified: hasUnclassifiedCount })
       .map(([key, hasResult]) => [key, { loading: !hasResult, error: false, hasResult }]),
   ));
   const sectionState = (section, valid) => ({
@@ -838,7 +809,6 @@ export default function HomePage() {
     kpis: sectionState(summary, Boolean(kpis && typeof kpis === "object" && !Array.isArray(kpis))),
     ops: sectionState(priorities, Array.isArray(priorities.data?.rankings)),
   };
-  const isRefreshing = auxiliaryRefreshing || Object.values(sections).some(section => section.updating);
   const dashboardRequestRef = useRef(null);
 
   useEffect(() => {
@@ -856,15 +826,12 @@ export default function HomePage() {
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate, user]);
 
-  const fetchDashboardData = useCallback(async (isSilent = false) => {
+  const fetchDashboardData = useCallback(async () => {
     if (!token) return;
     // Manual refresh, polling and focus share active work rather than restarting it.
     if (dashboardRequestRef.current) return dashboardRequestRef.current.promise;
     const controller = new AbortController();
     dashboardRequestRef.current = controller;
-    if (!isSilent) {
-      setAuxiliaryRefreshing(true);
-    }
     setAuxiliaryStates(previous => Object.fromEntries(Object.entries(previous).map(([key, state]) => [key, { ...state, loading: !state.hasResult, error: false }])));
 
     const load = async (key, request, select, commit) => {
@@ -894,16 +861,20 @@ export default function HomePage() {
       load("flags", signal => getFlagsRequest({ limit: 200, signal }, token), result => result?.data, setAllFlags),
       load("inspections", signal => getInspectionsRequest({ limit: 1000, signal }, token), result => result?.data, setInspections),
       load("inspectors", signal => getInspectorsRequest(token, { signal }), result => result?.data ?? result, setInspectors),
+      load("workload", signal => getInspectionWorkloadRequest({ summary: 1, signal }, token), result => result?.as_of ? [result] : null, result => setWorkload(result[0])),
+      load("registry", signal => getRegistryRequest({ limit: 1, signal }, token), result => Number.isFinite(result?.total) ? [result] : null, result => setRegistryCount(result[0])),
+      ...[["detection", setDetectionCount], ["manual", setManualCount], ["unclassified", setUnclassifiedCount]]
+        .map(([origin, commit]) => load(origin, signal => getFlagsRequest({ origin, registryLink: "unlinked", limit: 1, signal }, token),
+          result => Number.isFinite(result?.total) ? [result] : null, result => commit(result[0]))),
     ]).then(results => results.every(Boolean)).finally(() => {
       if (dashboardRequestRef.current === controller) {
         dashboardRequestRef.current = null;
-        setAuxiliaryRefreshing(false);
       }
     });
     return controller.promise;
-  }, [token, setAllFlags, setInspections, setInspectors]);
-  const refreshView = useAppDataRefresh("home", reason => refreshResults([
-    refreshAnalytics(), fetchDashboardData(reason === "scheduled"),
+  }, [token, setAllFlags, setInspections, setInspectors, setWorkload, setRegistryCount, setDetectionCount, setManualCount, setUnclassifiedCount]);
+  useAppDataRefresh("home", () => refreshResults([
+    refreshAnalytics(), fetchDashboardData(),
   ]));
 
   useEffect(() => {
@@ -949,7 +920,6 @@ export default function HomePage() {
         <p role="alert" className="saas-card" style={{ padding: 14, marginBottom: 14 }}>
           Stale analytics: the displayed overview is the last successful snapshot, not current data.
           Last computed: {summary.metadata?.computed_at ?? priorities.metadata?.computed_at ?? "unknown"}.
-          <button type="button" className="ghost-btn" onClick={refreshView}>Refresh now</button>
         </p>
       )}
       {/* Main Layout: 2 Columns */}
@@ -957,17 +927,9 @@ export default function HomePage() {
 
         {/* Left Column (Main Content) */}
         <div className="overview-main-column">
-          <HeroBanner
-            user={user}
-            kpis={kpis}
-            requestStates={requestStates}
-            mapsReady={isLoaded}
-            mapsError={loadError}
-            onRefresh={refreshView}
-            isRefreshing={isRefreshing}
-          />
-
-          <KpiSummary kpis={kpis} state={requestStates.kpis} onRetry={refreshAnalytics} />
+          <HeroBanner user={user} />
+          <WorkloadCards data={workload} state={requestStates.workload} />
+          <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
 
           {/* Map */}
           <MiniMapWidget

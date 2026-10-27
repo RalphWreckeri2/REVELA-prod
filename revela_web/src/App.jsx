@@ -21,6 +21,7 @@ import { useAuth } from './context/authContext';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
 const MapPage = lazy(() => import('./pages/MapPage'));
+const SourceRecordsPage = lazy(() => import('./pages/SourceRecordsPage'));
 const RegistryPage = lazy(() => import('./pages/RegistryPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 const InspectionPage = lazy(() => import('./pages/InspectionPage'));
@@ -81,6 +82,7 @@ export default function App() {
                     <Route path="/login" element={<LoginPage />} />
                     <Route path="/home" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
                     <Route path="/map" element={<ProtectedRoute><MapPage /></ProtectedRoute>} />
+                    <Route path="/map/records" element={<ProtectedRoute><SourceRecordsPage /></ProtectedRoute>} />
                     <Route path="/registry" element={<ProtectedRoute><RegistryPage /></ProtectedRoute>} />
                     <Route path="/analytics" element={<ProtectedRoute><AnalyticsPage /></ProtectedRoute>} />
                     <Route path="/inspections/calendar" element={<ProtectedRoute><InspectionCalendarPage /></ProtectedRoute>} />
