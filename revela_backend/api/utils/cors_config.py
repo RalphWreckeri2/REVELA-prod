@@ -158,7 +158,10 @@ def init_app(app, raw=None):
     CORS(app, resources={
         r"/api/*": {
             "origins": allowed_origins,
-            "allow_headers": ["Content-Type", "Authorization"],
+             "allow_headers": ["Content-Type", "Authorization"],
+             # Browser benchmarks need the already-issued telemetry ID to
+             # correlate client timings with the committed server request.
+             "expose_headers": ["X-Request-ID"],
             "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
             "supports_credentials": True,
             "max_age": 86400,

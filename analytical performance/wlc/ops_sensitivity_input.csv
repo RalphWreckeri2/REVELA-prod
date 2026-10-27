@@ -1,0 +1,17 @@
+barangay_id,barangay_name,red_count,yellow_count,black_count,avg_lat,avg_lng,sector_score,sector_score_source,bplo_lat,bplo_lng,flagged_count,dispatchable_red_count,dispatchable_yellow_count,dispatchable_business_count,open_inspection_excluded,production_ops,production_rank,weighted_burden,risk_score,distance_score,proximity_score,distance_km
+2,Barangay II,42,0,0,13.952413333333,121.116134946154,50.0,neutral_fallback,13.960413,121.114547,42,39,0,39,False,95.4,1,126,100.0,4.5,95.5,0.906
+1,Barangay I,38,0,0,13.954944171053,121.110258115789,50.0,neutral_fallback,13.960413,121.114547,38,38,0,38,False,89.1,2,114,90.5,3.8,96.2,0.764
+7,Barangay Bubuyan,18,21,0,13.979110520513,121.109200148718,50.0,neutral_fallback,13.960413,121.114547,39,18,21,39,False,77.6,3,96,76.2,10.8,89.2,2.158
+4,Barangay III,23,0,0,13.960856366522,121.10922453087,50.0,neutral_fallback,13.960413,121.114547,23,23,0,23,False,65.0,4,69,54.8,2.9,97.1,0.576
+3,Barangay II-A,18,0,0,13.950127144444,121.116082011111,50.0,neutral_fallback,13.960413,121.114547,18,18,0,18,False,56.2,5,54,42.9,5.8,94.2,1.156
+5,Barangay IV,15,0,0,13.958787532,121.117259115333,50.0,neutral_fallback,13.960413,121.114547,15,15,0,15,False,52.4,6,45,35.7,1.7,98.3,0.344
+9,Barangay Loob,16,0,0,13.9782279,121.11539725,50.0,neutral_fallback,13.960413,121.114547,16,16,0,16,False,51.9,7,48,38.1,9.9,90.1,1.983
+15,Barangay Santol,15,0,0,13.970692953333,121.1050982,50.0,neutral_fallback,13.960413,121.114547,15,15,0,15,False,50.9,8,45,35.7,7.7,92.3,1.532
+8,Barangay Calingatan,11,0,0,13.964182727273,121.120790809091,50.0,neutral_fallback,13.960413,121.114547,11,11,0,11,False,45.3,9,33,26.2,4.0,96.0,0.794
+16,Barangay Upa,10,0,0,13.96686031,121.11233713,50.0,neutral_fallback,13.960413,121.114547,10,10,0,10,False,43.7,10,30,23.8,3.8,96.2,0.756
+10,Barangay Lumanglipa,3,0,0,13.960332166667,121.083042566667,50.0,neutral_fallback,13.960413,121.114547,3,3,0,3,False,29.1,11,9,7.1,17.0,83.0,3.4
+12,Barangay Manggahan,1,0,0,13.9673104,121.1019349,50.0,neutral_fallback,13.960413,121.114547,1,1,0,1,False,28.2,12,3,2.4,7.8,92.2,1.562
+6,Barangay Bayorbor,0,0,0,,,50.0,neutral_fallback,13.960413,121.114547,0,0,0,0,False,0.0,13,0,0.0,50.0,50.0,
+11,Barangay Kinalaglagan,0,0,0,,,50.0,neutral_fallback,13.960413,121.114547,0,0,0,0,False,0.0,14,0,0.0,50.0,50.0,
+13,Barangay Nangkaan,0,0,0,,,50.0,neutral_fallback,13.960413,121.114547,0,0,0,0,False,0.0,15,0,0.0,50.0,50.0,
+14,Barangay San Sebastian,0,0,0,,,50.0,neutral_fallback,13.960413,121.114547,0,0,0,0,False,0.0,16,0,0.0,50.0,50.0,

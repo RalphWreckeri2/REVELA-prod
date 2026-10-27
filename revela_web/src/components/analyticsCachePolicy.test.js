@@ -77,12 +77,12 @@ test("tab resume/sleep and moving the wall clock back cannot extend validity", (
   assert.equal(analyticsSnapshotExpired(snapshot, 901001, 1), true);
 });
 
-test("expired refreshes continue polling for recovery, without displaying their rows", () => {
+test("expired refreshes continue polling while labelling retained results historical", () => {
   const metadata = { expired: true, refreshing: true, computed_at: COMPUTED_AT };
   assert.equal(analyticsRefreshPending(metadata), true);
   assert.equal(analyticsRefreshPending({ refresh_deferred: true }), true);
   assert.equal(analyticsRefreshPending({ refresh_failed: true }), false);
-  assert.match(analyticsSnapshotStatus(metadata), /expired.*hidden/i);
+  assert.match(analyticsSnapshotStatus(metadata), /expired.*historical/i);
   assert.match(analyticsSnapshotStatus({ refresh_failed: true }), /refresh failed/);
   assert.match(analyticsSnapshotStatus({ refresh_deferred: true }), /waiting to refresh/);
 });

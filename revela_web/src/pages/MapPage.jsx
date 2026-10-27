@@ -35,8 +35,10 @@ import {
   businessSourceLabel, businessDetailsInfo, matchesMapFilters, paginateRecords,
 } from "../components/businessCompliance";
 import { AuthContext } from "../context/authContext";
+import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
+import { beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark, mapReady } from "../services/responsivenessBenchmark";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import {
   BARANGAY_CENTROIDS,
@@ -50,6 +52,7 @@ import {
   runDetectionRequest,
   createYellowFlagRequest,
   getBarangaysRequest,
+  getInspectorsRequest,
   assignInspectionRequest,
   getOpsRankingsRequest,
   getDiagnosticClustersRequest,
@@ -1051,6 +1054,7 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
 // darkMapStyle + REVELA_MAP_ID are shared with SettingsPage / HomePage via src/utils/mapStyles.js
 
 function MapCanvas({
+  benchmarkTrial,
   isDark,
   isLoaded,
   loadError,
@@ -1290,12 +1294,25 @@ function MapCanvas({
         map.setZoom(minZoom);
       }
       clampMapCenterToRestriction(map, restrictionBoundsRef.current);
+      if (benchmarkTrial?.stages.fit) benchmarkTrial.idleAfterFit = true;
+      if (benchmarkTrial?.stages.tiles) {
+        benchmarkStage(benchmarkTrial, "idle");
+        mapReady(benchmarkTrial);
+      }
+    });
+
+    map.addListener("tilesloaded", () => {
+      if (benchmarkTrial?.stages.fit) {
+        benchmarkStage(benchmarkTrial, "tiles");
+        if (benchmarkTrial.idleAfterFit) benchmarkStage(benchmarkTrial, "idle");
+        mapReady(benchmarkTrial);
+      }
     });
 
     if (isPickingLocation) {
       map.setOptions({ draggableCursor: 'crosshair' });
     }
-  }, [clampMapCenterToRestriction, mapRef, isPickingLocation, zoom]);
+  }, [clampMapCenterToRestriction, mapRef, isPickingLocation, zoom, benchmarkTrial]);
 
   // Fit the whole municipality once the boundary asset is ready. Subsequent
   // calls only refresh the limits so resizing does not reset the user's view.
@@ -1305,11 +1322,13 @@ function MapCanvas({
       const map = internalMapRef.current;
       if (!map) return;
       window.google?.maps?.event?.trigger(map, "resize");
-      const applied = applyMunicipalViewLimits({ fit: !initialMunicipalFitRef.current });
+      const needsFit = !initialMunicipalFitRef.current;
+      const applied = applyMunicipalViewLimits({ fit: needsFit });
+      if (applied && needsFit) benchmarkStage(benchmarkTrial, "fit");
       if (applied) initialMunicipalFitRef.current = true;
     });
     return () => cancelAnimationFrame(frameId);
-  }, [isLoaded, mapInstance, municipalBounds, applyMunicipalViewLimits]);
+  }, [isLoaded, mapInstance, municipalBounds, applyMunicipalViewLimits, benchmarkTrial]);
 
   // Keep the map layout in sync with its container (desktop/mobile layout
   // changes, sidebar collapse, window resize). Google Maps needs an explicit
@@ -1637,7 +1656,9 @@ function MapCanvas({
     // Initialize MarkerClusterer with SuperClusterAlgorithm
     if (markers.length > 0) {
       clusterRef.current = new MarkerClusterer({
-        map: activeMap,
+        // Preserve the original mount order unless an opt-in trial needs to
+        // attach clusteringend before the first render.
+        map: benchmarkTrial?.stages.data ? undefined : activeMap,
         markers,
         algorithm: new SuperClusterAlgorithm({
           radius: 80,
@@ -1724,6 +1745,20 @@ function MapCanvas({
       });
     }
 
+    if (benchmarkTrial?.stages.data) {
+      benchmarkStage(benchmarkTrial, "markers", { createdMarkers: effectMarkerRefs.size });
+      if (markers.length) {
+        clusterRef.current.addListener("clusteringend", () => {
+          benchmarkStage(benchmarkTrial, "clustered");
+          mapReady(benchmarkTrial);
+        });
+      } else {
+        benchmarkStage(benchmarkTrial, "clustered");
+        mapReady(benchmarkTrial);
+      }
+    }
+    if (benchmarkTrial?.stages.data) clusterRef.current?.setMap(activeMap);
+
     return () => {
       if (clusterRef.current) {
         clusterRef.current.clearMarkers();
@@ -1735,7 +1770,7 @@ function MapCanvas({
       });
       effectMarkerRefs.clear();
     };
-  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd]);
+  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd, benchmarkTrial]);
 
   // Update cursor dynamically if picking state changes
   useEffect(() => {
@@ -2506,6 +2541,32 @@ export default function MapPage() {
   const { token, user } = useContext(AuthContext);
   const { isDark } = useTheme();
   const { isLoaded, loadError } = useGoogleMapsScript();
+  const benchmarkCleanupRef = useRef(null);
+  const [benchmarkTrial] = useState(startMapBenchmark);
+  useEffect(() => {
+    if (!benchmarkTrial) return undefined;
+    clearTimeout(benchmarkCleanupRef.current);
+    const timeout = setTimeout(() => finishBenchmark(benchmarkTrial, "incomplete", {
+      request_id: benchmarkTrial.requestId, registry_rows: benchmarkTrial.registryRows,
+      map_rows: benchmarkTrial.stages.data?.mapRows,
+      expected_markers: benchmarkTrial.stages.data?.expectedMarkers,
+      geolocated_rows: benchmarkTrial.stages.data?.geolocatedRows,
+      created_markers: benchmarkTrial.stages.markers?.createdMarkers,
+      notes: "map readiness timeout (60s)",
+    }), 60000);
+    return () => {
+      clearTimeout(timeout);
+      // React StrictMode replays effect cleanup immediately on mount. Defer
+      // cancellation so a real unmount records a row, but a replay does not.
+      benchmarkCleanupRef.current = setTimeout(() => {
+        finishBenchmark(benchmarkTrial, "incomplete", { notes: "left map before readiness" });
+        endMapBenchmark();
+      }, 0);
+    };
+  }, [benchmarkTrial]);
+  useEffect(() => {
+    if (loadError) finishBenchmark(benchmarkTrial, "failed", { notes: "Google Maps script failed" });
+  }, [loadError, benchmarkTrial]);
 
   const mapRef = useRef(null);
   const mapWorkspaceRef = useRef(null);
@@ -2755,22 +2816,74 @@ export default function MapPage() {
   const [locatingAdjustLocation, setLocatingAdjustLocation] = useState(false);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const flagsRequestSequence = useRef(0);
+  const flagsRequestController = useRef(null);
+  useEffect(() => () => flagsRequestController.current?.abort(), []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
   const fetchFlags = useCallback(async (isSilent = false) => {
     if (!token) return;
+    const sequence = ++flagsRequestSequence.current;
+    flagsRequestController.current?.abort();
+    const controller = new AbortController();
+    flagsRequestController.current = controller;
     if (!isSilent) {
       setLoadingFlags(true);
       setIsRefreshing(true);
     }
     setFlagsError("");
     try {
-      const rawList = await getAllFlagsRequest(token);
-      setFlags(rawList.map(normalizeFlag));
+      const rawList = await getAllFlagsRequest(token, {
+        signal: controller.signal,
+        onResponse: res => {
+          if (benchmarkTrial && !benchmarkTrial.finished) {
+            benchmarkTrial.requestId = res.headers.get("X-Request-ID");
+            benchmarkTrial.httpStatus = res.status;
+          }
+        },
+        onPage: page => {
+          if (benchmarkTrial && !benchmarkTrial.finished) {
+            benchmarkTrial.pages = page.pages;
+            benchmarkTrial.expectedRows = page.total;
+          }
+        },
+      });
+      if (sequence !== flagsRequestSequence.current) return false;
+      if (benchmarkTrial && !benchmarkTrial.finished &&
+          benchmarkTrial.expectedRows != null && rawList.length !== benchmarkTrial.expectedRows) {
+        finishBenchmark(benchmarkTrial, "incomplete", {
+          request_id: benchmarkTrial.requestId, http_status: benchmarkTrial.httpStatus,
+          map_rows: rawList.length, flags_pages: benchmarkTrial.pages,
+          notes: `last page received but API total=${benchmarkTrial.expectedRows}`,
+        });
+      }
+      const normalized = rawList.map(normalizeFlag);
+      const exactCount = normalized.filter(row => row.hasExactCoords).length;
+      const markerCount = normalized.filter(row => row.latitude != null && row.longitude != null &&
+        Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude))).length;
+      if (benchmarkTrial && !benchmarkTrial.finished &&
+          ((benchmarkTrial.map_rows != null && Number(benchmarkTrial.map_rows) !== rawList.length) ||
+            (benchmarkTrial.geolocated_rows != null && Number(benchmarkTrial.geolocated_rows) !== exactCount) ||
+            (benchmarkTrial.expected_markers != null && Number(benchmarkTrial.expected_markers) !== markerCount))) {
+        finishBenchmark(benchmarkTrial, "incomplete", {
+          request_id: benchmarkTrial.requestId, http_status: benchmarkTrial.httpStatus,
+          map_rows: rawList.length, geolocated_rows: exactCount, expected_markers: markerCount,
+          flags_pages: benchmarkTrial.pages, notes: "dataset changed from configured snapshot",
+        });
+      }
+      if (benchmarkTrial && !benchmarkTrial.finished) benchmarkStage(benchmarkTrial, "data", {
+        mapRows: rawList.length,
+        geolocatedRows: exactCount,
+        expectedMarkers: markerCount,
+        pages: benchmarkTrial.pages,
+      });
+      setFlags(normalized);
 
       // Fetch analytics for border-to-border risk heatmap (current state of the barangay)
+      let rankingsOk = true;
       try {
         const ops = await getOpsRankingsRequest(token);
+        if (sequence !== flagsRequestSequence.current) return false;
         const rankings = Array.isArray(ops) ? ops : (ops?.data ?? []);
         setOpsRankings(rankings);
 
@@ -2787,14 +2900,20 @@ export default function MapPage() {
         setBarangayRiskLevels(riskMap);
       } catch (err) {
         console.error("Failed to load analytics for map", err);
+        rankingsOk = false;
       }
+      return rankingsOk;
     } catch (err) {
+      if (sequence !== flagsRequestSequence.current) return false;
+      finishBenchmark(benchmarkTrial, "failed", { request_id: benchmarkTrial?.requestId,
+        http_status: benchmarkTrial?.httpStatus, notes: `flags: ${err.message}` });
       setFlagsError(err.message || "Unable to load flags.");
+      return false;
     } finally {
-      setLoadingFlags(false);
-      setIsRefreshing(false);
+      if (flagsRequestController.current === controller) flagsRequestController.current = null;
+      if (sequence === flagsRequestSequence.current) { setLoadingFlags(false); setIsRefreshing(false); }
     }
-  }, [token]);
+  }, [token, benchmarkTrial]);
 
   // Count Red Flags per barangay from the already-loaded flags array.
   // Used when prescriptive rankings omit a barangay (unranked tier on the map).
@@ -2819,9 +2938,11 @@ export default function MapPage() {
       if (data) {
         setDetectionQuota(data);
       }
+      return true;
     } catch (err) {
       console.error("Failed to load detection quota", err);
       setDetectionQuotaError("Scan allowance could not be loaded.");
+      return false;
     } finally {
       setDetectionQuotaLoading(false);
     }
@@ -2836,9 +2957,11 @@ export default function MapPage() {
       if (data) {
         setPlacesUsage(data);
       }
+      return true;
     } catch (err) {
       console.error("Failed to load places usage", err);
       setPlacesUsageError("Detection request budget could not be loaded.");
+      return false;
     } finally {
       setPlacesUsageLoading(false);
     }
@@ -2865,21 +2988,9 @@ export default function MapPage() {
     }
   };
 
-  useEffect(() => {
-    let isCurrent = true;
-    queueMicrotask(() => {
-      if (!isCurrent) return;
-      void fetchFlags(false);
-      void fetchDetectionQuota();
-      void fetchPlacesUsage();
-    });
-    return () => { isCurrent = false; };
-  }, [fetchFlags, fetchDetectionQuota, fetchPlacesUsage]);
-
-  useEffect(() => {
-    if (!token) return;
-    getBarangaysRequest(token)
-      .then(data => {
+  const loadMapBarangays = useCallback(async () => {
+    try {
+      const data = await getBarangaysRequest(token);
         // API may return a bare array or a {data: [...]} wrapper — handle
         // both so the dropdown doesn't silently end up empty.
         const list = Array.isArray(data)
@@ -2887,9 +2998,12 @@ export default function MapPage() {
           : Array.isArray(data?.data)
             ? data.data
             : [];
-        setBarangays(list);
-      })
-      .catch(err => console.error("Failed to load barangays", err));
+      setBarangays(list);
+      return true;
+    } catch (err) {
+      console.error("Failed to load barangays", err);
+      return false;
+    }
   }, [token]);
 
   // Pre-fetch GeoJSON once so handleMapClick can do real point-in-polygon
@@ -2911,18 +3025,18 @@ export default function MapPage() {
   }, []);
 
   const [inspectors, setInspectors] = useState([]);
-  useEffect(() => {
-    if (!token) return;
-    fetch(`${import.meta.env.VITE_API_ORIGIN || "http://127.0.0.1:5000"}/api/users/?role=Inspector`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(r => r.json())
-      .then(data => {
-        const list = Array.isArray(data) ? data : (data.data ?? []);
-        setInspectors(list.filter(u => u.isActive !== 0 && u.isActive !== false && u.userRole === 'Inspector'));
-      })
-      .catch(() => { });
+  const loadMapInspectors = useCallback(async () => {
+    try {
+      const data = await getInspectorsRequest(token);
+      const list = Array.isArray(data) ? data : (data?.data ?? []);
+      setInspectors(list.filter(u => u.isActive !== 0 && u.isActive !== false && u.userRole === 'Inspector'));
+      return true;
+    } catch { return false; }
   }, [token]);
+  const refreshView = useAppDataRefresh("map", reason => refreshResults([
+    fetchFlags(reason === "scheduled"), loadMapBarangays(), loadMapInspectors(),
+    ...(isAdmin ? [fetchDetectionQuota(), fetchPlacesUsage()] : []),
+  ]));
 
   useEffect(() => {
     const handleProgress = (event) => {
@@ -3006,43 +3120,6 @@ export default function MapPage() {
       if (dismissTimer) clearTimeout(dismissTimer);
     };
   }, [fetchFlags, fetchPlacesUsage, showWorkflowOperationSummary]);
-
-  // Real-time flag and inspection event listeners + 20s background polling
-  useEffect(() => {
-    const handleSync = () => { fetchFlags(true); };
-    window.addEventListener("revela:yellow-flag", handleSync);
-    window.addEventListener("revela:flag-update", handleSync);
-    window.addEventListener("revela:inspection-update", handleSync);
-    window.addEventListener("revela:registry-update", handleSync);
-    window.addEventListener("revela:user-update", handleSync);
-    window.addEventListener("revela:global-refresh", handleSync);
-
-    const poll = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchFlags(true);
-      }
-    }, 20000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchFlags(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-
-    return () => {
-      window.removeEventListener("revela:yellow-flag", handleSync);
-      window.removeEventListener("revela:flag-update", handleSync);
-      window.removeEventListener("revela:inspection-update", handleSync);
-      window.removeEventListener("revela:registry-update", handleSync);
-      window.removeEventListener("revela:user-update", handleSync);
-      window.removeEventListener("revela:global-refresh", handleSync);
-      window.clearInterval(poll);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-    };
-  }, [fetchFlags]);
 
 
   useEffect(() => {
@@ -3244,6 +3321,9 @@ export default function MapPage() {
 
     if (!confirmRes.isConfirmed) return;
 
+    const trial = beginBenchmark("full-detection", { mode: runDetectionMode, coverage: "Google Nearby + reconciliation + commits" });
+    let requestId, httpStatus;
+
     setRunDetectionLoading(true);
     setDetectionProgress({ stage: "initializing", percentage: 0, status: "Initializing detection engine..." });
     setElapsedTime(0);
@@ -3256,7 +3336,24 @@ export default function MapPage() {
 
     setActionError("");
     try {
-      const result = await runDetectionRequest(token, runDetectionMode);
+      const result = await runDetectionRequest(token, runDetectionMode, {
+        onResponse: res => { requestId = res.headers.get("X-Request-ID"); httpStatus = res.status; },
+      });
+      finishBenchmark(trial, result?.status || "incomplete", {
+        request_id: requestId, http_status: httpStatus,
+        registry_rows: detectionQuota?.registry_count ?? trial?.registry_rows, map_rows: flags.length,
+        expected_markers: flags.filter(f => f.latitude != null && f.longitude != null).length,
+        geolocated_rows: flags.filter(f => f.hasExactCoords).length,
+        notes: JSON.stringify({ total_checked: result?.total_checked, completed_points: result?.completed_points,
+          total_points: result?.total_points, api_requests: result?.run_summary?.api_requests_consumed,
+          fixture_requests: result?.run_summary?.fixture_requests_replayed,
+          matcher_calls: result?.run_summary?.registry_match_calls,
+          results_received: result?.run_summary?.results_received,
+          matched: result?.run_summary?.matched, no_match: result?.run_summary?.no_match,
+          work_budget_reason: result?.run_summary?.work_budget_reason,
+          scan_elapsed_seconds: result?.run_summary?.scan_elapsed_seconds,
+          quota_remaining: result?.quota?.remaining_this_month }),
+      });
       await fetchFlags();
       await fetchDetectionQuota();
       await fetchPlacesUsage();
@@ -3356,6 +3453,8 @@ export default function MapPage() {
         setFilterColor("Red");
       }
     } catch (err) {
+      finishBenchmark(trial, "failed", { request_id: requestId, http_status: httpStatus ?? err.status,
+        registry_rows: detectionQuota?.registry_count ?? trial?.registry_rows, notes: err.message });
       console.error("Detection scan error:", err);
       const errorMessage = err.message || "An error occurred during the geospatial scan.";
       const isQuotaError = !errorMessage.includes("REQUEST_DENIED")
@@ -4306,7 +4405,7 @@ export default function MapPage() {
             <button
               className="quick-refresh-btn"
               type="button"
-              onClick={() => fetchFlags(false)}
+              onClick={refreshView}
               disabled={isRefreshing}
               title="Refresh map pins and flags"
             >
@@ -4715,6 +4814,7 @@ export default function MapPage() {
           {/* Map */}
           <div className="frosted-glass map-canvas-container" style={styles.mapWrapper}>
             <MapCanvas
+              benchmarkTrial={benchmarkTrial}
               isDark={isDark}
               isLoaded={isLoaded}
               loadError={loadError}

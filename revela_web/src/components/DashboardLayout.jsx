@@ -31,6 +31,10 @@ import myLogo from "../assets/logo.png";
 import ProfileModal from "../pages/ProfileModal";
 import AboutCreditsModal from "./AboutCreditsModal";
 
+import { markMapNavigation } from "../services/responsivenessBenchmark";
+import { useRefreshCoordinator, useRefreshSnapshot } from "./useAppDataRefresh";
+import { REFRESH_MODES } from "../services/appRefreshCoordinator";
+
 // ── Nav config — add new pages here, never touch the layout ──
 const NAV_ITEMS = [
   {
@@ -215,6 +219,7 @@ function Sidebar({ onLogout, onOpenAbout, collapsed, onToggleCollapsed, isAdmin,
                 <Link
                   key={label}
                   to={path}
+                  onClick={path === "/map" && !isActive ? markMapNavigation : undefined}
                   className={`menu-item${isActive ? " active" : ""}`}
                   {...tooltipProps(label)}
                 >
@@ -292,17 +297,25 @@ function formatTimeAgo(iso) {
 }
 
 function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick }) {
-  const { token, user: authUser } = useAuth();
+  const { token, user: authUser, refreshUser } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationButtonRef = useRef(null);
   const notificationPopoverRef = useRef(null);
   const navigate = useNavigate();
+  const appRefresh = useRefreshCoordinator();
+  const refreshState = useRefreshSnapshot();
+  const [clock, setClock] = useState(0);
+  useEffect(() => {
+    const initial = setTimeout(() => setClock(Date.now()), 0);
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => { clearTimeout(initial); clearInterval(timer); };
+  }, []);
 
   const isAdmin = authUser?.role === "Admin" || authUser?.role === "SUPER_ADMIN" || authUser?.role === "System Administrator";
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [manualNotificationPending, setManualNotificationPending] = useState(false);
   const [dismissedAlertId, setDismissedAlertId] = useState(null);
   const latestAlert = notifications[0];
   const showSnippet = Boolean(
@@ -329,14 +342,14 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
   });
 
   const handleGlobalSync = useCallback(async () => {
-    setIsSyncing(true);
-    try {
-      await refreshNotifications();
-      window.dispatchEvent(new CustomEvent("revela:global-refresh", { detail: { timestamp: Date.now() } }));
-    } finally {
-      setTimeout(() => setIsSyncing(false), 600);
-    }
-  }, [refreshNotifications]);
+    setManualNotificationPending(true);
+    try { await Promise.all([appRefresh?.run("manual"), refreshNotifications(), refreshUser()]); }
+    finally { setManualNotificationPending(false); }
+  }, [appRefresh, refreshNotifications, refreshUser]);
+  const isSyncing = refreshState?.status === "loading" || manualNotificationPending;
+  const remaining = refreshState?.nextRefresh == null || !clock ? null : Math.max(0, refreshState.nextRefresh - clock);
+  const countdown = remaining == null ? "After first sync" : remaining === 0 ? "Due" :
+    `${Math.floor(remaining / 3600000)}:${String(Math.floor(remaining / 60000) % 60).padStart(2, "0")}:${String(Math.floor(remaining / 1000) % 60).padStart(2, "0")}`;
 
   useEffect(() => {
     if (!token || !isAdmin) return undefined;
@@ -562,7 +575,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
         <input type="text" placeholder="Search businesses, barangays..." />
       </div>*/}
 
-      <div className="top-nav-right" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+      <div className="top-nav-right">
         {/* Live sync pill badge */}
         <div
           className="live-sync-badge"
@@ -573,6 +586,19 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
         </div>
 
         {/* Instant manual sync button */}
+        <div className="app-refresh-controls" role="group" aria-label="Application data refresh" style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "var(--color-muted)" }}>
+          <label htmlFor="app-refresh-mode">Auto refresh</label>
+          <select id="app-refresh-mode" value={refreshState?.mode ?? "medium"}
+            onChange={event => appRefresh?.setMode(event.target.value)}
+            style={{ background: "var(--color-surface)", color: "var(--color-ink)", border: "1px solid var(--color-border)", borderRadius: 7, padding: "5px 7px" }}>
+            {Object.entries(REFRESH_MODES).map(([name, ms]) =>
+              <option key={name} value={name}>{name[0].toUpperCase() + name.slice(1)} · {ms === 60000 ? "1 min" : ms === 900000 ? "15 min" : ms === 3600000 ? "1 hour" : "24 hours"}</option>)}
+          </select>
+          <span title={refreshState?.lastSuccess ? new Date(refreshState.lastSuccess).toLocaleString() : "No successful sync yet"}>
+            Last: {refreshState?.lastSuccess ? new Date(refreshState.lastSuccess).toLocaleTimeString() : "—"} · Next: {countdown}{refreshState?.stale ? " · Changed" : ""}
+          </span>
+          <span role="status" aria-live="polite">{refreshState?.status === "idle" ? "" : refreshState?.status === "loading" ? "Syncing…" : refreshState?.status === "success" ? "Synced" : refreshState?.status === "partial-failure" ? "Partially updated" : "Sync failed"}</span>
+        </div>
         <button
           className="quick-refresh-icon-btn"
           type="button"

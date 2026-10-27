@@ -1,4 +1,6 @@
-import { lazy, Suspense, useLayoutEffect } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect } from 'react';
+import { installBenchmarkControls } from './services/responsivenessBenchmark';
+import { matchingDryRunRequest } from './services/api';
 import { BrowserRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeProvider';
 import { AuthProvider } from './context/AuthProvider';
@@ -14,6 +16,7 @@ import InactivityProvider from './components/InactivityProvider';
 import { useDeviceAccess } from './hooks/useDeviceAccess';
 import { PublicPageTransition } from './components/PublicPageTransition';
 import RevelaLoader from './components/RevelaLoader';
+import { AppRefreshProvider } from './components/AppRefreshProvider';
 import { useAuth } from './context/authContext';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -52,12 +55,14 @@ function SignOutOverlay() {
 }
 
 export default function App() {
+  useEffect(() => { installBenchmarkControls(matchingDryRunRequest); }, []);
   return (
     <AuthProvider>
       <ThemeProvider>
         <BrowserRouter>
           {/* Inside the router so route changes count as activity. */}
           <InactivityProvider>
+            <AppRefreshProvider>
             <PublicPageTransition>
             <PathnameKeyedRouteErrorBoundary>
               <Suspense
@@ -88,6 +93,7 @@ export default function App() {
               </Suspense>
             </PathnameKeyedRouteErrorBoundary>
             </PublicPageTransition>
+            </AppRefreshProvider>
           </InactivityProvider>
           <SignOutOverlay />
         </BrowserRouter>

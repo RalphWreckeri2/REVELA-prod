@@ -3,7 +3,8 @@
  * Business Registry — wired to /api/registry with upload, search, filter, pagination.
  */
 
-import { useState, useEffect, useCallback, useContext } from "react";
+import { useState, useEffect, useCallback, useContext, useRef } from "react";
+import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
 import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
 import { UploadModal } from "../components/UploadModal";
@@ -437,8 +438,7 @@ export default function RegistryPage() {
 
   // Dynamic barangay list loaded from API
   const [barangays, setBarangays] = useState([]);
-  useEffect(() => {
-    async function loadBarangays() {
+  const loadBarangays = useCallback(async () => {
       try {
         const data = await getBarangaysRequest(token);
         // The API may return a bare array or a {data: [...]} wrapper —
@@ -450,12 +450,11 @@ export default function RegistryPage() {
             ? data.data
             : [];
         setBarangays(list);
+        return true;
       } catch (err) {
         console.error("Failed to load barangays", err);
-        setBarangays([]); // don't leave a stale/bad value in state
+        return false;
       }
-    }
-    loadBarangays();
   }, [token]);
 
   // Debounced search — wait 400ms after typing before firing the request
@@ -466,9 +465,15 @@ export default function RegistryPage() {
   }, [search]);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const query = JSON.stringify([page, pageSize, debouncedSearch, barangay, status, regType]);
+  const currentQuery = useRef(query);
+  const registryRequestSequence = useRef(0);
+  useEffect(() => { currentQuery.current = query; }, [query]);
 
   // ── Fetch businesses ──────────────────────────────────────────────────────
   const fetchBusinesses = useCallback(async (isSilent = false) => {
+    const requestQuery = query;
+    const sequence = ++registryRequestSequence.current;
     if (!isSilent) {
       setLoading(true);
       setIsRefreshing(true);
@@ -483,18 +488,23 @@ export default function RegistryPage() {
       if (regType !== "All Types") params.registrationType = regType;
 
       const result = await getRegistryRequest(params, token);
+      if (currentQuery.current !== requestQuery || sequence !== registryRequestSequence.current) return false;
       setBusinesses(result.data ?? []);
       setTotal(result.total ?? 0);
       setTotalPages(Math.max(1, result.pages ?? Math.ceil((result.total ?? 0) / pageSize)));
+      return true;
     } catch (err) {
-      if (!isSilent) {
+      if (!isSilent && currentQuery.current === requestQuery && sequence === registryRequestSequence.current) {
         setError(err.message || "Failed to load registry.");
       }
+      return false;
     } finally {
-      setLoading(false);
-      setIsRefreshing(false);
+      if (currentQuery.current === requestQuery && sequence === registryRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
-  }, [page, debouncedSearch, barangay, status, regType, pageSize, token]);
+  }, [page, debouncedSearch, barangay, status, regType, pageSize, token, query]);
+  const refreshView = useAppDataRefresh(`registry:${query}`, reason => refreshResults([
+    fetchBusinesses(reason === "scheduled"), loadBarangays(),
+  ]));
 
   // ── Export CSV Handler ───────────────────────────────────────────────────
   const handleExport = async () => {
@@ -566,49 +576,6 @@ export default function RegistryPage() {
     setPage(1);
   }
 
-  // Fetch whenever page or filters change
-  useEffect(() => {
-    if (!token) return;
-    fetchBusinesses(false);
-  }, [fetchBusinesses, token]);
-
-  // Real-time and background sync listeners
-  useEffect(() => {
-    const handleSync = () => { fetchBusinesses(true); };
-    window.addEventListener("revela:registry-update", handleSync);
-    window.addEventListener("revela:global-refresh", handleSync);
-
-    const handleProgress = (e) => {
-      if (e.detail?.status === "Import complete!") {
-        fetchBusinesses(true);
-      }
-    };
-    window.addEventListener("revela:registry-progress", handleProgress);
-
-    const pollTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchBusinesses(true);
-      }
-    }, 25000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchBusinesses(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-
-    return () => {
-      window.removeEventListener("revela:registry-update", handleSync);
-      window.removeEventListener("revela:global-refresh", handleSync);
-      window.removeEventListener("revela:registry-progress", handleProgress);
-      window.clearInterval(pollTimer);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-    };
-  }, [fetchBusinesses]);
-
   // ── Summary counts (derived from the full total, not just current page) ───
   // These come from a dedicated summary endpoint in later sprints.
   // For now we show the total returned.
@@ -627,7 +594,7 @@ export default function RegistryPage() {
           <button
             className="quick-refresh-btn"
             type="button"
-            onClick={() => fetchBusinesses(false)}
+            onClick={refreshView}
             disabled={isRefreshing}
             title="Refresh registry"
           >

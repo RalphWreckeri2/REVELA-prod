@@ -155,7 +155,7 @@ test("empty data is a ready response; permanent errors are not retried", async (
   assert.equal(loader.getSnapshot().sections.diagnostic.status, "error");
 });
 
-test("an expired snapshot is hidden after offline sleep and recovers on reconnect", async (t) => {
+test("an expired snapshot is retained but labelled stale after offline sleep and recovers on explicit refresh", async (t) => {
   let online = true;
   let clock = 1;
   const loader = setup(t, { now: () => clock, isOnline: () => online, request: async (section) => response(section) });
@@ -164,9 +164,11 @@ test("an expired snapshot is hidden after offline sleep and recovers on reconnec
   loader.connectionChanged();
   clock += 16 * 60 * 1000;
   await loader.refresh();
-  assert.equal(loader.getSnapshot().sections.descriptive.data, null);
+  assert.equal(loader.getSnapshot().sections.descriptive.data.value, 1);
+  assert.equal(loader.getSnapshot().sections.descriptive.status, "expired");
   online = true;
   loader.connectionChanged();
+  await loader.refresh(true);
   await tick();
   assert.equal(loader.getSnapshot().sections.descriptive.status, "ready");
 });
@@ -210,4 +212,28 @@ test("a missing section is an error rather than an endless loading state or a fa
   assert.equal(loader.getSnapshot().sections.summary.status, "error");
   assert.equal(loader.getSnapshot().sections.summary.updating, false);
   assert.equal(loader.getSnapshot().sections.summary.data, null);
+});
+
+test("expired server response retains only this filter's last successful snapshot and timestamp", async (t) => {
+  let clock = 100;
+  let attempts = 0;
+  const computedAt = new Date().toISOString();
+  const loader = setup(t, { now: () => clock, maxRetries: 0, sectionNames: ["summary"],
+    request: async () => {
+      if (++attempts === 1) return { summary: { value: 42 }, analytics_cache: { computed_at: computedAt, age_seconds: 0 } };
+      throw Object.assign(new Error("snapshot expired"), { status: 503,
+        responseData: { analytics_cache: { expired: true, refreshing: false } } });
+    },
+  });
+  await loader.refresh(true);
+  clock += 16 * 60_000;
+  await loader.refresh(true);
+  const old = loader.getSnapshot().sections.summary;
+  assert.equal(old.status, "expired");
+  assert.equal(old.data.value, 42);
+  assert.equal(old.metadata.computed_at, computedAt);
+  const otherFilter = setup(t, { sectionNames: ["summary"], maxRetries: 0,
+    request: async () => { throw new Error("offline"); } });
+  await otherFilter.refresh(true);
+  assert.equal(otherFilter.getSnapshot().sections.summary.data, null);
 });

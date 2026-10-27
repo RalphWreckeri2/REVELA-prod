@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback, useContext, useRef, useId } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
+import { useAppDataRefresh } from "../components/useAppDataRefresh";
 import { SkeletonKanbanBoard } from "../components/LoadingSkeleton";
 import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
@@ -1033,10 +1034,16 @@ export default function InspectionPage() {
   const [filterStatus, setFilterStatus] = useState("");
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const requestKey = `inspections:${isAdmin ? filterStatus : "tasks"}`;
+  const currentRequestKey = useRef(requestKey);
+  const reportRequestSequence = useRef(0);
+  useEffect(() => { currentRequestKey.current = requestKey; }, [requestKey]);
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
   const fetchReports = useCallback(async (isSilent = false) => {
     if (!token) return;
+    const key = requestKey;
+    const sequence = ++reportRequestSequence.current;
     if (!isSilent) {
       setLoading(true);
       setIsRefreshing(true);
@@ -1049,11 +1056,13 @@ export default function InspectionPage() {
           { status: filterStatus || undefined, limit: 100 },
           token
         );
+        if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
         setReports(result.data ?? []);
         setTotal(result.total ?? 0);
         setTotalRows(result.total_rows ?? result.total ?? 0);
       } else {
         result = await getInspectorTasksRequest(token);
+        if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
         setReports(result.data ?? []);
         setTotal(result.total ?? 0);
         setTotalRows(result.total_rows ?? result.total ?? 0);
@@ -1061,54 +1070,20 @@ export default function InspectionPage() {
       setDetailTarget(current => current
         ? (result.data ?? []).find(row => row.reportID === current.reportID) ?? current
         : null);
+      return true;
     } catch (err) {
-      if (!isSilent) {
+      if (!isSilent && currentRequestKey.current === key && sequence === reportRequestSequence.current) {
         setError(err.message || "Failed to load inspections.");
       }
+      return false;
     } finally {
-      setLoading(false);
-      setIsRefreshing(false);
+      if (currentRequestKey.current === key && sequence === reportRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
-  }, [token, isAdmin, filterStatus]);
-
-  useEffect(() => {
-    fetchReports(false);
-  }, [fetchReports]);
-
-  useEffect(() => {
-    const onInspectionUpdate = () => fetchReports(true);
-    window.addEventListener("revela:inspection-update", onInspectionUpdate);
-    window.addEventListener("revela:flag-update", onInspectionUpdate);
-    window.addEventListener("revela:registry-update", onInspectionUpdate);
-    window.addEventListener("revela:user-update", onInspectionUpdate);
-    window.addEventListener("revela:global-refresh", onInspectionUpdate);
-
-    // Silent background auto-polling every 15s
-    const pollTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchReports(true);
-      }
-    }, 15000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchReports(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-
-    return () => {
-      window.removeEventListener("revela:inspection-update", onInspectionUpdate);
-      window.removeEventListener("revela:flag-update", onInspectionUpdate);
-      window.removeEventListener("revela:registry-update", onInspectionUpdate);
-      window.removeEventListener("revela:user-update", onInspectionUpdate);
-      window.removeEventListener("revela:global-refresh", onInspectionUpdate);
-      window.clearInterval(pollTimer);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-    };
-  }, [fetchReports]);
+  }, [token, isAdmin, filterStatus, requestKey]);
+  const refreshView = useAppDataRefresh(requestKey, async reason => {
+    const ok = await fetchReports(reason === "scheduled");
+    return { ok, status: ok ? "success" : "failure" };
+  });
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const filteredReports = reports.filter(report => matchesDispatchSearch(report, search));
@@ -1153,7 +1128,7 @@ export default function InspectionPage() {
           <button
             className="quick-refresh-btn"
             type="button"
-            onClick={() => fetchReports(false)}
+            onClick={refreshView}
             disabled={isRefreshing}
             title="Refresh inspection list"
           >

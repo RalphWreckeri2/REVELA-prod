@@ -963,8 +963,12 @@ body {
 .top-nav-right {
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 10px;
   margin-left: auto;
+}
+
+@media (max-width: 640px) {
+  .top-nav-right { gap: 6px; }
 }
 
 .nav-badge {

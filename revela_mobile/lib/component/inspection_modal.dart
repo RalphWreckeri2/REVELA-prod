@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:io';
 import '../service/inspection_service.dart';
+import '../service/inspection_benchmark.dart';
 import '../service/inspection_location_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/image_compressor.dart';
@@ -198,6 +199,10 @@ class _InspectionModalState extends State<InspectionModal> {
       return;
     }
 
+    final benchmark = InspectionBenchmark.start(
+      evidenceFiles: _uploadedPhotoUrls.isEmpty ? _evidenceFiles.length : 0,
+      preuploadedUrls: _uploadedPhotoUrls.length,
+    );
     setState(() => _submitting = true);
     try {
       _preWarmLocation();
@@ -205,6 +210,7 @@ class _InspectionModalState extends State<InspectionModal> {
       final vLat = location.fix?.latitude;
       final vLng = location.fix?.longitude;
       final vAccuracy = location.fix?.accuracy;
+      benchmark?.gpsFix = location.hasFix;
       if (!location.hasFix) {
         debugPrint('GPS unavailable for inspection: ${location.issue}');
         if (mounted) {
@@ -228,9 +234,15 @@ class _InspectionModalState extends State<InspectionModal> {
         verifiedAccuracy: vAccuracy,
         evidenceFiles: _uploadedPhotoUrls.isEmpty ? _evidenceFiles : null,
         photoURLs: _uploadedPhotoUrls.isEmpty ? null : _uploadedPhotoUrls,
+        onCommittedResponse: benchmark?.accepted,
+        onResponse: benchmark?.response,
+        onRequestFailure: benchmark?.failure,
       );
 
-      if (!mounted) return;
+      if (!mounted) {
+        benchmark?.finish('incomplete', notes: 'modal unmounted before confirmation');
+        return;
+      }
       final messenger = ScaffoldMessenger.of(context);
       widget.onSubmitted();
       Navigator.of(context).pop(true);
@@ -254,12 +266,18 @@ class _InspectionModalState extends State<InspectionModal> {
               : Colors.orange.shade700,
         ),
       );
+      benchmark?.finish(result == InspectionSubmissionResult.submitted
+          ? 'completed' : result.name);
     } catch (e) {
       debugPrint('submitInspection error: $e');
-      if (!mounted) return;
+      if (!mounted) {
+        benchmark?.finish('incomplete', notes: 'modal unmounted after error');
+        return;
+      }
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Submit failed: $e')));
+      benchmark?.finish('failed', notes: e.runtimeType.toString());
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

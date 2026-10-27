@@ -1,0 +1,17 @@
+﻿barangay_id,barangay_name,red_count,yellow_count,black_count,flagged_count,sector_score,sector_score_source,avg_lat,avg_lng,production_ops,production_rank,dispatchable_red_count,dispatchable_yellow_count,dispatchable_business_count,open_inspection_excluded,dispatch_eligible,barangay_name_casefold,_id_sort,weighted_burden,risk_score,distance_km,distance_score,proximity_score,ops_score,priority_band,rank,has_flags,location_missing,risk_contribution,sector_contribution,proximity_contribution
+2,Barangay II,42,0,0,42,50.0,neutral_fallback,13.952413333333,121.116134946154,95.4,1,39,0,39,False,True,barangay ii,2,126,100.0,0.906,4.5,95.5,95.4,High Priority,1,True,False,68.0,3.5,23.9
+1,Barangay I,38,0,0,38,50.0,neutral_fallback,13.954944171053,121.110258115789,89.1,2,38,0,38,False,True,barangay i,1,114,90.5,0.764,3.8,96.2,89.1,High Priority,2,True,False,61.5,3.5,24.0
+7,Barangay Bubuyan,18,21,0,39,50.0,neutral_fallback,13.979110520513,121.109200148718,77.6,3,18,21,39,False,True,barangay bubuyan,7,96,76.2,2.158,10.8,89.2,77.6,High Priority,3,True,False,51.8,3.5,22.3
+4,Barangay III,23,0,0,23,50.0,neutral_fallback,13.960856366522,121.10922453087,65.0,4,23,0,23,False,True,barangay iii,4,69,54.8,0.576,2.9,97.1,65.0,High Priority,4,True,False,37.3,3.5,24.3
+3,Barangay II-A,18,0,0,18,50.0,neutral_fallback,13.950127144444,121.116082011111,56.2,5,18,0,18,False,True,barangay ii-a,3,54,42.9,1.156,5.8,94.2,56.2,Standard,5,True,False,29.2,3.5,23.6
+5,Barangay IV,15,0,0,15,50.0,neutral_fallback,13.958787532,121.117259115333,52.4,6,15,0,15,False,True,barangay iv,5,45,35.7,0.344,1.7,98.3,52.4,Standard,6,True,False,24.3,3.5,24.6
+9,Barangay Loob,16,0,0,16,50.0,neutral_fallback,13.9782279,121.11539725,51.9,7,16,0,16,False,True,barangay loob,9,48,38.1,1.983,9.9,90.1,51.9,Standard,7,True,False,25.9,3.5,22.5
+15,Barangay Santol,15,0,0,15,50.0,neutral_fallback,13.970692953333,121.1050982,50.9,8,15,0,15,False,True,barangay santol,15,45,35.7,1.532,7.7,92.3,50.9,Standard,8,True,False,24.3,3.5,23.1
+8,Barangay Calingatan,11,0,0,11,50.0,neutral_fallback,13.964182727273,121.120790809091,45.3,9,11,0,11,False,True,barangay calingatan,8,33,26.2,0.794,4.0,96.0,45.3,Standard,9,True,False,17.8,3.5,24.0
+16,Barangay Upa,10,0,0,10,50.0,neutral_fallback,13.96686031,121.11233713,43.7,10,10,0,10,False,True,barangay upa,16,30,23.8,0.756,3.8,96.2,43.7,Standard,10,True,False,16.2,3.5,24.0
+10,Barangay Lumanglipa,3,0,0,3,50.0,neutral_fallback,13.960332166667,121.083042566667,29.1,11,3,0,3,False,True,barangay lumanglipa,10,9,7.1,3.4,17.0,83.0,29.1,Monitor,11,True,False,4.8,3.5,20.8
+12,Barangay Manggahan,1,0,0,1,50.0,neutral_fallback,13.9673104,121.1019349,28.2,12,1,0,1,False,True,barangay manggahan,12,3,2.4,1.562,7.8,92.2,28.2,Monitor,12,True,False,1.6,3.5,23.0
+6,Barangay Bayorbor,0,0,0,0,50.0,neutral_fallback,,,0.0,13,0,0,0,False,False,barangay bayorbor,6,0,0.0,,50.0,50.0,0.0,Monitor,13,False,True,0.0,3.5,12.5
+11,Barangay Kinalaglagan,0,0,0,0,50.0,neutral_fallback,,,0.0,14,0,0,0,False,False,barangay kinalaglagan,11,0,0.0,,50.0,50.0,0.0,Monitor,14,False,True,0.0,3.5,12.5
+13,Barangay Nangkaan,0,0,0,0,50.0,neutral_fallback,,,0.0,15,0,0,0,False,False,barangay nangkaan,13,0,0.0,,50.0,50.0,0.0,Monitor,15,False,True,0.0,3.5,12.5
+14,Barangay San Sebastian,0,0,0,0,50.0,neutral_fallback,,,0.0,16,0,0,0,False,False,barangay san sebastian,14,0,0.0,,50.0,50.0,0.0,Monitor,16,False,True,0.0,3.5,12.5

@@ -14,6 +14,7 @@ import {
   Area
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
+import { useAppDataRefresh } from "../components/useAppDataRefresh";
 import ResponsiveChart from "../components/ResponsiveChart";
 import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
@@ -275,11 +276,12 @@ function ChartEmptyState({
 export default function ExportReportsPage() {
   const { token, user } = useAuth();
   const [analyticsData, setAnalyticsData] = useState(null);
+  const [loadedAt, setLoadedAt] = useState(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(true);
   const [analyticsError, setAnalyticsError] = useState("");
   const requestRef = useRef({ sequence: 0, controller: null });
   const exportInProgress = useRef(false);
-  const refreshQueued = useRef(false);
+  const exportFinished = useRef(null);
   const [preparingExport, setPreparingExport] = useState(false);
   const [exportingImageId, setExportingImageId] = useState(null);
   const [exportingPdfId, setExportingPdfId] = useState(null);
@@ -305,48 +307,37 @@ export default function ExportReportsPage() {
       if (sequence !== requestRef.current.sequence || controller.signal.aborted) {
         throw new Error("The report data changed while refreshing. Retry the export.");
       }
-      if (forExport) flushSync(() => { setAnalyticsData(data); setLoadingAnalytics(false); });
-      else setAnalyticsData(data);
+      if (forExport) flushSync(() => { setAnalyticsData(data); setLoadedAt(Date.now()); setLoadingAnalytics(false); });
+      else { setAnalyticsData(data); setLoadedAt(Date.now()); }
       return data;
     } catch (err) {
       if (sequence === requestRef.current.sequence && !controller.signal.aborted) {
-        setAnalyticsData(null);
         setAnalyticsError(err.message || "Unable to load official registry report data.");
       }
-      if (forExport) throw err;
-      return null;
+      throw err;
     } finally {
       if (sequence === requestRef.current.sequence) setLoadingAnalytics(false);
     }
   }, [token]);
 
+  const refreshView = useAppDataRefresh("reports", async () => {
+    if (exportInProgress.current) await exportFinished.current;
+    const data = await loadData();
+    return { ok: Boolean(data), status: data ? "success" : "failure" };
+  });
   useEffect(() => {
-    if (!token) return undefined;
-    let mounted = true;
     const requestState = requestRef.current;
-    queueMicrotask(() => { if (mounted) void loadData(); });
-    const sync = () => {
-      if (exportInProgress.current) { refreshQueued.current = true; return; }
-      void loadData();
-    };
-    const visible = () => { if (document.visibilityState === "visible") sync(); };
-    const events = ["registry-update", "inspection-update", "flag-update", "global-refresh"];
-    events.forEach(name => window.addEventListener(`revela:${name}`, sync));
-    window.addEventListener("focus", visible);
-    document.addEventListener("visibilitychange", visible);
     return () => {
-      mounted = false;
       requestState.sequence += 1;
       requestState.controller?.abort();
-      events.forEach(name => window.removeEventListener(`revela:${name}`, sync));
-      window.removeEventListener("focus", visible);
-      document.removeEventListener("visibilitychange", visible);
     };
-  }, [loadData, token]);
+  }, [loadData]);
 
   const withFreshDemographics = async (action) => {
     if (exportInProgress.current) return;
     exportInProgress.current = true;
+    let finishExport;
+    exportFinished.current = new Promise(resolve => { finishExport = resolve; });
     setPreparingExport(true);
     try {
       const snapshot = await loadData({ forExport: true });
@@ -357,10 +348,8 @@ export default function ExportReportsPage() {
     } finally {
       exportInProgress.current = false;
       setPreparingExport(false);
-      if (refreshQueued.current) {
-        refreshQueued.current = false;
-        void loadData();
-      }
+      finishExport();
+      exportFinished.current = null;
     }
   };
 
@@ -1107,12 +1096,12 @@ export default function ExportReportsPage() {
                 }}
               >
                 <span>
-                  Report data could not be loaded. {analyticsError}
+                  {analyticsData ? `Update failed. Showing the last successful report snapshot from ${new Date(loadedAt).toLocaleString()}. ` : "Report data could not be loaded. "}{analyticsError}
                 </span>
                 <button
                   className="secondary-btn"
                   type="button"
-                  onClick={() => void loadData()}
+                  onClick={refreshView}
                 >
                   Retry
                 </button>
@@ -1122,7 +1111,7 @@ export default function ExportReportsPage() {
             {preparingExport && <p role="status" style={{ padding: "10px 14px", color: "var(--color-ink)" }}>
               Refreshing report data and preparing export…
             </p>}
-            {!loadingAnalytics && !analyticsError && <div className="saas-card frosted-glass" style={{ padding: 16, marginBottom: 20 }}>
+             {!loadingAnalytics && analyticsData && <div className="saas-card frosted-glass" style={{ padding: 16, marginBottom: 20 }}>
               <strong>Current confirmed compliance (distinct linked businesses)</strong>
               <p style={{ margin: "8px 0" }}>Office-confirmed compliant: {desc?.confirmed_compliance?.office_confirmed ?? 0} · Inspection-verified compliant: {desc?.confirmed_compliance?.inspection_verified ?? 0} · Combined: {desc?.confirmed_compliance?.total_confirmed ?? 0}</p>
               <small>Latest qualifying confirmation determines one category per business. These are not counts of every Green registry business.</small>
@@ -1173,7 +1162,7 @@ export default function ExportReportsPage() {
                   Total Registered
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-ink)", marginTop: 4 }}>
-                  {analyticsError ? "—" : kpis?.total_businesses ?? 0}
+                   {!analyticsData ? "—" : kpis?.total_businesses ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "#10b981", marginTop: 2, fontWeight: 600 }}>Active Municipality-wide</div>
               </div>
@@ -1183,7 +1172,7 @@ export default function ExportReportsPage() {
                   Active &amp; Compliant
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", marginTop: 4 }}>
-                  {analyticsError ? "—" : kpis?.active_count ?? 0}
+                   {!analyticsData ? "—" : kpis?.active_count ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Current year valid permits</div>
               </div>
@@ -1193,7 +1182,7 @@ export default function ExportReportsPage() {
                   Expired / Lapsed
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#ef4444", marginTop: 4 }}>
-                  {analyticsError ? "—" : kpis?.expired_count ?? 0}
+                   {!analyticsData ? "—" : kpis?.expired_count ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Awaiting renewal</div>
               </div>
@@ -1203,7 +1192,7 @@ export default function ExportReportsPage() {
                   Pending Review
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b", marginTop: 4 }}>
-                  {analyticsError ? "—" : kpis?.pending_count ?? 0}
+                   {!analyticsData ? "—" : kpis?.pending_count ?? 0}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>In processing queue</div>
               </div>
@@ -1213,7 +1202,7 @@ export default function ExportReportsPage() {
                   Compliance Rate
                 </div>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#3b82f6", marginTop: 4 }}>
-                  {analyticsError ? "—" : kpis?.compliance_rate != null ? `${kpis.compliance_rate}%` : "0%"}
+                   {!analyticsData ? "—" : kpis?.compliance_rate != null ? `${kpis.compliance_rate}%` : "0%"}
                 </div>
                 <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Active vs Total Ratio</div>
               </div>
@@ -1323,7 +1312,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sizeData.length === 0 ? (
                     <ChartEmptyState
@@ -1459,7 +1448,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : typeData.length === 0 ? (
                     <ChartEmptyState
@@ -1583,7 +1572,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : regTypeData.length === 0 ? (
                     <ChartEmptyState
@@ -1723,7 +1712,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: Math.max(320, chartSectorData.length * 58 + 40), width: "100%" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sectoralData.length === 0 ? (
                     <ChartEmptyState
@@ -1869,7 +1858,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: 220, width: "100%" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : barangaySpreadData.length === 0 ? (
                     <ChartEmptyState
@@ -2004,7 +1993,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: 210, width: "100%" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : complianceBySizeData.length === 0 ? (
                     <ChartEmptyState
@@ -2161,7 +2150,7 @@ export default function ExportReportsPage() {
                 <div style={{ height: 210, width: "100%" }}>
                   {loadingAnalytics ? (
                     <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
-                  ) : analyticsError ? (
+                   ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : !hasTimelineData ? (
                     <ChartEmptyState

@@ -26,7 +26,7 @@ export function analyticsRefreshPending(metadata) {
 }
 
 export function analyticsSnapshotStatus(metadata) {
-  if (metadata?.expired) return "Snapshot expired — rankings hidden (maximum age: 15 minutes)";
+  if (metadata?.expired) return "Snapshot expired — last successful results are historical (maximum fresh age: 15 minutes)";
   if (metadata?.refreshing) return "Cached snapshot — refreshing in the background";
   if (metadata?.refresh_failed) return "Cached snapshot — refresh failed; will retry";
   if (metadata?.refresh_deferred) return "Cached snapshot — waiting to refresh";

@@ -1,6 +1,7 @@
 import { useState, useEffect, useContext, useCallback } from "react";
 import { useTheme } from "../context/themeContext";
 import DashboardLayout from "../components/DashboardLayout";
+import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, rebalanceWlcWeight } from "../components/wlcPolicy";
 import { AuthContext } from "../context/authContext";
 import { changePasswordRequest, setup2faRequest, verify2faSetupRequest } from "../services/authService";
@@ -418,7 +419,7 @@ export default function SettingsPage() {
     if (token) {
       setStorageLoading(true);
       setStorageError("");
-      getEvidenceStorageStatsRequest(token)
+      return getEvidenceStorageStatsRequest(token)
         .then(data => {
           if (data) {
             setStorageStats(data);
@@ -426,36 +427,36 @@ export default function SettingsPage() {
               ? "Recovery backups still occupy server storage. Retry cleanup to finish, or contact an administrator if recovery is blocked."
               : "");
           }
+          return Boolean(data);
         })
         .catch(err => {
           setStorageError(err.message || "Could not load evidence usage.");
           console.error("Failed to load evidence storage stats:", err);
+          return false;
         })
         .finally(() => setStorageLoading(false));
     }
+    return Promise.resolve(false);
   }, [token]);
 
-  // Load initial settings on mount
-  useEffect(() => {
+  const loadPolicy = useCallback(async () => {
     setPolicyLoading(true);
     setPolicyError("");
-    getWlcConfigRequest(token).then(data => {
+    try {
+      const data = await getWlcConfigRequest(token);
       if (data) {
-        setWlcConfig(data);
+        setWlcConfig(current => !savedPolicy || policySignature(current) === policySignature(savedPolicy) ? data : current);
         setSavedPolicy(data);
       }
-    }).catch(err => {
+      return Boolean(data);
+    } catch (err) {
       setPolicyError(err.message || "Could not load policy.");
       console.error(err);
-    }).finally(() => setPolicyLoading(false));
-
-    fetchStorageStats();
-
-    return () => {
-      // Clear preview theme on unmount so it reverts if unsaved
-      setPreviewTheme(null);
-    };
-  }, [token, setPreviewTheme, fetchStorageStats]);
+      return false;
+    } finally { setPolicyLoading(false); }
+  }, [token, savedPolicy]);
+  useAppDataRefresh("settings", () => refreshResults([loadPolicy(), fetchStorageStats()]));
+  useEffect(() => () => setPreviewTheme(null), [setPreviewTheme]);
 
   const handleExecuteCleanup = async (filterToClean) => {
     setCleaningStorage(true);

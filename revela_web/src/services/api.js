@@ -653,20 +653,22 @@ export async function getFlagsRequest(params = {}, token) {
       headers: { Authorization: `Bearer ${token}` },
       signal: params.signal,
     });
+    params.onResponse?.(res);
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);
   }
 }
 
-export async function getAllFlagsRequest(token) {
+export async function getAllFlagsRequest(token, options = {}) {
   const records = [];
   let page = 1;
   let pages;
   do {
-    const result = await getFlagsRequest({ page, limit: 1000 }, token);
+    const result = await getFlagsRequest({ page, limit: 1000, onResponse: options.onResponse, signal: options.signal }, token);
     records.push(...(Array.isArray(result) ? result : (result?.data ?? [])));
     pages = result?.pages ?? 1;
+    options.onPage?.({ page, pages, total: result?.total, received: records.length });
     page += 1;
   } while (page <= pages);
   return records;
@@ -723,7 +725,7 @@ export async function escalateFlagToBlackRequest(logId, token) {
   }
 }
 
-export async function runDetectionRequest(token, mode = "quick") {
+export async function runDetectionRequest(token, mode = "quick", options = {}) {
   if (!token) {
     throw new Error("Missing authentication token.");
   }
@@ -737,6 +739,7 @@ export async function runDetectionRequest(token, mode = "quick") {
       },
       body: JSON.stringify({ mode }),
     });
+    options.onResponse?.(res);
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);
@@ -1735,7 +1738,7 @@ export async function purgeTestFixturesRequest(token, olderThanDays) {
 }
 
 /** POST /api/admin-settings/matching-dry-run — replay candidates, zero Google calls */
-export async function matchingDryRunRequest(candidates, token) {
+export async function matchingDryRunRequest(candidates, token, options = {}) {
   if (!token) throw new Error("Missing authentication token.");
   try {
     const res = await fetch(`${BASE_URL}/admin-settings/matching-dry-run`, {
@@ -1746,6 +1749,7 @@ export async function matchingDryRunRequest(candidates, token) {
       },
       body: JSON.stringify({ candidates }),
     });
+    options.onResponse?.(res);
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);

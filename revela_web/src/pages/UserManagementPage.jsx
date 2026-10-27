@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import DashboardLayout from "../components/DashboardLayout";
+import { useAppDataRefresh } from "../components/useAppDataRefresh";
 import { useAuth } from "../context/authContext";
 import { SkeletonTableRows } from "../components/LoadingSkeleton";
 import {
@@ -488,63 +489,37 @@ export default function UserManagementPage() {
   const [search,         setSearch]         = useState("");
   const [roleFilter,     setRoleFilter]     = useState("all");
   const [isRefreshing,   setIsRefreshing]   = useState(false);
+  const userRequestSequence = useRef(0);
 
   const fetchUsers = useCallback(async (isSilent = false) => {
     if (!token) return;
+    const sequence = ++userRequestSequence.current;
     if (!isSilent) {
       setLoading(true);
       setIsRefreshing(true);
     }
     try {
       const data = await getUsersRequest(token);
+      if (sequence !== userRequestSequence.current) return false;
       setUsers(data.filter(u => u.isActive !== 0 && u.isActive !== false));
+      return true;
     } catch (err) {
-      if (!isSilent) {
+      if (!isSilent && sequence === userRequestSequence.current) {
         Swal.fire({
           icon: 'error',
           title: 'Error',
           text: err.message || "Failed to load users."
         });
       }
+      return false;
     } finally {
-      setLoading(false);
-      setIsRefreshing(false);
+      if (sequence === userRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
     }
   }, [token]);
-
-  useEffect(() => { 
-    fetchUsers(false); 
-    const handleSync = () => {
-      fetchUsers(true);
-    };
-
-    window.addEventListener("revela:password-reset", handleSync);
-    window.addEventListener("revela:user-update", handleSync);
-    window.addEventListener("revela:global-refresh", handleSync);
-
-    const pollTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchUsers(true);
-      }
-    }, 30000);
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchUsers(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibility);
-    window.addEventListener("focus", handleVisibility);
-
-    return () => {
-      window.removeEventListener("revela:password-reset", handleSync);
-      window.removeEventListener("revela:user-update", handleSync);
-      window.removeEventListener("revela:global-refresh", handleSync);
-      window.clearInterval(pollTimer);
-      document.removeEventListener("visibilitychange", handleVisibility);
-      window.removeEventListener("focus", handleVisibility);
-    };
-  }, [fetchUsers]);
+  const refreshView = useAppDataRefresh(user?.role === "SUPER_ADMIN" ? "users" : null, async reason => {
+    const ok = await fetchUsers(reason === "scheduled");
+    return { ok, status: ok ? "success" : "failure" };
+  });
 
   // Derived stats
   const stats = useMemo(() => {
@@ -596,7 +571,7 @@ export default function UserManagementPage() {
           <button
             className="quick-refresh-btn"
             type="button"
-            onClick={() => fetchUsers(false)}
+            onClick={refreshView}
             disabled={isRefreshing}
             title="Refresh user list"
           >

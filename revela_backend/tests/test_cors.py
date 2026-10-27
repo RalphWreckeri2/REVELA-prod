@@ -111,6 +111,22 @@ class OriginParsingTests(unittest.TestCase):
         self.assertNotIn("*", allowed)
         self.assertIn(PRODUCTION_WWW, allowed)
 
+    def test_benchmark_request_id_is_exposed_only_to_allowed_browser(self):
+        from flask import Flask
+
+        app = Flask(__name__)
+        cors_config.init_app(app, PRODUCTION_APEX)
+
+        @app.get('/api/fixture')
+        def fixture():
+            return {'ok': True}, 200, {'X-Request-ID': 'fixture-id'}
+
+        with app.test_client() as client:
+            allowed = client.get('/api/fixture', headers={'Origin': PRODUCTION_WWW})
+            self.assertIn('X-Request-ID', allowed.headers['Access-Control-Expose-Headers'])
+            denied = client.get('/api/fixture', headers={'Origin': EVIL})
+            self.assertNotIn('Access-Control-Allow-Origin', denied.headers)
+
 
 def _build_app(cors_env):
     """Boot the real application factory with a given CORS_ORIGINS value."""

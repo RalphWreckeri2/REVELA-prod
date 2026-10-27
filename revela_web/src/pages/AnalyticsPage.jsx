@@ -831,15 +831,39 @@ export default function AnalyticsPage() {
   const [expandedDispatch, setExpandedDispatch] = useState({});
   const [draftFilters, setDraftFilters] = useState(createEmptyFilters);
   const [appliedFilters, setAppliedFilters] = useState(createEmptyFilters);
-  const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, appliedFilters);
+  const [filterMeta, setFilterMeta] = useState(null);
+  const [barangaysList, setBarangaysList] = useState([]);
+  const [filterMetaError, setFilterMetaError] = useState(false);
+  const [filterRetry, setFilterRetry] = useState(0);
+  const loadFilterOptions = useCallback(async () => {
+    if (!token) return false;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 20000);
+    try {
+      const [meta, brgy] = await Promise.allSettled([
+        getAnalyticsFilterMetadataRequest(token, { signal: controller.signal }),
+        getBarangaysRequest(token, { signal: controller.signal }),
+      ]);
+      if (meta.status === "fulfilled") setFilterMeta(meta.value);
+      if (brgy.status === "fulfilled") {
+        const value = brgy.value;
+        setBarangaysList(Array.isArray(value) ? value : (Array.isArray(value?.data) ? value.data : []));
+      }
+      const failed = meta.status === "rejected" || brgy.status === "rejected";
+      setFilterMetaError(failed);
+      return !failed;
+    } finally { window.clearTimeout(timer); }
+  }, [token]);
+  const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, appliedFilters, undefined, "analytics", () => loadFilterOptions());
   const currentSection = sections[activeTab];
   const data = useMemo(() => Object.fromEntries(
     Object.entries(sections).map(([name, section]) => [name, section.data]),
   ), [sections]);
   const loading = !currentSection.data && currentSection.status === "loading";
   const error = currentSection.error;
-  const snapshotIsExpired = currentSection.status === "expired";
-  const cacheMetadata = currentSection.metadata;
+  const expiredSection = Object.values(sections).find(section => section.status === "expired");
+  const snapshotIsExpired = Boolean(expiredSection);
+  const cacheMetadata = expiredSection?.metadata ?? currentSection.metadata;
   const isRefreshing = Object.values(sections).some((section) => section.updating);
   const backgroundRefreshing = currentSection.updating;
   const [showFilters, setShowFilters] = useState(false);
@@ -847,11 +871,6 @@ export default function AnalyticsPage() {
   const [brgySearchTerm, setBrgySearchTerm] = useState("");
   const [brgyDropdownOpen, setBrgyDropdownOpen] = useState(false);
   const brgyDropdownRef = useRef(null);
-
-  const [filterMeta, setFilterMeta] = useState(null);
-  const [barangaysList, setBarangaysList] = useState([]);
-  const [filterMetaError, setFilterMetaError] = useState(false);
-  const [filterRetry, setFilterRetry] = useState(0);
 
   useEffect(() => {
     const nav = sectionNavRef.current;
@@ -920,39 +939,8 @@ export default function AnalyticsPage() {
   }, [fetchWlcConfig]);
 
   useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-    let pending;
-    let controller;
-    let timer;
-    const load = () => {
-      if (pending) return pending;
-      controller = new AbortController();
-      timer = window.setTimeout(() => controller.abort(), 20000);
-      pending = (async () => {
-        const [meta, brgy] = await Promise.allSettled([
-          getAnalyticsFilterMetadataRequest(token, { signal: controller.signal }),
-          getBarangaysRequest(token, { signal: controller.signal }),
-        ]);
-        if (cancelled) return;
-        if (meta.status === "fulfilled") setFilterMeta(meta.value);
-        if (brgy.status === "fulfilled") {
-          const value = brgy.value;
-          setBarangaysList(Array.isArray(value) ? value : (Array.isArray(value?.data) ? value.data : []));
-        }
-        setFilterMetaError(meta.status === "rejected" || brgy.status === "rejected");
-      })().finally(() => { window.clearTimeout(timer); pending = null; });
-      return pending;
-    };
-    queueMicrotask(() => { if (!cancelled) void load(); });
-    window.addEventListener("online", load);
-    return () => {
-      cancelled = true;
-      controller?.abort();
-      window.clearTimeout(timer);
-      window.removeEventListener("online", load);
-    };
-  }, [token, filterRetry]);
+    if (filterRetry) void loadFilterOptions();
+  }, [filterRetry, loadFilterOptions]);
 
   // ── Derived shorthand references ──────────────────────────────────────────
   const desc = data?.descriptive;
@@ -2061,15 +2049,14 @@ export default function AnalyticsPage() {
       ══════════════════════════════════════════════════════════════════════ */}
         {snapshotIsExpired && (
           <div role="alert" className="saas-card" style={{ padding: 20, marginBottom: 24, color: COLOR.red }}>
-            <strong>Analytics snapshot expired — rankings are hidden.</strong>
-            <p>The maximum display age is 15 minutes. This snapshot is no longer eligible
-              for display, or its computation time cannot be verified.
-              A fresh snapshot is required before rankings and charts can be displayed.</p>
+            <strong>Stale analytics — historical snapshot, not current rankings.</strong>
+            <p>The server's maximum fresh age is 15 minutes. Last successfully loaded results remain visible
+              for reference only; do not use them as current dispatch priorities.</p>
             <p>Last computed: {cacheMetadata?.computed_at || "Unavailable"}.</p>
             <p>{cacheMetadata?.refresh_failed
               ? "The refresh failed. The next request will retry after the backoff."
               : backgroundRefreshing ? "Waiting for the background refresh."
-                 : "Refresh Analytics to retry; no expired rankings are being shown."}</p>
+                  : "Refresh Analytics to request an updated snapshot."}</p>
             <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}

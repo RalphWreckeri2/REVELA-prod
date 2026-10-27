@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { getInspectionCalendarRequest, getInspectionsRequest } from "../services/api";
+import { useAppDataRefresh } from "./useAppDataRefresh";
 import { deadlineGroups, deadlineStatusCounts, loadLatestAssignments, manilaToday } from "./deadlineCalendar";
 import "../styles/InspectionCalendar.css";
 
@@ -243,26 +244,26 @@ export default function InspectionCalendar({ token, initialDate }) {
   const [selectedDate, setSelectedDate] = useState(() => initialDate || manilaToday());
   const [calendar, setCalendar] = useState(null);
   const [requestState, setRequestState] = useState(null);
-  const [refreshVersion, setRefreshVersion] = useState(0);
-  const [deadlineVersion, setDeadlineVersion] = useState(0);
+  const refreshVersion = 0;
+  const deadlineVersion = 0;
   const [deadlineData, setDeadlineData] = useState(null);
   const [deadlineRequest, setDeadlineRequest] = useState(null);
-  const deadlineCache = useRef(null);
-
   const todayIso = deadlines ? manilaToday() : toIsoDate(new Date());
   const monthIso = `${visibleMonth.getFullYear()}-${String(visibleMonth.getMonth() + 1).padStart(2, "0")}`;
   const monthLabel = formatMonth(visibleMonth);
+  const queryKey = deadlines ? "calendar:deadlines" : `calendar:activity:${monthIso}:${selectedDate}`;
+  const currentQuery = useRef(queryKey);
+  useEffect(() => { currentQuery.current = queryKey; }, [queryKey]);
 
-  useEffect(() => {
-    if (!token || deadlines) return undefined;
-    let isCurrent = true;
-    const request = { token, month: monthIso, date: selectedDate, refreshVersion };
-    const loadCalendar = async () => {
-      if (!isCurrent) return;
+  const loadActive = async () => {
+    if (!token) return { ok: false, status: "failure" };
+    const isCurrent = () => currentQuery.current === queryKey;
+    if (!deadlines) {
+      const request = { token, month: monthIso, date: selectedDate, refreshVersion };
       setRequestState({ ...request, status: "loading", error: "" });
       try {
         const result = await getInspectionCalendarRequest(monthIso, selectedDate, token);
-        if (!isCurrent) return;
+        if (!isCurrent()) return { ok: false, status: "failure" };
         if (
           result?.month !== monthIso || result?.selectedDate !== selectedDate ||
           !Array.isArray(result?.days) || !Array.isArray(result?.activities)
@@ -271,45 +272,35 @@ export default function InspectionCalendar({ token, initialDate }) {
         }
         setCalendar({ token, refreshVersion, data: result });
         setRequestState({ ...request, status: "success", error: "" });
+        return { ok: true, status: "success" };
       } catch (requestError) {
-        if (isCurrent) {
+        if (isCurrent()) {
           setRequestState({
             ...request,
             status: "error",
             error: requestError.message || "Unable to load inspection activity.",
           });
         }
+        return { ok: false, status: "failure" };
       }
-    };
-    void Promise.resolve().then(loadCalendar);
-    // Ignore older responses after rapid date/month changes or unmounting.
-    return () => { isCurrent = false; };
-  }, [token, monthIso, selectedDate, refreshVersion, deadlines]);
-
-  useEffect(() => {
-    if (!token || !deadlines) return undefined;
-    if (deadlineCache.current?.token === token && deadlineCache.current?.version === deadlineVersion) return undefined;
-    let isCurrent = true;
+    }
     const request = { token, version: deadlineVersion };
-    const load = async () => {
-      if (!isCurrent) return;
       setDeadlineRequest({ ...request, status: "loading", error: "" });
       try {
         const rows = await loadLatestAssignments(params => getInspectionsRequest(params, token), {
-          isCurrent: () => isCurrent,
-          onProgress: progress => { if (isCurrent) setDeadlineRequest({ ...request, ...progress, status: "loading", error: "" }); },
+          isCurrent,
+          onProgress: progress => { if (isCurrent()) setDeadlineRequest({ ...request, ...progress, status: "loading", error: "" }); },
         });
-        if (!isCurrent || !rows) return;
-        deadlineCache.current = { ...request, rows };
+        if (!isCurrent() || !rows) return { ok: false, status: "failure" };
         setDeadlineData({ ...request, rows });
         setDeadlineRequest(previous => ({ ...previous, ...request, status: "success", error: "" }));
+        return { ok: true, status: "success" };
       } catch (requestError) {
-        if (isCurrent) setDeadlineRequest(previous => ({ ...previous, ...request, status: "error", error: requestError.message || "Could not load assignment deadlines." }));
+        if (isCurrent()) setDeadlineRequest(previous => ({ ...previous, ...request, status: "error", error: requestError.message || "Could not load assignment deadlines." }));
+        return { ok: false, status: "failure" };
       }
-    };
-    void Promise.resolve().then(load);
-    return () => { isCurrent = false; };
-  }, [token, deadlines, deadlineVersion]);
+  };
+  const refreshView = useAppDataRefresh(queryKey, loadActive);
 
   const requestMatches = requestState?.token === token &&
     requestState?.month === monthIso && requestState?.date === selectedDate &&
@@ -319,8 +310,8 @@ export default function InspectionCalendar({ token, initialDate }) {
   // Monthly counts can stay visible while another day in the same month loads.
   // Day details are never rendered until the response matches the current date.
   const monthData = calendar?.token === token && calendar?.data.month === monthIso &&
-    calendar?.refreshVersion === refreshVersion && !activityError ? calendar.data : null;
-  const dayReady = !activityLoading && !activityError && monthData?.selectedDate === selectedDate;
+    calendar?.refreshVersion === refreshVersion ? calendar.data : null;
+  const dayReady = !activityLoading && monthData?.selectedDate === selectedDate;
   const activities = dayReady ? monthData.activities : NO_ACTIVITIES;
 
   const activityDayCounts = useMemo(
@@ -332,8 +323,7 @@ export default function InspectionCalendar({ token, initialDate }) {
   const monthlyEvents = [...activityDayCounts.values()].reduce((total, count) => total + count, 0);
   const latestActiveDate = [...activityDayCounts.keys()].sort().at(-1);
   const deadlineRequestMatches = deadlineRequest?.token === token && deadlineRequest?.version === deadlineVersion;
-  const deadlineReady = deadlineRequestMatches && deadlineRequest.status === "success"
-    && deadlineData?.token === token && deadlineData?.version === deadlineVersion;
+  const deadlineReady = deadlineData?.token === token && deadlineData?.version === deadlineVersion;
   const deadlineLoading = !deadlineRequestMatches || deadlineRequest.status === "loading";
   const groups = useMemo(() => deadlineGroups(deadlineReady ? deadlineData.rows : []), [deadlineReady, deadlineData]);
   const deadlineDayCounts = useMemo(() => new Map([...groups.days].filter(([date]) => date.startsWith(`${monthIso}-`)).map(([date, rows]) => [date, rows.length])), [groups, monthIso]);
@@ -387,7 +377,7 @@ export default function InspectionCalendar({ token, initialDate }) {
     setSelectedDate(toIsoDate(today));
   };
 
-  const refreshCalendar = () => deadlines ? setDeadlineVersion(version => version + 1) : setRefreshVersion(version => version + 1);
+  const refreshCalendar = refreshView;
   const sharedDateProps = {
     visibleMonth, monthCells, selectedDate, todayIso, dayCounts,
     hasCounts, onSelectDate: setSelectedDate, deadlines,

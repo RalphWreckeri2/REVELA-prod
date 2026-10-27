@@ -37,7 +37,7 @@ export function createAnalyticsLoader({
   const expire = (name) => {
     const section = state.sections[name];
     if (section.data && analyticsSnapshotExpired(section, now())) {
-      emit(name, { data: null, status: "expired", error: "This snapshot is older than 15 minutes. Retry to update it." });
+      emit(name, { status: "expired" });
     }
   };
 
@@ -69,7 +69,7 @@ export function createAnalyticsLoader({
             if (lifetime.signal.aborted || scope !== generation) return;
             const preparing = cause.responseData?.analytics_cache;
             if (preparing?.expired) {
-              emit(name, { data: null, metadata: preparing, status: "loading" });
+              emit(name, { status: previous.data ? "expired" : "loading" });
               if (analyticsRefreshPending(preparing) && !preparing.refresh_failed) {
                 // An expired snapshot's 503 is also the server's signal that a
                 // replacement is being prepared. Poll it within the cold-load
@@ -104,7 +104,7 @@ export function createAnalyticsLoader({
             };
             const expired = analyticsSnapshotExpired(snapshot, now());
             emit(name, {
-              ...snapshot, data: expired ? null : json[name], metadata,
+              ...snapshot, data: expired ? previous.data : json[name], metadata: expired && previous.data ? previous.metadata : metadata,
               status: expired ? "expired" : "ready", error: null, fetchedAt: now(),
             });
             clearTimeout(expiryTimers.get(name));
@@ -118,7 +118,8 @@ export function createAnalyticsLoader({
         }
       } catch (error) {
         if (lifetime.signal.aborted || scope !== generation) return;
-        emit(name, { status: !isOnline() ? "offline" : "error", error: error.message });
+        emit(name, { status: state.sections[name].data && analyticsSnapshotExpired(state.sections[name], now())
+          ? "expired" : !isOnline() ? "offline" : "error", error: error.message });
       } finally {
         if (flights.get(name) === flight) {
           flights.delete(name);
@@ -150,7 +151,7 @@ export function createAnalyticsLoader({
       state = { ...state, offline };
       if (offline) {
         this.stop(false);
-        sectionNames.forEach((name) => emit(name, { status: "offline", updating: false }));
+        sectionNames.forEach((name) => emit(name, { status: state.sections[name].data && analyticsSnapshotExpired(state.sections[name], now()) ? "expired" : "offline", updating: false }));
       } else if (wasOffline) {
         void this.refresh(true);
       }

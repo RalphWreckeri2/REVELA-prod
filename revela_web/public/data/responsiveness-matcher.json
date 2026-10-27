@@ -1,0 +1,12 @@
+[
+  {"name":"Benchmark Bakery One","lat":13.9604,"lng":121.1145,"types":["bakery"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Pharmacy Two","lat":13.9610,"lng":121.1150,"types":["pharmacy"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Repair Three","lat":13.9615,"lng":121.1155,"types":["car_repair"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Grocery Four","lat":13.9620,"lng":121.1160,"types":["grocery_store"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Cafe Five","lat":13.9625,"lng":121.1165,"types":["cafe"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Hardware Six","lat":13.9630,"lng":121.1170,"types":["hardware_store"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Tailor Seven","lat":13.9635,"lng":121.1175,"types":["clothing_store"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Salon Eight","lat":13.9640,"lng":121.1180,"types":["beauty_salon"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Laundry Nine","lat":13.9645,"lng":121.1185,"types":["laundry"],"address":"Benchmark Street, Mataasnakahoy"},
+  {"name":"Benchmark Restaurant Ten","lat":13.9650,"lng":121.1190,"types":["restaurant"],"address":"Benchmark Street, Mataasnakahoy"}
+]

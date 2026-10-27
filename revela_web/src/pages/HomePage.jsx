@@ -14,6 +14,7 @@ import Footer from "../components/Footer";
 import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useAnalyticsData } from "../components/useAnalyticsData";
+import { useAppDataRefresh, refreshResults } from "../components/useAppDataRefresh";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, markNotificationsReadRequest } from "../services/api";
 import { getBarangayCentroid } from "../utils/barangayCentroids";
@@ -810,7 +811,7 @@ export default function HomePage() {
   const { isLoaded, loadError } = useGoogleMapsScript();
 
 
-  const { sections, refresh: refreshAnalytics } = useAnalyticsData(token, undefined, OVERVIEW_ANALYTICS_SECTIONS, 20000);
+  const { sections, refresh: refreshAnalytics } = useAnalyticsData(token, undefined, OVERVIEW_ANALYTICS_SECTIONS, null);
   const summary = sections.summary;
   const priorities = sections.prescriptive;
   const kpis = summary.data?.kpis;
@@ -878,10 +879,12 @@ export default function HomePage() {
         if (!Array.isArray(result)) throw new Error("Invalid dashboard response");
         commit(result);
         setAuxiliaryStates(previous => ({ ...previous, [key]: { loading: false, error: false, hasResult: true } }));
+        return true;
       } catch {
         if (!controller.signal.aborted) {
           setAuxiliaryStates(previous => ({ ...previous, [key]: { ...previous[key], loading: false, error: true } }));
         }
+        return false;
       } finally {
         window.clearTimeout(timer);
         controller.signal.removeEventListener("abort", abort);
@@ -891,7 +894,7 @@ export default function HomePage() {
       load("flags", signal => getFlagsRequest({ limit: 200, signal }, token), result => result?.data, setAllFlags),
       load("inspections", signal => getInspectionsRequest({ limit: 1000, signal }, token), result => result?.data, setInspections),
       load("inspectors", signal => getInspectorsRequest(token, { signal }), result => result?.data ?? result, setInspectors),
-    ]).finally(() => {
+    ]).then(results => results.every(Boolean)).finally(() => {
       if (dashboardRequestRef.current === controller) {
         dashboardRequestRef.current = null;
         setAuxiliaryRefreshing(false);
@@ -899,6 +902,9 @@ export default function HomePage() {
     });
     return controller.promise;
   }, [token]);
+  const refreshView = useAppDataRefresh("home", reason => refreshResults([
+    refreshAnalytics(), fetchDashboardData(reason === "scheduled"),
+  ]));
 
   useEffect(() => {
     if (rollover?.detected) {
@@ -937,56 +943,15 @@ export default function HomePage() {
     dashboardRequestRef.current = null;
   }, [fetchDashboardData]);
 
-  useEffect(() => {
-    // Discarded StrictMode effects never issue duplicate dashboard requests.
-    let current = true;
-    queueMicrotask(() => { if (current) void fetchDashboardData(false); });
-
-    let eventTimer;
-    const handleEventUpdate = () => {
-      window.clearTimeout(eventTimer);
-      eventTimer = window.setTimeout(() => fetchDashboardData(true), 200);
-    };
-
-    window.addEventListener("revela:inspection-update", handleEventUpdate);
-    window.addEventListener("revela:yellow-flag", handleEventUpdate);
-    window.addEventListener("revela:flag-update", handleEventUpdate);
-    window.addEventListener("revela:registry-update", handleEventUpdate);
-    window.addEventListener("revela:user-update", handleEventUpdate);
-    window.addEventListener("revela:global-refresh", handleEventUpdate);
-
-    // Silent background auto-polling every 20s
-    const pollInterval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchDashboardData(true);
-      }
-    }, 20000);
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        fetchDashboardData(true);
-      }
-    };
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleVisibilityChange);
-
-    return () => {
-      current = false;
-      window.removeEventListener("revela:inspection-update", handleEventUpdate);
-      window.removeEventListener("revela:yellow-flag", handleEventUpdate);
-      window.removeEventListener("revela:flag-update", handleEventUpdate);
-      window.removeEventListener("revela:registry-update", handleEventUpdate);
-      window.removeEventListener("revela:user-update", handleEventUpdate);
-      window.removeEventListener("revela:global-refresh", handleEventUpdate);
-      window.clearTimeout(eventTimer);
-      window.clearInterval(pollInterval);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleVisibilityChange);
-    };
-  }, [fetchDashboardData]);
-
   return (
     <DashboardLayout className="overview-page">
+      {Object.values(sections).some(section => section.status === "expired") && (
+        <p role="alert" className="saas-card" style={{ padding: 14, marginBottom: 14 }}>
+          Stale analytics: the displayed overview is the last successful snapshot, not current data.
+          Last computed: {summary.metadata?.computed_at ?? priorities.metadata?.computed_at ?? "unknown"}.
+          <button type="button" className="ghost-btn" onClick={refreshView}>Refresh now</button>
+        </p>
+      )}
       {/* Main Layout: 2 Columns */}
       <div className="overview-dashboard-layout">
 
@@ -998,7 +963,7 @@ export default function HomePage() {
             requestStates={requestStates}
             mapsReady={isLoaded}
             mapsError={loadError}
-            onRefresh={() => { void refreshAnalytics(); void fetchDashboardData(false); }}
+            onRefresh={refreshView}
             isRefreshing={isRefreshing}
           />
 

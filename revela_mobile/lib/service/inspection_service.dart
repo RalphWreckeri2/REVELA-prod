@@ -871,6 +871,10 @@ class InspectionService {
     List<String>? evidenceLocalPaths,
     List<XFile>? evidenceFiles,
     List<String>? photoURLs,
+    void Function(String? requestId, int? status, bool alreadyAccepted)?
+        onCommittedResponse,
+    void Function(String? requestId, int? status)? onResponse,
+    void Function(String? requestId, int? status)? onRequestFailure,
   }) async {
     final ownerUserId = await _auth.getAuthenticatedUserId();
     if (ownerUserId == null || ownerUserId.isEmpty) {
@@ -975,11 +979,16 @@ class InspectionService {
           'photoURL': photoUrlPayload,
         },
       );
+      onResponse?.call(response.headers.value('x-request-id'), response.statusCode);
       if (!_isAcceptedSubmission(response.data, task.reportID)) {
         throw const FormatException(
           'Submission response did not confirm the report identity.',
         );
       }
+      onCommittedResponse?.call(
+        response.headers.value('x-request-id'), response.statusCode,
+        response.data is Map && response.data['alreadyAccepted'] == true,
+      );
       await _offlineStorage.updateCachedTaskStatus(
         task.reportID,
         verificationStatus: 'Submitted',
@@ -1000,6 +1009,12 @@ class InspectionService {
       );
       return InspectionSubmissionResult.submitted;
     } catch (error) {
+      if (error is DioException) {
+        onRequestFailure?.call(
+          error.response?.headers.value('x-request-id'),
+          error.response?.statusCode,
+        );
+      }
       debugPrint('InspectionService.submitInspection failed: $error');
       final responseCode = error is DioException
           ? error.response?.statusCode ?? 0

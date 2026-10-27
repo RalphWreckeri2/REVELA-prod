@@ -1,0 +1,49 @@
+{
+  "generated_at": "2026-10-26T23:10:19.641614+00:00",
+  "database": {
+    "host": "altaria.proxy.rlwy.net",
+    "port": 58810,
+    "name": "railway",
+    "transaction": "READ ONLY, consistent snapshot"
+  },
+  "production_config": {
+    "source": "C:\\REVELA-prod\\revela_backend\\api\\analytics\\wlc_config.json",
+    "source_mtime": "2026-10-21T03:13:12.801531+00:00",
+    "weights_percent": {
+      "w1_risk": 68,
+      "w2_sector": 7,
+      "w3_distance": 25
+    },
+    "bplo": {
+      "lat": 13.960413,
+      "lng": 121.114547
+    },
+    "configured_sector_scores": 0
+  },
+  "unused_db_wlc_config_row": {
+    "id": 1,
+    "w1_risk": 68.0,
+    "w2_sector": 7.0,
+    "w3_distance": 25.0,
+    "bplo_lat": 13.960413,
+    "bplo_lng": 121.114547,
+    "sector_scores": "{}",
+    "updated_at": "2026-10-26 22:21:58"
+  },
+  "scoring": {
+    "model_version": "wlc-v2",
+    "builder": "shipped",
+    "ladder_columns_available": true,
+    "reference_max_burden": 126,
+    "sector_fallback_count": 16
+  },
+  "totals": {
+    "barangays": 16,
+    "red": 210,
+    "yellow": 21,
+    "black": 0,
+    "dispatch_eligible": 12
+  },
+  "csv": "C:\\REVELA-prod\\analytical performance\\wlc\\ops_sensitivity_input.csv",
+  "sql": "C:\\REVELA-prod\\analytical performance\\wlc\\ops_sensitivity_input.sql"
+}

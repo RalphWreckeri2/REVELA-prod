@@ -54,6 +54,7 @@ class _FakeAdapter implements HttpClientAdapter {
       statusCode,
       headers: const {
         Headers.contentTypeHeader: [Headers.jsonContentType],
+        'x-request-id': ['fixture-inspection-request'],
       },
     );
   }
@@ -182,6 +183,37 @@ void main() {
       now ?? DateTime.now,
     );
   }
+
+  test('online accepted callback sees mock request ID only after validated response', () async {
+    final success = await makeHarness();
+    addTearDown(success.close);
+    String? id;
+    int? status;
+    final outcome = await success.service.submitInspection(
+      task: _task(), inspectionResult: 'Yellow',
+      onCommittedResponse: (requestId, code, duplicate) {
+        id = requestId;
+        status = code;
+        expect(duplicate, isFalse);
+      },
+    );
+    expect(outcome, InspectionSubmissionResult.submitted);
+    expect(id, 'fixture-inspection-request');
+    expect(status, 200);
+
+    final rejected = await makeHarness(responseBody: {'reportID': 999, 'status': 'Submitted'});
+    addTearDown(rejected.close);
+    var accepted = false;
+    String? rejectedId;
+    final failed = await rejected.service.submitInspection(
+      task: _task(), inspectionResult: 'Yellow',
+      onCommittedResponse: (_, _, _) => accepted = true,
+      onResponse: (id, _) => rejectedId = id,
+    );
+    expect(accepted, isFalse);
+    expect(rejectedId, 'fixture-inspection-request');
+    expect(failed, isNot(InspectionSubmissionResult.submitted));
+  });
 
   for (final offline in [false, true]) {
     for (final acceptedAt in <String?>['2026-10-13 18:46:00', null]) {
