@@ -34,7 +34,7 @@ import {
   canReassignInspection,
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
-import { inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, matchesDispatchSearch, matchesGridSearch } from "./inspectionPresentation";
+import { dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchSearch, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
@@ -139,10 +139,19 @@ const Icon = {
       <line x1="3" y1="10" x2="21" y2="10" />
     </svg>
   ),
+  Dashboard: () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  ),
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const STATUS_COLS = ["Assigned", "Reassigned", "Submitted", "Verified"];
+const WORKLOAD_PAGE_SIZE = 20;
 
 const FLAG_COLOR = {
   Red:    { bg: "var(--flag-red-bg)",    text: "var(--flag-red-text)" },
@@ -1067,7 +1076,7 @@ export default function InspectionPage() {
       let result;
       if (isAdmin) {
         result = await getInspectionWorkloadRequest(
-          { status: filterStatus || undefined, view, page, reportID, deadlineDate, limit: 20 },
+          { status: filterStatus || undefined, view, page, reportID, deadlineDate, limit: WORKLOAD_PAGE_SIZE },
           token
         );
         if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
@@ -1097,6 +1106,16 @@ export default function InspectionPage() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const filteredReports = reports.filter(report => matchesDispatchSearch(report, search));
+  const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
+  const hasWorkloadFilter = view !== "all" || Boolean(reportID);
+  const workloadFilterName = view === "all" && reportID
+    ? "Selected inspection report"
+    : workloadFilterLabel(view, deadlineDate);
+  const workloadResult = workloadResultLabel(total, page, WORKLOAD_PAGE_SIZE);
+  const updatedLabel = dashboardUpdatedLabel(reportData?.as_of);
+  const periodLabel = view === "resolution"
+    ? inspectionPeriodLabel(reportData?.period_from, reportData?.as_of)
+    : null;
 
   const byStatus = (status) => {
     return filteredReports.filter((r) => r.verificationStatus === status);
@@ -1185,22 +1204,47 @@ export default function InspectionPage() {
         <div className="dispatch-results-summary" role="status">
           {loading && !hasReports ? <span className="ui-skeleton" style={{ display: "inline-block", width: 190 }} aria-hidden="true" /> : (
             <>
-              <span><strong>{filteredReports.length}</strong> matching loaded reports</span>
-              <span><strong>{reports.length}</strong> loaded of <strong>{total}</strong> matching in {isAdmin ? "the database" : "your tasks"}{filterStatus ? ` (${filterStatus})` : ""}</span>
-              {totalRows > total && <span title="Additional report rows grouped under each location’s latest report; this is not a lifecycle-event count.">{totalRows - total} additional report rows in history</span>}
+              <span><strong>{filteredReports.length}</strong> of <strong>{reports.length}</strong> shown on this page</span>
+              <span><strong>{total}</strong> matching in {isAdmin ? "this view" : "your tasks"}{filterStatus ? ` · ${filterStatus}` : ""}</span>
+              {totalRows > total && <span title="Older report revisions are grouped under each location’s latest report.">{totalRows - total} older report revisions in history</span>}
             </>
           )}
         </div>
       </div>
 
-      {isAdmin && <nav className="dispatch-workload-navigation" aria-label="Inspection results pagination">
-        <span>{view !== "all" ? `View: ${view.replaceAll("_", " ")} · ` : ""}{reportID ? `Report #${reportID} · ` : ""}Page {page} of {Math.max(1, Math.ceil(total / 20))}{reportData?.as_of ? ` · As of ${reportData.as_of} UTC` : ""}</span>
-        {view !== "all" && <button type="button" onClick={() => changeParams({ view: null, reportID: null, deadlineDate: null, page: null })}>Clear workload filter</button>}
-        <button type="button" disabled={page <= 1} onClick={() => changeParams({ page: page - 1 })}>Previous</button>
-        <button type="button" disabled={page * 20 >= total} onClick={() => changeParams({ page: page + 1 })}>Next</button>
-      </nav>}
+      {isAdmin && (
+        <section className="dispatch-workload-context" aria-label="Inspection filter context">
+          <span className="dispatch-workload-context-icon" aria-hidden="true"><Icon.Dashboard /></span>
+          <div className="dispatch-workload-context-copy">
+            <span className="dispatch-workload-context-eyebrow">{hasWorkloadFilter ? "From dashboard" : "Inspection results"}</span>
+            <div className="dispatch-workload-context-title">
+              <strong>{workloadFilterName}</strong>
+              {filterStatus && <span className="dispatch-workload-chip">{filterStatus}</span>}
+              {reportID && <span className="dispatch-workload-chip" title={`Selected report ID ${reportID}`}>Selected report #{reportID}</span>}
+            </div>
+            {(periodLabel || updatedLabel) && (
+              <span className="dispatch-workload-meta">
+                {periodLabel && <span>Resolution average for {periodLabel}</span>}
+                {periodLabel && updatedLabel && <span aria-hidden="true"> · </span>}
+                {updatedLabel && <time dateTime={reportData?.as_of}>{updatedLabel}</time>}
+              </span>
+            )}
+          </div>
+          <div className="dispatch-workload-context-actions">
+            <span className="dispatch-workload-count">{workloadResult}</span>
+            {workloadPages > 1 && (
+              <nav className="dispatch-workload-pager" aria-label="Inspection results pagination">
+                <button type="button" disabled={page <= 1} onClick={() => changeParams({ page: page - 1 })}>Previous</button>
+                <button type="button" disabled={page >= workloadPages} onClick={() => changeParams({ page: page + 1 })}>Next</button>
+              </nav>
+            )}
+            {hasWorkloadFilter && (
+              <button className="dispatch-workload-clear" type="button" onClick={() => changeParams({ view: null, reportID: null, deadlineDate: null, page: null })}>Clear filter</button>
+            )}
+          </div>
+        </section>
+      )}
       {isAdmin && reportID && !loading && hasReports && total === 0 && <p role="status">This report no longer matches the current filter. Results were recalculated when this page opened.</p>}
-      {isAdmin && view === "resolution" && reportData?.period_from && <p role="status">Submissions received {reportData.period_from} to {reportData.as_of} · UTC · {total} valid reports</p>}
 
       {error && (
         <div style={s.errorBanner} role="alert">

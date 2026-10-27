@@ -34,6 +34,21 @@ export function formatOverviewUpdatedAt(value) {
   return Number.isFinite(timestamp) ? `Updated ${updatedAtFormat.format(timestamp)}` : null;
 }
 
+const periodDateFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Manila", month: "short", day: "numeric",
+});
+
+export function formatOverviewPeriod(from, to) {
+  const parse = value => {
+    if (typeof value !== "string" || !/(Z|[+-]\d{2}:?\d{2})$/i.test(value)) return null;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? periodDateFormat.format(timestamp) : null;
+  };
+  const start = parse(from);
+  const end = parse(to);
+  return start && end ? `${start} – ${end}` : null;
+}
+
 // WMO codes supplied by the existing Open-Meteo integration.
 const WEATHER_CODES = {
   0: ["Clear sky", "sun"],

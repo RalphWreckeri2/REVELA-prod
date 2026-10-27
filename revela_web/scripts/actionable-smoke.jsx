@@ -98,7 +98,8 @@ try {
   }
   const timingDetails = document.querySelector(".overview-methodology");
   timingDetails.open = true;
-  check(timingDetails.textContent.includes("2026-09-27T12:00:00Z") && timingDetails.textContent.includes("2026-10-27T12:00:00Z"), "exact UTC bounds remain accessible");
+  check(timingDetails.textContent.includes("Sep 27 – Oct 27") && timingDetails.textContent.includes("Updated Oct 27, 8:00 PM")
+    && !/T\d{2}:\d{2}:\d{2}Z/.test(timingDetails.textContent), "calculation details are readable and hide raw timestamps");
   timingDetails.open = false;
   const firstAgeChip = document.querySelector('a[href="/inspections?view=age_0-3"]');
   firstAgeChip.focus();
@@ -114,19 +115,32 @@ try {
   check(initialSummaries === 1, "attention and secondary metrics share one coordinated workload summary");
   card.click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/inspections?view=overdue");
-  await wait(() => document.querySelector(".dispatch-workload-navigation")?.textContent.includes("Page 1 of 1"));
-  await wait(() => document.querySelector(".dispatch-results-summary")?.textContent.includes(`of ${zeroAttention ? 0 : 1} matching`));
-  check(document.querySelector(".dispatch-workload-navigation")?.textContent.includes("overdue")
-    && document.querySelector(".dispatch-results-summary")?.textContent.includes(`of ${zeroAttention ? 0 : 1} matching`), "overdue drill-down agrees with the card");
+  const overdueTotal = zeroAttention ? 0 : 1;
+  await wait(() => document.querySelector(".dispatch-workload-context")?.textContent.includes(`Showing ${overdueTotal} of ${overdueTotal}`));
+  await wait(() => document.querySelector(".dispatch-results-summary")?.textContent.includes(`${overdueTotal} matching in this view`));
+  const overdueContext = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
+  check(overdueContext.includes("From dashboard")
+    && overdueContext.includes("Overdue assignments")
+    && overdueContext.includes(`Showing ${overdueTotal} of ${overdueTotal}`)
+    && overdueContext.includes("Clear filter")
+    && overdueContext.includes("Dashboard data updated Oct 27, 8:00 PM"), "overdue banner names the filter, count, update time, and clear action");
+  check(!/UTC|T\d{2}:\d{2}:\d{2}Z/.test(overdueContext), "overdue banner hides raw UTC metadata");
+  check(document.querySelector(".dispatch-workload-pager") == null, "one-page workload hides previous and next controls");
+  check(document.querySelector(".dispatch-results-summary")?.textContent.includes(`${overdueTotal} matching in this view`), "overdue drill-down agrees with the card");
   document.getElementById("back-probe").click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   check(document.querySelector(".overview-workload .overview-action-card strong")?.textContent === (zeroAttention ? "2" : "3"), "back restores cached Overview");
   check(requests.filter(path => path.includes("/inspections/workload?summary=1")).length === initialSummaries, "cached revisit does not refetch workload before cadence");
-  for (const [href, expected] of [["/inspections?view=awaiting_verification", zeroAttention ? 0 : 2], ["/inspections?view=age_15%2B", zeroAttention ? 0 : 1]]) {
+  for (const [href, expected, label] of [
+    ["/inspections?view=awaiting_verification", zeroAttention ? 0 : 2, "Reports awaiting verification"],
+    ["/inspections?view=age_15%2B", zeroAttention ? 0 : 1, "Assignments open 15+ days"],
+  ]) {
     document.querySelector(`a[href="${href}"]`).click();
     await wait(() => document.getElementById("route-probe")?.textContent === href);
-    await wait(() => document.querySelector(".dispatch-results-summary")?.textContent.includes(`of ${expected} matching`));
-    check(document.querySelector(".dispatch-results-summary")?.textContent.includes(`of ${expected} matching`), `${href} count matches its Dispatch view`);
+    await wait(() => document.querySelector(".dispatch-results-summary")?.textContent.includes(`${expected} matching in this view`));
+    const context = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
+    check(context.includes("From dashboard") && context.includes(label)
+      && context.includes(`Showing ${expected} of ${expected}`), `${href} uses its plain-language workload label`);
     document.getElementById("back-probe").click();
     await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   }
@@ -136,11 +150,31 @@ try {
   dateWithAssignment.click();
   await wait(() => document.getElementById("route-probe")?.textContent.includes("view=deadline_day"));
   check(document.getElementById("route-probe")?.textContent.includes(`deadlineDate=${deadlineValue}`), "assignment date opens matching Dispatch records");
+  const expectedDeadlineLabel = new Date(`${deadlineValue}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" });
+  await wait(() => {
+    const context = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
+    return context.includes(`Assignments due ${expectedDeadlineLabel}`) && context.includes("Showing 1 of 1");
+  });
+  const deadlineContext = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
+  check(deadlineContext.includes(`Assignments due ${expectedDeadlineLabel}`)
+    && deadlineContext.includes("Showing 1 of 1")
+    && deadlineContext.includes("Clear filter"), `deadline drill-down names the selected day and count: ${deadlineContext}`);
+  check(!/UTC|T\d{2}:\d{2}:\d{2}Z/.test(deadlineContext), "deadline banner hides raw UTC metadata");
   document.getElementById("back-probe").click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   document.querySelector(".calendar-widget-task")?.click();
   await wait(() => document.getElementById("route-probe")?.textContent.includes("reportID=42"));
   check(document.getElementById("route-probe")?.textContent.includes("view=open"), "assignment entry opens its report");
+  await wait(() => {
+    const context = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
+    return context.includes("Selected report #42") && context.includes("Showing 1 of 1");
+  });
+  const reportContext = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
+  check(reportContext.includes("From dashboard")
+    && reportContext.includes("Open assignments")
+    && reportContext.includes("Selected report #42"), "selected report ID stays secondary to the workload name");
+  check(document.querySelector(".dispatch-workload-context-title strong")?.textContent === "Open assignments", "workload name remains the banner heading");
+  check(!document.querySelector(".inspection-dispatch-page")?.textContent.includes("UTC"), "Dispatch main page hides raw UTC timestamps");
   document.getElementById("back-probe").click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   document.querySelector('a[href="/map/records?origin=detection&registryLink=unlinked"]').click();

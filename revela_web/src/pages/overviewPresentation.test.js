@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { availableNumber, dateQuery, deadlinePresentation, formatOverviewNumber, formatOverviewUpdatedAt, manilaGreeting, weatherPresentation } from "./overviewPresentation.js";
+import { availableNumber, dateQuery, deadlinePresentation, formatOverviewNumber, formatOverviewPeriod, formatOverviewUpdatedAt, manilaGreeting, weatherPresentation } from "./overviewPresentation.js";
 
 test("summary update time is readable Manila local time, never guessed for an unzoned value", () => {
   assert.equal(formatOverviewUpdatedAt("2026-10-27T14:37:00Z"), "Updated Oct 27, 10:37 PM");
@@ -8,6 +8,15 @@ test("summary update time is readable Manila local time, never guessed for an un
   assert.equal(formatOverviewUpdatedAt("2026-10-27T22:37:00+08:00"), "Updated Oct 27, 10:37 PM");
   for (const value of [null, "", "2026-10-27T14:37:00", "invalidZ"]) {
     assert.equal(formatOverviewUpdatedAt(value), null);
+  }
+});
+
+test("reporting period reads as a Manila date range and rejects unzoned bounds", () => {
+  assert.equal(formatOverviewPeriod("2026-09-27T12:00:00Z", "2026-10-27T12:00:00Z"), "Sep 27 – Oct 27");
+  assert.equal(formatOverviewPeriod("2026-09-27T16:30:00Z", "2026-10-27T16:30:00Z"), "Sep 28 – Oct 28");
+  for (const value of [null, "", "2026-09-27", "not a dateZ"]) {
+    assert.equal(formatOverviewPeriod(value, "2026-10-27T12:00:00Z"), null);
+    assert.equal(formatOverviewPeriod("2026-09-27T12:00:00Z", value), null);
   }
 });
 

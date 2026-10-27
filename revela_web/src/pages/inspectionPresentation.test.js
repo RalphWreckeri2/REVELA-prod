@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel,
-  matchesDispatchSearch, matchesGridSearch,
+  dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline,
+  inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchSearch,
+  matchesGridSearch, workloadFilterLabel, workloadResultLabel,
 } from "./inspectionPresentation.js";
 
 for (const count of [0, 1, 5, 6, 12]) {
@@ -69,4 +70,48 @@ test("notice labels retain existing enforcement stages", () => {
   assert.equal(inspectionNoticeLabel(2), "2nd Notice");
   assert.equal(inspectionNoticeLabel(3), "3rd Notice");
   assert.equal(inspectionNoticeLabel(4), "Escalated");
+});
+
+test("every workload view has a plain-language banner label", () => {
+  const labels = {
+    all: "All inspection reports",
+    open: "Open assignments",
+    overdue: "Overdue assignments",
+    awaiting_verification: "Reports awaiting verification",
+    oldest: "Oldest open assignment",
+    resolution: "Average resolution time",
+    "age_0-3": "Assignments open 0–3 days",
+    "age_4-7": "Assignments open 4–7 days",
+    "age_8-14": "Assignments open 8–14 days",
+    "age_15+": "Assignments open 15+ days",
+    age_unavailable: "Assignments with unknown age",
+    deadline_missing: "Assignments without a due date",
+  };
+  for (const [view, label] of Object.entries(labels)) {
+    assert.equal(workloadFilterLabel(view), label, view);
+  }
+  assert.equal(workloadFilterLabel("deadline_day", "2026-10-28"), "Assignments due Oct 28");
+  assert.equal(workloadFilterLabel("deadline_day"), "Assignments due that day");
+  assert.equal(workloadFilterLabel("unexpected"), "All inspection reports");
+});
+
+test("workload result counts describe visible rows without inventing a total", () => {
+  assert.equal(workloadResultLabel(0, 1), "Showing 0 of 0");
+  assert.equal(workloadResultLabel(1, 1), "Showing 1 of 1");
+  assert.equal(workloadResultLabel(3, 1), "Showing 3 of 3");
+  assert.equal(workloadResultLabel(45, 1), "Showing 1–20 of 45");
+  assert.equal(workloadResultLabel(45, 2), "Showing 21–40 of 45");
+  assert.equal(workloadResultLabel(45, 3), "Showing 41–45 of 45");
+  assert.equal(workloadResultLabel(45, 99), "Showing 41–45 of 45");
+  assert.equal(workloadResultLabel(45, 2, 10), "Showing 11–20 of 45");
+  assert.equal(workloadResultLabel(undefined, undefined, 0), "Showing 0 of 0");
+});
+
+test("dashboard timestamps are readable in Manila time and hide UTC strings", () => {
+  assert.equal(dashboardUpdatedLabel("2026-10-27T12:00:00Z"), "Dashboard data updated Oct 27, 8:00 PM");
+  assert.equal(dashboardUpdatedLabel("2026-10-27T12:00:00+08:00"), "Dashboard data updated Oct 27, 12:00 PM");
+  assert.equal(dashboardUpdatedLabel("2026-10-27"), null);
+  assert.equal(dashboardUpdatedLabel(null), null);
+  assert.equal(inspectionPeriodLabel("2026-09-27T00:00:00Z", "2026-10-27T12:00:00Z"), "Sep 27 – Oct 27");
+  assert.equal(inspectionPeriodLabel(null, "2026-10-27T12:00:00Z"), null);
 });
