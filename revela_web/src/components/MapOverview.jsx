@@ -12,14 +12,16 @@ import {
 } from "./barangayMapMapping";
 import {
   buildBarangayOverviewFilters,
+  getBarangayTopTotals,
+  getMapPinBuckets,
   quantileBreaks,
   quantileClass,
   quantileRangeLabels,
+  registryCategoryColor,
 } from "./barangayOverviewPresentation";
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
-const BAR_COLORS = ["#2563eb", "#0f9f8f", "#7c3aed", "#f59e0b", "#e11d48", "#64748b"];
 const CHOROPLETH_COLORS = {
   registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
   inspections: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
@@ -45,7 +47,9 @@ const STATUS_COLORS = {
 };
 
 function shortBarangay(name = "") {
-  return name.replace(/^Barangay /, "Brgy. ");
+  return name
+    .replace(/^District (.+?)(?: \(Pob\.\))?$/, "Brgy. $1")
+    .replace(/^Barangay /, "Brgy. ");
 }
 
 function totalOf(rows = []) {
@@ -59,19 +63,19 @@ function CountsBar({ rows, emptyMessage }) {
     <>
       <div className="map-overview-stacked-bar" role="img"
         aria-label={rows.map((row) => `${row.label}: ${row.count}`).join(", ")}>
-        {rows.map((row, index) => (
+        {rows.map((row) => (
           <span key={row.value} title={`${row.label}: ${row.count}`}
             style={{
               width: `${(Number(row.count) / total) * 100}%`,
-              background: row.color || BAR_COLORS[index % BAR_COLORS.length],
+              background: row.color || registryCategoryColor("fallback", row.value),
             }} />
         ))}
       </div>
       <ul className="map-overview-count-list">
-        {rows.map((row, index) => (
+        {rows.map((row) => (
           <li key={row.value}>
             <span className="map-overview-count-swatch"
-              style={{ background: row.color || BAR_COLORS[index % BAR_COLORS.length] }} />
+              style={{ background: row.color || registryCategoryColor("fallback", row.value) }} />
             <span className="map-overview-count-label">{row.label}</span>
             <strong>{Number(row.count).toLocaleString()}</strong>
             <span className="map-overview-count-percent">
@@ -145,7 +149,14 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const boundaryFeaturesRef = useRef([]);
   const sourceGeoJsonFeaturesRef = useRef([]);
   const labelMarkersRef = useRef([]);
-  const hasFitBoundsRef = useRef(false);
+  const mapIdleRef = useRef(false);
+  const mapIdleListenerRef = useRef(null);
+  const resizeObserverRef = useRef(null);
+  const fitFrameRef = useRef(null);
+  const lastFitSignatureRef = useRef("");
+  const lastMapSizeRef = useRef("");
+  const fitBarangayBoundsRef = useRef(null);
+  const updateLabelVisibilityRef = useRef(null);
   const { isLoaded, loadError } = useGoogleMapsScript();
   const { overview, loading, error, retry } = useBarangayOverview(
     token,
@@ -161,20 +172,25 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     ? null
     : rowsById.get(Number(selectedBarangayId));
   const panelData = selectedRow || overview?.overall;
-  const overallData = overview?.overall;
   const mapCounts = useMemo(() => barangayRows.map((row) => Number(
     mapView === "registered" ? row.registry_total : row.inspections.total,
   )), [barangayRows, mapView]);
   const mapBreaks = useMemo(() => quantileBreaks(mapCounts), [mapCounts]);
-  const mapRangeLabels = useMemo(() => quantileRangeLabels(mapBreaks), [mapBreaks]);
+  const mapRangeLabels = useMemo(
+    () => quantileRangeLabels(mapBreaks, mapCounts),
+    [mapBreaks, mapCounts],
+  );
   const selectedDimension = REGISTRY_DIMENSIONS.find(
     (dimension) => dimension.key === activeDimension,
   ) || REGISTRY_DIMENSIONS[0];
   const dimensionRows = selectedDimension
     ? panelData?.registry?.[selectedDimension.key] || []
     : [];
-  const pendingInspections = Number(overallData?.inspections?.pending || 0)
-    + Number(overallData?.inspections?.waiting_for_review || 0);
+  const coloredDimensionRows = dimensionRows.map((row) => ({
+    ...row,
+    color: registryCategoryColor(activeDimension, row.value),
+  }));
+  const topTotals = getBarangayTopTotals(panelData);
   const mapRowsById = rowsById;
 
   const styleFeature = useCallback((feature) => {
@@ -204,19 +220,49 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   }, [styleFeature]);
 
   const fitBarangayBounds = useCallback(() => {
-    if (hasFitBoundsRef.current || !mapRef.current || !boundaryFeaturesRef.current.length) return;
+    const map = mapRef.current;
+    const container = map?.getDiv();
+    if (!mapIdleRef.current || !map || !container?.clientWidth || !container?.clientHeight
+      || !boundaryFeaturesRef.current.length) return;
+    const size = `${container.clientWidth}x${container.clientHeight}`;
+    const selectedId = selectedBarangayId == null ? null : Number(selectedBarangayId);
+    const signature = `${selectedId ?? "all"}:${size}`;
+    if (signature === lastFitSignatureRef.current) return;
     const bounds = new window.google.maps.LatLngBounds();
-    boundaryFeaturesRef.current.forEach((feature) => {
+    const features = selectedId == null
+      ? boundaryFeaturesRef.current
+      : boundaryFeaturesRef.current.filter((feature) => (
+        getBarangayIdForGeoJsonName(feature.getProperty("ADM4_EN")) === selectedId
+      ));
+    features.forEach((feature) => {
       feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
     });
     if (!bounds.isEmpty()) {
-      mapRef.current.fitBounds(bounds, { top: 24, right: 24, bottom: 24, left: 24 });
-      hasFitBoundsRef.current = true;
+      lastFitSignatureRef.current = signature;
+      const padding = selectedId == null ? 24 : 40;
+      map.fitBounds(bounds, {
+        top: padding,
+        right: padding,
+        bottom: padding,
+        left: padding,
+      });
     }
+  }, [selectedBarangayId]);
+
+  const scheduleBarangayFit = useCallback(() => {
+    if (fitFrameRef.current != null) {
+      window.cancelAnimationFrame(fitFrameRef.current);
+    }
+    fitFrameRef.current = window.requestAnimationFrame(() => {
+      fitFrameRef.current = window.requestAnimationFrame(() => {
+        fitFrameRef.current = null;
+        fitBarangayBoundsRef.current?.();
+      });
+    });
   }, []);
 
   const addBarangayLabels = useCallback((features, sourceFeatures) => {
-    labelMarkersRef.current.forEach((marker) => marker.setMap(null));
+    labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     if (!mapRef.current || !window.google?.maps?.Marker) return;
     const sourceByName = new Map(sourceFeatures.map((feature) => [
@@ -244,9 +290,35 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
           className: "map-overview-feature-label",
         },
       });
-      labelMarkersRef.current.push(marker);
+      labelMarkersRef.current.push({ marker, barangayId: id });
     });
   }, []);
+
+  const updateBarangayLabelVisibility = useCallback(() => {
+    const zoom = mapRef.current?.getZoom() || 0;
+    labelMarkersRef.current.forEach(({ marker, barangayId }) => {
+      const visible = zoom >= 14
+        || barangayId === Number(selectedBarangayId)
+        || barangayId === Number(hoveredBarangayId);
+      marker.setVisible(visible);
+    });
+  }, [hoveredBarangayId, selectedBarangayId]);
+
+  useEffect(() => {
+    fitBarangayBoundsRef.current = fitBarangayBounds;
+  }, [fitBarangayBounds]);
+
+  useEffect(() => {
+    updateLabelVisibilityRef.current = updateBarangayLabelVisibility;
+  }, [updateBarangayLabelVisibility]);
+
+  useEffect(() => {
+    updateBarangayLabelVisibility();
+  }, [updateBarangayLabelVisibility]);
+
+  useEffect(() => {
+    scheduleBarangayFit();
+  }, [scheduleBarangayFit, selectedBarangayId]);
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
@@ -255,9 +327,26 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
         boundaryFeaturesRef.current,
         sourceGeoJsonFeaturesRef.current,
       );
+      updateLabelVisibilityRef.current?.();
     }
-    fitBarangayBounds();
-  }, [addBarangayLabels, fitBarangayBounds]);
+    mapIdleListenerRef.current = map.addListener("idle", () => {
+      mapIdleRef.current = true;
+      scheduleBarangayFit();
+      updateLabelVisibilityRef.current?.();
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserverRef.current = new ResizeObserver(() => {
+        const container = map.getDiv();
+        const size = `${container.clientWidth}x${container.clientHeight}`;
+        if (size === lastMapSizeRef.current) return;
+        lastMapSizeRef.current = size;
+        lastFitSignatureRef.current = "";
+        scheduleBarangayFit();
+      });
+      resizeObserverRef.current.observe(map.getDiv());
+    }
+    scheduleBarangayFit();
+  }, [addBarangayLabels, scheduleBarangayFit]);
 
   const handleDataLayerLoad = useCallback((dataLayer) => {
     dataLayerRef.current = dataLayer;
@@ -276,19 +365,34 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
         sourceGeoJsonFeaturesRef.current = normalizedGeoJson.features;
         dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
         addBarangayLabels(features, normalizedGeoJson.features);
-        fitBarangayBounds();
+        scheduleBarangayFit();
+        updateLabelVisibilityRef.current?.();
       })
       .catch(() => setBoundaryError(true));
-  }, [addBarangayLabels, fitBarangayBounds]);
+  }, [addBarangayLabels, scheduleBarangayFit]);
 
   const handleDataLayerUnmount = useCallback(() => {
-    labelMarkersRef.current.forEach((marker) => marker.setMap(null));
+    labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     boundaryFeaturesRef.current = [];
     sourceGeoJsonFeaturesRef.current = [];
-    hasFitBoundsRef.current = false;
-    mapRef.current = null;
+    lastFitSignatureRef.current = "";
     dataLayerRef.current = null;
+  }, []);
+
+  const handleMapUnmount = useCallback(() => {
+    mapIdleListenerRef.current?.remove();
+    mapIdleListenerRef.current = null;
+    resizeObserverRef.current?.disconnect();
+    resizeObserverRef.current = null;
+    if (fitFrameRef.current != null) {
+      window.cancelAnimationFrame(fitFrameRef.current);
+      fitFrameRef.current = null;
+    }
+    mapIdleRef.current = false;
+    lastFitSignatureRef.current = "";
+    lastMapSizeRef.current = "";
+    mapRef.current = null;
   }, []);
 
   const selectFeature = useCallback((event) => {
@@ -308,25 +412,13 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   };
 
   const pinRows = useMemo(() => {
-    if (!panelData?.pins) return [];
-    const allRows = [
-      { key: "registered_on_map", label: "Registered on map" },
-      { key: "detected_not_in_registry", label: "Detected, not in registry" },
-      { key: "detection_with_business_id", label: "Detected and linked to a business" },
-      { key: "added_by_inspector", label: "Added by inspector" },
-      { key: "other_source", label: "Other pins" },
-    ].map((row) => ({
+    const allRows = getMapPinBuckets(panelData?.pins).map((row) => ({
       ...row,
       value: row.key,
-      count: Number(panelData.pins[row.key] || 0),
       color: STATUS_COLORS[row.key],
     }));
-    if (pinView === "detected") {
-      return allRows.slice(1, 3).filter((row) => row.count > 0);
-    }
-    if (pinView === "inspector") {
-      return allRows.slice(3, 4).filter((row) => row.count > 0);
-    }
+    if (pinView === "detected") return allRows.slice(1, 2).filter((row) => row.count > 0);
+    if (pinView === "inspector") return allRows.slice(2, 3).filter((row) => row.count > 0);
     return allRows.filter((row) => row.count > 0);
   }, [panelData, pinView]);
 
@@ -360,16 +452,19 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     <div className="map-overview">
       <div className="map-overview-controls">
         <div className="map-overview-topbar" aria-label="Barangay totals">
+          <span className="map-overview-current-selection">
+            {selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"}
+          </span>
           <div className="map-overview-total">
-            <strong>{Number(overallData?.registry_total || 0).toLocaleString()}</strong>
+            <strong>{topTotals.registered.toLocaleString()}</strong>
             <span>Registered businesses</span>
           </div>
           <div className="map-overview-total">
-            <strong>{Number(overallData?.pins?.detected_not_in_registry || 0).toLocaleString()}</strong>
+            <strong>{topTotals.notInRegistry.toLocaleString()}</strong>
             <span>Found on the map, not in registry</span>
           </div>
           <div className="map-overview-total">
-            <strong>{pendingInspections.toLocaleString()}</strong>
+            <strong>{topTotals.beingInspected.toLocaleString()}</strong>
             <span>Being inspected</span>
           </div>
         </div>
@@ -418,6 +513,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               center={MAP_CENTER}
               zoom={13}
               onLoad={handleMapLoad}
+              onUnmount={handleMapUnmount}
               options={{
                 mapId: REVELA_MAP_ID,
                 clickableIcons: false,
@@ -487,10 +583,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
 
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">
-              <div>
-                <h4>A. Official Registry</h4>
-                <p className="map-overview-card-subtitle">Registered businesses</p>
-              </div>
+              <h4>A. Official Registry · {Number(panelData?.registry_total || 0).toLocaleString()} businesses</h4>
               <AnalyticsInfoTip label="About registered businesses">
                 Counts are from the official registry. The selected date range applies to map pins and inspections, not registry totals.
               </AnalyticsInfoTip>
@@ -505,7 +598,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
                 </button>
               ))}
             </div>
-            <CountsBar rows={dimensionRows}
+            <CountsBar rows={coloredDimensionRows}
               emptyMessage="No registered businesses in this view yet." />
           </section>
 
@@ -515,9 +608,9 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
             </div>
             <div className="map-overview-field-section">
               <div className="map-overview-card-heading">
-                <h5>Found on the map</h5>
+                <h5>Found on the map · {Number(panelData?.pins?.total || 0).toLocaleString()} pins</h5>
                 <AnalyticsInfoTip label="About map pins">
-                  Each map pin is counted once. Pins without coordinates are included in totals but cannot be placed on the map.
+                  This includes every pin in the selected area. Detected pins linked to a business are grouped with registered pins. Pins without coordinates are still included.
                 </AnalyticsInfoTip>
               </div>
               <div className="map-overview-choice-row" role="group" aria-label="Map pin groups">
@@ -539,7 +632,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
             </div>
             <div className="map-overview-field-section">
               <div className="map-overview-card-heading">
-                <h5>Inspections</h5>
+                <h5>Inspections · {Number(panelData?.inspections?.total || 0).toLocaleString()} reports</h5>
                 <AnalyticsInfoTip label="About inspection progress">
                   Not yet done combines Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review includes submitted reports.
                 </AnalyticsInfoTip>
@@ -548,6 +641,8 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
                 emptyMessage={selectedRow
                   ? "No inspections in this barangay yet."
                   : "No inspections yet across these barangays."} />
+              {selectedRow && !Number(panelData?.inspections?.verified || 0)
+                && <p className="map-overview-note">No verified results yet.</p>}
             {outcomeRows.length > 0 && (
               <>
                 <p className="map-overview-note">Verified outcomes</p>

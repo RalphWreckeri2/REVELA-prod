@@ -54,15 +54,19 @@ export function quantileBreaks(values, classCount = 5) {
     .map(Number)
     .filter((value) => Number.isFinite(value) && value > 0)
     .sort((first, second) => first - second);
-  if (!sorted.length || classCount < 1) return [];
+  const roundedUnique = [...new Set(sorted.map(Math.round))];
+  if (!roundedUnique.length || classCount < 1) return [];
+  if (roundedUnique.length <= classCount) return roundedUnique;
 
-  return Array.from({ length: classCount - 1 }, (_, index) => {
+  const breaks = Array.from({ length: classCount - 1 }, (_, index) => {
     const position = ((index + 1) * (sorted.length - 1)) / classCount;
     const lowerIndex = Math.floor(position);
     const fraction = position - lowerIndex;
     const upperIndex = Math.min(lowerIndex + 1, sorted.length - 1);
-    return sorted[lowerIndex] + (sorted[upperIndex] - sorted[lowerIndex]) * fraction;
+    return Math.round(sorted[lowerIndex]
+      + (sorted[upperIndex] - sorted[lowerIndex]) * fraction);
   });
+  return [...new Set([...breaks, roundedUnique[roundedUnique.length - 1]])];
 }
 
 export function quantileClass(value, breaks) {
@@ -72,13 +76,89 @@ export function quantileClass(value, breaks) {
   return index === -1 ? breaks.length : index;
 }
 
-export function quantileRangeLabels(breaks) {
-  const format = (value) => Number.isInteger(value)
-    ? value.toLocaleString()
-    : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+export function quantileRangeLabels(breaks, values = []) {
+  const distinctCount = new Set(values
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .map(Math.round)).size;
+  const format = (value) => Math.round(value).toLocaleString();
+  if (distinctCount > 0 && distinctCount <= 5) {
+    return breaks.map(format);
+  }
   return breaks.map((boundary, index) => (
     index === 0
       ? `1–${format(boundary)}`
       : `>${format(breaks[index - 1])}–${format(boundary)}`
-  )).concat(breaks.length ? `>${format(breaks[breaks.length - 1])}` : []);
+  ));
+}
+
+export function getNotInRegistryPinTotal(pins = {}) {
+  return Number(pins.detected_not_in_registry || 0)
+    + Number(pins.added_by_inspector || 0);
+}
+
+export function getBarangayTopTotals(data = {}) {
+  return {
+    registered: Number(data.registry_total || 0),
+    notInRegistry: getNotInRegistryPinTotal(data.pins),
+    beingInspected: Number(data.inspections?.pending || 0)
+      + Number(data.inspections?.waiting_for_review || 0),
+  };
+}
+
+export function getMapPinBuckets(pins = {}) {
+  return [
+    {
+      key: "registered_on_map",
+      label: "Registered on map",
+      count: Number(pins.registered_on_map || 0)
+        + Number(pins.detection_with_business_id || 0),
+    },
+    {
+      key: "detected_not_in_registry",
+      label: "Detected, not in registry",
+      count: Number(pins.detected_not_in_registry || 0),
+    },
+    {
+      key: "added_by_inspector",
+      label: "Added by inspector",
+      count: Number(pins.added_by_inspector || 0),
+    },
+    {
+      key: "other_source",
+      label: "Other pins",
+      count: Number(pins.other_source || 0),
+    },
+  ];
+}
+
+const CATEGORY_PALETTE = [
+  "#2563eb",
+  "#0f9f8f",
+  "#7c3aed",
+  "#f59e0b",
+  "#e11d48",
+  "#64748b",
+  "#0891b2",
+  "#65a30d",
+];
+
+const BUSINESS_SIZE_COLORS = Object.freeze({
+  micro: "#2563eb",
+  small: "#0f9f8f",
+  medium: "#7c3aed",
+  large: "#f59e0b",
+});
+
+export function registryCategoryColor(dimension, value) {
+  const normalizedValue = String(value ?? "Unknown").trim().toLowerCase();
+  if (dimension === "business_size" && BUSINESS_SIZE_COLORS[normalizedValue]) {
+    return BUSINESS_SIZE_COLORS[normalizedValue];
+  }
+  const colorKey = `${dimension}:${normalizedValue}`;
+  let hash = 0;
+  for (let index = 0; index < colorKey.length; index += 1) {
+    hash = (hash * 31 + colorKey.charCodeAt(index)) >>> 0;
+  }
+  return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
 }
