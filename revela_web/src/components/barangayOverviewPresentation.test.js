@@ -9,6 +9,7 @@ import {
   quantileClass,
   quantileRangeLabels,
   registryCategoryColor,
+  sortRegistryBreakdownRows,
   visibleRegistryDimensions,
 } from "./barangayOverviewPresentation.js";
 
@@ -147,4 +148,28 @@ test("registry category colors stay fixed across scopes and row order", () => {
     registryCategoryColor("business_type", "Corporation"),
     registryCategoryColor("business_type", "Sole Proprietorship"),
   );
+});
+
+test("registry size rows use fixed category order and other dimensions sort by count with Others last", () => {
+  const sizeRows = sortRegistryBreakdownRows("business_size", [
+    { value: "Large", count: 40 },
+    { value: "Unknown", count: 25 },
+    { value: "Small", count: 10 },
+    { value: "Medium", count: 20 },
+    { value: "Micro", count: 5 },
+    { value: "Others", count: 100 },
+  ]);
+  assert.deepEqual(sizeRows.map((row) => row.value), [
+    "Micro", "Small", "Medium", "Large", "Unknown", "Others",
+  ]);
+
+  const otherRows = sortRegistryBreakdownRows("business_type", [
+    { value: "Others", count: 50 },
+    { value: "Retail", count: 10 },
+    { value: "Services", count: 20 },
+    { value: "Wholesale", count: 20 },
+  ]);
+  assert.deepEqual(otherRows.map((row) => row.value), [
+    "Services", "Wholesale", "Retail", "Others",
+  ]);
 });

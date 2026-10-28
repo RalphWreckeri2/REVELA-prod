@@ -18,10 +18,12 @@ import {
   quantileClass,
   quantileRangeLabels,
   registryCategoryColor,
+  sortRegistryBreakdownRows,
 } from "./barangayOverviewPresentation";
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+const MAX_SELECTED_BARANGAY_ZOOM = 16;
 const CHOROPLETH_COLORS = {
   registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
   inspections: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
@@ -144,6 +146,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const [pinView, setPinView] = useState("all");
   const [boundaryError, setBoundaryError] = useState(false);
   const dataLayerRef = useRef(null);
+  const hoverInfoWindowRef = useRef(null);
   const styleFeatureRef = useRef(null);
   const mapRef = useRef(null);
   const boundaryFeaturesRef = useRef([]);
@@ -153,6 +156,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const mapIdleListenerRef = useRef(null);
   const resizeObserverRef = useRef(null);
   const fitFrameRef = useRef(null);
+  const pendingSelectionFitRef = useRef(false);
   const lastFitSignatureRef = useRef("");
   const lastMapSizeRef = useRef("");
   const fitBarangayBoundsRef = useRef(null);
@@ -186,7 +190,10 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const dimensionRows = selectedDimension
     ? panelData?.registry?.[selectedDimension.key] || []
     : [];
-  const coloredDimensionRows = dimensionRows.map((row) => ({
+  const coloredDimensionRows = sortRegistryBreakdownRows(
+    activeDimension,
+    dimensionRows,
+  ).map((row) => ({
     ...row,
     color: registryCategoryColor(activeDimension, row.value),
   }));
@@ -239,7 +246,9 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     });
     if (!bounds.isEmpty()) {
       lastFitSignatureRef.current = signature;
-      const padding = selectedId == null ? 24 : 40;
+      const isSelectionFit = selectedId != null;
+      const padding = isSelectionFit ? 60 : 24;
+      if (isSelectionFit) pendingSelectionFitRef.current = true;
       map.fitBounds(bounds, {
         top: padding,
         right: padding,
@@ -322,6 +331,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
+    hoverInfoWindowRef.current = new window.google.maps.InfoWindow();
     if (boundaryFeaturesRef.current.length) {
       addBarangayLabels(
         boundaryFeaturesRef.current,
@@ -331,6 +341,12 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     }
     mapIdleListenerRef.current = map.addListener("idle", () => {
       mapIdleRef.current = true;
+      if (pendingSelectionFitRef.current) {
+        pendingSelectionFitRef.current = false;
+        if (map.getZoom() > MAX_SELECTED_BARANGAY_ZOOM) {
+          map.setZoom(MAX_SELECTED_BARANGAY_ZOOM);
+        }
+      }
       scheduleBarangayFit();
       updateLabelVisibilityRef.current?.();
     });
@@ -381,6 +397,8 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   }, []);
 
   const handleMapUnmount = useCallback(() => {
+    hoverInfoWindowRef.current?.close();
+    hoverInfoWindowRef.current = null;
     mapIdleListenerRef.current?.remove();
     mapIdleListenerRef.current = null;
     resizeObserverRef.current?.disconnect();
@@ -392,6 +410,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     mapIdleRef.current = false;
     lastFitSignatureRef.current = "";
     lastMapSizeRef.current = "";
+    pendingSelectionFitRef.current = false;
     mapRef.current = null;
   }, []);
 
@@ -403,9 +422,32 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const setHoveredFeature = useCallback((event) => {
     const id = getBarangayIdForGeoJsonName(event.feature?.getProperty("ADM4_EN"));
     setHoveredBarangayId(id);
-  }, []);
+    const row = mapRowsById.get(id);
+    const count = Number(mapView === "registered"
+      ? row?.registry_total || 0
+      : row?.inspections?.total || 0);
+    const content = document.createElement("div");
+    content.className = "map-overview-hover-tooltip";
+    const name = document.createElement("strong");
+    name.textContent = row?.barangayName
+      || event.feature?.getProperty("ADM4_EN")
+      || "Barangay";
+    const metric = document.createElement("span");
+    metric.textContent = `${count.toLocaleString()} ${
+      mapView === "registered" ? "registered businesses" : "inspection reports"
+    }`;
+    content.append(name, metric);
+    hoverInfoWindowRef.current?.setContent(content);
+    if (event.latLng) {
+      hoverInfoWindowRef.current?.setPosition(event.latLng);
+      hoverInfoWindowRef.current?.open({ map: mapRef.current });
+    }
+  }, [mapRowsById, mapView]);
 
-  const clearHoveredFeature = useCallback(() => setHoveredBarangayId(null), []);
+  const clearHoveredFeature = useCallback(() => {
+    setHoveredBarangayId(null);
+    hoverInfoWindowRef.current?.close();
+  }, []);
 
   const selectFromList = (event) => {
     setSelectedBarangayId(event.target.value ? Number(event.target.value) : null);
@@ -562,6 +604,9 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               ))}
             </select>
           </label>
+          <p className="map-overview-map-hint">
+            Zoom in or use the list below to pick small barangays.
+          </p>
         </section>
 
         <aside className="map-overview-panel" aria-label="Barangay details">

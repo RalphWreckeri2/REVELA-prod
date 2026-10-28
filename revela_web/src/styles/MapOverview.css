@@ -229,6 +229,22 @@
     1px 1px 2px #fff;
 }
 
+.map-overview-hover-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 4px;
+  color: #0f172a;
+  font-size: 12px;
+}
+
+.map-overview-map-hint {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .map-overview-map-legend {
   display: flex;
   flex-direction: column;

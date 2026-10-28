@@ -18,7 +18,9 @@ const MapOverview = lazy(() => import("../components/MapOverview"));
 import AnalyticsInfoTip from "../components/AnalyticsInfoTip";
 import ResponsiveChart from "../components/ResponsiveChart";
 import {
+  activeInspectorWorkload,
   completeInspectionTimeline,
+  groupOperationsStatusBreakdown,
   groupInspectionStatuses,
   pivotCategoryCounts,
 } from "../components/analyticsPresentation";
@@ -67,6 +69,12 @@ const REGISTRY_STATUS_STACKS = [
 const INSPECTION_STATUS_STACKS = [
   { key: "pending", label: "Pending", color: "#f97316" },
   { key: "awaiting_review", label: "Awaiting review", color: "#3b82f6" },
+  { key: "verified", label: "Verified", color: "#10b981" },
+];
+
+const OPERATIONS_STATUS_STACKS = [
+  { key: "pending", label: "Pending", color: "#f97316" },
+  { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
   { key: "verified", label: "Verified", color: "#10b981" },
 ];
 
@@ -875,17 +883,29 @@ export default function AnalyticsPage() {
   const awaitingCount = Number(desc?.audit_summary?.workflow?.awaiting_verification || 0);
   const confirmedCompliance = desc?.confirmed_compliance;
 
-  const operationsStatusRows = data?.operations?.inspector_status_counts || [];
+  const operationsStatusRows = activeInspectorWorkload(
+    data?.operations?.inspector_stats || [],
+    data?.operations?.inspector_status_counts || [],
+  );
+  const operationsStatusTotals = groupOperationsStatusBreakdown(
+    data?.operations?.status_breakdown || [],
+  );
   const operationsTimeline = completeInspectionTimeline(
     data?.operations?.inspection_status_timeline || [],
     appliedFilters.inspection_from,
     appliedFilters.inspection_to,
   );
-  const operationsStatusTotals = operationsStatusRows.reduce((totals, row) => ({
-    pending: totals.pending + Number(row.pending || 0),
-    awaiting_review: totals.awaiting_review + Number(row.awaiting_review || 0),
-    verified: totals.verified + Number(row.verified || 0),
-  }), { pending: 0, awaiting_review: 0, verified: 0 });
+  const operationsTimelineChartRows = operationsTimeline.rows.map(row => ({
+    ...row,
+    awaiting_review: row.submitted,
+  }));
+  const operationsChartStatusTotals = OPERATIONS_STATUS_STACKS.map(status => ({
+    ...status,
+    total: operationsStatusRows.reduce(
+      (sum, row) => sum + Number(row[status.key] || 0),
+      0,
+    ),
+  }));
 
 
   const activeFilterCount = countActiveBackendFilters(appliedFilters);
@@ -3002,114 +3022,153 @@ export default function AnalyticsPage() {
               </div>
             ) : (
               <>
-                <div className="analytics-operations-grid">
+                <p className="analytics-operations-summary">
+                  {operationsStatusTotals.total.toLocaleString()} inspections:{" "}
+                  {operationsStatusTotals.pending.toLocaleString()} pending,{" "}
+                  {operationsStatusTotals.awaiting_review.toLocaleString()} waiting for review,{" "}
+                  {operationsStatusTotals.verified.toLocaleString()} verified.
+                </p>
 
-                  <div className="saas-card frosted-glass" style={{ padding: 24, borderRadius: 16 }}>
-                    <div className="analytics-card-heading">
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
-                        How many reports has each inspector handled?
-                      </h3>
-                    </div>
-                    <table className="analytics-operations-table">
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Pending</th>
-                          <th>Awaiting review</th>
-                          <th>Verified</th>
-                          <th>Avg days</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {operationsStatusRows.length === 0 ? (
-                          <tr><td colSpan="5"><EmptyState h={120} title="No inspector data" message="No reports match the selected filters." /></td></tr>
-                        ) : operationsStatusRows.map(row => {
-                          const stat = (data?.operations?.inspector_stats || []).find(item => item.userID === row.userID);
-                          return (
-                            <tr key={row.userID}>
-                              <td>{row.fullName}</td>
-                              <td>{Number(row.pending || 0).toLocaleString()}</td>
-                              <td>{Number(row.awaiting_review || 0).toLocaleString()}</td>
-                              <td>{Number(row.verified || 0).toLocaleString()}</td>
-                              <td>{stat?.avg_resolution_time ? (stat.avg_resolution_time / 1440).toFixed(1) : "—"}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    <details className="analytics-profile-disclosure analytics-inspector-detail">
-                      <summary>Pins flagged yellow</summary>
-                      <table className="analytics-operations-table">
-                        <thead><tr><th>Name</th><th>Pins flagged yellow</th></tr></thead>
-                        <tbody>
-                          {(data?.operations?.inspector_stats || []).map(row => (
-                            <tr key={row.userID}>
-                              <td>{row.fullName}</td>
-                              <td>{Number(row.yellow_flags_reported || 0).toLocaleString()}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </details>
+                <div className="analytics-operations-grid">
+                  <div className="saas-card frosted-glass analytics-operations-card">
+                  <div className="analytics-card-heading">
+                    <h3>Who is working on what?</h3>
+                    <AnalyticsInfoTip label="About inspector workload">
+                      Pending groups Assigned, Reassigned, In Progress, and Unassigned. Waiting for review means Submitted. Verified reports are complete. Active inspectors remain listed when they have no reports.
+                    </AnalyticsInfoTip>
+                  </div>
+                  {operationsStatusRows.length === 0 ? (
+                    <EmptyState h={260} title="No active inspectors" message="No inspectors match the selected filters." />
+                  ) : (
+                    <>
+                      <div className="analytics-operations-legend">
+                        {operationsChartStatusTotals.filter(status => status.total > 0).map(status => (
+                          <span key={status.key}>
+                            <i style={{ background: status.color }} />
+                            {status.label}
+                          </span>
+                        ))}
+                      </div>
+                      <div style={{
+                        height: Math.max(260, operationsStatusRows.length * 40 + 80),
+                        width: "100%",
+                      }}>
+                        <ResponsiveChart height={Math.max(260, operationsStatusRows.length * 40 + 80)}>
+                          {({ width }) => {
+                            const labelWidth = Math.min(210, Math.max(128, width * 0.28));
+                            return (
+                              <BarChart data={operationsStatusRows} layout="vertical"
+                                barSize={24} barCategoryGap="22%"
+                                margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                                <CartesianGrid strokeDasharray="3 3" horizontal={false}
+                                  stroke="rgba(226,232,240,0.4)" />
+                                <XAxis type="number" domain={[0, "dataMax"]}
+                                  allowDecimals={false}
+                                  tick={{ fontSize: 10, fill: "var(--color-muted)" }}
+                                  axisLine={false} tickLine={false} />
+                                <YAxis type="category" dataKey="fullName" width={labelWidth}
+                                  interval={0}
+                                  tick={{ fontSize: 11, fill: "var(--color-muted)" }}
+                                  axisLine={false} tickLine={false} />
+                                <Tooltip content={<CustomTooltip />} />
+                                {OPERATIONS_STATUS_STACKS.map(status => (
+                                  <Bar key={status.key} dataKey={status.key}
+                                    name={status.label} stackId="inspector-work"
+                                    fill={status.color} isAnimationActive={false} />
+                                ))}
+                              </BarChart>
+                            );
+                          }}
+                        </ResponsiveChart>
+                      </div>
+                    </>
+                  )}
+                  <p className="analytics-chart-caption">
+                    Each bar shows an inspector’s work by review stage.
+                  </p>
                   </div>
 
-                  <div className="saas-card frosted-glass" style={{ padding: 24, borderRadius: 16 }}>
-                    <div className="analytics-card-heading">
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
-                        How are reports split across inspectors?
-                      </h3>
-                      <AnalyticsInfoTip label="About inspector status chart">
-                        Status groups match the Field Inspections chart. Only reports linked to a barangay and assigned to an inspector are included.
-                      </AnalyticsInfoTip>
-                    </div>
-                    <StackedBarangayChart data={operationsStatusRows} statuses={INSPECTION_STATUS_STACKS}
-                      categoryKey="fullName" categoryLabel="Inspector"
-                      emptyMessage="No inspector reports match the selected filters." />
-                    <p className="analytics-chart-caption">
-                      There are {operationsStatusTotals.pending} pending, {operationsStatusTotals.awaiting_review} awaiting review, and {operationsStatusTotals.verified} verified reports.
-                    </p>
+                  <div className="saas-card frosted-glass analytics-operations-card">
+                  <div className="analytics-card-heading">
+                    <h3>Inspector details</h3>
+                  </div>
+                  <table className="analytics-operations-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Pending</th>
+                        <th>Waiting for review</th>
+                        <th>Verified</th>
+                        <th>Avg days</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {operationsStatusRows.length === 0 ? (
+                        <tr><td colSpan="5"><EmptyState h={120} title="No inspector data" message="No active inspectors match the selected filters." /></td></tr>
+                      ) : operationsStatusRows.map(row => (
+                        <tr key={row.userID}>
+                          <td>{row.fullName}</td>
+                          <td>{Number(row.pending || 0).toLocaleString()}</td>
+                          <td>{Number(row.awaiting_review || 0).toLocaleString()}</td>
+                          <td>{Number(row.verified || 0).toLocaleString()}</td>
+                          <td>{row.avg_resolution_time ? (row.avg_resolution_time / 1440).toFixed(1) : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <details className="analytics-profile-disclosure analytics-inspector-detail">
+                    <summary>Pins flagged yellow</summary>
+                    <table className="analytics-operations-table">
+                      <thead><tr><th>Name</th><th>Pins flagged yellow</th></tr></thead>
+                      <tbody>
+                        {(data?.operations?.inspector_stats || []).map(row => (
+                          <tr key={row.userID}>
+                            <td>{row.fullName}</td>
+                            <td>{Number(row.yellow_flags_reported || 0).toLocaleString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
                   </div>
                 </div>
 
-                {/* Timeline */}
-                <div className="saas-card frosted-glass" style={{ padding: 24, borderRadius: 16 }}>
+                <div className="saas-card frosted-glass analytics-operations-card analytics-operations-timeline">
                   <div className="analytics-card-heading">
-                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
-                      How did submitted and verified reports change over time?
-                    </h3>
-                    <AnalyticsInfoTip label="About report timeline">
-                      Each bar covers one day; ranges longer than 31 days are grouped by week. Dates without reports remain visible.
-                    </AnalyticsInfoTip>
+                  <h3>How many inspections were submitted each day?</h3>
+                  <AnalyticsInfoTip label="About daily inspection counts">
+                    Waiting for review includes submitted reports. Verified is shown separately. Dates without activity are included; ranges longer than 31 days are grouped by week.
+                  </AnalyticsInfoTip>
                   </div>
-                  {operationsTimeline.rows.length === 0 ? (
-                    <EmptyState h={300} title="No timeline data" message="No reports match the selected date range." />
+                  {operationsTimelineChartRows.length === 0 ? (
+                  <EmptyState h={300} title="No timeline data" message="No reports match the selected date range." />
                   ) : (
-                    <div style={{ height: 320, width: "100%" }}>
-                      <ResponsiveChart>
-                        <BarChart data={operationsTimeline.rows} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.6)" />
-                          <XAxis dataKey="date" axisLine={false} tickLine={false}
-                            tick={{ fontSize: 10, fill: "var(--color-muted)" }} tickMargin={10} minTickGap={20}
-                            angle={-30} textAnchor="end" />
-                          <YAxis allowDecimals={false} axisLine={false} tickLine={false}
-                            tick={{ fontSize: 11, fill: "var(--color-muted)" }} />
-                          <Tooltip content={<CustomTooltip />} />
-                          {[
-                            { key: "submitted", label: "Submitted", color: COLOR.blue },
-                            { key: "verified", label: "Verified", color: COLOR.green },
-                          ].filter(status => operationsTimeline.rows.some(row => row[status.key] > 0))
-                            .map(status => (
-                              <Bar key={status.key} dataKey={status.key} name={status.label}
-                                stackId="timeline" fill={status.color} isAnimationActive={false} />
-                            ))}
-                        </BarChart>
-                      </ResponsiveChart>
-                    </div>
+                  <div style={{ height: 320, width: "100%" }}>
+                    <ResponsiveChart>
+                      <BarChart data={operationsTimelineChartRows} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.6)" />
+                        <XAxis dataKey="date" axisLine={false} tickLine={false}
+                          tick={{ fontSize: 10, fill: "var(--color-muted)" }} tickMargin={10} minTickGap={20}
+                          angle={-30} textAnchor="end" />
+                        <YAxis allowDecimals={false} axisLine={false} tickLine={false}
+                          tick={{ fontSize: 11, fill: "var(--color-muted)" }} />
+                        <Tooltip content={<CustomTooltip />} />
+                        {[
+                          { key: "awaiting_review", label: "Waiting for review", color: COLOR.blue },
+                          { key: "verified", label: "Verified", color: COLOR.green },
+                        ].filter(status => operationsTimelineChartRows.some(row => row[status.key] > 0))
+                          .map(status => (
+                            <Bar key={status.key} dataKey={status.key} name={status.label}
+                              stackId="timeline" fill={status.color} isAnimationActive={false} />
+                          ))}
+                      </BarChart>
+                    </ResponsiveChart>
+                  </div>
                   )}
-                  {operationsTimeline.rows.length > 0 && (
-                    <p className="analytics-chart-caption">
-                      {operationsTimeline.interval === "week" ? "Weekly totals." : "Daily totals."}
-                    </p>
+                  {operationsTimelineChartRows.length > 0 && (
+                  <p className="analytics-chart-caption">
+                    Compare reports waiting for review with reports already verified.
+                  </p>
                   )}
                 </div>
               </>

@@ -49,6 +49,34 @@ export function visibleRegistryDimensions(registry = {}) {
   });
 }
 
+export function sortRegistryBreakdownRows(dimension, rows = []) {
+  const sizeOrder = new Map([
+    ["micro", 0],
+    ["small", 1],
+    ["medium", 2],
+    ["large", 3],
+  ]);
+  return [...rows].sort((first, second) => {
+    const firstValue = String(first.value ?? first.label ?? "");
+    const secondValue = String(second.value ?? second.label ?? "");
+    const firstNormalized = firstValue.trim().toLowerCase();
+    const secondNormalized = secondValue.trim().toLowerCase();
+    const firstIsOthers = firstNormalized === "others";
+    const secondIsOthers = secondNormalized === "others";
+    if (firstIsOthers !== secondIsOthers) return firstIsOthers ? 1 : -1;
+
+    if (dimension === "business_size") {
+      const firstRank = sizeOrder.get(firstNormalized) ?? Number.MAX_SAFE_INTEGER;
+      const secondRank = sizeOrder.get(secondNormalized) ?? Number.MAX_SAFE_INTEGER;
+      if (firstRank !== secondRank) return firstRank - secondRank;
+    }
+
+    const countDifference = Number(second.count || 0) - Number(first.count || 0);
+    if (countDifference) return countDifference;
+    return firstValue.localeCompare(secondValue);
+  });
+}
+
 export function quantileBreaks(values, classCount = 5) {
   const sorted = values
     .map(Number)

@@ -34,6 +34,43 @@ export function groupInspectionStatuses(rows = []) {
   }).filter(row => row.total > 0);
 }
 
+export function groupOperationsStatusBreakdown(rows = []) {
+  const totals = { pending: 0, awaiting_review: 0, verified: 0 };
+  for (const row of rows) {
+    const status = String(row.status ?? "Unassigned").trim().toLowerCase();
+    const count = Number(row.count || 0);
+    if (status === "submitted") {
+      totals.awaiting_review += count;
+    } else if (status === "verified") {
+      totals.verified += count;
+    } else {
+      totals.pending += count;
+    }
+  }
+  return { ...totals, total: totals.pending + totals.awaiting_review + totals.verified };
+}
+
+export function activeInspectorWorkload(inspectorStats = [], statusRows = []) {
+  const statusesByUserId = new Map(
+    statusRows.map(row => [String(row.userID), row]),
+  );
+  return inspectorStats.map(stat => {
+    const statuses = statusesByUserId.get(String(stat.userID));
+    const row = {
+      ...stat,
+      pending: Number(statuses?.pending || 0),
+      awaiting_review: Number(statuses?.awaiting_review || 0),
+      verified: Number(statuses?.verified || 0),
+    };
+    return {
+      ...row,
+      total: row.pending + row.awaiting_review + row.verified,
+    };
+  }).sort((first, second) => (
+    second.total - first.total || String(first.fullName).localeCompare(String(second.fullName))
+  ));
+}
+
 export function pivotCategoryCounts(rows = [], labelKey, countKey = "count") {
   const byCategory = new Map();
   for (const row of rows) {

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activeInspectorWorkload,
   completeInspectionTimeline,
+  groupOperationsStatusBreakdown,
   groupInspectionStatuses,
   pivotCategoryCounts,
 } from "./analyticsPresentation.js";
@@ -23,6 +25,51 @@ test("groups inspection statuses and excludes barangays with no reports", () => 
     awaiting_review: 5,
     total: 21,
   }]);
+});
+
+test("Operations status totals use the same groups as Section B", () => {
+  const sectionB = groupInspectionStatuses([{
+    barangayName: "All",
+    assigned: 1,
+    reassigned: 2,
+    in_progress: 3,
+    unassigned: 4,
+    submitted: 5,
+    verified: 6,
+  }])[0];
+  const operations = groupOperationsStatusBreakdown([
+    { status: "Assigned", count: 1 },
+    { status: "Reassigned", count: 2 },
+    { status: "In Progress", count: 3 },
+    { status: "Unassigned", count: 4 },
+    { status: "Submitted", count: 5 },
+    { status: "Verified", count: 6 },
+  ]);
+  assert.deepEqual(operations, {
+    pending: sectionB.pending,
+    awaiting_review: sectionB.awaiting_review,
+    verified: sectionB.verified,
+    total: sectionB.total,
+  });
+});
+
+test("active inspectors remain visible with zero workload", () => {
+  const result = activeInspectorWorkload([
+    { userID: 2, fullName: "Bea", avg_resolution_time: 0 },
+    { userID: 1, fullName: "Ana", avg_resolution_time: 1440 },
+  ], [
+    { userID: "1", pending: 1, awaiting_review: 2, verified: 3 },
+  ]);
+  assert.deepEqual(result.map(row => ({
+    userID: row.userID,
+    fullName: row.fullName,
+    pending: row.pending,
+    awaiting_review: row.awaiting_review,
+    verified: row.verified,
+  })), [
+    { userID: 1, fullName: "Ana", pending: 1, awaiting_review: 2, verified: 3 },
+    { userID: 2, fullName: "Bea", pending: 0, awaiting_review: 0, verified: 0 },
+  ]);
 });
 
 test("pivots grouped counts by barangay", () => {
