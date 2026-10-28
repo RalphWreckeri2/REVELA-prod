@@ -2,14 +2,14 @@
 
 ## Implementation
 
-- Flagged Locations offers Status, Source, Registry Link in that order, combined
+- Flagged Locations offers Status, Origin / Registry, Registry Link in that order, combined
   with AND logic and the existing search/barangay search. Map markers and the
   paginated location list receive the same complete filtered dataset. Counters
   reflect that view; detection scope/allowance and municipal priority rankings
   remain independent. The Map reads every API page before replacing its dataset.
 - A shared custom combobox matches the Detection mode design, with keyboard
   navigation, focus restoration, Escape, outside-pointer and blur closing.
-- Business details show the stored origin once below the address. Eligible
+- Business details show stored origin and current Registry-link status below the address. Eligible
   unlinked businesses also show exactly:
   `Inspection-verified compliant · Not yet in imported registry`.
   The open detail uses refreshed data so linking removes this text immediately
@@ -22,17 +22,26 @@
   report model. Exports refresh the same snapshot shown in the open list, and
   include every matching row, not just the visible page. CSV uses PapaParse with
   formula/quote/newline escaping and UTF-8 BOM. PDF includes title, scope,
-  generation timestamp, applied filters, record count and all six columns.
+  generation timestamp, applied filters, record count and all seven columns.
+- Analytics keeps Non-Registry Pin Monitoring strict (no actual
+  `businessID`/Registry link) and presents all linked geospatial pins in a
+  separate Registry-Linked Pin Monitoring section. Both show persisted origin.
 
 ## Exact definitions
 
-**Source** is persisted `geospatial_logs.source`, projected as `originSource`.
-`detection` = Business Detection; `manual` = Inspector Report; `registry` and
-`registry_detected` = Official BPLO Registry (the latter is a registry business
-also found by Places). Missing/unrecognized source is Unknown origin; it is
-never silently classified as detection. Legacy `flagSource` compatibility is
-retained for other readers, but the new Map/report do not use its guessed
+**Origin** is persisted `geospatial_logs.source`, projected as `originSource`.
+`detection` = Business Detection; `manual` = Inspector Report; `registry` =
+official-registry import/sync; `registry_detected` = registry-origin pin also
+found by Places. Origin is historical provenance and does not change when a
+Registry link is later added. Missing/unrecognized source is Unknown origin; it
+is never silently classified as detection. Legacy `flagSource` compatibility
+is retained for other readers, but the new Map/report do not use its guessed
 fallback as provenance.
+
+The Map's “Linked to Official BPLO Registry” filter uses actual Registry
+membership, not origin. Its Business Detection filter includes only
+detection-origin pins that are not currently linked. The detail view shows
+both properties separately.
 
 **Registry Link** on a real pin means its non-null `businessID` matches an
 existing `official_registry.businessID`. Source, place/name matching used by

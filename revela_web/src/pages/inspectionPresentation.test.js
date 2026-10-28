@@ -58,10 +58,10 @@ test("a grid flag filter intersects the copied search without changing ordering"
 });
 
 test("missing and malformed deadlines are not presented as assigned dates", () => {
-  for (const value of [null, undefined, ""]) assert.deepEqual(inspectionDeadline(value), { label: "No deadline set", dateTime: null });
+  for (const value of [null, undefined, ""]) assert.deepEqual(inspectionDeadline(value), { label: "No deadline", dateTime: null });
   assert.deepEqual(inspectionDeadline("invalid"), { label: "Deadline unavailable", dateTime: null });
   assert.equal(inspectionDeadline("2026-10-20T12:00:00Z").dateTime, "2026-10-20T12:00:00.000Z");
-  assert.notEqual(inspectionDeadline("2026-10-20T12:00:00Z").label, "No deadline set");
+  assert.notEqual(inspectionDeadline("2026-10-20T12:00:00Z").label, "No deadline");
 });
 
 test("notice labels retain existing enforcement stages", () => {

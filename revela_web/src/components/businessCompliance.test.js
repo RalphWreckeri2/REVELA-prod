@@ -18,20 +18,20 @@ test("Map dropdowns have the requested defaults and exact option order", () => {
   assert.deepEqual(STATUS_OPTIONS.map(option => option.value),
     ["all", "in_inspection", "Green", "Yellow", "Yellow_Inspector", "Orange", "Red", "Black", "Purple"]);
   assert.deepEqual(BUSINESS_SOURCE_OPTIONS.map(option => option.label),
-    ["All Sources", "Business Detection", "Inspector Report", "Official BPLO Registry", "Unclassified Origin"]);
+    ["All Sources", "Business Detection", "Inspector Report", "Linked to Official BPLO Registry", "Unclassified Origin"]);
   assert.deepEqual(MAP_REGISTRY_LINK_OPTIONS.map(option => option.label),
     ["All", "Linked to Registry", "Not in Registry", "Inspection-verified compliant · Not in Registry"]);
 });
 
 test("unlinked verified Green displays one source line and the exact neutral indicator", () => {
   assert.deepEqual(businessDetailsInfo(verified()), {
-    source: "Source: Business Detection", compliance: UNLINKED_COMPLIANCE_TEXT,
+    source: "Origin: Business Detection · Not in Registry", compliance: UNLINKED_COMPLIANCE_TEXT,
   });
 });
 
 test("linking removes the Not yet indicator while preserving detection origin", () => {
   assert.deepEqual(businessDetailsInfo(verified({ registryLinked: true })), {
-    source: "Source: Business Detection", compliance: null,
+    source: "Origin: Business Detection · Linked to Registry", compliance: null,
   });
 });
 
@@ -45,14 +45,31 @@ test("Green without evidence, superseded Green and active Orange cannot show the
 
 test("unknown sources and missing link projections are never guessed from labels or IDs", () => {
   assert.equal(businessSourceLabel("manual"), "Inspector Report");
-  assert.equal(businessSourceLabel("registry_detected"), "Official BPLO Registry");
+  assert.equal(businessSourceLabel("registry_detected"), "Registry + Maps detection");
   assert.equal(businessSourceLabel("unexpected"), "Unknown origin");
   assert.equal(matchesMapFilters(verified({ originSource: "unknown" }), { source: "detection" }), false);
   assert.equal(matchesMapFilters(verified({ registryLinked: false, businessID: "guessed" }), { registryLink: "linked" }), false);
   assert.equal(matchesMapFilters(verified({ originSource: "registry_detected" }), { source: "detection" }), false);
-  assert.equal(matchesMapFilters(verified({ originSource: "registry_detected" }), { source: "registry" }), true);
+  assert.equal(matchesMapFilters(verified({ originSource: "registry_detected", registryLinked: true }), { source: "registry" }), true);
 });
 
+test("Map source filters use exact populations for detection, manual, registry and unclassified origins", () => {
+  const detection = verified({ id: 1, originSource: "detection", source: "detection" });
+  const manual = verified({ id: 2, originSource: "manual", source: "manual" });
+  const registry = verified({ id: 3, originSource: "registry", source: "registry", registryLinked: true });
+  const registryDetected = verified({ id: 4, originSource: "registry_detected", source: "registry_detected", registryLinked: true });
+  const unknown = verified({ id: 5, originSource: "unknown", source: "unknown" });
+  const rows = [detection, manual, registry, registryDetected, unknown];
+
+  assert.deepEqual(rows.filter(row => matchesMapFilters(row, { source: "detection" })).map(row => row.id), [1]);
+  assert.deepEqual(rows.filter(row => matchesMapFilters(row, { source: "manual" })).map(row => row.id), [2]);
+  assert.deepEqual(rows.filter(row => matchesMapFilters(row, { source: "registry" })).map(row => row.id), [3, 4]);
+  const linkedDetection = verified({ id: 6, originSource: "detection", source: "detection", registryLinked: true });
+  assert.equal(matchesMapFilters(linkedDetection, { source: "detection" }), false);
+  assert.equal(matchesMapFilters(linkedDetection, { source: "registry" }), true);
+  assert.deepEqual(rows.filter(row => matchesMapFilters(row, { source: "unclassified" })).map(row => row.id), [5]);
+  assert.equal(rows.filter(row => matchesMapFilters(row, { source: "unclassified" })).some(row => row.id === 3 || row.id === 4), false);
+});
 test("status, source, registry link, search and barangay use AND logic", () => {
   const rows = [verified(), verified({ id: 18, registryLinked: true }),
     verified({ id: 19, originSource: "manual", source: "manual" }),
@@ -82,7 +99,8 @@ test("Yellow and inspector Yellow preserve the existing overlapping status meani
 const reportRecords = Array.from({ length: 35 }, (_, index) => ({
   detectionReference: index + 1, businessName: `Detected Shop ${index + 1}`,
   barangayID: index < 30 ? 1 : 2, barangayName: index < 30 ? "Barangay I" : "Barangay II",
-  address: "Main Street", verifiedOn: "2026-10-16T01:02:03.123456Z", registryLinked: index % 2 === 0,
+  address: "Main Street", originSource: "detection",
+  verifiedOn: "2026-10-16T01:02:03.123456Z", registryLinked: index % 2 === 0,
 }));
 
 test("View List, CSV and PDF share all filtered records, including beyond page one", () => {
@@ -98,6 +116,7 @@ test("View List, CSV and PDF share all filtered records, including beyond page o
   const pdf = compliancePrintReport(report, { fullName: "Test Admin" });
   assert.deepEqual(pdf.data.rows, [...pageOne.data, ...pageTwo.data]);
   assert.equal(pdf.data.rows.at(-1)["Pin Reference"], "30");
+  assert.equal(pdf.data.rows.at(-1).Origin, "Business Detection");
   assert.equal(pdf.data.count, csv.data.length);
   assert.match(pdf.title, /Inspection-Verified Compliant Businesses/);
   assert.match(pdf.subtitle, /current admin-verification evidence/);

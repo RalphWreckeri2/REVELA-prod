@@ -113,6 +113,7 @@ def current_confirmation_rows(cursor, *, ladder=False, barangay_ids=None):
     """
     from api.registry.colors import _effective_flag_color_sql
 
+    origin_source = origin_source_sql("g", cursor)
     office_at = """(SELECT e.createdAt FROM enforcement_events e
         WHERE e.subjectType = 'business' AND e.subjectID = CAST(r.businessID AS CHAR)
           AND e.eventType = 'compliance_confirmed'
@@ -125,6 +126,7 @@ def current_confirmation_rows(cursor, *, ladder=False, barangay_ids=None):
         ORDER BY e.createdAt DESC, e.eventID DESC LIMIT 1)"""
     cursor.execute(f"""SELECT r.businessID, g.logID, g.detectedName, g.barangayID,
                     b.barangayName, COALESCE(NULLIF(g.nearestLandmark, ''), r.businessAddress, '') AS address,
+                    {origin_source} AS originSource,
                     {_effective_flag_color_sql('g', ladder=ladder)} AS flagColor,
                     {office_at} AS officeAt,
                     {verified_green_at_sql('g', ladder=ladder)} AS inspectionAt

@@ -2407,6 +2407,8 @@ export default function AnalyticsPage() {
 
               {/* Non-registry monitoring, inside Section B after its KPIs */}
               <NonRegistryPinMonitoring snapshot={desc?.non_registry_monitoring} refreshing={backgroundRefreshing} />
+              <NonRegistryPinMonitoring snapshot={desc?.registry_linked_monitoring}
+                refreshing={backgroundRefreshing} membership="linked" />
 
               {/* Field Inspections FAQs */}
               <div style={{ marginBottom: 32 }}>

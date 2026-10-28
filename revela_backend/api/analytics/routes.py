@@ -20,7 +20,10 @@ from app import mysql
 from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
 from api.analytics.scoring import calculate_rankings, select_rankings
-from api.analytics.non_registry import non_registry_monitoring_sql, build_non_registry_monitoring
+from api.analytics.non_registry import (
+    non_registry_monitoring_sql, build_non_registry_monitoring,
+    registry_linked_monitoring_sql, build_registry_linked_monitoring,
+)
 from api.flags.compliance import origin_source_sql, current_confirmation_rows, confirmation_summary
 from api.models.detection_runs import get_recent_detection_runs
 from api.analytics.filters import (
@@ -1432,6 +1435,13 @@ def _get_all_analytics_inner(F=None):
     _execute(cur, "descriptive.non_registry_monitoring", monitoring_sql, monitoring_params)
     non_registry_monitoring = build_non_registry_monitoring(cur.fetchall(), Fx)
 
+    linked_monitoring_sql, linked_monitoring_params = registry_linked_monitoring_sql(
+        Fx, ladder=ladder,
+        source_sql=origin_source_sql("g", _labeled(cur, "schema:geospatial_logs.source")),
+    )
+    _execute(cur, "descriptive.registry_linked_monitoring", linked_monitoring_sql, linked_monitoring_params)
+    registry_linked_monitoring = build_registry_linked_monitoring(cur.fetchall(), Fx)
+
     descriptive = {
         "kpis": kpis,
         "enforcement_progress": enforcement_progress,
@@ -1451,6 +1461,7 @@ def _get_all_analytics_inner(F=None):
                            "workflow": workflow},
         "confirmed_compliance": confirmed,
         "non_registry_monitoring": non_registry_monitoring,
+        "registry_linked_monitoring": registry_linked_monitoring,
     }
     _publish_analytics_section("descriptive", descriptive)
 

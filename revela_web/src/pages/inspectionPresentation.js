@@ -87,7 +87,7 @@ export function inspectionNoticeLabel(level) {
 }
 
 export function inspectionDeadline(value) {
-  if (!value) return { label: "No deadline set", dateTime: null };
+  if (!value) return { label: "No deadline", dateTime: null };
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return { label: "Deadline unavailable", dateTime: null };
   return {

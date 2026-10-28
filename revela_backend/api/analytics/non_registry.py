@@ -20,8 +20,8 @@ REGISTRY_ONLY_FILTERS = (
 )
 
 
-def non_registry_monitoring_sql(filters, *, ladder, source_sql):
-    """One row per logID, with the latest inspection (no report join fan-out).
+def _pin_monitoring_sql(filters, *, ladder, source_sql, linked):
+    """One row per logID for one actual Registry-link population.
 
     Membership and verified Green evidence are exactly the shared Map/report
     definitions. Registry-only filters have no population here and are ignored.
@@ -47,18 +47,28 @@ def non_registry_monitoring_sql(filters, *, ladder, source_sql):
             WHERE latest.targetType = 'geospatial_log' AND latest.targetID = g.logID
             ORDER BY latest.irTimestamp DESC, latest.reportID DESC LIMIT 1
         )
-        WHERE NOT ({registry_link_sql('g')}) {geo} {inspection}
+        WHERE {"(" + registry_link_sql('g') + ")" if linked else "NOT (" + registry_link_sql('g') + ")"} {geo} {inspection}
         ORDER BY g.detectedDate DESC, g.logID DESC
     """, geo_params + inspection_params
 
 
-def build_non_registry_monitoring(rows, filters=None, *, generated_at=None):
+def non_registry_monitoring_sql(filters, *, ladder, source_sql):
+    """One row per not-linked pin, with the latest inspection."""
+    return _pin_monitoring_sql(filters, ladder=ladder, source_sql=source_sql, linked=False)
+
+
+def registry_linked_monitoring_sql(filters, *, ladder, source_sql):
+    """One row per businessID-linked pin, with the latest inspection."""
+    return _pin_monitoring_sql(filters, ladder=ladder, source_sql=source_sql, linked=True)
+
+
+def _build_pin_monitoring(rows, filters=None, *, generated_at=None, linked):
     summary = {"total": 0, "needs_verification": 0, "under_inspection": 0, "verified_green": 0}
     barangays = {}
     records = []
     for raw in rows:
         row = decorate_compliance(dict(raw))
-        if row["registryLinked"]:
+        if row["registryLinked"] is not linked:
             continue
         color = row.get("flagColor") if row.get("flagColor") in PIN_COLORS else "Unknown"
         # Same current-workflow predicate used by the Map's inspection filter.
@@ -73,7 +83,7 @@ def build_non_registry_monitoring(rows, filters=None, *, generated_at=None):
             "barangayName": row.get("barangayName") or "Unknown barangay",
             "address": row.get("address") or "",
             "flagColor": color, "originSource": row["originSource"],
-            "registryLinked": False, "verificationStatus": status,
+            "registryLinked": linked, "verificationStatus": status,
             "hasActiveInspection": under_inspection,
             "verifiedGreen": verified_green,
             "verifiedGreenAt": row["verifiedGreenAt"] if verified_green else None,
@@ -101,3 +111,11 @@ def build_non_registry_monitoring(rows, filters=None, *, generated_at=None):
         "ignored_filters": [key for key in REGISTRY_ONLY_FILTERS if (filters or {}).get(key)],
         "count_unit": "pins (distinct geospatial logID)",
     }
+
+
+def build_non_registry_monitoring(rows, filters=None, *, generated_at=None):
+    return _build_pin_monitoring(rows, filters, generated_at=generated_at, linked=False)
+
+
+def build_registry_linked_monitoring(rows, filters=None, *, generated_at=None):
+    return _build_pin_monitoring(rows, filters, generated_at=generated_at, linked=True)

@@ -17,11 +17,19 @@ export const NON_REGISTRY_COLUMNS = Object.freeze([
 ]);
 
 export function isNonRegistrySnapshot(snapshot) {
+  return isPinMonitoringSnapshot(snapshot, false);
+}
+
+export function isRegistryLinkedSnapshot(snapshot) {
+  return isPinMonitoringSnapshot(snapshot, true);
+}
+
+function isPinMonitoringSnapshot(snapshot, linked) {
   return Boolean(snapshot && Array.isArray(snapshot.records) && Array.isArray(snapshot.by_barangay)
     && ["total", "needs_verification", "under_inspection", "verified_green"].every(key =>
       Number.isInteger(snapshot.summary?.[key]) && snapshot.summary[key] >= 0)
     && snapshot.summary.total === snapshot.records.length
-    && snapshot.records.every(row => row.registryLinked === false)
+    && snapshot.records.every(row => row.registryLinked === linked)
     && typeof snapshot.generated_at === "string" && Number.isFinite(Date.parse(snapshot.generated_at)));
 }
 
@@ -36,12 +44,21 @@ export function nonRegistryRows(records) {
     "Inspection Status": row.verificationStatus || "Not assigned",
     "Inspection-Verified Compliant": row.verifiedGreen === true ? "Yes" : "No",
     "Verified On": row.verifiedGreen === true ? formatManilaDate(row.verifiedGreenAt) : "—",
-    "Registry Link": "Not in Registry",
+    "Registry Link": row.registryLinked ? "Linked to Registry" : "Not in Registry",
   }));
 }
 
 export function nonRegistryCsv(snapshot) {
   if (!isNonRegistrySnapshot(snapshot)) throw new Error("The non-registry snapshot is unavailable. Refresh Analytics before exporting.");
+  return monitoringCsv(snapshot);
+}
+
+export function registryLinkedCsv(snapshot) {
+  if (!isRegistryLinkedSnapshot(snapshot)) throw new Error("The Registry-linked snapshot is unavailable. Refresh Analytics before exporting.");
+  return monitoringCsv(snapshot);
+}
+
+function monitoringCsv(snapshot) {
   const rows = nonRegistryRows(snapshot.records);
   const csv = Papa.unparse({
     fields: [...NON_REGISTRY_COLUMNS, "Snapshot Checked At"],

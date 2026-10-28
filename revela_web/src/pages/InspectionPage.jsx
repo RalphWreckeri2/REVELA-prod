@@ -4,7 +4,7 @@
  * Inspectors only see their own tasks via the same page (role-gated views).
  */
 
-import { useState, useEffect, useCallback, useContext, useRef, useId } from "react";
+import { useState, useEffect, useCallback, useContext, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
@@ -34,7 +34,7 @@ import {
   canReassignInspection,
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
-import { dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline, inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchSearch, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
+import { dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, matchesDispatchSearch, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
@@ -68,11 +68,6 @@ const Icon = {
   MapPin: () => (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="12" cy="10" r="3"/><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
-    </svg>
-  ),
-  User: () => (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
     </svg>
   ),
   Check: () => (
@@ -674,6 +669,11 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
           <p style={{ fontSize: 13, color: "var(--color-muted)", display: "flex", alignItems: "center", gap: 5, margin: 0 }}>
             <Icon.MapPin /> {report.barangayName ?? "Unknown barangay"}
           </p>
+          {(report.reportID != null || report.logID != null) && (
+            <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: "4px 0 0" }}>
+              {[report.reportID != null && `Report #${report.reportID}`, report.logID != null && `Location #${report.logID}`].filter(Boolean).join(" · ")}
+            </p>
+          )}
         </div>
 
         <div style={{ border: "1px solid var(--color-border)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
@@ -913,13 +913,13 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
           </div>
         </div>
 
-        <p className="dispatch-grid-count" role="status">Showing {filteredReports.length} of {reports.length} loaded {status.toLowerCase()} reports.</p>
+        <p className="dispatch-grid-count" role="status">Showing {filteredReports.length} of {reports.length} {status.toLowerCase()} reports.</p>
         <div className="dispatch-grid-content">
           <div className="dispatch-grid-cards">
             {filteredReports.map(report => <InspectionCard key={report.reportID ?? `log-${report.logID}`} report={report} onViewDetail={onViewDetail} />)}
           </div>
           {filteredReports.length === 0 && (
-            <div className="dispatch-empty"><strong>No matching loaded reports</strong>Change or clear the grid search and current-flag filter.</div>
+            <div className="dispatch-empty"><strong>No matching reports</strong>Change or clear the grid search and current-flag filter.</div>
           )}
         </div>
     </InspectionDialog>
@@ -928,37 +928,24 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
 
 // ── Inspection Card ────────────────────────────────────────────────────────────
 function InspectionCard({ report, onViewDetail }) {
-  const metadataID = useId();
-  const badgesID = useId();
   const name = report.detectedName || "Unknown establishment";
-  const flagMeta = FLAG_COLOR[report.flagColor] ?? { bg: "var(--color-hover)", text: "var(--color-muted)" };
   const deadline = inspectionDeadline(report.deadline);
-  const notice = inspectionNoticeLabel(report.noticeLevel);
 
   return (
     <button
       className="dispatch-card" type="button" data-report-id={report.reportID}
-      aria-label={`View inspection details for ${name}`}
-      aria-describedby={`${metadataID} ${badgesID}`}
       onClick={event => onViewDetail(report, event.currentTarget)}
     >
       <span className="dispatch-card-name">{name}</span>
-      <span className="dispatch-card-meta" id={metadataID}>
-        <span><span aria-hidden="true"><Icon.MapPin /></span>{report.barangayName || "Barangay unavailable"}</span>
-        <span><span aria-hidden="true"><Icon.User /></span>Inspector: {report.inspectorName || "Unavailable"}</span>
-        <span><span aria-hidden="true"><Icon.Clock /></span>{deadline.dateTime ? <>Deadline: <time dateTime={deadline.dateTime}>{deadline.label}</time></> : deadline.label}</span>
+      <span className="dispatch-card-location">
+        <Icon.MapPin />{report.barangayName || "Barangay unavailable"}
       </span>
-      <span className="dispatch-card-badges" id={badgesID}>
-        <span style={{ background: flagMeta.bg, color: flagMeta.text }} title={getFriendlyFlagLabel(report.flagColor)}>
-          <span aria-hidden="true"><Icon.Flag /></span>Current flag: <strong>{report.flagColor || "Unavailable"}</strong>
+      <span className="dispatch-card-footer">
+        <span className="dispatch-card-deadline">
+          <Icon.Clock />
+          {deadline.dateTime ? <>Due <time dateTime={deadline.dateTime}>{deadline.label}</time></> : "No deadline"}
         </span>
-        {report.inspectionResult && <span className="dispatch-result" title={formatResult(report.inspectionResult)}>Submitted result: <strong>{report.inspectionResult}</strong></span>}
-        {notice && <span className="dispatch-notice" style={report.noticeLevel === 4 ? { background: "var(--flag-black-bg)", color: "var(--flag-black-text)" } : undefined}>Notice stage: {notice}</span>}
-        {report.wasReassigned === 1 && <span className="dispatch-history"><span aria-hidden="true"><Icon.RefreshCw /></span>Previously reassigned</span>}
-      </span>
-      <span className="dispatch-card-foot">
-        <span>{[report.reportID != null && `Report #${report.reportID}`, report.logID != null && `Location #${report.logID}`].filter(Boolean).join(" · ")}</span>
-        <span aria-hidden="true">View details →</span>
+        <span className="dispatch-card-action">View details <span aria-hidden="true">→</span></span>
       </span>
     </button>
   );
@@ -986,11 +973,10 @@ function KanbanColumn({ status, reports, onViewDetail, isCollapsed, onToggleColl
         >
           <span className="dispatch-column-dot" aria-hidden="true" />
           <span className="dispatch-column-title" id={`${bodyID}-title`}>{status}</span>
-          <span className="dispatch-column-count" id={`${bodyID}-count`} aria-label={`${reports.length} matching loaded reports`}>{reports.length}</span>
+          <span className="dispatch-column-count" id={`${bodyID}-count`} aria-label={`${reports.length} matching reports`}>{reports.length}</span>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d={isCollapsed ? "M9 18l6-6-6-6" : "M15 18l-6-6 6-6"} /></svg>
         </button>
       </h2>
-      <p className="dispatch-column-summary" hidden={isCollapsed}>{visibleReports.length} shown · {reports.length} matching loaded</p>
       <div className="dispatch-column-body" id={bodyID} hidden={isCollapsed}>
         {!isCollapsed && (reports.length ? (
           <>
@@ -998,7 +984,7 @@ function KanbanColumn({ status, reports, onViewDetail, isCollapsed, onToggleColl
             {hasMore && <button className="dispatch-view-all" type="button" onClick={event => onFocusColumn(status, event.currentTarget)}>View all {reports.length} {status.toLowerCase()} reports</button>}
           </>
         ) : (
-          <div className="dispatch-empty"><strong>{isFiltered ? "No matching loaded reports" : `No loaded ${status.toLowerCase()} reports`}</strong>Counts reflect the loaded records.</div>
+          <div className="dispatch-empty"><strong>{isFiltered ? "No matching reports" : `No ${status.toLowerCase()} reports`}</strong></div>
         ))}
       </div>
     </section>
@@ -1047,7 +1033,6 @@ export default function InspectionPage() {
 
   // Filter state (admin only)
   const filterStatus = searchParams.get("status") || "";
-  const setFilterStatus = status => changeParams({ status, view: null, page: null, reportID: null, deadlineDate: null });
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
   useEffect(() => { setSearch(searchParams.get("search") || ""); }, [searchParams]);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -1055,8 +1040,6 @@ export default function InspectionPage() {
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
   const reports = reportData?.data ?? [];
   const total = reportData?.total ?? 0;
-  // Includes older revisions collapsed by the latest-per-target query.
-  const totalRows = reportData?.total_rows ?? total;
   const [loading, setLoading] = useState(() => !hasReports);
   const currentRequestKey = useRef(requestKey);
   const reportRequestSequence = useRef(0);
@@ -1108,6 +1091,7 @@ export default function InspectionPage() {
   const filteredReports = reports.filter(report => matchesDispatchSearch(report, search));
   const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
   const hasWorkloadFilter = view !== "all" || Boolean(reportID);
+  const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus);
   const workloadFilterName = view === "all" && reportID
     ? "Selected inspection report"
     : workloadFilterLabel(view, deadlineDate);
@@ -1184,31 +1168,19 @@ export default function InspectionPage() {
 
       <div className="dispatch-toolbar">
         <div className="dispatch-search-field">
-          <label htmlFor="dispatch-search">Search loaded inspections</label>
+          <div className="dispatch-search-label">
+            <label htmlFor="dispatch-search">Search inspections</label>
+            {search.trim() && (
+              <span className="dispatch-search-count" role="status">
+                {filteredReports.length} {filteredReports.length === 1 ? "match" : "matches"} on this page
+              </span>
+            )}
+          </div>
           <div className="dispatch-search-input">
             <Icon.Search />
             <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, or area..." value={search} onChange={event => { setSearch(event.target.value); changeParams({ search: event.target.value }); }} />
             {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); changeParams({ search: null }); searchRef.current.focus(); }}><Icon.X /></button>}
           </div>
-        </div>
-        {isAdmin && (
-          <div className="dispatch-status-field">
-            <label htmlFor="dispatch-status">Inspection status</label>
-            <select id="dispatch-status" value={filterStatus} onChange={event => setFilterStatus(event.target.value)}>
-              <option value="">All Statuses</option>
-              {STATUS_COLS.map(status => <option key={status} value={status}>{status}</option>)}
-              <option value="In Progress">In Progress (legacy)</option>
-            </select>
-          </div>
-        )}
-        <div className="dispatch-results-summary" role="status">
-          {loading && !hasReports ? <span className="ui-skeleton" style={{ display: "inline-block", width: 190 }} aria-hidden="true" /> : (
-            <>
-              <span><strong>{filteredReports.length}</strong> of <strong>{reports.length}</strong> shown on this page</span>
-              <span><strong>{total}</strong> matching in {isAdmin ? "this view" : "your tasks"}{filterStatus ? ` · ${filterStatus}` : ""}</span>
-              {totalRows > total && <span title="Older report revisions are grouped under each location’s latest report.">{totalRows - total} older report revisions in history</span>}
-            </>
-          )}
         </div>
       </div>
 
@@ -1231,15 +1203,17 @@ export default function InspectionPage() {
             )}
           </div>
           <div className="dispatch-workload-context-actions">
-            <span className="dispatch-workload-count">{workloadResult}</span>
+            {loading && !hasReports
+              ? <span className="ui-skeleton dispatch-workload-count-skeleton" aria-hidden="true" />
+              : <span className="dispatch-workload-count">{workloadResult}</span>}
             {workloadPages > 1 && (
               <nav className="dispatch-workload-pager" aria-label="Inspection results pagination">
                 <button type="button" disabled={page <= 1} onClick={() => changeParams({ page: page - 1 })}>Previous</button>
                 <button type="button" disabled={page >= workloadPages} onClick={() => changeParams({ page: page + 1 })}>Next</button>
               </nav>
             )}
-            {hasWorkloadFilter && (
-              <button className="dispatch-workload-clear" type="button" onClick={() => changeParams({ view: null, reportID: null, deadlineDate: null, page: null })}>Clear filter</button>
+            {hasActiveFilter && (
+              <button className="dispatch-workload-clear" type="button" onClick={() => changeParams({ view: null, reportID: null, deadlineDate: null, status: null, page: null })}>Clear filter</button>
             )}
           </div>
         </section>
@@ -1256,16 +1230,16 @@ export default function InspectionPage() {
         <SkeletonKanbanBoard columns={visibleCols.length} />
       ) : (
         <div>
-          <p className="dispatch-board-help" id="dispatch-board-help">Columns preview up to five matching loaded reports. Browse horizontally on smaller screens; use each column’s View all button for its loaded grid.</p>
+          <p className="dispatch-board-help" id="dispatch-board-help">Columns show up to five reports; use View all for the rest.</p>
           <div className="dispatch-board-scroll" role="region" aria-label="Inspection status columns" aria-describedby="dispatch-board-help" tabIndex={0}>
           <div
             className="dispatch-board"
             style={{
               gridTemplateColumns: visibleCols
-                .map((status) => (collapsedCols.has(status) ? "60px" : "minmax(280px, 1fr)"))
+                .map((status) => (collapsedCols.has(status) ? "60px" : "minmax(250px, 1fr)"))
                 .join(" "),
               minWidth: visibleCols.reduce(
-                (acc, status) => acc + (collapsedCols.has(status) ? 60 : 280),
+                (acc, status) => acc + (collapsedCols.has(status) ? 60 : 250),
                 (visibleCols.length - 1) * 16
               ),
             }}

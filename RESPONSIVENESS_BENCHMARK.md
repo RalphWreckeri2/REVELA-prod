@@ -1,3 +1,4 @@
+-- Active: 1769740580880@@127.0.0.1@3306@mysql
 # Responsiveness benchmarks (manual, opt-in)
 
 Nothing in this guide deploys or starts a scan, submits an inspection, resets a quota, or changes a database automatically. Use an **approved staging environment** for any full-detection or inspection trial. Never use a production account for write trials. Benchmark switches are **off by default**.

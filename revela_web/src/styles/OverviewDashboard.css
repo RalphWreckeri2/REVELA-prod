@@ -1,12 +1,12 @@
 /* Overview-only refinements; shared metric cards live in KpiCard.css. */
 .overview-page {
   --overview-surface: var(--color-modal-bg);
-  --overview-muted: #5c6b60;
+  --overview-muted: #64748b;
   --overview-accent: #1d7048;
   --overview-danger: #b91c1c;
-  --overview-border: #e3e8e1;
-  --overview-item: #f6f8f5;
-  --overview-item-hover: #eef3ec;
+  --overview-border: #e2e8f0;
+  --overview-item: #f8fafc;
+  --overview-item-hover: #f1f5f9;
   --overview-warning: #9a5a12;
   --overview-warning-border: #ecd6b3;
   --overview-warning-bg: #fffaf1;

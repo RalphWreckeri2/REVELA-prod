@@ -18,7 +18,7 @@ export const BUSINESS_SOURCE_OPTIONS = Object.freeze([
   { value: "all", label: "All Sources" },
   { value: "detection", label: "Business Detection" },
   { value: "manual", label: "Inspector Report" },
-  { value: "registry", label: "Official BPLO Registry" },
+  { value: "registry", label: "Linked to Official BPLO Registry" },
   { value: "unclassified", label: "Unclassified Origin" },
 ]);
 
@@ -36,11 +36,12 @@ export const COMPLIANCE_REPORT_TITLE = "Inspection-Verified Compliant Businesses
 export const COMPLIANCE_REPORT_DESCRIPTION = "Current admin-verified Green inspections, including linked manual-origin pins and historical unlinked pin references. Linked businesses are classified by their latest valid confirmation.";
 export const COMPLIANCE_REPORT_SCOPE = "Distinct confirmed registry businesses with effective Green status and current admin-verification evidence. Office-confirmed businesses are counted separately; Green color alone is not sufficient.";
 export const COMPLIANCE_COLUMNS = Object.freeze([
-  "Pin Reference", "Business Name", "Barangay", "Address", "Verified On", "Registry Link",
+  "Pin Reference", "Business Name", "Barangay", "Address", "Origin", "Verified On", "Registry Link",
 ]);
 
 export function businessSourceLabel(source) {
-  if (source === "registry_detected") return "Official BPLO Registry";
+  if (source === "registry") return "Official BPLO Registry import";
+  if (source === "registry_detected") return "Registry + Maps detection";
   return BUSINESS_SOURCE_OPTIONS.find(option => option.value === source && source !== "all")?.label
     ?? "Unknown origin";
 }
@@ -55,8 +56,9 @@ export function hasUnlinkedCompliance(record) {
 }
 
 export function businessDetailsInfo(record) {
+  const linked = isRegistryLinked(record);
   return {
-    source: `Source: ${businessSourceLabel(record?.originSource ?? record?.source)}`,
+    source: `Origin: ${businessSourceLabel(record?.originSource ?? record?.source)} · ${linked ? "Linked to Registry" : "Not in Registry"}`,
     compliance: hasUnlinkedCompliance(record) ? UNLINKED_COMPLIANCE_TEXT : null,
   };
 }
@@ -78,9 +80,11 @@ export function matchesMapFilters(record, {
     : status === "Yellow_Inspector" ? color === "Yellow" && Boolean(record.reportedByUserID)
       : color === status);
   const origin = record.originSource ?? record.source ?? "unknown";
-  const sourceMatches = source === "all" || origin === source
-    || (source === "unclassified" && !["manual", "detection"].includes(origin))
-    || (source === "registry" && origin === "registry_detected");
+  const sourceMatches = source === "all"
+    || (source === "registry" && isRegistryLinked(record))
+    || (source === "detection" && origin === "detection" && !isRegistryLinked(record))
+    || (source === "manual" && origin === "manual")
+    || (source === "unclassified" && !["manual", "detection", "registry", "registry_detected"].includes(origin));
   const q = search.trim().toLowerCase();
   const referenceQuery = q.startsWith("#") ? q.slice(1).trim() : q;
   const searchMatches = !q || [record.name, record.detectedName, record.barangay,
@@ -127,6 +131,7 @@ export function complianceRow(record) {
     "Business Name": record.businessName ?? "",
     Barangay: record.barangayName ?? "",
     Address: record.address ?? "",
+    Origin: businessSourceLabel(record.originSource),
     "Verified On": formatManilaDate(record.verifiedOn),
     "Registry Link": isRegistryLinked(record) ? "Linked to Registry" : "Not in Registry",
   };

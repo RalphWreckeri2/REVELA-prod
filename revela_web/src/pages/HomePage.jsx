@@ -189,7 +189,7 @@ function ActionCard({ label, value, to, note, state, suffix = "", empty = "No da
   </Link>;
 }
 
-const sourcePath = source => `/map/records?origin=${source}&registryLink=unlinked`;
+const sourcePath = source => `/map?source=${source}&registryLink=unlinked`;
 const workloadPath = (view, reportID) => `/inspections?view=${encodeURIComponent(view)}${reportID ? `&reportID=${reportID}` : ""}`;
 
 function SourceCards({ sources, states }) {

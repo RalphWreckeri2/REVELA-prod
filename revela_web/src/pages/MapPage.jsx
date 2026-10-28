@@ -4966,7 +4966,7 @@ export default function MapPage() {
                 onChange={value => { setFilterBarangay(value); setLocationsPage(1); }} />
               <FilterDropdown label="Status" value={filterColor} options={STATUS_OPTIONS}
                 onChange={value => { setFilterColor(value); setLocationsPage(1); }} />
-              <FilterDropdown label="Source" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
+              <FilterDropdown label="Origin / Registry" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
                 onChange={value => { setLocationsPage(1);
                   const params = new URLSearchParams(location.search);
                   if (value === "all") params.delete("source"); else params.set("source", value);

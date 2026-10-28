@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 from registry_sqlite import RegistryDB
-from api.analytics.non_registry import build_non_registry_monitoring, non_registry_monitoring_sql
+from api.analytics.non_registry import (
+    build_non_registry_monitoring, non_registry_monitoring_sql,
+    build_registry_linked_monitoring, registry_linked_monitoring_sql,
+)
 from api.flags.compliance import origin_source_sql
 from api.flags import compliance_report
 from api.models.geospatial import reset_source_column_cache
@@ -56,6 +59,13 @@ class NonRegistryMonitoringTests(unittest.TestCase):
         cur.execute(sql, params)
         return build_non_registry_monitoring(cur.fetchall(), filters, generated_at=CHECKED_AT)
 
+    def linked_snapshot(self, filters=None, *, ladder=True):
+        filters = filters or {}
+        cur = self.db.cursor()
+        sql, params = registry_linked_monitoring_sql(filters, ladder=ladder, source_sql=origin_source_sql("g", cur))
+        cur.execute(sql, params)
+        return build_registry_linked_monitoring(cur.fetchall(), filters, generated_at=CHECKED_AT)
+
     def test_snapshot_covers_all_colors_and_excludes_real_registry_links(self):
         self.pin(1, "Red")
         self.pin(2, "Yellow", source="manual")
@@ -92,6 +102,17 @@ class NonRegistryMonitoringTests(unittest.TestCase):
         self.assertEqual(named["flagColor"], "Green")
         self.assertFalse(named["registryLinked"])
         self.assertFalse(named["verifiedGreen"])
+
+    def test_linked_monitoring_includes_linked_detection_and_preserves_its_origin(self):
+        self.pin(1, "Green", source="detection", linked=True)
+        self.pin(2, "Red", source="manual", linked=True)
+        self.pin(3, "Yellow", source="detection")
+        snapshot = self.linked_snapshot()
+        self.assertEqual(snapshot["summary"]["total"], 2)
+        self.assertEqual({row["logID"] for row in snapshot["records"]}, {1, 2})
+        detection = next(row for row in snapshot["records"] if row["logID"] == 1)
+        self.assertEqual(detection["originSource"], "detection")
+        self.assertTrue(detection["registryLinked"])
 
     def test_latest_inspection_is_single_row_and_matches_map_workflow(self):
         self.pin(1, "Yellow")

@@ -5,10 +5,10 @@ from app import mysql
 #: migrations/20261017_01_geospatial_source.sql, so the Map can say where a pin
 #: is from instead of inferring it from which columns happen to be set.
 #:
-#:   registry            came from official_registry (import, sync, snap)
-#:   registry_detected   a registry business that Google Places also found
-#:   detection           found by a scan, no registry link
-#:   manual              an inspector reported it from the field
+#:   registry            originated from official_registry (import, sync, snap)
+#:   registry_detected   registry-origin pin also found by Google Places
+#:   detection           originated from a detection scan; it may later be linked
+#:   manual              originated from an inspector field report
 #:   unknown             we cannot tell. Never guess.
 #:
 #: 'unknown' is the default on purpose: guessing is worse than admitting it.

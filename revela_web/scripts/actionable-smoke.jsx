@@ -7,7 +7,7 @@ import { AppRefreshProvider } from "../src/components/AppRefreshProvider";
 import HomePage from "../src/pages/HomePage";
 import InspectionPage from "../src/pages/InspectionPage";
 import AnalyticsPage from "../src/pages/AnalyticsPage";
-import SourceRecordsPage from "../src/pages/SourceRecordsPage";
+import MapPage from "../src/pages/MapPage";
 import { analyticsRoute } from "../src/pages/analyticsNavigation";
 import "../src/index.css";
 import "../src/styles/global.css";
@@ -22,6 +22,13 @@ const check = (ok, label) => { if (!ok) throw new Error(label); checks.push(labe
 const wait = async predicate => {
   for (let i = 0; i < 200; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
   throw new Error("Synthetic UI did not become ready");
+};
+const backTo = async expected => {
+  for (let i = 0; i < 8 && document.getElementById("route-probe")?.textContent !== expected; i++) {
+    document.getElementById("back-probe").click();
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  await wait(() => document.getElementById("route-probe")?.textContent === expected);
 };
 const response = (data) => Response.json(data);
 const requests = [];
@@ -47,11 +54,11 @@ window.fetch = async input => {
     return response({ data: rows, total: rows.length, page: 1, pages: 1, as_of: "2026-10-27T12:00:00Z" });
   }
   if (path.endsWith("/registry")) return response({ total: 3, data: [] });
-  if (path.endsWith("/flags")) return url.searchParams.has("origin")
+  if (path.endsWith("/flags")) return url.searchParams.has("origin") || url.searchParams.get("limit") === "1000"
     ? response({ total: 21, pages: url.searchParams.get("limit") === "1" ? 21 : 2,
         data: Array.from({ length: url.searchParams.get("limit") === "1" || url.searchParams.get("page") === "2" ? 1 : 20 }, (_, index) => ({
           logID: url.searchParams.get("page") === "2" ? 30 : index + 9, detectedName: "Unlinked test pin",
-          barangayName: "Barangay Twelve", originSource: url.searchParams.get("origin"), registryLinked: false,
+          barangayName: "Barangay Twelve", originSource: url.searchParams.get("origin") || "detection", registryLinked: false,
         })) })
     : response({ total: 0, pages: 1, data: [] });
   if (path.endsWith("/inspections")) return response({ total: 1, data: [{ reportID: 42, verificationStatus: "Assigned", deadline: `${deadlineValue} 08:00:00`, detectedName: "Test shop", inspectorName: "Inspector One" }] });
@@ -68,9 +75,9 @@ const root = createRoot(document.getElementById("smoke-root"));
 const mount = initial => root.render(<AuthContext.Provider value={{ token: "fixture", user: { id: 77, role: "Admin", fullName: "Test Admin" }, logout() {} }}>
   <ThemeContext.Provider value={{ theme: fixtureTheme, resolvedTheme: fixtureTheme }}><AppRefreshProvider>
     <MemoryRouter initialEntries={[initial]}><LocationProbe /><Routes>
-      <Route path="/home" element={<HomePage />} /><Route path="/inspections" element={<InspectionPage />} />
+      <Route path="/home" element={<HomePage />} /><Route path="/map" element={<MapPage />} /><Route path="/inspections" element={<InspectionPage />} />
       <Route path="/analytics" element={<AnalyticsPage />} />
-      <Route path="/map/records" element={<SourceRecordsPage />} />
+
     </Routes></MemoryRouter>
   </AppRefreshProvider></ThemeContext.Provider></AuthContext.Provider>
 );
@@ -104,7 +111,7 @@ try {
   const firstAgeChip = document.querySelector('a[href="/inspections?view=age_0-3"]');
   firstAgeChip.focus();
   check(document.activeElement === firstAgeChip && document.querySelectorAll(".overview-age-chip").length === 3 && !document.querySelector(".overview-age-chip[href*='age_15']"), "remaining age chips retain accessible drill-downs without duplicating 15+");
-  check(document.querySelector('a[href="/map/records?origin=detection&registryLink=unlinked"]')?.textContent.includes("21"), "detection card uses unlinked source predicate");
+  check(document.querySelector('a[href="/map?source=detection&registryLink=unlinked"]')?.textContent.includes("21"), "detection card uses unlinked source predicate");
   check(document.querySelector('a[href="/analytics?tab=prescriptive&barangay_id=12"]') != null, "priority links to prescriptive barangay");
   check(document.querySelector(".overview-priority-rank")?.textContent === "3", "priority keeps municipal rank without rescoring");
   check(analyticsRoute("?tab=prescriptive&barangay_id=12").barangayId === 12, "direct/reloaded URL parses selected barangay");
@@ -117,7 +124,6 @@ try {
   await wait(() => document.getElementById("route-probe")?.textContent === "/inspections?view=overdue");
   const overdueTotal = zeroAttention ? 0 : 1;
   await wait(() => document.querySelector(".dispatch-workload-context")?.textContent.includes(`Showing ${overdueTotal} of ${overdueTotal}`));
-  await wait(() => document.querySelector(".dispatch-results-summary")?.textContent.includes(`${overdueTotal} matching in this view`));
   const overdueContext = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
   check(overdueContext.includes("From dashboard")
     && overdueContext.includes("Overdue assignments")
@@ -126,9 +132,41 @@ try {
     && overdueContext.includes("Dashboard data updated Oct 27, 8:00 PM"), "overdue banner names the filter, count, update time, and clear action");
   check(!/UTC|T\d{2}:\d{2}:\d{2}Z/.test(overdueContext), "overdue banner hides raw UTC metadata");
   check(document.querySelector(".dispatch-workload-pager") == null, "one-page workload hides previous and next controls");
-  check(document.querySelector(".dispatch-results-summary")?.textContent.includes(`${overdueTotal} matching in this view`), "overdue drill-down agrees with the card");
-  document.getElementById("back-probe").click();
-  await wait(() => document.getElementById("route-probe")?.textContent === "/home");
+  check(document.getElementById("dispatch-status") == null, "inspection status dropdown removed");
+  check(document.querySelector(".dispatch-results-summary") == null, "debug-style results summary removed");
+  check(document.querySelector(".dispatch-column-summary") == null, "per-column duplicate summaries removed");
+  check(document.querySelectorAll(".dispatch-column").length === 4
+    && document.querySelector('[data-status="Assigned"] .dispatch-column-count')?.textContent === String(overdueTotal), "status columns retain matching counts");
+  if (!zeroAttention) {
+    const reportCard = document.querySelector(".dispatch-card");
+    const cardText = reportCard?.textContent ?? "";
+    check(cardText.includes("Fixture 42") && cardText.includes("Barangay unavailable")
+      && cardText.includes("No deadline") && cardText.includes("View details"), "card shows only name, location, deadline, and action");
+    check(!/Inspector|Current flag|Submitted result|Report #|Location #/.test(cardText), "secondary details are removed from the card");
+    const workloadReads = requests.filter(path => path.includes("/inspections/workload") && !path.includes("summary=1")).length;
+    reportCard.click();
+    await wait(() => document.querySelector('[role="dialog"]')?.textContent.includes("Inspection Details"));
+    const detailText = document.querySelector('[role="dialog"]')?.textContent ?? "";
+    check(detailText.includes("Fixture 42") && detailText.includes("Report #42 · Location #42")
+      && detailText.includes("Current Flag Color") && detailText.includes("Inspector"), "card opens details with secondary assignment fields");
+    document.querySelector('[role="dialog"] .modal-close-btn')?.click();
+    await wait(() => document.querySelector('[role="dialog"]') == null);
+    const searchInput = document.getElementById("dispatch-search");
+    const setSearchValue = value => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(searchInput, value);
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    setSearchValue("Fixture 42");
+    await wait(() => document.querySelector(".dispatch-search-count")?.textContent.includes("1 match"));
+    check(document.querySelectorAll(".dispatch-card").length === 1, "search narrows loaded reports");
+    setSearchValue("missing report");
+    await wait(() => document.querySelector(".dispatch-search-count")?.textContent.includes("0 matches"));
+    check(document.querySelectorAll(".dispatch-card").length === 0, "search reports no matching loaded results");
+    setSearchValue("");
+    await wait(() => document.querySelector(".dispatch-search-count") == null && document.querySelectorAll(".dispatch-card").length === 1);
+    check(requests.filter(path => path.includes("/inspections/workload") && !path.includes("summary=1")).length === workloadReads, "search filters loaded reports without another request");
+  }
+  await backTo("/home");
   check(document.querySelector(".overview-workload .overview-action-card strong")?.textContent === (zeroAttention ? "2" : "3"), "back restores cached Overview");
   check(requests.filter(path => path.includes("/inspections/workload?summary=1")).length === initialSummaries, "cached revisit does not refetch workload before cadence");
   for (const [href, expected, label] of [
@@ -137,7 +175,7 @@ try {
   ]) {
     document.querySelector(`a[href="${href}"]`).click();
     await wait(() => document.getElementById("route-probe")?.textContent === href);
-    await wait(() => document.querySelector(".dispatch-results-summary")?.textContent.includes(`${expected} matching in this view`));
+    await wait(() => document.querySelector(".dispatch-workload-context")?.textContent.includes(`Showing ${expected} of ${expected}`));
     const context = document.querySelector(".dispatch-workload-context")?.textContent ?? "";
     check(context.includes("From dashboard") && context.includes(label)
       && context.includes(`Showing ${expected} of ${expected}`), `${href} uses its plain-language workload label`);
@@ -177,19 +215,13 @@ try {
   check(!document.querySelector(".inspection-dispatch-page")?.textContent.includes("UTC"), "Dispatch main page hides raw UTC timestamps");
   document.getElementById("back-probe").click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
-  document.querySelector('a[href="/map/records?origin=detection&registryLink=unlinked"]').click();
-  await wait(() => document.querySelector(".source-records-page")?.textContent.includes("21 matching records"));
-  check(document.getElementById("route-probe")?.textContent.includes("origin=detection")
-    && document.querySelectorAll(".source-records-list li").length === 20, "source KPI opens matching server-filtered paginated list");
-  const firstPageReads = requests.filter(path => path.includes("/flags?page=1&limit=20&origin=detection")).length;
-  check(firstPageReads === 1, "one backend read supplies the first source page");
-  document.querySelector(".source-records-pagination button:last-child").click();
-  await wait(() => document.getElementById("route-probe")?.textContent.includes("page=2"));
-  await wait(() => document.querySelectorAll(".source-records-list li").length === 1);
-  check(document.querySelector(".source-records-page")?.textContent.includes("page 2 of 2"), "source page 2 preserves URL filter and final record");
-  document.getElementById("back-probe").click();
-  await wait(() => document.querySelectorAll(".source-records-list li").length === 20);
-  check(requests.filter(path => path.includes("/flags?page=1&limit=20&origin=detection")).length === firstPageReads, "cached source page does not refetch on back");
+  document.querySelector('a[href="/map?source=detection&registryLink=unlinked"]').click();
+  await wait(() => document.getElementById("route-probe")?.textContent.includes("source=detection")
+    && document.getElementById("route-probe")?.textContent.includes("registryLink=unlinked"));
+  await wait(() => document.querySelector(".map-page") != null && document.querySelector(".map-location-list") != null);
+  check(document.querySelector(".map-location-count")?.textContent.includes("21"), "source KPI opens Map & Flags with the source filter selected");
+  check(document.querySelectorAll(".map-location-card").length === 8, "Map & Flags keeps its existing paginated list");
+  check(document.querySelector(".map-location-pagination span")?.textContent.includes("Page 1 of 3"), "Map & Flags pagination is preserved");
   document.getElementById("back-probe").click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   document.querySelector('a[href="/analytics?tab=prescriptive&barangay_id=12"]').click();

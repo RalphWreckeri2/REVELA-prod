@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import Papa from "papaparse";
 import { paginateRecords } from "./businessCompliance.js";
-import { isNonRegistrySnapshot, NON_REGISTRY_COLUMNS, nonRegistryRows, nonRegistryCsv } from "./nonRegistryMonitoring.js";
+import {
+  isNonRegistrySnapshot, isRegistryLinkedSnapshot, NON_REGISTRY_COLUMNS,
+  nonRegistryRows, nonRegistryCsv, registryLinkedCsv,
+} from "./nonRegistryMonitoring.js";
 
 const record = (id, extra = {}) => ({
   logID: id, detectedName: `Pin ${id}`, barangayID: 1, barangayName: "Barangay I",
@@ -32,6 +35,19 @@ test("list rows show pin references, current evidence and persisted provenance w
   assert.equal(row["Inspection-Verified Compliant"], "Yes");
   assert.match(row["Verified On"], /Asia\/Manila/);
   assert.equal("Business ID" in row, false);
+});
+
+test("linked monitoring and CSV retain detection origin separately from Registry membership", () => {
+  const linkedRecord = record(366, { originSource: "detection", registryLinked: true });
+  const data = snapshot([linkedRecord]);
+  assert.equal(isNonRegistrySnapshot(data), false);
+  assert.equal(isRegistryLinkedSnapshot(data), true);
+  const [row] = nonRegistryRows(data.records);
+  assert.equal(row.Source, "Business Detection");
+  assert.equal(row["Registry Link"], "Linked to Registry");
+  const parsed = Papa.parse(registryLinkedCsv(data).slice(1), { header: true });
+  assert.equal(parsed.data[0].Source, "Business Detection");
+  assert.equal(parsed.data[0]["Registry Link"], "Linked to Registry");
 });
 
 test("Green colour or historical verification alone cannot produce a verified-compliant row", () => {

@@ -20,6 +20,7 @@ def get_inspection_verified_compliant():
                 "barangayID": row["barangayID"],
                 "barangayName": row["barangayName"],
                 "address": row["address"],
+                "originSource": row["originSource"],
                 "verifiedOn": row["confirmedAt"],
                 "registryLinked": True,
             } for row in all_rows if row["confirmationSource"] == "inspection"]
@@ -43,6 +44,7 @@ def get_inspection_verified_compliant():
             records.append({"detectionReference": row["logID"],
                 "businessName": row["detectedName"], "barangayID": row["barangayID"],
                 "barangayName": row["barangayName"], "address": row["address"],
+                "originSource": row["originSource"],
                 "verifiedOn": row["verifiedGreenAt"], "registryLinked": False})
         records.sort(key=lambda row: (str(row["businessName"] or ""), row["detectionReference"]))
         return {"data": records, "total": len(records),

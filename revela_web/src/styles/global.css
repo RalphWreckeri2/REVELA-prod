@@ -11,7 +11,7 @@
   /* Brand */
   --color-primary: #56ab2f;
   --color-primary-dark: #3b6d11;
-  --color-primary-light: rgba(86, 171, 47, 0.1);
+  --color-primary-light: rgba(86, 171, 47, 0.06);
   --color-gold: #eab308;
   --color-gold-dark: #ca8a04;
   --color-gold-light: rgba(234, 179, 8, 0.1);
@@ -40,7 +40,7 @@
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-bg-pill: color-mix(
     in srgb,
-    var(--color-primary) 25%,
+    var(--color-primary) 8%,
     var(--glass-bg)
   );
   --glass-border: rgba(255, 255, 255, 0.9);
@@ -1277,7 +1277,7 @@ html:not(.theme-dark) .priority-dispatch-icon {
 html.theme-dark {
   --color-primary: #34d399;
   --color-primary-dark: #059669;
-  --color-primary-light: rgba(52, 211, 153, 0.14);
+  --color-primary-light: rgba(52, 211, 153, 0.08);
   --color-gold: #fde047;
   --color-gold-dark: #eab308;
   --color-gold-light: rgba(253, 224, 71, 0.15);

@@ -61,7 +61,9 @@ def test_submitted_green_is_not_verified_and_verification_includes_linked_origin
     rows = snapshot(db)
     assert confirmation_summary(rows)["inspection_verified"] == 1
     assert len(rows) == 1 and rows[0]["businessID"] == "OFFICE-030"
-    assert compliance_report.get_inspection_verified_compliant()["total"] == 1
+    report = compliance_report.get_inspection_verified_compliant()
+    assert report["total"] == 1
+    assert report["data"][0]["originSource"] == source
     assert db.rows("SELECT source FROM geospatial_logs") == [{"source": source}]
     result, error = inspections.verify_inspection(31, 2, business_id="OFFICE-030",
         registry_review_token=review["reviewToken"], confirm_establishment=True)
