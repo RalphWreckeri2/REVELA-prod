@@ -25,6 +25,7 @@ function StackedTooltip({ active, payload, statuses }) {
         );
       })}
       <div className="analytics-stacked-tooltip-total">
+        <span className="analytics-stacked-swatch" aria-hidden="true" />
         <span>Total</span>
         <strong>{Number(row.__total || 0).toLocaleString()}</strong>
         <span>100%</span>
