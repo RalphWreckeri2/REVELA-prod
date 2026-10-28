@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, memo } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef, memo, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "react-router-dom";
 import { analyticsRoute } from "./analyticsNavigation";
@@ -14,6 +14,7 @@ import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
 import PinMonitoringPanel from "../components/PinMonitoringPanel";
 import StackedBarangayChart from "../components/StackedBarangayChart";
+const MapOverview = lazy(() => import("../components/MapOverview"));
 import AnalyticsInfoTip from "../components/AnalyticsInfoTip";
 import ResponsiveChart from "../components/ResponsiveChart";
 import {
@@ -696,6 +697,7 @@ export default function AnalyticsPage() {
   const isRefreshing = Object.values(sections).some((section) => section.updating);
   const backgroundRefreshing = currentSection.updating;
   const [showFilters, setShowFilters] = useState(false);
+  const [mapOverviewExpanded, setMapOverviewExpanded] = useState(false);
   const [openSections, setOpenSections] = useState({ location: false, business: false, flags: false, inspection: false });
   const [brgySearchTerm, setBrgySearchTerm] = useState("");
   const [brgyDropdownOpen, setBrgyDropdownOpen] = useState(false);
@@ -1909,6 +1911,27 @@ export default function AnalyticsPage() {
                   Data Source: BPLO Registry
                 </span>
               </div>
+
+              <details
+                className="map-overview-disclosure saas-card frosted-glass"
+                onToggle={(event) => setMapOverviewExpanded(event.currentTarget.open)}
+              >
+                <summary>
+                  <span>Which barangay would you like to explore?</span>
+                </summary>
+                <AnalyticsInfoTip label="About the barangay map">
+                  Select a barangay to see its registry, map-pin, and inspection totals. The date range changes pin and inspection counts, not registry counts.
+                </AnalyticsInfoTip>
+                {mapOverviewExpanded && (
+                  <Suspense fallback={<Skeleton h={360} />}>
+                    <MapOverview
+                      token={token}
+                      filters={appliedFilters}
+                      onOpenAdvancedFilters={() => setShowFilters(true)}
+                    />
+                  </Suspense>
+                )}
+              </details>
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
               <div className="analytics-census-grid">

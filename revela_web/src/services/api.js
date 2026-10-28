@@ -1359,6 +1359,28 @@ export async function getAnalyticsOverviewRequest(arg1, arg2, options = {}) {
   }
 }
 
+export async function getBarangayOverviewRequest(token, filters = {}, { signal } = {}) {
+  try {
+    if (!token) {
+      throw new Error("Missing authentication token.");
+    }
+    const qs = analyticsFiltersToSearchParams(filters);
+    const query = qs.toString();
+    const url = query
+      ? `${BASE_URL}/analytics/barangay-overview?${query}`
+      : `${BASE_URL}/analytics/barangay-overview`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: authHeaders(token),
+      signal,
+      cache: "no-store",
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 export async function getDemographicReportsRequest(token, { signal } = {}) {
   try {
     if (!token) {

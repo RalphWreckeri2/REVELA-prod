@@ -1,0 +1,198 @@
+import unittest
+from unittest.mock import MagicMock, patch
+
+from flask import Flask
+
+from api.analytics import routes
+
+
+BARANGAY_NAMES = {
+    1: "Barangay I",
+    2: "Barangay II",
+    3: "Barangay II-A",
+    4: "Barangay III",
+    5: "Barangay IV",
+    6: "Barangay Bayorbor",
+    7: "Barangay Bubuyan",
+    8: "Barangay Calingatan",
+    9: "Barangay Kinalaglagan",
+    10: "Barangay Lumanglipa",
+    11: "Barangay Loob",
+    12: "Barangay Manggahan",
+    13: "Barangay Nangkaan",
+    14: "Barangay San Sebastian",
+    15: "Barangay Santol",
+    16: "Barangay Upa",
+}
+
+
+class BarangayOverviewCursor:
+    def __init__(self):
+        self.sql_calls = []
+        self.rows = []
+
+    def execute(self, sql, params=()):
+        self.sql_calls.append((sql, params))
+        if "SELECT barangayID, barangayName FROM barangays" in sql:
+            self.rows = [
+                {"barangayID": key, "barangayName": value}
+                for key, value in BARANGAY_NAMES.items()
+            ]
+        elif "SELECT COUNT(*) AS total FROM official_registry" in sql:
+            self.rows = [{"total": 602}]
+        elif "SELECT o.barangayID, COUNT(*) AS total" in sql:
+            self.rows = [{"barangayID": 1, "total": 602}]
+        elif "AS registered_on_map" in sql:
+            self.rows = [{
+                "barangayID": 1,
+                "total": 495,
+                "registered_on_map": 400,
+                "detected_not_in_registry": 50,
+                "detection_with_business_id": 5,
+                "added_by_inspector": 30,
+                "other_source": 10,
+                "pins_without_location": 12,
+            }]
+        elif "AS waiting_for_review" in sql:
+            self.rows = [{
+                "barangayID": 1,
+                "pending": 4,
+                "waiting_for_review": 2,
+                "verified": 3,
+                "total": 9,
+                "outcome_green": 1,
+                "outcome_yellow": 1,
+                "outcome_red": 1,
+            }]
+        elif "o.businessSize" in sql:
+            self.rows = [{"barangayID": 1, "category": "MICRO", "count": 602}]
+        elif "o.businessType" in sql:
+            self.rows = [{"barangayID": 1, "category": "SOLE PROPRIETORSHIP", "count": 602}]
+        elif "o.registrationType" in sql:
+            self.rows = [{"barangayID": 1, "category": "NEW", "count": 602}]
+        elif "o.lineOfBusiness" in sql:
+            self.rows = [
+                {"barangayID": 1, "category": f"SECTOR {index}", "count": 10 - index}
+                for index in range(1, 8)
+            ]
+        else:
+            raise AssertionError(f"Unexpected read query: {sql}")
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        return self.rows[0]
+
+    def close(self):
+        pass
+
+
+class BarangayOverviewTests(unittest.TestCase):
+    def run_endpoint(self, query):
+        app = Flask(__name__)
+        cursor = BarangayOverviewCursor()
+        mysql_stub = MagicMock()
+        mysql_stub.connection.cursor.return_value = cursor
+        with app.test_request_context(f"/api/analytics/barangay-overview?{query}"):
+            with patch.object(routes, "mysql", mysql_stub), \
+                    patch.object(routes, "ladder_columns_available", return_value=False):
+                response, status = routes.get_barangay_overview.__wrapped__()
+        return response.get_json(), status, cursor
+
+    def test_returns_all_sixteen_rows_and_totals_with_business_id_detection_visible(self):
+        data, status, cursor = self.run_endpoint(
+            "barangay_id=1&barangay_ids=2,3"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["barangays"]), 16)
+        self.assertEqual(
+            [row["barangayID"] for row in data["barangays"]],
+            list(range(1, 17)),
+        )
+        self.assertEqual(data["overall"]["registry_total"], 602)
+        self.assertEqual(data["overall"]["pins"]["total"], 495)
+        self.assertEqual(data["overall"]["inspections"]["total"], 9)
+        self.assertEqual(
+            sum(row["registry_total"] for row in data["barangays"]), 602
+        )
+        self.assertEqual(
+            sum(row["pins"]["total"] for row in data["barangays"]), 495
+        )
+        self.assertEqual(
+            sum(row["inspections"]["total"] for row in data["barangays"]), 9
+        )
+        self.assertEqual(
+            data["barangays"][0]["pins"]["detection_with_business_id"], 5
+        )
+        self.assertEqual(data["barangays"][0]["pins_without_location"], 12)
+        self.assertEqual(data["barangays"][0]["registry"]["business_size"][0]["label"], "Micro")
+        self.assertTrue(all(call[0].lstrip().upper().startswith("SELECT")
+                            for call in cursor.sql_calls))
+        self.assertFalse(any("barangayID IN" in sql for sql, _ in cursor.sql_calls))
+        pin_sql = next(sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql)
+        self.assertIn("g.source IN ('registry', 'registry_detected')", pin_sql)
+        self.assertIn("g.source = 'detection' AND g.businessID IS NULL", pin_sql)
+        self.assertIn("g.source = 'detection' AND g.businessID IS NOT NULL", pin_sql)
+        self.assertIn("g.source = 'manual'", pin_sql)
+        self.assertIn("g.latitude IS NULL OR g.longitude IS NULL", pin_sql)
+        self.assertTrue(all("reportID" not in sql or "ir.reportID" in sql
+                            for sql, _ in cursor.sql_calls))
+        self.assertTrue(any("ir.targetID = g.logID" in sql for sql, _ in cursor.sql_calls))
+        self.assertFalse(any("g.reportID" in sql for sql, _ in cursor.sql_calls))
+
+    def test_date_bounds_filter_pins_and_inspections_not_registry(self):
+        _, status, cursor = self.run_endpoint(
+            "detected_from=2026-10-01&inspection_from=2026-10-02"
+        )
+
+        self.assertEqual(status, 200)
+        registry_queries = [
+            sql for sql, _ in cursor.sql_calls
+            if "FROM official_registry" in sql
+        ]
+        pin_queries = [sql for sql, _ in cursor.sql_calls if "FROM geospatial_logs g" in sql]
+        inspection_queries = [
+            (sql, params) for sql, params in cursor.sql_calls
+            if "FROM inspection_reports ir" in sql
+        ]
+        self.assertTrue(all("detectedDate" not in sql and "irTimestamp" not in sql
+                            for sql in registry_queries))
+        self.assertTrue(any("detectedDate" in sql for sql in pin_queries))
+        self.assertTrue(any("irTimestamp" in sql for sql, _ in inspection_queries))
+        self.assertTrue(any(params == ["2026-10-01", "2026-10-02"]
+                            for _, params in inspection_queries))
+
+    def test_statuses_are_grouped_as_pending_waiting_and_verified(self):
+        data, _, cursor = self.run_endpoint("")
+        barangay = data["barangays"][0]
+
+        self.assertEqual(barangay["inspections"]["pending"], 4)
+        self.assertEqual(barangay["inspections"]["waiting_for_review"], 2)
+        self.assertEqual(barangay["inspections"]["verified"], 3)
+        self.assertEqual(barangay["inspections"]["outcomes"], {
+            "Green": 1,
+            "Yellow": 1,
+            "Red": 1,
+        })
+        inspection_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS waiting_for_review" in sql
+        )
+        self.assertIn("'Assigned', 'Reassigned', 'In Progress'", inspection_sql)
+        self.assertIn("ir.verificationStatus = 'Submitted'", inspection_sql)
+        self.assertIn("ir.verificationStatus = 'Verified'", inspection_sql)
+
+    def test_line_of_business_keeps_top_five_and_combines_the_rest(self):
+        data, _, _ = self.run_endpoint("")
+        rows = data["barangays"][0]["registry"]["line_of_business"]
+
+        self.assertEqual(len(rows), 6)
+        self.assertEqual(rows[-1]["label"], "Others")
+        self.assertEqual(rows[-1]["count"], 7)
+        self.assertTrue(all("short_label" in row for row in rows))
+        self.assertTrue(all(len(row["short_label"]) <= 32 for row in rows))
+
+
+if __name__ == "__main__":
+    unittest.main()

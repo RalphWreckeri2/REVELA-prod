@@ -672,6 +672,316 @@ def get_all_analytics():
         return jsonify({"error": "Failed to load analytics"}), 500
 
 
+def _barangay_overview_label(value, max_length=32):
+    label = " ".join(str(value or "Unknown").strip().split()).title()
+    if len(label) <= max_length:
+        return label
+    return label[:max_length - 1].rstrip() + "…"
+
+
+def _barangay_overview_dimension(rows, limit=None):
+    counts = {}
+    for row in rows:
+        label = _barangay_overview_label(row["category"])
+        counts[label] = counts.get(label, 0) + int(row["count"] or 0)
+
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0].casefold()))
+    if limit is not None and len(ordered) > limit:
+        kept = ordered[:limit]
+        kept.append(("Others", sum(count for _, count in ordered[limit:])))
+        ordered = kept
+
+    return [
+        {
+            "value": label,
+            "label": label,
+            "short_label": (
+                "Others" if label == "Others"
+                else _barangay_overview_label(label)
+            ),
+            "count": count,
+        }
+        for label, count in ordered
+    ]
+
+
+@analytics_bp.route("/barangay-overview", methods=["GET"])
+@jwt_required()
+def get_barangay_overview():
+    """Return all barangay map aggregates without running the full analytics pipeline."""
+    cursor = mysql.connection.cursor()
+    try:
+        filters = parse_analytics_filters(request.args)
+        filters["barangay_ids"] = None
+        filters["registration_type_supported"] = True
+        registry_where, registry_params = registry_sql("o", filters)
+        ladder = ladder_columns_available(cursor)
+        geo_where, geo_params = geo_sql("g", filters, ladder=ladder)
+        inspection_where, inspection_params = inspection_sql("ir", filters)
+
+        cursor.execute(
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID"
+        )
+        barangay_rows = cursor.fetchall()
+        barangays = {
+            int(row["barangayID"]): {
+                "barangayID": int(row["barangayID"]),
+                "barangayName": row["barangayName"],
+                "registry_total": 0,
+                "registry": {
+                    "business_size": [],
+                    "business_type": [],
+                    "registration_type": [],
+                    "line_of_business": [],
+                },
+                "pins": {
+                    "registered_on_map": 0,
+                    "detected_not_in_registry": 0,
+                    "detection_with_business_id": 0,
+                    "added_by_inspector": 0,
+                    "other_source": 0,
+                    "total": 0,
+                },
+                "pins_without_location": 0,
+                "inspections": {
+                    "pending": 0,
+                    "waiting_for_review": 0,
+                    "verified": 0,
+                    "total": 0,
+                    "outcomes": {"Green": 0, "Yellow": 0, "Red": 0},
+                },
+            }
+            for row in barangay_rows
+        }
+
+        cursor.execute(
+            "SELECT COUNT(*) AS total FROM official_registry o WHERE 1=1"
+            + registry_where,
+            registry_params,
+        )
+        registry_total = int(cursor.fetchone()["total"] or 0)
+        cursor.execute(
+            """
+            SELECT o.barangayID, COUNT(*) AS total
+            FROM official_registry o
+            WHERE 1=1
+            """ + registry_where + """
+            GROUP BY o.barangayID
+            """,
+            registry_params,
+        )
+        registry_totals_by_barangay = cursor.fetchall()
+        for row in registry_totals_by_barangay:
+            barangay = barangays.get(row["barangayID"])
+            if barangay:
+                barangay["registry_total"] = int(row["total"] or 0)
+
+        dimension_columns = (
+            ("business_size", "businessSize", None),
+            ("business_type", "businessType", None),
+            ("registration_type", "registrationType", None),
+            ("line_of_business", "lineOfBusiness", 5),
+        )
+        overall_registry_dimensions = {}
+        for response_key, column, limit in dimension_columns:
+            cursor.execute(
+                f"""
+                SELECT o.barangayID,
+                       COALESCE(NULLIF(TRIM(o.{column}), ''), 'Unknown') AS category,
+                       COUNT(*) AS count
+                FROM official_registry o
+                WHERE 1=1 {registry_where}
+                GROUP BY o.barangayID, category
+                """,
+                registry_params,
+            )
+            dimension_rows = cursor.fetchall()
+            overall_registry_dimensions[response_key] = _barangay_overview_dimension(
+                dimension_rows, limit=limit
+            )
+            rows_by_barangay = {}
+            for row in dimension_rows:
+                rows_by_barangay.setdefault(row["barangayID"], []).append(row)
+            for barangay_id, barangay in barangays.items():
+                barangay["registry"][response_key] = _barangay_overview_dimension(
+                    rows_by_barangay.get(barangay_id, []), limit=limit
+                )
+
+        cursor.execute(
+            f"""
+            SELECT g.barangayID,
+                   COUNT(g.logID) AS total,
+                   SUM(CASE WHEN g.source IN ('registry', 'registry_detected')
+                            THEN 1 ELSE 0 END) AS registered_on_map,
+                   SUM(CASE WHEN g.source = 'detection' AND g.businessID IS NULL
+                            THEN 1 ELSE 0 END) AS detected_not_in_registry,
+                   SUM(CASE WHEN g.source = 'detection' AND g.businessID IS NOT NULL
+                            THEN 1 ELSE 0 END) AS detection_with_business_id,
+                   SUM(CASE WHEN g.source = 'manual'
+                            THEN 1 ELSE 0 END) AS added_by_inspector,
+                   SUM(CASE WHEN g.source IS NULL
+                                 OR g.source NOT IN
+                                    ('registry', 'registry_detected', 'detection', 'manual')
+                            THEN 1 ELSE 0 END) AS other_source,
+                   SUM(CASE WHEN g.latitude IS NULL OR g.longitude IS NULL
+                            THEN 1 ELSE 0 END) AS pins_without_location
+            FROM geospatial_logs g
+            WHERE 1=1 {geo_where}
+            GROUP BY g.barangayID
+            """,
+            geo_params,
+        )
+        pin_rows = cursor.fetchall()
+        overall_pin_counts = {
+            key: 0
+            for key in (
+                "registered_on_map",
+                "detected_not_in_registry",
+                "detection_with_business_id",
+                "added_by_inspector",
+                "other_source",
+                "total",
+                "pins_without_location",
+            )
+        }
+        for row in pin_rows:
+            for key in overall_pin_counts:
+                overall_pin_counts[key] += int(row[key] or 0)
+            barangay = barangays.get(row["barangayID"])
+            if not barangay:
+                continue
+            for key in (
+                "registered_on_map",
+                "detected_not_in_registry",
+                "detection_with_business_id",
+                "added_by_inspector",
+                "other_source",
+                "total",
+            ):
+                barangay["pins"][key] = int(row[key] or 0)
+            barangay["pins_without_location"] = int(
+                row["pins_without_location"] or 0
+            )
+
+        cursor.execute(
+            f"""
+            SELECT g.barangayID,
+                   COUNT(DISTINCT CASE
+                       WHEN ir.verificationStatus IN
+                            ('Assigned', 'Reassigned', 'In Progress')
+                         OR COALESCE(NULLIF(TRIM(ir.verificationStatus), ''),
+                                     'Unassigned')
+                            NOT IN ('Assigned', 'Reassigned', 'In Progress',
+                                    'Submitted', 'Verified')
+                       THEN ir.reportID END) AS pending,
+                   COUNT(DISTINCT CASE
+                       WHEN ir.verificationStatus = 'Submitted'
+                       THEN ir.reportID END) AS waiting_for_review,
+                   COUNT(DISTINCT CASE
+                       WHEN ir.verificationStatus = 'Verified'
+                       THEN ir.reportID END) AS verified,
+                   COUNT(DISTINCT ir.reportID) AS total,
+                   COUNT(DISTINCT CASE
+                       WHEN ir.verificationStatus = 'Verified'
+                        AND ir.inspectionResult = 'Green'
+                       THEN ir.reportID END) AS outcome_green,
+                   COUNT(DISTINCT CASE
+                       WHEN ir.verificationStatus = 'Verified'
+                        AND ir.inspectionResult = 'Yellow'
+                       THEN ir.reportID END) AS outcome_yellow,
+                   COUNT(DISTINCT CASE
+                       WHEN ir.verificationStatus = 'Verified'
+                        AND ir.inspectionResult = 'Red'
+                       THEN ir.reportID END) AS outcome_red
+            FROM inspection_reports ir
+            JOIN geospatial_logs g ON ir.targetID = g.logID
+            WHERE 1=1 {geo_where} {inspection_where}
+            GROUP BY g.barangayID
+            """,
+            geo_params + inspection_params,
+        )
+        inspection_rows = cursor.fetchall()
+        overall_inspection_counts = {
+            key: 0
+            for key in (
+                "pending",
+                "waiting_for_review",
+                "verified",
+                "total",
+                "outcome_green",
+                "outcome_yellow",
+                "outcome_red",
+            )
+        }
+        for row in inspection_rows:
+            for key in overall_inspection_counts:
+                overall_inspection_counts[key] += int(row[key] or 0)
+            barangay = barangays.get(row["barangayID"])
+            if not barangay:
+                continue
+            inspections = barangay["inspections"]
+            inspections["pending"] = int(row["pending"] or 0)
+            inspections["waiting_for_review"] = int(
+                row["waiting_for_review"] or 0
+            )
+            inspections["verified"] = int(row["verified"] or 0)
+            inspections["total"] = int(row["total"] or 0)
+            inspections["outcomes"] = {
+                "Green": int(row["outcome_green"] or 0),
+                "Yellow": int(row["outcome_yellow"] or 0),
+                "Red": int(row["outcome_red"] or 0),
+            }
+
+        rows = list(barangays.values())
+        overall = {
+            "barangayID": None,
+            "barangayName": "All barangays",
+            "registry_total": registry_total,
+            "registry": overall_registry_dimensions,
+            "pins": {
+                key: overall_pin_counts[key]
+                for key in (
+                    "registered_on_map",
+                    "detected_not_in_registry",
+                    "detection_with_business_id",
+                    "added_by_inspector",
+                    "other_source",
+                    "total",
+                )
+            },
+            "pins_without_location": overall_pin_counts["pins_without_location"],
+            "inspections": {
+                key: overall_inspection_counts[key]
+                for key in (
+                    "pending",
+                    "waiting_for_review",
+                    "verified",
+                    "total",
+                )
+            },
+        }
+        overall["inspections"]["outcomes"] = {
+            "Green": overall_inspection_counts["outcome_green"],
+            "Yellow": overall_inspection_counts["outcome_yellow"],
+            "Red": overall_inspection_counts["outcome_red"],
+        }
+        overall["registry_unassigned"] = registry_total - sum(
+            row["registry_total"] for row in rows
+        )
+        overall["pins_unassigned"] = overall_pin_counts["total"] - sum(
+            row["pins"]["total"] for row in rows
+        )
+        overall["inspections_unassigned"] = overall_inspection_counts["total"] - sum(
+            row["inspections"]["total"] for row in rows
+        )
+        return jsonify({"barangays": rows, "overall": overall}), 200
+    except Exception:
+        current_app.logger.exception("Failed to load barangay overview")
+        return jsonify({"error": "Failed to load barangay overview"}), 500
+    finally:
+        cursor.close()
+
+
 def _new_year_rollover_info():
     """Per-user unread notification; never stored in a shared snapshot."""
     uid = int(get_jwt_identity())

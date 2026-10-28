@@ -133,6 +133,37 @@ html.theme-dark .analytics-tab-btn:hover:not(.active) { background: rgba(255, 25
   min-width: 0;
 }
 
+.map-overview-disclosure {
+  position: relative;
+  margin: 0 0 24px;
+  padding: 0 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+}
+.map-overview-disclosure > summary {
+  display: flex;
+  align-items: center;
+  min-height: 56px;
+  padding-right: 52px;
+  cursor: pointer;
+  color: var(--color-ink);
+  font-size: 15px;
+  font-weight: 750;
+  list-style-position: inside;
+}
+.map-overview-disclosure > .analytics-info-tip {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+}
+.map-overview-disclosure .analytics-info-tip-trigger {
+  width: 44px;
+  height: 44px;
+}
+.map-overview-disclosure > .map-overview {
+  padding: 0 0 16px;
+}
+
 .analytics-feature-card {
   box-sizing: border-box;
   container: analytics-card / inline-size;
