@@ -16,7 +16,7 @@
 .analytics-page .saas-content .analytics-feature-card,
 .analytics-page .saas-content .kpi-card {
   border: 1px solid var(--color-border);
-  background: #fff;
+  background: #FBFCFC;
   box-shadow: none;
 }
 

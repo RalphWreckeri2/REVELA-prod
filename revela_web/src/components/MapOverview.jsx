@@ -172,6 +172,7 @@ export default function MapOverview({ token, filters }) {
   const [activeDimension, setActiveDimension] = useState("business_size");
   const [pinView, setPinView] = useState("all");
   const [boundaryError, setBoundaryError] = useState(false);
+  const legendControlRef = useRef(null);
   const dataLayerRef = useRef(null);
   const hoverInfoWindowRef = useRef(null);
   const styleFeatureRef = useRef(null);
@@ -227,6 +228,14 @@ export default function MapOverview({ token, filters }) {
   }));
   const topTotals = getBarangayTopTotals(panelData);
   const mapRowsById = rowsById;
+
+  useEffect(() => {
+    if (isLoaded && legendControlRef.current) {
+      window.google?.maps?.OverlayView?.preventMapHitsAndGesturesFrom?.(
+        legendControlRef.current,
+      );
+    }
+  }, [isLoaded]);
 
   const styleFeature = useCallback((feature) => {
     const featureName = feature.getProperty("ADM4_EN");
@@ -542,6 +551,21 @@ export default function MapOverview({ token, filters }) {
 
   return (
     <div className="map-overview">
+      <div className="map-overview-topbar" aria-label={`${selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"} totals`}>
+        <div className="map-overview-total">
+          <strong>{topTotals.registered.toLocaleString()}</strong>
+          <span>Registered businesses</span>
+        </div>
+        <div className="map-overview-total">
+          <strong>{topTotals.notInRegistry.toLocaleString()}</strong>
+          <span>Found on the map, not in registry</span>
+        </div>
+        <div className="map-overview-total">
+          <strong>{topTotals.beingInspected.toLocaleString()}</strong>
+          <span>Being inspected</span>
+        </div>
+      </div>
+
       <div className="map-overview-controls">
         <label className="map-overview-select-label map-overview-select-label--filter">
           <span>Barangay</span>
@@ -564,21 +588,6 @@ export default function MapOverview({ token, filters }) {
         </label>
       </div>
 
-      <div className="map-overview-topbar" aria-label={`${selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"} totals`}>
-        <div className="map-overview-total">
-          <strong>{topTotals.registered.toLocaleString()}</strong>
-          <span>Registered businesses</span>
-        </div>
-        <div className="map-overview-total">
-          <strong>{topTotals.notInRegistry.toLocaleString()}</strong>
-          <span>Found on the map, not in registry</span>
-        </div>
-        <div className="map-overview-total">
-          <strong>{topTotals.beingInspected.toLocaleString()}</strong>
-          <span>Being inspected</span>
-        </div>
-      </div>
-
       {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
       {error && <p className="map-overview-error-inline" role="alert">Some barangay details could not be updated.</p>}
 
@@ -599,75 +608,81 @@ export default function MapOverview({ token, filters }) {
               </button>
             </div>
           </div>
-          {loadError ? (
-            <div className="map-overview-map-message" role="alert">The map could not be loaded.</div>
-          ) : !isLoaded ? (
-            <div className="map-overview-map-message" role="status">Loading map…</div>
-          ) : (
-            <GoogleMap
-              mapContainerClassName="map-overview-canvas"
-              center={MAP_CENTER}
-              zoom={13}
-              onLoad={handleMapLoad}
-              onUnmount={handleMapUnmount}
-              options={{
-                mapId: REVELA_MAP_ID,
-                clickableIcons: false,
-                mapTypeControl: false,
-                streetViewControl: false,
-                fullscreenControl: true,
-                zoomControl: true,
-                minZoom: MAP_MIN_ZOOM,
-                maxZoom: MAP_MAX_ZOOM,
-              }}
-            >
-              <Data
-                onLoad={handleDataLayerLoad}
-                onUnmount={handleDataLayerUnmount}
-                onClick={selectFeature}
-                onMouseOver={setHoveredFeature}
-                onMouseOut={clearHoveredFeature}
-              />
-            </GoogleMap>
-          )}
-          {boundaryError && (
-            <p className="map-overview-map-error" role="alert">
-              Barangay boundaries could not be displayed.
-            </p>
-          )}
-          <div className="map-overview-legend-control">
-            <button type="button" className="map-overview-legend-toggle"
-              aria-label={legendOpen ? "Close map legend" : "Open map legend"}
-              aria-expanded={legendOpen} aria-controls="map-overview-legend"
-              title={legendOpen ? "Close map legend" : "Map legend"}
-              onClick={() => setLegendOpen((open) => !open)}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 4h16v16H4z" />
-                <path d="M4 9h16M9 9v11" />
-              </svg>
-            </button>
-            {legendOpen && (
-              <div id="map-overview-legend" className="map-overview-map-legend" role="group"
-                aria-label={mapView === "inspections"
-                  ? "Inspections per barangay map legend"
-                  : "Businesses per barangay map legend"}>
-                <span className="map-overview-legend-title">
-                  {mapView === "inspections" ? "Inspections per barangay" : "Businesses per barangay"}
-                </span>
-                <div className="map-overview-legend-ranges">
-                  {mapRangeLabels.map((label, index) => (
-                    <span key={label}>
-                      <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
-                      {label}
-                    </span>
-                  ))}
-                </div>
-                <span className="map-overview-legend-empty">
-                  <i /> {mapView === "inspections" ? "No inspections yet" : "No registered businesses"}
-                </span>
-              </div>
+          <div className="map-overview-map-stage">
+            {loadError ? (
+              <div className="map-overview-map-message" role="alert">The map could not be loaded.</div>
+            ) : !isLoaded ? (
+              <div className="map-overview-map-message" role="status">Loading map…</div>
+            ) : (
+              <GoogleMap
+                mapContainerClassName="map-overview-canvas"
+                center={MAP_CENTER}
+                zoom={13}
+                onLoad={handleMapLoad}
+                onUnmount={handleMapUnmount}
+                options={{
+                  mapId: REVELA_MAP_ID,
+                  clickableIcons: false,
+                  mapTypeControl: false,
+                  streetViewControl: false,
+                  fullscreenControl: true,
+                  zoomControl: true,
+                  minZoom: MAP_MIN_ZOOM,
+                  maxZoom: MAP_MAX_ZOOM,
+                }}
+              >
+                <Data
+                  onLoad={handleDataLayerLoad}
+                  onUnmount={handleDataLayerUnmount}
+                  onClick={selectFeature}
+                  onMouseOver={setHoveredFeature}
+                  onMouseOut={clearHoveredFeature}
+                />
+              </GoogleMap>
             )}
+            {boundaryError && (
+              <p className="map-overview-map-error" role="alert">
+                Barangay boundaries could not be displayed.
+              </p>
+            )}
+            <div ref={legendControlRef} className="map-overview-legend-control"
+              onClick={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onTouchStart={(event) => event.stopPropagation()}>
+              <button type="button" className="map-overview-legend-toggle"
+                aria-label={legendOpen ? "Close map legend" : "Open map legend"}
+                aria-expanded={legendOpen} aria-controls="map-overview-legend"
+                title={legendOpen ? "Close map legend" : "Map legend"}
+                onClick={() => setLegendOpen((open) => !open)}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 4h16v16H4z" />
+                  <path d="M4 9h16M9 9v11" />
+                </svg>
+              </button>
+              {legendOpen && (
+                <div id="map-overview-legend" className="map-overview-map-legend" role="group"
+                  aria-label={mapView === "inspections"
+                    ? "Inspections per barangay map legend"
+                    : "Businesses per barangay map legend"}>
+                  <span className="map-overview-legend-title">
+                    {mapView === "inspections" ? "Inspections per barangay" : "Businesses per barangay"}
+                  </span>
+                  <div className="map-overview-legend-ranges">
+                    {mapRangeLabels.map((label, index) => (
+                      <span key={label}>
+                        <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                  <span className="map-overview-legend-empty">
+                    <i /> {mapView === "inspections" ? "No inspections yet" : "No registered businesses"}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
           <p className="map-overview-map-hint">
             Zoom in or use the list below to pick small barangays.
