@@ -1272,6 +1272,7 @@ html.theme-dark .presc-priority-badge { color: var(--color-ink) !important; }
   z-index: 10002;
   width: 100%;
   max-width: 960px;
+  height: min(720px, calc(100vh - 48px));
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
@@ -1367,6 +1368,7 @@ html.theme-dark .presc-priority-badge { color: var(--color-ink) !important; }
   }
   .analytics-filter-modal {
     max-width: 100%;
+    height: min(720px, calc(100vh - 24px));
     max-height: calc(100vh - 24px);
     border-bottom-left-radius: 0;
     border-bottom-right-radius: 0;

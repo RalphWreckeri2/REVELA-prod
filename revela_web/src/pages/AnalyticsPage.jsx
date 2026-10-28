@@ -1270,7 +1270,8 @@ export default function AnalyticsPage() {
       <style>{`
         /* shimmer keyframe now defined globally in global.css */
         .saas-card { position: relative; }
-        .saas-card:focus-within, .saas-card:hover { z-index: 50; }
+        .saas-card:not(.analytics-filter-modal):focus-within,
+        .saas-card:not(.analytics-filter-modal):hover { z-index: 50; }
         
         /* New Tier System */
         .tier-1-card {
