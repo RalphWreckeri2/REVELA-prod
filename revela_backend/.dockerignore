@@ -6,3 +6,11 @@ venv/
 __pycache__/
 *.py[cod]
 instance/
+**/*.sql.gz
+**/*.rvl
+**/*.pem
+**/*.key
+recovery-output/
+**/*.dpapi
+**/*.pc-backup.json
+.pc-venv/
