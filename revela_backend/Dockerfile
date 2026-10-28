@@ -1,4 +1,5 @@
-FROM public.ecr.aws/docker/library/python:3.13-slim-bookworm
+ARG PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python:3.13-slim-bookworm
+FROM ${PYTHON_BASE_IMAGE}
 
 ARG MYSQL_APT_COMPONENT=mysql-9.7-lts
 ARG MYSQL_CLIENT_VERSION=9.7.4-1debian12

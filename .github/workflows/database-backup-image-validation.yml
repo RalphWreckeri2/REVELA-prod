@@ -19,6 +19,7 @@ jobs:
       - name: Build backend image without publishing it
         run: |
           docker build --pull \
+            --build-arg PYTHON_BASE_IMAGE=docker.io/library/python:3.13-slim-bookworm \
             --build-arg MYSQL_APT_COMPONENT=mysql-9.7-lts \
             --build-arg MYSQL_CLIENT_VERSION=9.7.4-1debian12 \
             --tag "revela-backend:ci-${GITHUB_SHA}" \
