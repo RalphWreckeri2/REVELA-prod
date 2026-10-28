@@ -28,6 +28,12 @@ const monitoringRecords = empty ? [] : barangays.map((barangayName, index) => {
 });
 const descriptive = {
   kpis: { total_businesses: empty ? 0 : 1248, active_count: empty ? 0 : 1010, expired_count: empty ? 0 : 156, pending_count: empty ? 0 : 42, closed_count: 24, revoked_count: 16, compliance_rate: 80.9, current_year_registered_count: 1098, upcoming_year_renewal_count: 870, new_registration_count: 276, renewal_registration_count: 972 },
+  registry_by_barangay_status: empty ? [] : barangays.map((barangayName, i) => ({
+    barangayID: i + 1, barangayName, active: 60, pending: 5, expired: 8, closed: 3, revoked: 2, total: 78,
+  })),
+  inspection_by_barangay_status: empty ? [] : barangays.map((barangayName, i) => ({
+    barangayID: i + 1, barangayName, assigned: 1, reassigned: 0, in_progress: 1, submitted: 1, verified: 3, unassigned: 0, total: 6,
+  })),
   nature_per_barangay: empty ? [] : barangays.map((barangayName, i) => ({ barangayName, Retail: 48 + i * 3, Services: 24 + i })),
   sectoral_distribution: empty ? [] : sectors.map((sector, i) => ({ sector, count: 340 - i * 48 })),
   business_size_dist: empty ? [] : sizes.map((size_label, i) => ({ size_label, count: [960, 210, 62, 16][i] })),
@@ -36,7 +42,8 @@ const descriptive = {
   compliance_by_size: empty ? [] : sizes.map((size_label, i) => ({ size_label, active_count: [770, 180, 48, 12][i], inactive_count: [190, 30, 14, 4][i] })),
   compliance_timeline: empty ? [] : ["Oct 2025", "Nov 2025", "Dec 2025", "Jan 2026", "Feb 2026", "Mar 2026", "Apr 2026", "May 2026", "Jun 2026", "Jul 2026", "Aug 2026", "Sep 2026"].map((month, i) => ({ month, active_count: [270, 305, 290, 1010, 960, 860, 740, 660, 590, 440, 370, 310][i], non_active_count: [180, 165, 178, 238, 220, 190, 174, 160, 141, 132, 112, 101][i] })),
   enforcement_progress: empty ? [] : barangays.map((barangayName, i) => ({ barangayName, green_count: 44 + i, red_count: 3 + i, yellow_count: 5, black_count: 1, orange_count: 2, purple_count: 1 })),
-  audit_summary: { total_inspections: empty ? 0 : 96, result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 64 }, { inspectionResult: "Red", count: 22 }, { inspectionResult: "Black", count: 10 }],
+  audit_summary: { total_inspections: empty ? 0 : 96, total_reports: empty ? 0 : 96, unlinked_reports: empty ? 0 : 4,
+    result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 64 }, { inspectionResult: "Red", count: 22 }, { inspectionResult: "Black", count: 10 }],
     submitted_result_breakdown: empty ? [] : [{ inspectionResult: "Green", count: 3 }, { inspectionResult: "Red", count: 4 }],
     workflow: { awaiting_verification: empty ? 0 : 7, verified_reports: empty ? 0 : 96, submitted_green: empty ? 0 : 3 } },
   confirmed_compliance: { office_confirmed: empty ? 0 : 3, inspection_verified: empty ? 0 : 5, total_confirmed: empty ? 0 : 8 },
@@ -49,10 +56,23 @@ const descriptive = {
     by_barangay: monitoringRecords.map(row => ({ barangayID: row.barangayID, barangayName: row.barangayName,
       ...Object.fromEntries(["Green", "Red", "Yellow", "Orange", "Black", "Purple", "Unknown"].map(color => [color, color === row.flagColor ? 1 : 0])) })),
   },
+  registry_linked_monitoring: (() => {
+    const records = monitoringRecords.slice(0, 5).map((row, index) => ({ ...row, registryLinked: true, businessID: 500 + index }));
+    return { summary: { total: records.length,
+      needs_verification: records.filter(row => ["Red", "Yellow"].includes(row.flagColor)).length,
+      under_inspection: records.filter(row => row.verificationStatus === "Assigned").length,
+      verified_green: records.filter(row => row.verifiedGreen).length },
+    records, generated_at: new Date().toISOString(),
+    by_barangay: records.map(row => ({ barangayID: row.barangayID, barangayName: row.barangayName,
+      ...Object.fromEntries(["Green", "Red", "Yellow", "Orange", "Black", "Purple", "Unknown"].map(color => [color, color === row.flagColor ? 1 : 0])) })) };
+  })(),
 };
 const sections = {
   descriptive,
-  diagnostic: { scan_history: [], category_risk_drivers: [], dbscan_clusters: [], morans_data: { points: [] } },
+  diagnostic: { scan_history: [], category_risk_drivers: empty ? [] : sectors.slice(0, 5).map((category, i) => ({
+    category, flagged_count: 14 - i * 2, total_registered: 90 - i * 9, non_green_rate: 15.6 - i,
+  })), category_linkage_summary: { linked_records: 44, total_flagged_records: 52, linkage_rate: 84.6, unlinked_records: 6, ambiguous_records: 2 },
+  dbscan_clusters: [], morans_data: { points: [] } },
   prescriptive: { rankings: [], dispatch_recommendations: [], wlc_config: {} },
   operations: { inspector_stats: [], status_breakdown: [{ status: "Assigned", count: 28 }, { status: "Submitted", count: 32 }, { status: "Verified", count: 64 }], inspection_timeline: [{ date: "2026-09-01", count: 12 }, { date: "2026-09-08", count: 24 }, { date: "2026-09-15", count: 19 }, { date: "2026-09-22", count: 32 }] },
 };

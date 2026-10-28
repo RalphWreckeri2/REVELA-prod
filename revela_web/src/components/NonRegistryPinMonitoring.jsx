@@ -18,7 +18,7 @@ const CARDS = [
   { key: "verified_green", label: "Inspection-verified Green", variant: "green" },
 ];
 
-export default function NonRegistryPinMonitoring({ snapshot, refreshing = false, membership = "unlinked" }) {
+export default function NonRegistryPinMonitoring({ snapshot, refreshing = false, membership = "unlinked", embedded = false }) {
   const linked = membership === "linked";
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
@@ -40,21 +40,34 @@ export default function NonRegistryPinMonitoring({ snapshot, refreshing = false,
     }
   };
 
+  const Wrapper = embedded ? "div" : "section";
   return (
-    <section className="non-registry-monitoring saas-card frosted-glass" aria-labelledby={`pin-monitoring-title-${membership}`}>
-      <div className="non-registry-heading">
-        <div>
-          <h4 id={`pin-monitoring-title-${membership}`}>{linked ? "Registry-Linked Pin Monitoring" : "Non-Registry Pin Monitoring"}</h4>
-          <p>{linked
-            ? "Current geospatial pins linked to an official Registry business by businessID. Origin remains separately recorded."
-            : "Current pins marked “Not in Registry” using the same membership rules as the Map. Not in the imported registry does not automatically mean non-compliant."}</p>
+    <Wrapper className={`non-registry-monitoring${embedded ? " non-registry-monitoring--embedded" : " saas-card frosted-glass"}`}
+      aria-labelledby={embedded ? undefined : `pin-monitoring-title-${membership}`}>
+      {!embedded && (
+        <div className="non-registry-heading">
+          <div>
+            <h4 id={`pin-monitoring-title-${membership}`}>{linked ? "Registry-Linked Pin Monitoring" : "Non-Registry Pin Monitoring"}</h4>
+            <p>{linked
+              ? "Current geospatial pins linked to an official Registry business by businessID. Origin remains separately recorded."
+              : "Current pins marked “Not in Registry” using the same membership rules as the Map. Not in the imported registry does not automatically mean non-compliant."}</p>
+          </div>
+          <div className="non-registry-actions">
+            <button type="button" className="ghost-btn" ref={listButtonRef} disabled={!valid}
+              onClick={() => { setPage(1); setOpen(true); }}>View List</button>
+            <button type="button" className="ghost-btn" disabled={!valid} onClick={exportCsv}>Export CSV</button>
+          </div>
         </div>
-        <div className="non-registry-actions">
-          <button type="button" className="ghost-btn" ref={listButtonRef} disabled={!valid}
-            onClick={() => { setPage(1); setOpen(true); }}>View List</button>
-          <button type="button" className="ghost-btn" disabled={!valid} onClick={exportCsv}>Export CSV</button>
+      )}
+      {embedded && (
+        <div className="non-registry-embedded-toolbar">
+          <div className="non-registry-actions">
+            <button type="button" className="ghost-btn" ref={listButtonRef} disabled={!valid}
+              onClick={() => { setPage(1); setOpen(true); }}>View List</button>
+            <button type="button" className="ghost-btn" disabled={!valid} onClick={exportCsv}>Export CSV</button>
+          </div>
         </div>
-      </div>
+      )}
       {!valid ? <p role="status" className="non-registry-empty">{linked ? "Registry-linked" : "Non-registry"} monitoring data is unavailable. Refresh Analytics to load this section.</p> : <>
         <div className="non-registry-kpis">
           {CARDS.map(card => (
@@ -107,6 +120,6 @@ export default function NonRegistryPinMonitoring({ snapshot, refreshing = false,
         </>}
         <p className="non-registry-note">CSV exports include all {snapshot.summary.total} matching pins, not just this page. Snapshot: {formatManilaDate(snapshot.generated_at)}.</p>
       </InspectionDialog>}
-    </section>
+    </Wrapper>
   );
 }

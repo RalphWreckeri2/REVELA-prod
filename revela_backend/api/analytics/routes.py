@@ -1074,12 +1074,15 @@ def _get_all_analytics_inner(F=None):
     )
     total_businesses = cur.fetchone()["n"]
 
+    # Status KPIs use the full applied registry filter set, including an applied
+    # permit status. That keeps the KPI strip and the barangay/status chart on
+    # one population: when a status is selected, both show that one status.
     _execute(
         cur,
         "kpi.active_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Active'"
-        + reg_no_status,
-        reg_no_status_p,
+        + reg_all,
+        reg_all_p,
     )
     active_count = cur.fetchone()["n"]
 
@@ -1087,8 +1090,8 @@ def _get_all_analytics_inner(F=None):
         cur,
         "kpi.expired_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Expired'"
-        + reg_no_status,
-        reg_no_status_p,
+        + reg_all,
+        reg_all_p,
     )
     expired_count = cur.fetchone()["n"]
 
@@ -1096,8 +1099,8 @@ def _get_all_analytics_inner(F=None):
         cur,
         "kpi.closed_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Closed'"
-        + reg_no_status,
-        reg_no_status_p,
+        + reg_all,
+        reg_all_p,
     )
     closed_count = cur.fetchone()["n"]
 
@@ -1105,8 +1108,8 @@ def _get_all_analytics_inner(F=None):
         cur,
         "kpi.pending_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Pending'"
-        + reg_no_status,
-        reg_no_status_p,
+        + reg_all,
+        reg_all_p,
     )
     pending_count = cur.fetchone()["n"]
 
@@ -1114,8 +1117,8 @@ def _get_all_analytics_inner(F=None):
         cur,
         "kpi.revoked_count",
         "SELECT COUNT(*) AS n FROM official_registry WHERE applicationStatus = 'Revoked'"
-        + reg_no_status,
-        reg_no_status_p,
+        + reg_all,
+        reg_all_p,
     )
     revoked_count = cur.fetchone()["n"]
 
@@ -1304,6 +1307,40 @@ def _get_all_analytics_inner(F=None):
 
     nature_per_barangay = list(nature_per_barangay_dict.values())
 
+    # Registry businesses by barangay and permit status. The LEFT JOIN keeps
+    # every barangay visible at zero, while reg_o applies the same registry
+    # filters as the status KPIs. Each businessID is counted once.
+    _execute(cur, "descriptive.registry_by_barangay_status", f"""
+        SELECT
+            b.barangayID,
+            b.barangayName,
+            COUNT(CASE WHEN o.applicationStatus = 'Active'  THEN o.businessID END) AS active,
+            COUNT(CASE WHEN o.applicationStatus = 'Pending' THEN o.businessID END) AS pending,
+            COUNT(CASE WHEN o.applicationStatus = 'Expired' THEN o.businessID END) AS expired,
+            COUNT(CASE WHEN o.applicationStatus = 'Closed'  THEN o.businessID END) AS closed,
+            COUNT(CASE WHEN o.applicationStatus = 'Revoked' THEN o.businessID END) AS revoked,
+            COUNT(o.businessID) AS total
+        FROM barangays b
+        LEFT JOIN official_registry o
+          ON o.barangayID = b.barangayID {reg_o}
+        WHERE 1=1 {brgy_b}
+        GROUP BY b.barangayID, b.barangayName
+        ORDER BY b.barangayName
+    """, reg_o_p + brgy_b_p)
+    registry_by_barangay_status = [
+        {
+            "barangayID": row["barangayID"],
+            "barangayName": row["barangayName"],
+            "active": row["active"] or 0,
+            "pending": row["pending"] or 0,
+            "expired": row["expired"] or 0,
+            "closed": row["closed"] or 0,
+            "revoked": row["revoked"] or 0,
+            "total": row["total"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
     # Business size
     _execute(cur, "descriptive.business_size_dist", f"""
         SELECT COALESCE(businessSize, 'Unknown') AS size_label, COUNT(*) AS count
@@ -1392,6 +1429,59 @@ def _get_all_analytics_inner(F=None):
     """, insp_ir_p + geo_g_p)
     total_inspections = cur.fetchone()["n"]
 
+    # Inspection reports by barangay and current status. This is the same
+    # pin-linked report population as audit_summary: one row per target pin,
+    # one distinct reportID per report, and no lifecycle-event or assignment
+    # counts. The LEFT JOINs keep all barangays visible at zero.
+    _execute(cur, "descriptive.inspection_by_barangay_status", f"""
+        SELECT
+            b.barangayID,
+            b.barangayName,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Assigned'    THEN ir.reportID END) AS assigned,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Reassigned'  THEN ir.reportID END) AS reassigned,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'In Progress' THEN ir.reportID END) AS in_progress,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Submitted'   THEN ir.reportID END) AS submitted,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Verified'    THEN ir.reportID END) AS verified,
+            COUNT(DISTINCT CASE
+                WHEN COALESCE(NULLIF(TRIM(ir.verificationStatus), ''), 'Unassigned')
+                     NOT IN ('Assigned', 'Reassigned', 'In Progress', 'Submitted', 'Verified')
+                THEN ir.reportID END) AS unassigned,
+            COUNT(DISTINCT ir.reportID) AS total
+        FROM barangays b
+        LEFT JOIN geospatial_logs g
+          ON g.barangayID = b.barangayID {geo_on_g}
+        LEFT JOIN inspection_reports ir
+          ON ir.targetID = g.logID {insp_ir}
+        WHERE 1=1 {brgy_b}
+        GROUP BY b.barangayID, b.barangayName
+        ORDER BY b.barangayName
+    """, geo_on_g_p + insp_ir_p + brgy_b_p)
+    inspection_by_barangay_status = [
+        {
+            "barangayID": row["barangayID"],
+            "barangayName": row["barangayName"],
+            "assigned": row["assigned"] or 0,
+            "reassigned": row["reassigned"] or 0,
+            "in_progress": row["in_progress"] or 0,
+            "submitted": row["submitted"] or 0,
+            "verified": row["verified"] or 0,
+            "unassigned": row["unassigned"] or 0,
+            "total": row["total"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
+    # The Descriptive report population is pin-linked. Count reports that
+    # cannot be attributed to a barangay so the chart can disclose them rather
+    # than silently folding in the Operations LEFT JOIN population.
+    _execute(cur, "descriptive.unlinked_inspection_reports", f"""
+        SELECT COUNT(DISTINCT ir.reportID) AS n
+        FROM inspection_reports ir
+        LEFT JOIN geospatial_logs g ON ir.targetID = g.logID
+        WHERE g.logID IS NULL {insp_ir}
+    """, insp_ir_p)
+    unlinked_inspection_reports = cur.fetchone()["n"] or 0
+
     _execute(cur, "descriptive.inspection_result_breakdown", f"""
         SELECT ir.inspectionResult, COUNT(*) AS count
         FROM inspection_reports ir
@@ -1446,6 +1536,8 @@ def _get_all_analytics_inner(F=None):
         "kpis": kpis,
         "enforcement_progress": enforcement_progress,
         "nature_per_barangay": nature_per_barangay,
+        "registry_by_barangay_status": registry_by_barangay_status,
+        "inspection_by_barangay_status": inspection_by_barangay_status,
         "sectoral_distribution": sectoral_distribution,
         "business_size_dist": business_size_dist,
         "business_type_dist": business_type_dist,
@@ -1454,6 +1546,7 @@ def _get_all_analytics_inner(F=None):
         "compliance_timeline": compliance_timeline,
         "audit_summary": {"total_inspections": total_inspections,
                            "total_reports": total_inspections,
+                           "unlinked_reports": unlinked_inspection_reports,
                            "verified_reports": workflow.get("verified_reports", 0),
                            "submitted_green": workflow.get("submitted_green", 0),
                            "result_breakdown": result_breakdown,

@@ -91,7 +91,7 @@ try {
     if (page !== "access") {
       const ready = state === "loading" ? (page === "analytics" ? ".analytics-loading-layout" : "#chart-card-size") : state === "error" ? (page === "analytics" ? ".analytics-section-state" : '[role="alert"]') : page === "analytics" ? ".analytics-feature-card" : "#chart-card-size";
       await wait(`document.querySelector('${ready}')`, `${page} ${state}`);
-      if (state === "populated") await wait(`document.querySelectorAll('.responsive-chart svg.recharts-surface').length >= 7`, "all chart SVGs");
+      if (state === "populated") await wait(`document.querySelectorAll('.responsive-chart svg.recharts-surface').length >= 2`, "all chart SVGs");
     }
     await sleep(350);
   };
@@ -203,7 +203,7 @@ try {
         assert.equal(data.zoom, 1, "100% viewport scale");
         assert.equal(data.width, width, "unzoomed CSS viewport width");
         assert.equal(data.overflow, false, "no page-level horizontal overflow");
-        assert.equal(data.cards.length, 7, "all demographic cards rendered");
+        assert.equal(data.cards.length, page === "analytics" ? 2 : 7, "all demographic cards rendered");
         for (const card of data.cards) {
           assert.ok(card.width >= 340, `${page} ${width} ${sidebar}: ${card.title} has usable width`);
           assert.ok(card.chart?.width > 0 && card.chart?.height > 0, `${card.title} positive chart dimensions`);
@@ -214,14 +214,9 @@ try {
           if (page === "reports") assert.ok(card.titleWidth >= 240, `${card.title} title not squeezed`);
         }
         if (page === "analytics") {
-          assert.ok(Math.abs(data.cards[0].width - data.cards[1].width) < 1, "Geographic and Top Sectors full width");
-          for (const [a, b] of [[2, 3], [4, 5]]) {
-            if (Math.abs(data.cards[a].y - data.cards[b].y) < 1) {
-              assert.ok(Math.abs(data.cards[a].width - data.cards[b].width) < 1, "paired widths match");
-              assert.ok(Math.abs(data.cards[a].height - data.cards[b].height) < 1, "paired heights match");
-            } else assert.ok(Math.abs(data.cards[a].x - data.cards[b].x) < 1, "narrow paired cards stack");
-          }
-          assert.ok(data.cards[6].height < 400, "timeline remains compact");
+          assert.ok(Math.abs(data.cards[0].width - data.cards[1].width) < 1, "registry and inspection charts share full width");
+          assert.ok(data.cards[1].y > data.cards[0].y, "the two Descriptive charts stack vertically");
+          assert.ok(data.cards[0].height > 300 && data.cards[1].height > 300, "stacked charts keep usable height");
           assert.ok(data.content.bottom <= data.dock.y + 1, "dock reserves space outside scroll content");
         }
         results.push({ page, width, height, sidebar, ...data });
@@ -239,47 +234,46 @@ try {
           await sleep(300);
         }
         if (sidebar === "expanded" || width === 1440) {
-          await scrollTo(page === "analytics" ? ".analytics-feature-card--geographic" : "#chart-card-size");
+          await scrollTo(page === "analytics" ? ".analytics-feature-card--registry-status" : "#chart-card-size");
           await screenshot(`${page}-${width}-${sidebar}.png`);
           if (page === "analytics" && width >= 1280) {
-            await scrollTo(".analytics-feature-card--business-size");
-            await screenshot(`${page}-${width}-${sidebar}-paired.png`);
-            await scrollTo(".analytics-feature-card--timeline");
-            await screenshot(`${page}-${width}-${sidebar}-timeline.png`);
+            await scrollTo(".analytics-feature-card--inspection-status");
+            await screenshot(`${page}-${width}-${sidebar}-inspection.png`);
           }
         }
       }
     }
   }
 
-  // Exercise long-label tooltips, tab remounting, the narrow donut legend, and
-  // the assistant drawer while the charts remain in a separate scroll area.
+  // Exercise the stacked-chart tooltip, tab remounting, the two-chart
+  // Descriptive layout, and the assistant drawer while charts stay in their
+  // own scroll area.
   await metrics(1280, 800);
   console.log("Checking tooltips, tabs, assistant, and resize");
   await navigate("analytics");
-  await scrollTo(".analytics-feature-card--top-sectors");
-  const bar = await evaluate(`(() => { const r = document.querySelector('.analytics-feature-card--top-sectors .recharts-bar-rectangle').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+  await scrollTo(".analytics-feature-card--registry-status");
+  const bar = await evaluate(`(() => { const r = document.querySelector('.analytics-feature-card--registry-status .recharts-bar-rectangle').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
   await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...bar });
-  await wait(`document.querySelector('.analytics-feature-card--top-sectors .analytics-chart-tooltip')?.textContent.includes('Retail Sale in Non-Specialized Stores with Food, Beverages or Tobacco Predominating')`, "complete sector tooltip");
-  assert.equal(await evaluate(`(() => { const card = document.querySelector('.analytics-feature-card--top-sectors').getBoundingClientRect(); const tip = document.querySelector('.analytics-feature-card--top-sectors .analytics-chart-tooltip').getBoundingClientRect(); return tip.left >= card.left && tip.right <= card.right && tip.top >= card.top && tip.bottom <= card.bottom; })()`), true, "long-label tooltip fits card");
-  await screenshot("analytics-long-sector-tooltip.png");
+  await wait(`document.querySelector('.analytics-feature-card--registry-status .analytics-stacked-tooltip')?.textContent.includes('Barangay I')`, "registry stacked tooltip");
+  assert.equal(await evaluate(`(() => { const card = document.querySelector('.analytics-feature-card--registry-status').getBoundingClientRect(); const tip = document.querySelector('.analytics-feature-card--registry-status .analytics-stacked-tooltip').getBoundingClientRect(); return tip.left >= card.left && tip.right <= card.right && tip.top >= card.top && tip.bottom <= card.bottom; })()`), true, "stacked tooltip fits card");
+  await screenshot("analytics-registry-stacked-tooltip.png");
   await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 5 });
   await evaluate(`[...document.querySelectorAll('.analytics-tab-btn')].find(button => button.textContent.includes('Operations')).click()`);
   await wait(`document.body.textContent.includes('Inspection Activity Timeline')`, "operations tab");
   await evaluate(`document.querySelector('.analytics-tab-btn').click()`);
-  await wait(`document.querySelectorAll('.analytics-feature-card .responsive-chart .recharts-wrapper').length === 7`, "descriptive tab remount");
+  await wait(`document.querySelectorAll('.analytics-feature-card .responsive-chart .recharts-wrapper').length === 2`, "descriptive tab remount");
   await evaluate(`document.querySelector('[aria-label="Open AI Analyst"]').click()`);
   assert.equal(await evaluate(`document.querySelector('.saas-content').getBoundingClientRect().bottom <= document.querySelector('.analytics-tools').getBoundingClientRect().top + 1`), true, "expanded assistant never overlays charts");
   await evaluate(`document.querySelector('[aria-label="Close AI Analyst"]').click()`);
   await metrics(1920, 1080);
-  await scrollTo(".analytics-feature-card--geographic");
+  await scrollTo(".analytics-feature-card--registry-status");
   const wide = await measure("analytics");
-  assert.ok(wide.cards[0].chart.height === 340 && wide.cards[0].axesInside, "roomy geographic chart returns to columns with labels inside");
-  await screenshot("analytics-wide-geographic.png");
+  assert.ok(wide.cards[0].chart.height > 500 && wide.cards[0].axesInside, "roomy registry chart keeps all barangay rows legible inside its scroll area");
+  await screenshot("analytics-wide-registry-chart.png");
   await metrics(1200, 800);
-  await scrollTo(".analytics-feature-card--business-size");
-  await screenshot("analytics-narrow-donut-legends.png");
-  results.push({ checks: "long tooltip, tab remount, assistant space, narrow donut legends, live resize" });
+  await scrollTo(".analytics-feature-card--inspection-status");
+  await screenshot("analytics-narrow-stacked-charts.png");
+  results.push({ checks: "stacked tooltip, tab remount, assistant space, narrow stacked charts, live resize" });
 
   for (const [width, height] of [[768, 1024], [1024, 768], [1280, 800], [1440, 1000]]) {
     await metrics(width, height);
@@ -288,12 +282,12 @@ try {
         await navigate(page, state);
         if (state === "loading" && page === "analytics") await scrollTo(".analytics-skeleton-charts");
         else if (page === "reports") await scrollTo("#chart-card-size");
-        else if (state === "empty") await scrollTo(".analytics-feature-card--geographic");
+        else if (state === "empty") await scrollTo(".analytics-feature-card--registry-status");
         assert.equal(await evaluate(`document.documentElement.scrollWidth > innerWidth`), false, `${state} no horizontal overflow`);
         if (width === 768 || width === 1440) await screenshot(`${page}-${width}-${state}.png`);
         if (state === "loading") {
           await evaluate(`window.__releaseLayout()`);
-          await wait(`document.querySelectorAll('.responsive-chart svg.recharts-surface').length >= 7`, "charts mount after loading");
+          await wait(`document.querySelectorAll('.responsive-chart svg.recharts-surface').length >= 2`, "charts mount after loading");
         }
         results.push({ page, width, state, passed: true });
         console.log(`State passed: ${page} ${width} ${state}`);
