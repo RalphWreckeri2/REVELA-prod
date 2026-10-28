@@ -27,7 +27,7 @@ import {
   selectLocationChoice,
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
-import { canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
+import { activeInspectorsForDispatch, canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import FilterDropdown from "../components/FilterDropdown";
 import {
@@ -457,21 +457,21 @@ const HEATMAP_RISK_STYLE = {
     fillColor: "#D32F2F",
     fillOpacity: 0.72,
     strokeColor: "#212121",
-    strokeWeight: 1,
+    strokeWeight: 2,
     zIndex: 4,
   },
   Medium: {
     fillColor: "#FFB74D",
     fillOpacity: 0.72,
     strokeColor: "#212121",
-    strokeWeight: 1,
+    strokeWeight: 2,
     zIndex: 3,
   },
   Low: {
     fillColor: "#A5D6A7",
     fillOpacity: 0.72,
     strokeColor: "#212121",
-    strokeWeight: 1,
+    strokeWeight: 2,
     zIndex: 2,
   },
   /** Red flags present but barangay not in prescriptive rankings yet */
@@ -479,7 +479,7 @@ const HEATMAP_RISK_STYLE = {
     fillColor: "#FFF9C4",
     fillOpacity: 0.72,
     strokeColor: "#616161",
-    strokeWeight: 1,
+    strokeWeight: 2,
     zIndex: 2,
   },
   /** No red flags (or no data) â€” â€œvery lowâ€  style */
@@ -487,7 +487,7 @@ const HEATMAP_RISK_STYLE = {
     fillColor: "#BBDEFB",
     fillOpacity: 0.72,
     strokeColor: "#546E7A",
-    strokeWeight: 1,
+    strokeWeight: 2,
     zIndex: 1,
   },
 };
@@ -606,6 +606,91 @@ function computeGeoJsonBounds(features) {
   return Number.isFinite(north) && Number.isFinite(south) && Number.isFinite(east) && Number.isFinite(west)
     ? { north, south, east, west }
     : null;
+}
+
+// Derive the municipality's outer outline from the barangay polygons by
+// keeping only edges that are not shared by two adjacent features. This is a
+// pure client-side visual helper: it does not alter the source GeoJSON.
+function computeMunicipalOutline(features) {
+  const keyOf = (pt) => `${Number(pt[0]).toFixed(12)},${Number(pt[1]).toFixed(12)}`;
+  const edgeCounts = new Map();
+
+  const addRingEdges = (ring) => {
+    if (!Array.isArray(ring) || ring.length < 2) return;
+    for (let i = 0; i < ring.length - 1; i++) {
+      const a = ring[i];
+      const b = ring[i + 1];
+      if (!Array.isArray(a) || !Array.isArray(b)) continue;
+      if (typeof a[0] !== "number" || typeof a[1] !== "number") continue;
+      if (typeof b[0] !== "number" || typeof b[1] !== "number") continue;
+      const ka = keyOf(a);
+      const kb = keyOf(b);
+      const edgeKey = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+      if (!edgeCounts.has(edgeKey)) {
+        edgeCounts.set(edgeKey, { count: 0, a: a.slice(), b: b.slice() });
+      }
+      edgeCounts.get(edgeKey).count += 1;
+    }
+  };
+
+  (features || []).forEach((feature) => {
+    const g = feature?.geometry;
+    if (!g) return;
+    const polys =
+      g.type === "MultiPolygon"
+        ? g.coordinates
+        : g.type === "Polygon"
+          ? [g.coordinates]
+          : [];
+    (polys || []).forEach((poly) => {
+      if (!Array.isArray(poly)) return;
+      poly.forEach(addRingEdges);
+    });
+  });
+
+  const boundaryKeys = [...edgeCounts.entries()]
+    .filter(([, v]) => v.count === 1)
+    .map(([k]) => k);
+  if (boundaryKeys.length === 0) return null;
+
+  const adj = new Map();
+  boundaryKeys.forEach((k) => {
+    const e = edgeCounts.get(k);
+    const aKey = keyOf(e.a);
+    const bKey = keyOf(e.b);
+    if (!adj.has(aKey)) adj.set(aKey, []);
+    if (!adj.has(bKey)) adj.set(bKey, []);
+    adj.get(aKey).push({ key: k, otherKey: bKey, point: e.b });
+    adj.get(bKey).push({ key: k, otherKey: aKey, point: e.a });
+  });
+
+  const used = new Set();
+  const rings = [];
+  for (const startKey of boundaryKeys) {
+    if (used.has(startKey)) continue;
+    const e0 = edgeCounts.get(startKey);
+    used.add(startKey);
+    const firstKey = keyOf(e0.a);
+    const ringPts = [e0.a.slice(), e0.b.slice()];
+    used.add(startKey);
+    let currentKey = keyOf(e0.b);
+    let safety = boundaryKeys.length + 5;
+    while (currentKey !== firstKey && safety-- > 0) {
+      const candidates = (adj.get(currentKey) || []).filter((c) => !used.has(c.key));
+      if (candidates.length === 0) break;
+      const cand = candidates[0];
+      used.add(cand.key);
+      const nextKey = cand.otherKey;
+      if (nextKey !== firstKey) ringPts.push(cand.point.slice());
+      currentKey = nextKey;
+    }
+    if (ringPts.length >= 3) rings.push(ringPts);
+  }
+
+  if (rings.length === 0) return null;
+  let largest = rings[0];
+  for (const r of rings) if (r.length > largest.length) largest = r;
+  return largest;
 }
 
 // Web Mercator projection of latitude to the [0, 1] world Y axis used by
@@ -1096,6 +1181,7 @@ function MapCanvas({
   const clusterRef = useRef(null);
   const diagnosticCircleRefs = useRef([]);
   const geoJsonDataRef = useRef(null);
+  const municipalOutlineRef = useRef(null);
   const mapContainerRef = useRef(null);
   const minZoomRef = useRef(null);
   const restrictionBoundsRef = useRef(null);
@@ -1445,13 +1531,13 @@ function MapCanvas({
       // Base barangay boundaries style
       return {
         fillColor: "#1f7a1f",
-        fillOpacity: 0.12,
-        strokeColor: "#166534",
-        strokeWeight: 1,
+        fillOpacity: 0.1,
+        strokeColor: isDark ? "#4ade80" : "#15803d",
+        strokeWeight: 2,
         visible: true,
       };
     },
-    [layers.barangay, layers.diagnostics, barangayRiskLevels, barangayRedFlagCounts, isPickingLocation],
+    [layers.barangay, layers.diagnostics, barangayRiskLevels, barangayRedFlagCounts, isPickingLocation, isDark],
   );
 
   useEffect(() => {
@@ -1459,6 +1545,48 @@ function MapCanvas({
     if (!dl) return;
     dl.setStyle(geoJsonFeatureStyle);
   }, [geoJsonFeatureStyle]);
+
+  // Render Mataasnakahoy's municipal outline as a thicker overlay so it is
+  // easy to distinguish from the internal barangay boundaries.
+  useEffect(() => {
+    if (municipalOutlineRef.current) {
+      municipalOutlineRef.current.setMap(null);
+      municipalOutlineRef.current = null;
+    }
+    if (!isLoaded || !mapInstance || !window.google?.maps) return;
+    const show = Boolean(layers.barangay || layers.diagnostics || isPickingLocation);
+    if (!show) return;
+    let cancelled = false;
+    fetch("/data/mataasnakahoy.json")
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !mapInstance) return;
+        const features = Array.isArray(json?.features) ? json.features : [];
+        const ring = computeMunicipalOutline(features);
+        if (!ring || ring.length < 3) return;
+        const path = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
+        const poly = new window.google.maps.Polygon({
+          paths: path,
+          strokeColor: isDark ? "#bbf7d0" : "#14532d",
+          strokeWeight: 4,
+          strokeOpacity: 1,
+          fillColor: isDark ? "#14532d" : "#166534",
+          fillOpacity: 0,
+          clickable: false,
+          zIndex: 10,
+        });
+        poly.setMap(mapInstance);
+        municipalOutlineRef.current = poly;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (municipalOutlineRef.current) {
+        municipalOutlineRef.current.setMap(null);
+        municipalOutlineRef.current = null;
+      }
+    };
+  }, [isLoaded, mapInstance, layers.barangay, layers.diagnostics, isPickingLocation, isDark]);
 
   // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
   const buildMarkerContent = useCallback((flag, selected, isAdjusting = false) => {
@@ -2446,7 +2574,7 @@ function DispatchModal({ flag, token, onClose, onSuccess }) {
         console.log("Inspectors API Response:", data);
         const list = Array.isArray(data) ? data : (data.data ?? data.users ?? []);
         console.log("Filtered inspectors list:", list);
-        setInspectors(list);
+        setInspectors(activeInspectorsForDispatch(list));
         setFetching(false);
       })
       .catch(err => {
@@ -2512,11 +2640,12 @@ function DispatchModal({ flag, token, onClose, onSuccess }) {
         {fetching ? (
           <p style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading inspectors…</p>
         ) : (
-          <select style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-modal-bg)", cursor: "pointer", marginBottom: 4 }} value={selectedUID} onChange={e => setSelectedUID(e.target.value)}>
+          <select style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-modal-bg)", cursor: "pointer", marginBottom: 4 }} value={selectedUID} onChange={e => setSelectedUID(e.target.value)} disabled={inspectors.length === 0}>
             <option value="">Choose an inspector…</option>
             {inspectors.map(u => (<option key={u.userID} value={u.userID}>{u.fullName}</option>))}
           </select>
         )}
+        {!fetching && !error && inspectors.length === 0 && <p role="status" style={{ fontSize: 12, color: "var(--color-muted)", margin: "4px 0" }}>No active inspectors available.</p>}
         <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 8, marginTop: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>Deadline (Optional)</label>
         <input
           type="datetime-local"
@@ -2528,7 +2657,7 @@ function DispatchModal({ flag, token, onClose, onSuccess }) {
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 24 }}>
           <button className="ghost-btn" onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="primary-btn" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={handleAssign} disabled={loading || fetching}>{loading ? "Dispatching…" : <><Icon.Send /> Dispatch</>}</button>
+          <button className="primary-btn" style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={handleAssign} disabled={loading || fetching || inspectors.length === 0}>{loading ? "Dispatching…" : <><Icon.Send /> Dispatch</>}</button>
         </div>
       </div>
     </div>,
@@ -3031,7 +3160,7 @@ export default function MapPage() {
     try {
       const data = await getInspectorsRequest(token);
       const list = Array.isArray(data) ? data : (data?.data ?? []);
-      setInspectors(list.filter(u => u.isActive !== 0 && u.isActive !== false && u.userRole === 'Inspector'));
+      setInspectors(activeInspectorsForDispatch(list));
       return true;
     } catch { return false; }
   }, [token, setInspectors]);
