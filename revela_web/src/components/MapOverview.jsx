@@ -4,16 +4,32 @@ import AnalyticsInfoTip from "./AnalyticsInfoTip";
 import { getBarangayOverviewRequest } from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
-import { getBarangayIdForGeoJsonName } from "./barangayMapMapping";
+import {
+  getBarangayIdForGeoJsonName,
+  getGeoJsonCentroid,
+  getShortBarangayLabel,
+  normalizeGeoJsonWinding,
+} from "./barangayMapMapping";
 import {
   buildBarangayOverviewFilters,
-  visibleRegistryDimensions,
+  quantileBreaks,
+  quantileClass,
+  quantileRangeLabels,
 } from "./barangayOverviewPresentation";
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
 const BAR_COLORS = ["#2563eb", "#0f9f8f", "#7c3aed", "#f59e0b", "#e11d48", "#64748b"];
+const CHOROPLETH_COLORS = {
+  registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
+  inspections: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
+};
 const EMPTY_BARANGAY_ROWS = Object.freeze([]);
+const REGISTRY_DIMENSIONS = [
+  { key: "business_size", label: "By size" },
+  { key: "business_type", label: "By type" },
+  { key: "registration_type", label: "By registration type" },
+];
 const STATUS_COLORS = {
   registered_on_map: "#2563eb",
   detected_not_in_registry: "#f97316",
@@ -32,15 +48,6 @@ function shortBarangay(name = "") {
   return name.replace(/^Barangay /, "Brgy. ");
 }
 
-function getMapFill(count, maximum, isInspectionView) {
-  if (!count) return "#cbd5e1";
-  const ratio = maximum ? count / maximum : 0;
-  const colors = isInspectionView
-    ? ["#dbeafe", "#93c5fd", "#3b82f6", "#1d4ed8"]
-    : ["#dcfce7", "#86efac", "#22c55e", "#15803d"];
-  return colors[Math.min(colors.length - 1, Math.floor(ratio * colors.length))];
-}
-
 function totalOf(rows = []) {
   return rows.reduce((total, row) => total + Number(row.count || 0), 0);
 }
@@ -56,7 +63,7 @@ function CountsBar({ rows, emptyMessage }) {
           <span key={row.value} title={`${row.label}: ${row.count}`}
             style={{
               width: `${(Number(row.count) / total) * 100}%`,
-              background: BAR_COLORS[index % BAR_COLORS.length],
+              background: row.color || BAR_COLORS[index % BAR_COLORS.length],
             }} />
         ))}
       </div>
@@ -64,7 +71,7 @@ function CountsBar({ rows, emptyMessage }) {
         {rows.map((row, index) => (
           <li key={row.value}>
             <span className="map-overview-count-swatch"
-              style={{ background: BAR_COLORS[index % BAR_COLORS.length] }} />
+              style={{ background: row.color || BAR_COLORS[index % BAR_COLORS.length] }} />
             <span className="map-overview-count-label">{row.label}</span>
             <strong>{Number(row.count).toLocaleString()}</strong>
             <span className="map-overview-count-percent">
@@ -134,6 +141,11 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const [boundaryError, setBoundaryError] = useState(false);
   const dataLayerRef = useRef(null);
   const styleFeatureRef = useRef(null);
+  const mapRef = useRef(null);
+  const boundaryFeaturesRef = useRef([]);
+  const sourceGeoJsonFeaturesRef = useRef([]);
+  const labelMarkersRef = useRef([]);
+  const hasFitBoundsRef = useRef(false);
   const { isLoaded, loadError } = useGoogleMapsScript();
   const { overview, loading, error, retry } = useBarangayOverview(
     token,
@@ -149,24 +161,20 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     ? null
     : rowsById.get(Number(selectedBarangayId));
   const panelData = selectedRow || overview?.overall;
-  const maxMapCount = useMemo(() => Math.max(
-    0,
-    ...barangayRows.map((row) => Number(mapView === "registered"
-      ? row.registry_total
-      : row.inspections.total)),
-  ), [barangayRows, mapView]);
-  const visibleDimensions = useMemo(
-    () => visibleRegistryDimensions(panelData?.registry),
-    [panelData],
-  );
-  const selectedDimension = visibleDimensions.find(
+  const overallData = overview?.overall;
+  const mapCounts = useMemo(() => barangayRows.map((row) => Number(
+    mapView === "registered" ? row.registry_total : row.inspections.total,
+  )), [barangayRows, mapView]);
+  const mapBreaks = useMemo(() => quantileBreaks(mapCounts), [mapCounts]);
+  const mapRangeLabels = useMemo(() => quantileRangeLabels(mapBreaks), [mapBreaks]);
+  const selectedDimension = REGISTRY_DIMENSIONS.find(
     (dimension) => dimension.key === activeDimension,
-  ) || visibleDimensions[0];
+  ) || REGISTRY_DIMENSIONS[0];
   const dimensionRows = selectedDimension
     ? panelData?.registry?.[selectedDimension.key] || []
     : [];
-  const pendingInspections = Number(panelData?.inspections?.pending || 0)
-    + Number(panelData?.inspections?.waiting_for_review || 0);
+  const pendingInspections = Number(overallData?.inspections?.pending || 0)
+    + Number(overallData?.inspections?.waiting_for_review || 0);
   const mapRowsById = rowsById;
 
   const styleFeature = useCallback((feature) => {
@@ -178,34 +186,108 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
       : row?.inspections?.total || 0);
     const isHovered = Number(hoveredBarangayId) === id;
     const isSelected = Number(selectedBarangayId) === id;
+    const colorIndex = quantileClass(count, mapBreaks);
     return {
-      fillColor: getMapFill(count, maxMapCount, mapView === "inspections"),
-      fillOpacity: isSelected ? 0.78 : isHovered ? 0.68 : 0.52,
+      fillColor: colorIndex < 0
+        ? "#cbd5e1"
+        : CHOROPLETH_COLORS[mapView][colorIndex],
+      fillOpacity: 1,
       strokeColor: isSelected ? "#0f172a" : isHovered ? "#f97316" : "#ffffff",
-      strokeWeight: isSelected ? 3 : isHovered ? 2.5 : 1,
-      zIndex: isSelected ? 2 : isHovered ? 1 : 0,
+      strokeWeight: isSelected ? 4 : isHovered ? 2 : 1,
+      zIndex: isSelected ? 100 : isHovered ? 10 : 0,
     };
-  }, [hoveredBarangayId, mapRowsById, mapView, maxMapCount, selectedBarangayId]);
+  }, [hoveredBarangayId, mapBreaks, mapRowsById, mapView, selectedBarangayId]);
 
   useEffect(() => {
     styleFeatureRef.current = styleFeature;
     dataLayerRef.current?.setStyle((feature) => styleFeature(feature));
   }, [styleFeature]);
 
+  const fitBarangayBounds = useCallback(() => {
+    if (hasFitBoundsRef.current || !mapRef.current || !boundaryFeaturesRef.current.length) return;
+    const bounds = new window.google.maps.LatLngBounds();
+    boundaryFeaturesRef.current.forEach((feature) => {
+      feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
+    });
+    if (!bounds.isEmpty()) {
+      mapRef.current.fitBounds(bounds, { top: 24, right: 24, bottom: 24, left: 24 });
+      hasFitBoundsRef.current = true;
+    }
+  }, []);
+
+  const addBarangayLabels = useCallback((features, sourceFeatures) => {
+    labelMarkersRef.current.forEach((marker) => marker.setMap(null));
+    labelMarkersRef.current = [];
+    if (!mapRef.current || !window.google?.maps?.Marker) return;
+    const sourceByName = new Map(sourceFeatures.map((feature) => [
+      feature.properties.ADM4_EN,
+      feature,
+    ]));
+    features.forEach((feature) => {
+      const name = feature.getProperty("ADM4_EN");
+      const id = getBarangayIdForGeoJsonName(name);
+      if (id == null) return;
+      const position = getGeoJsonCentroid(sourceByName.get(name));
+      if (!position) return;
+      const marker = new window.google.maps.Marker({
+        map: mapRef.current,
+        position,
+        clickable: false,
+        optimized: true,
+        zIndex: 1000,
+        icon: {
+          path: window.google.maps.SymbolPath.CIRCLE,
+          scale: 0,
+        },
+        label: {
+          text: getShortBarangayLabel(feature.getProperty("ADM4_EN")),
+          className: "map-overview-feature-label",
+        },
+      });
+      labelMarkersRef.current.push(marker);
+    });
+  }, []);
+
+  const handleMapLoad = useCallback((map) => {
+    mapRef.current = map;
+    if (boundaryFeaturesRef.current.length) {
+      addBarangayLabels(
+        boundaryFeaturesRef.current,
+        sourceGeoJsonFeaturesRef.current,
+      );
+    }
+    fitBarangayBounds();
+  }, [addBarangayLabels, fitBarangayBounds]);
+
   const handleDataLayerLoad = useCallback((dataLayer) => {
     dataLayerRef.current = dataLayer;
     setBoundaryError(false);
     dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
-    try {
-      Promise.resolve(dataLayer.loadGeoJson("/data/mataasnakahoy.json"))
-        .then(() => dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {}))
-        .catch(() => setBoundaryError(true));
-    } catch {
-      setBoundaryError(true);
-    }
-  }, []);
+    fetch("/data/mataasnakahoy.json")
+      .then((response) => {
+        if (!response.ok) throw new Error("Boundary data request failed.");
+        return response.json();
+      })
+      .then((geoJson) => {
+        const normalizedGeoJson = normalizeGeoJsonWinding(geoJson);
+        const features = dataLayer.addGeoJson(normalizedGeoJson);
+        if (features.length !== 16) throw new Error("Expected all barangay boundaries.");
+        boundaryFeaturesRef.current = features;
+        sourceGeoJsonFeaturesRef.current = normalizedGeoJson.features;
+        dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
+        addBarangayLabels(features, normalizedGeoJson.features);
+        fitBarangayBounds();
+      })
+      .catch(() => setBoundaryError(true));
+  }, [addBarangayLabels, fitBarangayBounds]);
 
   const handleDataLayerUnmount = useCallback(() => {
+    labelMarkersRef.current.forEach((marker) => marker.setMap(null));
+    labelMarkersRef.current = [];
+    boundaryFeaturesRef.current = [];
+    sourceGeoJsonFeaturesRef.current = [];
+    hasFitBoundsRef.current = false;
+    mapRef.current = null;
     dataLayerRef.current = null;
   }, []);
 
@@ -233,33 +315,34 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
       { key: "detection_with_business_id", label: "Detected and linked to a business" },
       { key: "added_by_inspector", label: "Added by inspector" },
       { key: "other_source", label: "Other pins" },
-    ];
-    if (pinView === "detected") {
-      return allRows.slice(1, 3).map((row) => ({
-        ...row,
-        count: Number(panelData.pins[row.key] || 0),
-        color: STATUS_COLORS[row.key],
-      }));
-    }
-    if (pinView === "inspector") {
-      return allRows.slice(3, 4).map((row) => ({
-        ...row,
-        count: Number(panelData.pins[row.key] || 0),
-        color: STATUS_COLORS[row.key],
-      }));
-    }
-    return allRows.map((row) => ({
+    ].map((row) => ({
       ...row,
+      value: row.key,
       count: Number(panelData.pins[row.key] || 0),
       color: STATUS_COLORS[row.key],
-    })).filter((row) => row.count > 0);
+    }));
+    if (pinView === "detected") {
+      return allRows.slice(1, 3).filter((row) => row.count > 0);
+    }
+    if (pinView === "inspector") {
+      return allRows.slice(3, 4).filter((row) => row.count > 0);
+    }
+    return allRows.filter((row) => row.count > 0);
   }, [panelData, pinView]);
 
   const inspectionRows = [
-    { key: "pending", label: "Not yet done", count: Number(panelData?.inspections?.pending || 0) },
-    { key: "waiting_for_review", label: "Waiting for review", count: Number(panelData?.inspections?.waiting_for_review || 0) },
-    { key: "verified", label: "Verified", count: Number(panelData?.inspections?.verified || 0) },
-  ];
+    { key: "pending", value: "pending", label: "Pending", count: Number(panelData?.inspections?.pending || 0), color: STATUS_COLORS.pending },
+    { key: "waiting_for_review", value: "waiting_for_review", label: "Waiting for review", count: Number(panelData?.inspections?.waiting_for_review || 0), color: STATUS_COLORS.waiting_for_review },
+    { key: "verified", value: "verified", label: "Verified", count: Number(panelData?.inspections?.verified || 0), color: STATUS_COLORS.verified },
+  ].filter((row) => row.count > 0);
+  const outcomeRows = ["Green", "Yellow", "Red"]
+    .map((value) => ({
+      value,
+      label: value,
+      count: Number(panelData?.inspections?.outcomes?.[value] || 0),
+      color: STATUS_COLORS[value],
+    }))
+    .filter((row) => row.count > 0);
 
   if (loading && !overview) {
     return <div className="map-overview-loading" role="status">Loading barangay details…</div>;
@@ -276,8 +359,22 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   return (
     <div className="map-overview">
       <div className="map-overview-controls">
+        <div className="map-overview-topbar" aria-label="Barangay totals">
+          <div className="map-overview-total">
+            <strong>{Number(overallData?.registry_total || 0).toLocaleString()}</strong>
+            <span>Registered businesses</span>
+          </div>
+          <div className="map-overview-total">
+            <strong>{Number(overallData?.pins?.detected_not_in_registry || 0).toLocaleString()}</strong>
+            <span>Found on the map, not in registry</span>
+          </div>
+          <div className="map-overview-total">
+            <strong>{pendingInspections.toLocaleString()}</strong>
+            <span>Being inspected</span>
+          </div>
+        </div>
         <label>
-          <span>Show results from</span>
+          <span>Date range</span>
           <select value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
             <option value="all">All time</option>
             <option value="year">This year</option>
@@ -287,7 +384,6 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
         </label>
         <details className="map-overview-advanced">
           <summary>Advanced filters</summary>
-          <p>Use your current filters to narrow registry, pin, and inspection results.</p>
           <button type="button" onClick={onOpenAdvancedFilters}>Open filters</button>
         </details>
       </div>
@@ -307,14 +403,9 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
                 aria-pressed={mapView === "inspections"} onClick={() => setMapView("inspections")}>
                 Inspections
               </button>
-            </div>
-            <div className="map-overview-hotspot-tip">
               <button type="button" disabled aria-label="Hotspots coming soon">
                 Hotspots · Coming soon
               </button>
-              <AnalyticsInfoTip label="About map hotspots">
-                This map currently shows barangay totals. Hotspot details may be added later.
-              </AnalyticsInfoTip>
             </div>
           </div>
           {loadError ? (
@@ -326,6 +417,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               mapContainerClassName="map-overview-canvas"
               center={MAP_CENTER}
               zoom={13}
+              onLoad={handleMapLoad}
               options={{
                 mapId: REVELA_MAP_ID,
                 clickableIcons: false,
@@ -349,16 +441,18 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               Barangay boundaries could not be displayed.
             </p>
           )}
-          {hoveredBarangayId != null && rowsById.get(Number(hoveredBarangayId)) && (
-            <div className="map-overview-hover-label" aria-live="polite">
-              {rowsById.get(Number(hoveredBarangayId)).barangayName}
-            </div>
-          )}
           <div className="map-overview-map-legend">
-            <span>{mapView === "registered" ? "Fewer businesses" : "Fewer inspections"}</span>
-            <span className={`map-overview-legend-gradient${mapView === "inspections"
-              ? " map-overview-legend-gradient--inspections" : ""}`} aria-hidden="true" />
-            <span>{mapView === "registered" ? "More businesses" : "More inspections"}</span>
+            <span className="map-overview-legend-title">
+              {mapView === "inspections" ? "Inspections per barangay" : "Businesses per barangay"}
+            </span>
+            <div className="map-overview-legend-ranges">
+              {mapRangeLabels.map((label, index) => (
+                <span key={label}>
+                  <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
+                  {label}
+                </span>
+              ))}
+            </div>
             <span className="map-overview-legend-empty">
               <i /> {mapView === "inspections" ? "No inspections yet" : "No registered businesses"}
             </span>
@@ -391,24 +485,21 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
             )}
           </div>
 
-          <p className="map-overview-summary">
-            {Number(panelData?.registry_total || 0).toLocaleString()} registered businesses ·{" "}
-            {Number(panelData?.pins?.detected_not_in_registry || 0).toLocaleString()} found on the map, not in the registry ·{" "}
-            {pendingInspections.toLocaleString()} being inspected
-          </p>
-
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">
-              <h4>Registered businesses</h4>
+              <div>
+                <h4>A. Official Registry</h4>
+                <p className="map-overview-card-subtitle">Registered businesses</p>
+              </div>
               <AnalyticsInfoTip label="About registered businesses">
                 Counts are from the official registry. The selected date range applies to map pins and inspections, not registry totals.
               </AnalyticsInfoTip>
             </div>
             <div className="map-overview-choice-row" role="group" aria-label="Business breakdown">
-              {visibleDimensions.map((dimension) => (
+              {REGISTRY_DIMENSIONS.map((dimension) => (
                 <button key={dimension.key} type="button"
-                  className={selectedDimension?.key === dimension.key ? "active" : ""}
-                  aria-pressed={selectedDimension?.key === dimension.key}
+                  className={activeDimension === dimension.key ? "active" : ""}
+                  aria-pressed={activeDimension === dimension.key}
                   onClick={() => setActiveDimension(dimension.key)}>
                   {dimension.label}
                 </button>
@@ -420,85 +511,67 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
 
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">
-              <h4>Found on the map</h4>
-              <AnalyticsInfoTip label="About map pins">
-                Each map pin is counted once. Pins without coordinates are included in totals but cannot be placed on the map.
-              </AnalyticsInfoTip>
+              <h4>B. Field Inspections</h4>
             </div>
-            <div className="map-overview-choice-row" role="group" aria-label="Map pin groups">
-              {[
-                ["all", "All"],
-                ["detected", "Detected"],
-                ["inspector", "Added by inspector"],
-              ].map(([key, label]) => (
-                <button key={key} type="button" className={pinView === key ? "active" : ""}
-                  aria-pressed={pinView === key} onClick={() => setPinView(key)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-            <ul className="map-overview-status-list">
-              {pinRows.map((row) => (
-                <li key={row.key}>
-                  <span className="map-overview-count-swatch" style={{ background: row.color }} />
-                  <span>{row.label}</span>
-                  <strong>{row.count.toLocaleString()}</strong>
-                </li>
-              ))}
-              {pinRows.length === 0 && <li className="map-overview-empty">No pins in this view yet.</li>}
-            </ul>
-            <p className="map-overview-note">
-              {Number(panelData?.pins_without_location || 0).toLocaleString()} pins have no location
-            </p>
-          </section>
-
-          <section className="map-overview-detail-card">
-            <div className="map-overview-card-heading">
-              <h4>Inspections</h4>
-              <AnalyticsInfoTip label="About inspection progress">
-                Not yet done combines Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review includes submitted reports.
-              </AnalyticsInfoTip>
-            </div>
-            {Number(panelData?.inspections?.total || 0) === 0 ? (
-              <p className="map-overview-empty">
-                {selectedRow
-                  ? "No inspections in this barangay yet."
-                  : "No inspections yet across these barangays."}
+            <div className="map-overview-field-section">
+              <div className="map-overview-card-heading">
+                <h5>Found on the map</h5>
+                <AnalyticsInfoTip label="About map pins">
+                  Each map pin is counted once. Pins without coordinates are included in totals but cannot be placed on the map.
+                </AnalyticsInfoTip>
+              </div>
+              <div className="map-overview-choice-row" role="group" aria-label="Map pin groups">
+                {[
+                  ["all", "All"],
+                  ["detected", "Detected"],
+                  ["inspector", "Added by inspector"],
+                ].map(([key, label]) => (
+                  <button key={key} type="button" className={pinView === key ? "active" : ""}
+                    aria-pressed={pinView === key} onClick={() => setPinView(key)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <CountsBar rows={pinRows} emptyMessage="No pins in this view yet." />
+              <p className="map-overview-note">
+                {Number(panelData?.pins_without_location || 0).toLocaleString()} pins have no location
               </p>
-            ) : (
+            </div>
+            <div className="map-overview-field-section">
+              <div className="map-overview-card-heading">
+                <h5>Inspections</h5>
+                <AnalyticsInfoTip label="About inspection progress">
+                  Not yet done combines Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review includes submitted reports.
+                </AnalyticsInfoTip>
+              </div>
+              <CountsBar rows={inspectionRows}
+                emptyMessage={selectedRow
+                  ? "No inspections in this barangay yet."
+                  : "No inspections yet across these barangays."} />
+            {outcomeRows.length > 0 && (
               <>
-                <ul className="map-overview-status-list">
-                  {inspectionRows.map((row) => (
-                    <li key={row.key}>
+                <p className="map-overview-note">Verified outcomes</p>
+                <ul className="map-overview-outcome-list">
+                  {outcomeRows.map((row) => (
+                    <li key={row.value}>
                       <span className="map-overview-count-swatch"
-                        style={{ background: STATUS_COLORS[row.key] }} />
-                      <span>{row.label}</span>
+                        style={{ background: row.color }} />
+                      <span className="map-overview-count-label">{row.label}</span>
                       <strong>{row.count.toLocaleString()}</strong>
+                      <span className="map-overview-count-percent">
+                        {panelData?.inspections?.verified
+                          ? `${((row.count / Number(panelData.inspections.verified)) * 100).toFixed(1)}%`
+                          : "0.0%"}
+                      </span>
                     </li>
                   ))}
                 </ul>
-                {Number(panelData?.inspections?.verified || 0) > 0 && (
-                  <ul className="map-overview-outcome-list" aria-label="Verified results">
-                    {["Green", "Yellow", "Red"].map((outcome) => (
-                      <li key={outcome}>
-                        <span className="map-overview-count-swatch"
-                          style={{ background: STATUS_COLORS[outcome] }} />
-                        <span>{outcome}</span>
-                        <strong>{Number(panelData.inspections.outcomes?.[outcome] || 0).toLocaleString()}</strong>
-                      </li>
-                    ))}
-                  </ul>
-                )}
               </>
             )}
+            </div>
           </section>
         </aside>
       </div>
-      {Number(panelData?.pins?.detection_with_business_id || 0) > 0 && (
-        <p className="map-overview-anomaly" role="status">
-          {Number(panelData.pins.detection_with_business_id).toLocaleString()} detected pins are already linked to a registered business.
-        </p>
-      )}
     </div>
   );
 }

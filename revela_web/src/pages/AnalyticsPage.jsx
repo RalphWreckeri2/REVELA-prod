@@ -1895,8 +1895,17 @@ export default function AnalyticsPage() {
             <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}
-        {data.descriptive && activeTab === "descriptive" && (
+        {activeTab === "descriptive" && (
           <section style={{ marginBottom: 52 }}>
+            <Suspense fallback={<Skeleton h={560} />}>
+              <MapOverview
+                token={token}
+                filters={appliedFilters}
+                onOpenAdvancedFilters={() => setShowFilters(true)}
+              />
+            </Suspense>
+            {mapOverviewExpanded && (
+              <>
             <SectionHeader
               tier="descriptive"
               title="Descriptive Analytics"
@@ -2081,7 +2090,8 @@ export default function AnalyticsPage() {
                 </div>
               </details>
             </div>
-
+              </>
+            )}
           </section>
         )}
 

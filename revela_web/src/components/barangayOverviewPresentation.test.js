@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildBarangayOverviewFilters,
+  quantileBreaks,
+  quantileClass,
+  quantileRangeLabels,
   visibleRegistryDimensions,
 } from "./barangayOverviewPresentation.js";
 
@@ -43,4 +46,19 @@ test("single-value registry dimensions are hidden", () => {
     "business_type",
     "line_of_business",
   ]);
+});
+
+test("quantile choropleth creates five numeric ranges and separates low and high counts", () => {
+  const breaks = quantileBreaks([
+    4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 60, 80, 119,
+  ]);
+  const labels = quantileRangeLabels(breaks);
+
+  assert.equal(breaks.length, 4);
+  assert.equal(labels.length, 5);
+  assert.match(labels[0], /^1–/);
+  assert.match(labels[4], /^>/);
+  assert.equal(quantileClass(4, breaks), 0);
+  assert.equal(quantileClass(119, breaks), 4);
+  assert.equal(quantileClass(0, breaks), -1);
 });

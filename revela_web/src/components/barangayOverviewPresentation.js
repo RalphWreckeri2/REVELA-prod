@@ -48,3 +48,37 @@ export function visibleRegistryDimensions(registry = {}) {
     return new Set(values.map((item) => item.value)).size > 1;
   });
 }
+
+export function quantileBreaks(values, classCount = 5) {
+  const sorted = values
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .sort((first, second) => first - second);
+  if (!sorted.length || classCount < 1) return [];
+
+  return Array.from({ length: classCount - 1 }, (_, index) => {
+    const position = ((index + 1) * (sorted.length - 1)) / classCount;
+    const lowerIndex = Math.floor(position);
+    const fraction = position - lowerIndex;
+    const upperIndex = Math.min(lowerIndex + 1, sorted.length - 1);
+    return sorted[lowerIndex] + (sorted[upperIndex] - sorted[lowerIndex]) * fraction;
+  });
+}
+
+export function quantileClass(value, breaks) {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count <= 0) return -1;
+  const index = breaks.findIndex((boundary) => count <= boundary);
+  return index === -1 ? breaks.length : index;
+}
+
+export function quantileRangeLabels(breaks) {
+  const format = (value) => Number.isInteger(value)
+    ? value.toLocaleString()
+    : value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  return breaks.map((boundary, index) => (
+    index === 0
+      ? `1–${format(boundary)}`
+      : `>${format(breaks[index - 1])}–${format(boundary)}`
+  )).concat(breaks.length ? `>${format(breaks[breaks.length - 1])}` : []);
+}
