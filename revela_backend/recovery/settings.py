@@ -52,9 +52,11 @@ def database_state_directory():
 def configuration_issues():
     backend = os.getenv("DB_BACKUP_STORAGE", "s3").strip().lower()
     required = ("BACKUP_ENVIRONMENT",
-                "BACKUP_ALERT_WEBHOOK", "BACKUP_HEARTBEAT_URL",
+                "BACKUP_ALERT_WEBHOOK",
                 "BACKUP_DB_HOST", "BACKUP_DB_PORT", "BACKUP_DB_NAME",
                 "BACKUP_DB_USER", "BACKUP_DB_PASSWORD", "DB_BACKUP_ROLE")
+    if schedule_enabled():
+        required += ("BACKUP_HEARTBEAT_URL",)
     if backend == "s3":
         required += ("BACKUP_S3_BUCKET", "AWS_REGION", "BACKUP_AWS_ACCOUNT_ID", "BACKUP_WORK_DIR")
     elif backend == "volume":
@@ -96,7 +98,10 @@ def configuration_issues():
             issues.append("BACKUP_DB_SSL_CA_FILE must identify an installed CA file")
     if backend == "s3" and os.getenv("BACKUP_WORK_DIR") and not Path(os.environ["BACKUP_WORK_DIR"]).is_dir():
         issues.append("BACKUP_WORK_DIR must be an existing private workspace")
-    for name in ("BACKUP_ALERT_WEBHOOK", "BACKUP_HEARTBEAT_URL"):
+    https_endpoints = ["BACKUP_ALERT_WEBHOOK"]
+    if schedule_enabled():
+        https_endpoints.append("BACKUP_HEARTBEAT_URL")
+    for name in https_endpoints:
         if os.getenv(name) and not os.environ[name].startswith("https://"):
             issues.append(f"{name} must use HTTPS")
     if not shutil.which(os.getenv("MYSQLDUMP_BIN", "mysqldump")):
@@ -163,7 +168,7 @@ class DatabaseSettings:
             kms_key=os.getenv("BACKUP_KMS_KEY_ARN", ""),
             mysqldump=os.getenv("MYSQLDUMP_BIN", "mysqldump"),
             alert_url=os.environ["BACKUP_ALERT_WEBHOOK"],
-            heartbeat_url=os.environ["BACKUP_HEARTBEAT_URL"],
+            heartbeat_url=os.getenv("BACKUP_HEARTBEAT_URL", ""),
             storage_backend=backend,
             volume_directory=volume,
             volume_min_free_bytes=int(os.environ.get("DB_BACKUP_MIN_FREE_BYTES", "0")),

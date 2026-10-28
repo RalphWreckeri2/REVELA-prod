@@ -112,6 +112,16 @@ cleanup switch until the following are resolved:
    Public returned HTTP 429 (`toomanyrequests: Data limit exceeded`); no image
    was deployed, published, or uploaded as an artifact.
 
+   A read-only fetch of the production MySQL image's `/var/lib/mysql/ca.pem`
+   and `server-cert.pem` showed that the CA is self-issued and the server
+   certificate has no DNS subject alternative name and does not match the
+   Railway private database hostname. This is not a completed TLS connection
+   test, but strict certificate/hostname verification cannot pass with those
+   stock certificates. Do not weaken client verification. A valid CA and
+   server certificate covering the actual database hostname are required;
+   providing them to MySQL would require a separately approved MySQL service
+   configuration/restart, or a Railway-provided verified TLS endpoint.
+
    Build after review with the verified versions:
 
    ```powershell
@@ -138,9 +148,13 @@ cleanup switch until the following are resolved:
    select a positive reserve that accommodates dump/scratch space plus the
    existing evidence; do not assume the measured free space is all available
    for backups.
-   Privately configure the least-privilege MySQL identity, CA file, and
-   HTTPS-only alert/heartbeat destinations. Re-run the read-only TLS
-   preflight in that runtime.
+   Privately configure the least-privilege MySQL identity and CA file. The
+   HTTPS `BACKUP_ALERT_WEBHOOK` is required for manual as well as scheduled
+   exports because failures must be reported (the admin inbox is also used).
+   `BACKUP_HEARTBEAT_URL` is only required when recurring scheduling is
+   enabled; it is sent for successful scheduled runs and is not required for
+   the one-time manual export. Re-run the read-only TLS preflight in that
+   runtime.
 3. **External trigger setup.** The GitHub Actions workflow and protected API
    endpoints are implemented locally, not deployed. For the future approved
    deployment, install GitHub Actions repository secrets
@@ -218,8 +232,10 @@ cleanup switch until the following are resolved:
    as-is.
 2. Set the API volume path to the observed mount, establish a conservative
    positive free-space floor, inject the dedicated backup DB account and CA,
-   and install private alert/heartbeat destinations. Do not paste these values
-   into code, logs, or chat.
+   and install the HTTPS failure-alert destination. `BACKUP_HEARTBEAT_URL`
+   remains unset for the one-time manual test; install its HTTPS destination
+   before any recurring schedule is enabled. Do not paste private values into
+   code, logs, or chat.
 3. Use Railway's deployed service console/CLI to run the read-only TLS
    preflight. Require verified certificate and hostname plus the 9.7.4 server
    version and negotiated cipher. Check status and volume preflight while the

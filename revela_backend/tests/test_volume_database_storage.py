@@ -149,6 +149,36 @@ def test_volume_backend_is_selected_without_s3_configuration(tmp_path, monkeypat
     assert isinstance(DatabaseStorage(settings), VolumeDatabaseStorage)
 
 
+def test_heartbeat_endpoint_is_required_only_for_scheduled_backups(tmp_path, monkeypatch):
+    mount = tmp_path / "existing-volume"
+    mount.mkdir()
+    values = {
+        "DB_BACKUP_STORAGE": "volume",
+        "DB_BACKUP_VOLUME_DIR": str(mount),
+        "DB_BACKUP_VOLUME_REQUIRE_MOUNT": "0",
+        "DB_BACKUP_MIN_FREE_BYTES": "1",
+        "BACKUP_ENVIRONMENT": "test",
+        "BACKUP_ALERT_WEBHOOK": "https://alerts.invalid",
+        "BACKUP_DB_HOST": "127.0.0.1",
+        "BACKUP_DB_PORT": "3306",
+        "BACKUP_DB_NAME": "fixture",
+        "BACKUP_DB_USER": "fixture-user",
+        "BACKUP_DB_PASSWORD": "synthetic-only",
+        "DB_BACKUP_ROLE": "api",
+        "MYSQLDUMP_BIN": sys.executable,
+        "DB_BACKUP_ENABLED": "1",
+        "DB_BACKUP_SCHEDULE_ENABLED": "0",
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("BACKUP_HEARTBEAT_URL", raising=False)
+    assert configuration_issues() == []
+    assert DatabaseSettings.from_env().heartbeat_url == ""
+
+    monkeypatch.setenv("DB_BACKUP_SCHEDULE_ENABLED", "1")
+    assert "Missing BACKUP_HEARTBEAT_URL" in configuration_issues()
+
+
 def test_volume_shared_status_is_atomic_and_storage_scoped(volume_storage):
     _, storage = volume_storage
     state = {"phase": "running", "running_since": status.stamp()}
