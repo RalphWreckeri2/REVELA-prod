@@ -1392,13 +1392,39 @@ export default function AnalyticsPage() {
       <div style={{ width: "100%", minWidth: 0 }}>
 
         {/* PAGE HEADER */}
-        <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 16 }}>
-          <div>
+        <div className="analytics-page-heading">
+          <div className="analytics-page-heading-copy">
             <h1 className="page-title">System Analytics</h1>
             <p className="page-subtitle" style={{ color: "var(--color-muted)" }}>
               Descriptive · Diagnostic · Prescriptive — All 16 Barangays of Mataasnakahoy
             </p>
           </div>
+
+          <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics sections">
+            {[
+              { id: "descriptive", label: "Descriptive", sub: "What is happening?", dot: "var(--color-green)" },
+              { id: "diagnostic", label: "Diagnostic", sub: "Why is it happening?", dot: "var(--color-yellow)" },
+              { id: "prescriptive", label: "Prescriptive", sub: "What should we do?", dot: "#6366f1" },
+              { id: "operations", label: "Operations", sub: "Inspector performance", dot: "var(--color-blue, #3b82f6)" }
+            ].map(tab => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`analytics-tab-btn ${isActive ? "active" : ""}`}
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <span className="analytics-tab-label">
+                    <span className="analytics-tab-dot" style={{ background: tab.dot }} aria-hidden="true" />
+                    {tab.label}
+                  </span>
+                  <span className="analytics-tab-subtitle">{tab.sub}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
         {/* Hidden trigger for automated fixture query compatibility */}
@@ -1430,32 +1456,6 @@ export default function AnalyticsPage() {
             </button>
           </div>
         )}
-
-        <nav ref={sectionNavRef} className="analytics-section-nav saas-card frosted-glass" aria-label="Analytics sections">
-          {[
-            { id: "descriptive", label: "Descriptive", sub: "What is happening?", dot: "var(--color-green)" },
-            { id: "diagnostic", label: "Diagnostic", sub: "Why is it happening?", dot: "var(--color-yellow)" },
-            { id: "prescriptive", label: "Prescriptive", sub: "What should we do?", dot: "#6366f1" },
-            { id: "operations", label: "Operations", sub: "Inspector performance", dot: "var(--color-blue, #3b82f6)" }
-          ].map(tab => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                className={`analytics-tab-btn ${isActive ? "active" : ""}`}
-                aria-current={isActive ? "page" : undefined}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span className="analytics-tab-label">
-                  <span className="analytics-tab-dot" style={{ background: tab.dot }} aria-hidden="true" />
-                  {tab.label}
-                </span>
-                <span className="analytics-tab-subtitle">{tab.sub}</span>
-              </button>
-            );
-          })}
-        </nav>
 
         {/* ANALYTICS FILTERS PORTAL MODAL */}
         {typeof document !== "undefined" && createPortal(

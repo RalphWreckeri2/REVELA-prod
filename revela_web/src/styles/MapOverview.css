@@ -162,8 +162,8 @@
 
 .map-overview-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
+  gap: 20px;
   align-items: stretch;
   min-width: 0;
 }
@@ -180,7 +180,7 @@
   border: 1px solid var(--color-border);
   border-radius: 12px;
   background: #fff;
-  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.045);
+  box-shadow: none;
 }
 
 .map-overview-map-card {
@@ -189,6 +189,21 @@
   min-height: 520px;
   height: 100%;
   flex-direction: column;
+}
+
+.map-overview-map-toolbar {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.map-overview-select-label--toolbar {
+  min-width: min(220px, 100%);
+  margin-left: auto;
+}
+
+.map-overview-select-label--toolbar select {
+  min-width: 190px;
 }
 
 .map-overview-segmented,
@@ -273,13 +288,14 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 12px;
-  margin: 14px 0;
-  padding: 14px 16px;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  background: #f8fafc;
-  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  gap: 10px;
+  margin: 12px 0 4px;
+  padding: 12px 4px 8px;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: #334155;
   font-size: 14px;
   line-height: 1.4;
@@ -407,7 +423,15 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 6px 0 14px;
+  border: 0;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
+
+.map-overview-detail-card:last-child { border-bottom: 0; }
 
 .map-overview-choice-row button {
   flex: 0 1 auto;
@@ -525,6 +549,16 @@
   .map-overview-map-card,
   .map-overview-detail-card {
     padding: 12px;
+  }
+
+  .map-overview-detail-card {
+    padding: 12px 0;
+  }
+
+  .map-overview-map-toolbar { align-items: stretch; }
+  .map-overview-select-label--toolbar {
+    width: 100%;
+    margin-left: 0;
   }
 
   .map-overview-canvas,

@@ -594,7 +594,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
 
       <div className="map-overview-layout">
         <section className="map-overview-map-card" aria-label="Barangay map">
-          <div className="map-overview-map-heading">
+          <div className="map-overview-map-heading map-overview-map-toolbar">
             <div className="map-overview-segmented" role="group" aria-label="Map color">
               <button type="button" className={mapView === "registered" ? "active" : ""}
                 aria-pressed={mapView === "registered"} onClick={() => setMapView("registered")}>
@@ -608,6 +608,15 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
                 Hotspots · Coming soon
               </button>
             </div>
+            <label className="map-overview-select-label map-overview-select-label--toolbar">
+              <span>Choose a barangay</span>
+              <select value={selectedBarangayId ?? ""} onChange={selectFromList}>
+                <option value="">All barangays</option>
+                {barangayRows.map((row) => (
+                  <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
+                ))}
+              </select>
+            </label>
           </div>
           {loadError ? (
             <div className="map-overview-map-message" role="alert">The map could not be loaded.</div>
@@ -664,15 +673,6 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               <i /> {mapView === "inspections" ? "No inspections yet" : "No registered businesses"}
             </span>
           </div>
-          <label className="map-overview-select-label">
-            <span>Choose a barangay</span>
-            <select value={selectedBarangayId ?? ""} onChange={selectFromList}>
-              <option value="">All barangays</option>
-              {barangayRows.map((row) => (
-                <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
-              ))}
-            </select>
-          </label>
           <p className="map-overview-map-hint">
             Zoom in or use the list below to pick small barangays.
           </p>

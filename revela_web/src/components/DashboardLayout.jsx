@@ -564,19 +564,31 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
   return (
     <header className="top-navbar frosted-glass">
       <div className="top-nav-right">
-        <div className="app-refresh-controls" role="group" aria-label="Application data refresh">
+        <div className="app-refresh-controls" role="group" aria-label="Data synchronization">
+          <button className={`app-sync-now${["failure", "partial-failure"].includes(refreshState?.status) ? " app-sync-now--error" : ""}`}
+            type="button" onClick={handleGlobalSync} disabled={isSyncing}
+            aria-busy={isSyncing} aria-label={isSyncing ? "Syncing application data" : "Sync application data now"}
+            title="Sync application data now">
+            <svg className={isSyncing ? "spin-icon" : ""} viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
+            </svg>
+            <span>{isSyncing ? "Syncing…" : "Sync now"}</span>
+          </button>
           <details className={`app-refresh-details${["failure", "partial-failure"].includes(refreshState?.status) ? " app-refresh-details--error" : ""}${isSyncing ? " app-refresh-details--loading" : ""}`} ref={refreshDetailsRef} onKeyDown={event => {
             if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); }
           }}>
-            <summary aria-label={`Sync. ${refreshStatus}. Open refresh details`} title={`Sync · ${refreshStatus}`}>
-              <svg className={isSyncing ? "spin-icon" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
+            <summary aria-label={`Automatic refresh settings. ${refreshStatus}`} title="Automatic refresh settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 7v5l3 2" />
               </svg>
-              <span>Sync</span>
             </summary>
             <div className="app-refresh-popover">
-              <strong>Data refresh</strong>
-              <label htmlFor="app-refresh-mode">Auto-refresh mode</label>
+              <strong>Automatic refresh</strong>
+              <label htmlFor="app-refresh-mode">Refresh frequency</label>
               <select id="app-refresh-mode" value={refreshState?.mode ?? "medium"}
                 onChange={event => appRefresh?.setMode(event.target.value)}>
                 {Object.entries(REFRESH_MODES).map(([name, ms]) =>
@@ -586,25 +598,22 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
               <p role="status" aria-live="polite">{refreshStatus}</p>
               {!refreshStatus.startsWith("Next refresh in") && <p>Next refresh: {countdown}</p>}
               {refreshState?.errors?.length > 0 && <div className="app-refresh-errors" role="alert">{refreshState.errors.map((error, index) => <p key={index}>{error}</p>)}</div>}
-              <button className="app-refresh-now" type="button" onClick={handleGlobalSync} disabled={isSyncing}>Refresh now</button>
             </div>
           </details>
-          <button className="quick-refresh-icon-btn" type="button" aria-label="Refresh Data" title="Refresh data now" onClick={handleGlobalSync} disabled={isSyncing}>
-            <svg className={isSyncing ? "spin-icon" : ""} viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-            </svg>
-          </button>
         </div>
 
         <span className="top-nav-separator" aria-hidden="true" />
 
-        <div className="top-nav-account">
+        <div className="top-nav-account" role="group" aria-label="Account and notifications">
         <div className="notification-wrapper" style={{ position: "relative" }}>
           <button
             ref={notificationButtonRef}
             className="icon-btn"
             type="button"
-            aria-label="Notifications"
+            aria-label={unreadCount > 0
+              ? `Notifications, ${unreadCount} unread`
+              : "Notifications"}
+            title={unreadCount > 0 ? `${unreadCount} unread notifications` : "Notifications"}
             aria-expanded={showNotifications}
             aria-controls="notification-panel"
             onClick={toggleNotifications}
@@ -762,19 +771,22 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           className="nav-profile"
           type="button"
           onClick={onProfileClick}
-          aria-label={`Account: ${user.name}. Open profile`}
+          aria-label={`Open profile for ${user.name}`}
+          title="View profile"
         >
           <div className="nav-avatar">{user.initials}</div>
           <div className="nav-user-info">
             <span className="user-name">{user.name}</span>
+            <span className="nav-account-caption">Account</span>
           </div>
           <span className="nav-profile-chevron" aria-hidden="true">⌄</span>
         </button>
-        <button className="nav-logout" type="button" onClick={onLogout} disabled={logoutPending} aria-busy={logoutPending}>
+        <button className="nav-logout" type="button" onClick={onLogout} disabled={logoutPending}
+          aria-busy={logoutPending} aria-label="Log out" title="Sign out of REVELA">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" />
           </svg>
-          Logout
+          <span>Logout</span>
         </button>
         </div>
       </div>
