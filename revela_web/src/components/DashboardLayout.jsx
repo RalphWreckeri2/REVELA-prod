@@ -296,7 +296,7 @@ function formatTimeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
-function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick, onLogout, logoutPending }) {
+function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick }) {
   const { token, user: authUser, refreshUser } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
   const notificationButtonRef = useRef(null);
@@ -781,13 +781,6 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           </div>
           <span className="nav-profile-chevron" aria-hidden="true">⌄</span>
         </button>
-        <button className="nav-logout" type="button" onClick={onLogout} disabled={logoutPending}
-          aria-busy={logoutPending} aria-label="Log out" title="Sign out of REVELA">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" />
-          </svg>
-          <span>Logout</span>
-        </button>
         </div>
       </div>
     </header>
@@ -808,6 +801,8 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
   const [showAboutModal, setShowAboutModal] = useState(false);
   const [logoutPending, setLogoutPending] = useState(false);
   const logoutPendingRef = useRef(false);
+  const openProfileModal = useCallback(() => setShowProfileModal(true), []);
+  const closeProfileModal = useCallback(() => setShowProfileModal(false), []);
   const navigate = useNavigate();
   const { user: authUser, logout } = useAuth();
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(authUser?.role);
@@ -833,6 +828,7 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
       });
       if (!result.isConfirmed) return;
       setLogoutPending(true);
+      setShowProfileModal(false);
       if (typeof onLogout === "function") {
         await onLogout();
       } else {
@@ -890,7 +886,7 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
 
       <div className="saas-main">
         <div className="ambient-bg-mesh" />
-        <TopNavbar user={displayUser} onProfileClick={() => setShowProfileModal(true)} onLogout={handleLogout} logoutPending={logoutPending} />
+        <TopNavbar user={displayUser} onProfileClick={openProfileModal} />
 
         {/* Each page owns its .saas-content padding via this wrapper */}
         <main className="saas-content">
@@ -899,7 +895,13 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
         {bottomBar}
       </div>
 
-      {showProfileModal && <ProfileModal onClose={() => setShowProfileModal(false)} />}
+      {showProfileModal && (
+        <ProfileModal
+          onClose={closeProfileModal}
+          onLogout={handleLogout}
+          logoutPending={logoutPending}
+        />
+      )}
       {showAboutModal && <AboutCreditsModal onClose={() => setShowAboutModal(false)} />}
     </div>
   );
