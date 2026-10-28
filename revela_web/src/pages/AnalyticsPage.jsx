@@ -38,6 +38,12 @@ import {
 } from "../services/api";
 
 const EMPTY_FILTER_BARANGAYS = Object.freeze([]);
+const ANALYTICS_TABS = [
+  { id: "descriptive", label: "Overview", dot: "var(--color-green)" },
+  { id: "diagnostic", label: "Why it happens", dot: "var(--color-yellow)" },
+  { id: "prescriptive", label: "Recommendations", dot: "#6366f1" },
+  { id: "operations", label: "Inspector activity", dot: "var(--color-blue, #3b82f6)" },
+];
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
 const COLOR = {
   green: "#10b981", // elegant emerald
@@ -1073,17 +1079,13 @@ export default function AnalyticsPage() {
       <div className="analytics-tools">
         {showFloatingNav && !snapshotIsExpired && (
           <nav className="analytics-quick-nav" aria-label="Analytics quick navigation">
-            {[
-              { id: "descriptive", label: "Descriptive" },
-              { id: "diagnostic", label: "Diagnostic" },
-              { id: "prescriptive", label: "Prescriptive" },
-              { id: "operations", label: "Operations" },
-            ].map(tab => (
+            {ANALYTICS_TABS.map(tab => (
               <button
                 key={tab.id}
                 type="button"
                 className={`analytics-quick-nav-btn${activeTab === tab.id ? " active" : ""}`}
                 aria-pressed={activeTab === tab.id}
+                aria-current={activeTab === tab.id ? "page" : undefined}
                 onClick={() => setActiveTab(tab.id)}
               >
                 {tab.label}
@@ -1396,17 +1398,12 @@ export default function AnalyticsPage() {
           <div className="analytics-page-heading-copy">
             <h1 className="page-title">System Analytics</h1>
             <p className="page-subtitle" style={{ color: "var(--color-muted)" }}>
-              Descriptive · Diagnostic · Prescriptive — All 16 Barangays of Mataasnakahoy
+              Business and inspection insights across Mataasnakahoy
             </p>
           </div>
 
           <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics sections">
-            {[
-              { id: "descriptive", label: "Descriptive", sub: "What is happening?", dot: "var(--color-green)" },
-              { id: "diagnostic", label: "Diagnostic", sub: "Why is it happening?", dot: "var(--color-yellow)" },
-              { id: "prescriptive", label: "Prescriptive", sub: "What should we do?", dot: "#6366f1" },
-              { id: "operations", label: "Operations", sub: "Inspector performance", dot: "var(--color-blue, #3b82f6)" }
-            ].map(tab => {
+            {ANALYTICS_TABS.map(tab => {
               const isActive = activeTab === tab.id;
               return (
                 <button
@@ -1420,7 +1417,6 @@ export default function AnalyticsPage() {
                     <span className="analytics-tab-dot" style={{ background: tab.dot }} aria-hidden="true" />
                     {tab.label}
                   </span>
-                  <span className="analytics-tab-subtitle">{tab.sub}</span>
                 </button>
               );
             })}
@@ -1885,7 +1881,6 @@ export default function AnalyticsPage() {
               <MapOverview
                 token={token}
                 filters={appliedFilters}
-                onOpenAdvancedFilters={() => setShowFilters(true)}
               />
             </Suspense>
             {mapOverviewExpanded && (
@@ -1920,7 +1915,6 @@ export default function AnalyticsPage() {
                     <MapOverview
                       token={token}
                       filters={appliedFilters}
-                      onOpenAdvancedFilters={() => setShowFilters(true)}
                     />
                   </Suspense>
                 )}

@@ -163,10 +163,11 @@ function useBarangayOverview(token, filters, datePreset) {
   };
 }
 
-export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
+export default function MapOverview({ token, filters }) {
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
   const [selectedBarangayId, setSelectedBarangayId] = useState(null);
+  const [legendOpen, setLegendOpen] = useState(false);
   const [hoveredBarangayId, setHoveredBarangayId] = useState(null);
   const [activeDimension, setActiveDimension] = useState("business_size");
   const [pinView, setPinView] = useState("all");
@@ -542,29 +543,17 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   return (
     <div className="map-overview">
       <div className="map-overview-controls">
-        <div className="map-overview-topbar" aria-label="Barangay totals">
-          <span className="map-overview-current-selection">
-            {selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"}
-          </span>
-          <div className="map-overview-total">
-            <strong>{topTotals.registered.toLocaleString()}</strong>
-            <span>Registered businesses</span>
-          </div>
-          <div className="map-overview-total">
-            <strong>{topTotals.notInRegistry.toLocaleString()}</strong>
-            <span>Found on the map, not in registry</span>
-          </div>
-          <div className="map-overview-total">
-            <strong>{topTotals.beingInspected.toLocaleString()}</strong>
-            <span>Being inspected</span>
-          </div>
-        </div>
+        <label className="map-overview-select-label map-overview-select-label--filter">
+          <span>Barangay</span>
+          <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
+            <option value="">All barangays</option>
+            {barangayRows.map((row) => (
+              <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
+            ))}
+          </select>
+        </label>
         <label className="map-overview-date-label" title="Choose the date range">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="5" width="18" height="16" rx="2" />
-            <path d="M16 3v4M8 3v4M3 11h18" />
-          </svg>
+          <span>Date range</span>
           <select aria-label="Date range" title="Choose the date range"
             value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
             <option value="all">All time</option>
@@ -573,20 +562,21 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
             <option value="7days">Last 7 days</option>
           </select>
         </label>
-        <button className="map-overview-filter-button" type="button"
-          onClick={onOpenAdvancedFilters}
-          aria-label="Advanced filters"
-          aria-haspopup="dialog"
-          aria-controls="analytics-filter-panel"
-          title="Advanced filters">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M4 5h16M7 12h10m-7 7h4" />
-            <circle cx="8" cy="5" r="1.5" fill="currentColor" />
-            <circle cx="15" cy="12" r="1.5" fill="currentColor" />
-            <circle cx="10" cy="19" r="1.5" fill="currentColor" />
-          </svg>
-        </button>
+      </div>
+
+      <div className="map-overview-topbar" aria-label={`${selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"} totals`}>
+        <div className="map-overview-total">
+          <strong>{topTotals.registered.toLocaleString()}</strong>
+          <span>Registered businesses</span>
+        </div>
+        <div className="map-overview-total">
+          <strong>{topTotals.notInRegistry.toLocaleString()}</strong>
+          <span>Found on the map, not in registry</span>
+        </div>
+        <div className="map-overview-total">
+          <strong>{topTotals.beingInspected.toLocaleString()}</strong>
+          <span>Being inspected</span>
+        </div>
       </div>
 
       {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
@@ -608,15 +598,6 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
                 Hotspots · Coming soon
               </button>
             </div>
-            <label className="map-overview-select-label map-overview-select-label--toolbar">
-              <span>Choose a barangay</span>
-              <select value={selectedBarangayId ?? ""} onChange={selectFromList}>
-                <option value="">All barangays</option>
-                {barangayRows.map((row) => (
-                  <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
-                ))}
-              </select>
-            </label>
           </div>
           {loadError ? (
             <div className="map-overview-map-message" role="alert">The map could not be loaded.</div>
@@ -654,24 +635,39 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               Barangay boundaries could not be displayed.
             </p>
           )}
-          <div className="map-overview-map-legend" role="group"
-            aria-label={mapView === "inspections"
-              ? "Inspections per barangay map legend"
-              : "Businesses per barangay map legend"}>
-            <span className="map-overview-legend-title">
-              {mapView === "inspections" ? "Inspections per barangay" : "Businesses per barangay"}
-            </span>
-            <div className="map-overview-legend-ranges">
-              {mapRangeLabels.map((label, index) => (
-                <span key={label}>
-                  <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
-                  {label}
+          <div className="map-overview-legend-control">
+            <button type="button" className="map-overview-legend-toggle"
+              aria-label={legendOpen ? "Close map legend" : "Open map legend"}
+              aria-expanded={legendOpen} aria-controls="map-overview-legend"
+              title={legendOpen ? "Close map legend" : "Map legend"}
+              onClick={() => setLegendOpen((open) => !open)}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 4h16v16H4z" />
+                <path d="M4 9h16M9 9v11" />
+              </svg>
+            </button>
+            {legendOpen && (
+              <div id="map-overview-legend" className="map-overview-map-legend" role="group"
+                aria-label={mapView === "inspections"
+                  ? "Inspections per barangay map legend"
+                  : "Businesses per barangay map legend"}>
+                <span className="map-overview-legend-title">
+                  {mapView === "inspections" ? "Inspections per barangay" : "Businesses per barangay"}
                 </span>
-              ))}
-            </div>
-            <span className="map-overview-legend-empty">
-              <i /> {mapView === "inspections" ? "No inspections yet" : "No registered businesses"}
-            </span>
+                <div className="map-overview-legend-ranges">
+                  {mapRangeLabels.map((label, index) => (
+                    <span key={label}>
+                      <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
+                      {label}
+                    </span>
+                  ))}
+                </div>
+                <span className="map-overview-legend-empty">
+                  <i /> {mapView === "inspections" ? "No inspections yet" : "No registered businesses"}
+                </span>
+              </div>
+            )}
           </div>
           <p className="map-overview-map-hint">
             Zoom in or use the list below to pick small barangays.
