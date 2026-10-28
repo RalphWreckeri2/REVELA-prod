@@ -1532,7 +1532,7 @@ function MapCanvas({
       return {
         fillColor: "#1f7a1f",
         fillOpacity: 0.1,
-        strokeColor: isDark ? "#4ade80" : "#15803d",
+        strokeColor: isDark ? "#86efac" : "#15803d",
         strokeWeight: 2,
         visible: true,
       };
@@ -1567,8 +1567,8 @@ function MapCanvas({
         const path = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
         const poly = new window.google.maps.Polygon({
           paths: path,
-          strokeColor: isDark ? "#bbf7d0" : "#14532d",
-          strokeWeight: 4,
+          strokeColor: isDark ? "#fcd34d" : "#14532d",
+          strokeWeight: 5,
           strokeOpacity: 1,
           fillColor: isDark ? "#14532d" : "#166534",
           fillOpacity: 0,

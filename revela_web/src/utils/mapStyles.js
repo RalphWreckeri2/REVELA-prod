@@ -10,14 +10,14 @@ export const REVELA_MAP_ID = "34390388b3abb63aa84876a7";
 
 /** Dark styled-map array applied when the app theme is dark. */
 export const darkMapStyle = [
-  { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
+  { elementType: "geometry", stylers: [{ color: "#1e293b" }] },
   { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
   { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
   { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
   { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
   { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#263c3f" }] },
   { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#6b9a76" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#334155" }] },
   { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
   { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
   { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#746855" }] },

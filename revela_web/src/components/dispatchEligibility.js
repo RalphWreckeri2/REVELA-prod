@@ -39,6 +39,15 @@ export function normalizeDispatchColor(rawColor) {
   return KNOWN_FLAG_COLORS.has(color) ? color : "Unknown";
 }
 
+export function activeInspectorsForDispatch(list) {
+  return (Array.isArray(list) ? list : []).filter(
+    (u) =>
+      u?.isActive !== 0 &&
+      u?.isActive !== false &&
+      u?.userRole === "Inspector",
+  );
+}
+
 export function canDispatchFlag(flag, { isAdmin } = {}) {
   if (!isAdmin) return false;
   if (NON_DISPATCHABLE_FLAG_COLORS.includes(flag?.color)) {
