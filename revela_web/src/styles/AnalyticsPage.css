@@ -12,6 +12,27 @@
 .analytics-page .saas-content section,
 .analytics-page .responsive-chart { min-width: 0; }
 
+.analytics-page .saas-content .frosted-glass,
+.analytics-page .saas-content .analytics-feature-card,
+.analytics-page .saas-content .kpi-card {
+  border: 1px solid var(--color-border);
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.045);
+}
+
+.analytics-page .saas-content .frosted-glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html.theme-dark .analytics-page .saas-content .frosted-glass,
+html.theme-dark .analytics-page .saas-content .analytics-feature-card,
+html.theme-dark .analytics-page .saas-content .kpi-card {
+  border-color: var(--color-border);
+  background: var(--color-modal-bg);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.18);
+}
+
 .analytics-section-nav {
   display: flex;
   flex-wrap: wrap;

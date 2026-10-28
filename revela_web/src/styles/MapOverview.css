@@ -61,7 +61,6 @@
   line-height: 1.25;
 }
 
-.map-overview-controls label,
 .map-overview-select-label {
   display: flex;
   flex-direction: column;
@@ -69,6 +68,24 @@
   color: var(--color-muted);
   font-size: 12px;
   font-weight: 650;
+}
+
+.map-overview-date-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface, #fff);
+  color: var(--color-muted);
+}
+
+.map-overview-date-label svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 
 .map-overview select {
@@ -81,25 +98,31 @@
   font: inherit;
 }
 
-.map-overview-advanced {
-  position: relative;
+.map-overview-date-label select {
+  min-width: 142px;
+  padding: 8px 28px 8px 4px;
+  border: 0;
+  background: transparent;
 }
 
-.map-overview-advanced summary {
+.map-overview-date-label select:focus-visible,
+.map-overview-filter-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.map-overview-filter-button {
   display: flex;
   align-items: center;
+  justify-content: center;
+  width: 44px;
   min-height: 44px;
-  padding: 0 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 650;
-  list-style-position: inside;
+  padding: 8px !important;
 }
 
-.map-overview-advanced button {
-  margin-top: 6px;
+.map-overview-filter-button svg {
+  width: 20px;
+  height: 20px;
 }
 
 .map-overview button {
@@ -156,7 +179,8 @@
   padding: 16px;
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  background: var(--color-surface, #fff);
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(15, 23, 42, 0.045);
 }
 
 .map-overview-map-card {
@@ -249,45 +273,59 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  margin: 12px 0;
-  color: var(--color-muted);
-  font-size: 11px;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 14px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  color: #334155;
+  font-size: 14px;
+  line-height: 1.4;
 }
 
 .map-overview-legend-title {
-  color: var(--color-ink);
-  font-weight: 700;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 750;
 }
 
 .map-overview-legend-ranges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 12px;
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 112px), 1fr));
+  gap: 10px;
 }
 
 .map-overview-legend-ranges span,
 .map-overview-legend-empty {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  min-width: 0;
+  gap: 9px;
+  font-weight: 650;
 }
 
 .map-overview-legend-ranges i {
-  width: 14px;
-  height: 14px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border: 1px solid rgba(15, 23, 42, 0.3);
+  border-radius: 4px;
 }
 
 .map-overview-legend-empty {
-  margin-top: 2px;
+  gap: 9px;
+  color: #1e293b;
 }
 
 .map-overview-legend-empty i {
-  width: 11px;
-  height: 11px;
-  border-radius: 3px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border: 1px solid #64748b;
+  border-radius: 4px;
   background: #cbd5e1;
 }
 
@@ -499,8 +537,27 @@
     align-items: stretch;
   }
 
-  .map-overview-controls label,
-  .map-overview-controls select {
+  .map-overview-date-label {
     width: 100%;
   }
+
+  .map-overview-date-label select { width: 100%; }
+}
+
+html.theme-dark .map-overview-map-card,
+html.theme-dark .map-overview-detail-card,
+html.theme-dark .map-overview-total {
+  background: var(--color-modal-bg);
+}
+
+html.theme-dark .map-overview-map-legend {
+  border-color: #475569;
+  background: #1e293b;
+  color: #e2e8f0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+html.theme-dark .map-overview-legend-title,
+html.theme-dark .map-overview-legend-empty {
+  color: #f8fafc;
 }

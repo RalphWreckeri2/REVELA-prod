@@ -702,7 +702,6 @@ export default function AnalyticsPage() {
   const expiredSection = Object.values(sections).find(section => section.status === "expired");
   const snapshotIsExpired = Boolean(expiredSection);
   const cacheMetadata = expiredSection?.metadata ?? currentSection.metadata;
-  const isRefreshing = Object.values(sections).some((section) => section.updating);
   const backgroundRefreshing = currentSection.updating;
   const [showFilters, setShowFilters] = useState(false);
   const [mapOverviewExpanded, setMapOverviewExpanded] = useState(false);
@@ -1399,41 +1398,6 @@ export default function AnalyticsPage() {
             <p className="page-subtitle" style={{ color: "var(--color-muted)" }}>
               Descriptive · Diagnostic · Prescriptive — All 16 Barangays of Mataasnakahoy
             </p>
-          </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              className={`analytics-filter-btn${activeFilterCount > 0 ? " has-filters" : ""}`}
-              onClick={() => setShowFilters(true)}
-              aria-expanded={showFilters}
-              aria-haspopup="dialog"
-              aria-controls="analytics-filter-panel"
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
-              <span>Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</span>
-            </button>
-            <button
-              className="quick-refresh-btn"
-              type="button"
-              onClick={() => fetchAnalytics(false)}
-              disabled={isRefreshing || backgroundRefreshing}
-              title="Refresh analytics data"
-            >
-              <svg
-                className={isRefreshing || backgroundRefreshing ? "spin-icon" : ""}
-                viewBox="0 0 24 24"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-              </svg>
-              <span>{isRefreshing || backgroundRefreshing ? "Syncing…" : "Refresh"}</span>
-            </button>
           </div>
         </div>
 

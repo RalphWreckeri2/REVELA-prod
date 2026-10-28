@@ -23,6 +23,9 @@ import {
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+const MAP_MIN_ZOOM = 12;
+const MAP_MAX_ZOOM = 20;
+const MAP_BOUNDS_PADDING_RATIO = 0.5;
 const MAX_SELECTED_BARANGAY_ZOOM = 16;
 const CHOROPLETH_COLORS = {
   registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
@@ -56,6 +59,29 @@ function shortBarangay(name = "") {
 
 function totalOf(rows = []) {
   return rows.reduce((total, row) => total + Number(row.count || 0), 0);
+}
+
+function getMunicipalityRestriction(features) {
+  const bounds = new window.google.maps.LatLngBounds();
+  features.forEach((feature) => {
+    feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
+  });
+  if (bounds.isEmpty()) return null;
+
+  const southWest = bounds.getSouthWest();
+  const northEast = bounds.getNorthEast();
+  const latitudePadding = (northEast.lat() - southWest.lat()) * MAP_BOUNDS_PADDING_RATIO;
+  const longitudePadding = (northEast.lng() - southWest.lng()) * MAP_BOUNDS_PADDING_RATIO;
+  return new window.google.maps.LatLngBounds(
+    new window.google.maps.LatLng(
+      southWest.lat() - latitudePadding,
+      southWest.lng() - longitudePadding,
+    ),
+    new window.google.maps.LatLng(
+      northEast.lat() + latitudePadding,
+      northEast.lng() + longitudePadding,
+    ),
+  ).toJSON();
 }
 
 function CountsBar({ rows, emptyMessage }) {
@@ -149,6 +175,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
   const hoverInfoWindowRef = useRef(null);
   const styleFeatureRef = useRef(null);
   const mapRef = useRef(null);
+  const municipalityRestrictionRef = useRef(null);
   const boundaryFeaturesRef = useRef([]);
   const sourceGeoJsonFeaturesRef = useRef([]);
   const labelMarkersRef = useRef([]);
@@ -331,6 +358,16 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
+    if (municipalityRestrictionRef.current) {
+      map.setOptions({
+        minZoom: MAP_MIN_ZOOM,
+        maxZoom: MAP_MAX_ZOOM,
+        restriction: {
+          latLngBounds: municipalityRestrictionRef.current,
+          strictBounds: true,
+        },
+      });
+    }
     hoverInfoWindowRef.current = new window.google.maps.InfoWindow();
     if (boundaryFeaturesRef.current.length) {
       addBarangayLabels(
@@ -378,6 +415,17 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
         const features = dataLayer.addGeoJson(normalizedGeoJson);
         if (features.length !== 16) throw new Error("Expected all barangay boundaries.");
         boundaryFeaturesRef.current = features;
+        municipalityRestrictionRef.current = getMunicipalityRestriction(features);
+        if (municipalityRestrictionRef.current) {
+          mapRef.current?.setOptions({
+            minZoom: MAP_MIN_ZOOM,
+            maxZoom: MAP_MAX_ZOOM,
+            restriction: {
+              latLngBounds: municipalityRestrictionRef.current,
+              strictBounds: true,
+            },
+          });
+        }
         sourceGeoJsonFeaturesRef.current = normalizedGeoJson.features;
         dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
         addBarangayLabels(features, normalizedGeoJson.features);
@@ -391,6 +439,7 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
     labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     boundaryFeaturesRef.current = [];
+    municipalityRestrictionRef.current = null;
     sourceGeoJsonFeaturesRef.current = [];
     lastFitSignatureRef.current = "";
     dataLayerRef.current = null;
@@ -510,19 +559,34 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
             <span>Being inspected</span>
           </div>
         </div>
-        <label>
-          <span>Date range</span>
-          <select value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
+        <label className="map-overview-date-label" title="Choose the date range">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="16" rx="2" />
+            <path d="M16 3v4M8 3v4M3 11h18" />
+          </svg>
+          <select aria-label="Date range" title="Choose the date range"
+            value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
             <option value="all">All time</option>
             <option value="year">This year</option>
             <option value="30days">Last 30 days</option>
             <option value="7days">Last 7 days</option>
           </select>
         </label>
-        <details className="map-overview-advanced">
-          <summary>Advanced filters</summary>
-          <button type="button" onClick={onOpenAdvancedFilters}>Open filters</button>
-        </details>
+        <button className="map-overview-filter-button" type="button"
+          onClick={onOpenAdvancedFilters}
+          aria-label="Advanced filters"
+          aria-haspopup="dialog"
+          aria-controls="analytics-filter-panel"
+          title="Advanced filters">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 5h16M7 12h10m-7 7h4" />
+            <circle cx="8" cy="5" r="1.5" fill="currentColor" />
+            <circle cx="15" cy="12" r="1.5" fill="currentColor" />
+            <circle cx="10" cy="19" r="1.5" fill="currentColor" />
+          </svg>
+        </button>
       </div>
 
       {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
@@ -563,6 +627,8 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
                 streetViewControl: false,
                 fullscreenControl: true,
                 zoomControl: true,
+                minZoom: MAP_MIN_ZOOM,
+                maxZoom: MAP_MAX_ZOOM,
               }}
             >
               <Data
@@ -579,7 +645,10 @@ export default function MapOverview({ token, filters, onOpenAdvancedFilters }) {
               Barangay boundaries could not be displayed.
             </p>
           )}
-          <div className="map-overview-map-legend">
+          <div className="map-overview-map-legend" role="group"
+            aria-label={mapView === "inspections"
+              ? "Inspections per barangay map legend"
+              : "Businesses per barangay map legend"}>
             <span className="map-overview-legend-title">
               {mapView === "inspections" ? "Inspections per barangay" : "Businesses per barangay"}
             </span>
