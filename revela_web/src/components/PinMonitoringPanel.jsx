@@ -1,5 +1,6 @@
 import { useState } from "react";
 import NonRegistryPinMonitoring from "./NonRegistryPinMonitoring";
+import AnalyticsInfoTip from "./AnalyticsInfoTip";
 
 const TABS = [
   { id: "unlinked", label: "Non-registry pins", membership: "unlinked" },
@@ -14,7 +15,6 @@ export default function PinMonitoringPanel({ nonRegistry, registryLinked, refres
       <summary>
         <span>
           <strong>Pin monitoring</strong>
-          <small>Map pins are a separate unit from inspection reports and registry businesses.</small>
         </span>
         <span className="pin-monitoring-summary-hint">Open panel</span>
       </summary>
@@ -34,9 +34,11 @@ export default function PinMonitoringPanel({ nonRegistry, registryLinked, refres
           <NonRegistryPinMonitoring embedded membership={current.membership} refreshing={refreshing}
             snapshot={current.membership === "linked" ? registryLinked : nonRegistry} />
         </div>
-        <p className="pin-monitoring-note">
-          This panel never adds pin counts to the registry or inspection-report charts. Non-registry membership follows the Map rules; a pin outside the imported registry is not automatically non-compliant.
-        </p>
+        <div className="pin-monitoring-note">
+          <AnalyticsInfoTip label="About pin monitoring">
+            Pin counts are separate from registry businesses and inspection reports. Non-registry membership follows the Map rules; a pin outside the imported registry is not automatically non-compliant.
+          </AnalyticsInfoTip>
+        </div>
       </div>
     </details>
   );

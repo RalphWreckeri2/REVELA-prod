@@ -4,8 +4,8 @@ import { useSearchParams } from "react-router-dom";
 import { analyticsRoute } from "./analyticsNavigation";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  PieChart, Pie, Cell, RadarChart, Radar, PolarGrid,
-  PolarAngleAxis, PolarRadiusAxis, LabelList, AreaChart, Area,
+  Cell, RadarChart, Radar, PolarGrid,
+  PolarAngleAxis, PolarRadiusAxis, LabelList,
   ScatterChart, Scatter, ZAxis, ReferenceLine
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
@@ -14,7 +14,13 @@ import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
 import PinMonitoringPanel from "../components/PinMonitoringPanel";
 import StackedBarangayChart from "../components/StackedBarangayChart";
+import AnalyticsInfoTip from "../components/AnalyticsInfoTip";
 import ResponsiveChart from "../components/ResponsiveChart";
+import {
+  completeInspectionTimeline,
+  groupInspectionStatuses,
+  pivotCategoryCounts,
+} from "../components/analyticsPresentation";
 import { formatScanHistoryTimestamp } from "../components/scanHistory";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useSessionDataset } from "../components/useAppDataRefresh";
@@ -46,15 +52,6 @@ const COLOR = {
   blueLight: "rgba(59, 130, 246, 0.15)",
 };
 
-const FLAG_COLORS = {
-  Green: COLOR.green,
-  Red: COLOR.red,
-  Yellow: COLOR.yellow,
-  Black: COLOR.slate,
-  Orange: COLOR.orange,
-  Purple: COLOR.purple,
-};
-
 // Descriptive status stacks use fixed permit/report colors, deliberately not
 // the Map flag palette. Labels call these "Permit status" and "Current report
 // status" so a purple Closed permit is never read as a purple Map flag.
@@ -67,13 +64,24 @@ const REGISTRY_STATUS_STACKS = [
 ];
 
 const INSPECTION_STATUS_STACKS = [
-  { key: "assigned", label: "Assigned", color: "#f97316" },
-  { key: "reassigned", label: "Reassigned", color: "#64748b" },
-  { key: "in_progress", label: "In Progress", color: "#f59e0b" },
-  { key: "submitted", label: "Submitted", color: "#3b82f6" },
+  { key: "pending", label: "Pending", color: "#f97316" },
+  { key: "awaiting_review", label: "Awaiting review", color: "#3b82f6" },
   { key: "verified", label: "Verified", color: "#10b981" },
-  { key: "unassigned", label: "Unassigned", color: "#94a3b8" },
 ];
+
+const OUTCOME_STACKS = [
+  { key: "Green", label: "Green", color: COLOR.green },
+  { key: "Yellow", label: "Yellow", color: COLOR.yellow },
+  { key: "Red", label: "Red", color: COLOR.red },
+];
+
+const BUSINESS_SIZE_COLORS = {
+  Micro: "#3b82f6",
+  Small: "#14b8a6",
+  Medium: "#8b5cf6",
+  Large: "#f59e0b",
+  Unknown: "#64748b",
+};
 
 // ── Detection scan outcomes ───────────────────────────────────────────────────
 // `completed_with_gaps` processed every cell and recorded bounded saturated
@@ -211,7 +219,7 @@ const ProfileTable = ({ title, rows, empty = "No data" }) => {
     <div className="analytics-profile-table-wrap">
       <h5>{title}</h5>
       {rows.length === 0 ? <p className="analytics-stacked-footnote">{empty}</p> : (
-        <div className="analytics-profile-table-scroll">
+        <div className="analytics-profile-table-frame">
           <table className="analytics-profile-table">
             <caption className="analytics-sr-only">{title} distribution</caption>
             <thead><tr><th scope="col">Profile</th><th scope="col">Count</th><th scope="col">Share</th></tr></thead>
@@ -279,224 +287,6 @@ function countActiveBackendFilters(applied) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // --- Insight Generator Logic (Auto-Analyze) ---
-const InsightGenerator = {
-  flagsByColor: (data) => {
-    if (!data || data.length === 0) return "No flag data is currently available for the selected filters.";
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    if (total === 0) return "There are zero recorded entities matching this criteria.";
-
-    const cleared = data.find(d => d.name.includes("Cleared"))?.value || 0;
-    const unregistered = data.find(d => d.name.includes("Unregistered"))?.value || 0;
-
-    const clearedPct = Math.round((cleared / total) * 100);
-    const unregPct = Math.round((unregistered / total) * 100);
-
-    if (unregPct > 30) {
-      return `It looks like a significant chunk (${unregPct}%) of entities here are suspected to be unregistered. This is a major red flag—you should prioritize dispatching inspection teams to verify these businesses immediately.`;
-    } else if (clearedPct > 80) {
-      return `Great news! A massive ${clearedPct}% of the businesses here are fully cleared and active. Compliance in this segment is very healthy.`;
-    } else {
-      return `Currently, ${clearedPct}% of businesses are cleared, while ${unregPct}% are suspected unregistered. The rest are in intermediate warning states. Keep a close eye on the warning flags before they turn into full violations.`;
-    }
-  },
-
-  timeline: (data) => {
-    if (!data || data.length < 2) return "Not enough historical data to spot a trend yet.";
-    const first = data[0];
-    const last = data[data.length - 1];
-
-    const activeDiff = last.active - first.active;
-    if (activeDiff > 0) {
-      return `Over this period, active business renewals have trended upwards, gaining ${activeDiff} new compliant entities. This means our enforcement and outreach are working!`;
-    } else if (activeDiff < 0) {
-      return `Warning: We've seen a drop of ${Math.abs(activeDiff)} active businesses over this timeframe. We might be looking at businesses shutting down or failing to renew. Consider a targeted renewal campaign.`;
-    } else {
-      return `Active business counts have remained completely flat over this period.`;
-    }
-  },
-
-  leaderboard: (data) => {
-    if (!data || data.length === 0) return "No barangay data available.";
-    const worst = [...data].sort((a, b) => {
-      if (a.rate !== b.rate) return a.rate - b.rate;
-      return b.totalFlags - a.totalFlags;
-    })[0];
-    const best = [...data].sort((a, b) => {
-      if (a.rate !== b.rate) return b.rate - a.rate;
-      return (b.totalEntities || b.totalFlags) - (a.totalEntities || a.totalFlags);
-    })[0];
-
-    if (worst.rate < 70) {
-      return `Right now, ${worst.barangayName} is struggling the most, sitting at a low ${worst.rate}% compliance rate with ${worst.totalFlags} active flags. I highly recommend focusing your next enforcement sweep there.`;
-    }
-    return `${best.barangayName} is leading the pack with an impressive ${best.rate}% compliance rate, while ${worst.barangayName} is trailing at ${worst.rate}%. Overall, the distribution looks relatively stable.`;
-  },
-
-  funnel: (data) => {
-    if (!data || data.length < 2) return "Not enough funnel data.";
-    const verified = data.find(d => d.step === "Verified inspection reports")?.value || 0;
-    const green = data.find(d => d.step === "Verified Green reports")?.value || 0;
-    const share = verified > 0 ? Math.round((green / verified) * 100) : 0;
-
-    return `${green} of ${verified} admin-verified inspection reports are Green (${share}%). This report-based share counts verified reports, not distinct businesses; submitted reports awaiting verification are excluded.`;
-  },
-
-  sectoral: (data) => {
-    if (!data || data.length === 0) return "No sector data available.";
-    const top = data[0];
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    const pct = Math.round((top.value / total) * 100);
-
-    if (pct > 40) {
-      return `The "${top.name}" sector is absolutely dominating this segment, making up ${pct}% of all records. Any policy changes here will have a massive ripple effect on the entire ecosystem.`;
-    }
-    return `The largest sector here is "${top.name}", but the distribution is fairly spread out across multiple industries, meaning risk isn't concentrated in just one area.`;
-  },
-
-  geographic: (data) => {
-    if (!data || data.length === 0) return "No geographic spread data available.";
-    const total = data.reduce((sum, item) => sum + Object.values(item).reduce((acc, val) => typeof val === 'number' ? acc + val : acc, 0), 0);
-    return `This chart shows the distribution of ${total} businesses across different barangays, broken down by sector. The AI can help identify specific concentrations of industries in certain areas.`;
-  },
-
-  categoryRisk: (data) => {
-    if (!data || data.length === 0) return "No category risk data available.";
-    const top = data[0];
-    return `The "${top.name}" sector currently has the highest number of flags (${top.count}). This indicates a sector-specific risk pattern that may require targeted enforcement or policy review.`;
-  },
-
-  businessSize: (data) => {
-    if (!data || data.length === 0) return "No size data available.";
-    const micro = data.find(d => d.name === "Micro")?.value || 0;
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    const microPct = Math.round((micro / total) * 100);
-
-    if (microPct > 75) {
-      return `As expected, Micro-sized businesses make up the overwhelming majority (${microPct}%). When designing compliance programs for this group, ensure the fees and paperwork aren't too burdensome for tiny operations.`;
-    }
-    return `While Micro businesses are present, there is a healthy mix of Small and Medium enterprises here, which generally indicates a maturing local economy.`;
-  },
-
-  businessType: (data) => {
-    if (!data || data.length === 0) return "No business type data available.";
-    const top = data[0];
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    const topPct = Math.round((top.value / total) * 100);
-
-    if (top.name === "Single Proprietorship" && topPct > 80) {
-      return `The local economy is heavily reliant on Single Proprietorships (${topPct}%). This typically points to a localized, informal economy. Compliance messaging should be simple and direct.`;
-    }
-    if (top.name === "Corporation") {
-      return `Corporations make up the largest block of businesses here (${topPct}%). This indicates a highly formalized economy with more complex tax and compliance requirements.`;
-    }
-    return `The most common legal structure is ${top.name} (${topPct}%).`;
-  },
-
-  complianceBySize: (data) => {
-    if (!data || data.length === 0) return "No compliance by size data available.";
-    let highestNonCompliantPct = 0;
-    let worstSize = "None";
-
-    data.forEach(d => {
-      const total = d.Active + d["Non-Active"];
-      if (total > 0) {
-        const ncPct = (d["Non-Active"] / total) * 100;
-        if (ncPct > highestNonCompliantPct) {
-          highestNonCompliantPct = ncPct;
-          worstSize = d.name;
-        }
-      }
-    });
-
-    if (highestNonCompliantPct > 30) {
-      return `Warning: The "${worstSize}" segment has the highest rate of non-compliance at ${Math.round(highestNonCompliantPct)}%. Consider launching targeted amnesty or simplified registration programs specifically for this demographic.`;
-    }
-    return `Compliance rates are generally stable across all business sizes, with no single segment showing extremely critical non-compliance rates.`;
-  },
-
-  renewalSeasonality: (data) => {
-    if (!data || data.length === 0) return "No seasonality data available.";
-    const totalRenewals = data.reduce((sum, item) => sum + item.Active + item["Non-Active"], 0);
-    let peakMonth = data[0];
-    let peakVolume = peakMonth.Active + peakMonth["Non-Active"];
-
-    data.forEach(d => {
-      const vol = d.Active + d["Non-Active"];
-      if (vol > peakVolume) {
-        peakVolume = vol;
-        peakMonth = d;
-      }
-    });
-
-    const peakPct = Math.round((peakVolume / totalRenewals) * 100);
-    if (peakPct > 40) {
-      return `There is a massive seasonal spike around ${peakMonth.month}, accounting for ${peakPct}% of all activity. Ensure inspection and processing teams are fully staffed during this window.`;
-    }
-    return `Business activity is relatively distributed over the year, peaking moderately in ${peakMonth.month}.`;
-  },
-
-  inspectorPerformance: (data) => {
-    if (!data || data.length === 0) return "No inspector data available.";
-    const topPerformer = [...data].sort((a, b) => b.total_verified - a.total_verified)[0];
-    if (topPerformer && topPerformer.total_verified > 0) {
-      return `Inspector ${topPerformer.fullName} has ${topPerformer.total_verified} admin-verified reports. Submitted work awaiting verification is shown separately.`;
-    }
-    return "No admin-verified reports yet. Submitted reports may still be awaiting review.";
-  },
-
-  redFlagTrend: (data) => {
-    if (!data || data.length < 2) return "Not enough data to determine a trend.";
-    const first = data[0]["New Red Flags"];
-    const last = data[data.length - 1]["New Red Flags"];
-    const diff = last - first;
-
-    if (diff > 0) {
-      return `Red flag emergence is trending upwards, with an increase of ${diff} cases compared to the start of the period. This indicates a growing compliance risk that requires attention.`;
-    } else if (diff < 0) {
-      return `Good news: new red flags are trending downwards, dropping by ${Math.abs(diff)} cases. Our enforcement actions seem to be deterring critical violations.`;
-    } else {
-      return `The emergence of new red flags has remained stable over this period, with no significant spikes or drops detected.`;
-    }
-  },
-
-  inspectionStatus: (data) => {
-    if (!data || data.length === 0) return "No inspection status data available.";
-    const total = data.reduce((sum, item) => sum + item.count, 0);
-    const pending = data.filter(d => ['Assigned', 'In Progress', 'Reassigned', 'Unassigned'].includes(d.status)).reduce((sum, item) => sum + item.count, 0);
-    const pendingPct = total > 0 ? Math.round((pending / total) * 100) : 0;
-
-    if (pendingPct > 50) {
-      return `A high number of inspections (${pendingPct}%) are currently pending (assigned, reassigned, or in progress). Operations might be backlogging. Consider re-evaluating the current dispatch load.`;
-    }
-    return `Operations are flowing steadily. Only ${pendingPct}% of current assignments are still pending.`;
-  },
-
-  opsTimeline: (data) => {
-    if (!data || data.length === 0) return "Not enough operations timeline data available.";
-    const total = data.reduce((sum, item) => sum + item.count, 0);
-    return `Over this period, a total of ${total} inspections were recorded. Look for any spikes in activity that correspond with recent dispatch operations.`;
-  },
-
-  auditBreakdown: (data) => {
-    if (!data || data.length === 0) return "No audit outcome data available.";
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    const green = data.find(d => d.name === "Green")?.value || 0;
-    const red = data.find(d => d.name === "Red")?.value || 0;
-
-    if (total === 0) return "No inspections have been recorded yet.";
-
-    const greenPct = Math.round((green / total) * 100);
-    const redPct = Math.round((red / total) * 100);
-
-    if (redPct > 30) {
-      return `Warning: ${redPct}% of verified inspections are resulting in a Red flag (severe non-compliance). This highlights a critical need for targeted enforcement and follow-up.`;
-    } else if (greenPct > 70) {
-      return `Positive outcome: ${greenPct}% of businesses inspected are receiving Green flags, showing strong compliance among those audited.`;
-    }
-    return `Inspections yield a mix of outcomes, with ${greenPct}% Green and ${redPct}% Red. The varied results indicate enforcement is uncovering both compliant and non-compliant operations effectively.`;
-  }
-};
-
 // Lightweight markdown renderer for AI chat bubbles
 const renderMarkdown = (text) => {
   if (!text) return null;
@@ -1033,15 +823,31 @@ export default function AnalyticsPage() {
 
   // ── Descriptive cross-tabs ────────────────────────────────────────────────
   const registryChartData = desc?.registry_by_barangay_status || [];
-  const inspectionChartData = desc?.inspection_by_barangay_status || [];
-
-  // ── Audit result breakdown ────────────────────────────────────────────────
-  const auditData = (desc?.audit_summary?.result_breakdown || []).map(r => ({
-    name: r.inspectionResult,
-    value: r.count,
-    fill: FLAG_COLORS[r.inspectionResult] || COLOR.muted,
+  const registrySizeChartData = pivotCategoryCounts(
+    desc?.registry_size_by_barangay || [], "size_label",
+  );
+  const businessSizeLabels = [...new Set(
+    (desc?.registry_size_by_barangay || []).map(row => row.size_label || "Unknown"),
+  )].sort((a, b) => {
+    const order = ["Micro", "Small", "Medium", "Large", "Unknown"];
+    return (order.indexOf(a) < 0 ? order.length : order.indexOf(a))
+      - (order.indexOf(b) < 0 ? order.length : order.indexOf(b)) || a.localeCompare(b);
+  });
+  const businessSizeStacks = businessSizeLabels.map((label, index) => ({
+    key: label,
+    label,
+    color: BUSINESS_SIZE_COLORS[label] || [COLOR.blue, COLOR.green, COLOR.purple, COLOR.orange][index % 4],
   }));
-
+  const rawInspectionChartData = desc?.inspection_by_barangay_status || [];
+  const inspectionChartData = groupInspectionStatuses(rawInspectionChartData);
+  const inspectionNoReportBarangays = Math.max(0,
+    rawInspectionChartData.length - inspectionChartData.length);
+  const inspectionOutcomeChartData = pivotCategoryCounts(
+    desc?.inspection_outcome_by_barangay || [], "outcome",
+  );
+  const verifiedReportsWithoutOutcome = Number(
+    desc?.audit_summary?.verified_reports_without_outcome ?? 0,
+  );
 
   const categoryLinkageSummary = diag?.category_linkage_summary || {};
   const categoryData = (diag?.category_risk_drivers || []).map((row) => {
@@ -1062,22 +868,22 @@ export default function AnalyticsPage() {
   // ── Prescriptive: WLC radar (top 8) ──────────────────────────────────────
   const radarData = opsRadarData(presc?.rankings, shortBarangay);
 
-  const auditBreakdown = desc?.audit_summary?.result_breakdown || [];
-  const inspectedCount = auditBreakdown.reduce((sum, r) => sum + r.count, 0);
   const linkedReportCount = Number(desc?.audit_summary?.total_reports ?? desc?.audit_summary?.total_inspections ?? 0);
-  const unlinkedReportCount = Number(desc?.audit_summary?.unlinked_reports ?? 0);
-  const verifiedReportCount = Number(desc?.audit_summary?.workflow?.verified_reports ?? inspectedCount);
-  const clearedCount = auditBreakdown.filter(r => r.inspectionResult === 'Green' || r.inspectionResult === 'Compliant').reduce((sum, r) => sum + r.count, 0);
+  const verifiedReportCount = Number(desc?.audit_summary?.workflow?.verified_reports ?? 0);
   const awaitingCount = Number(desc?.audit_summary?.workflow?.awaiting_verification || 0);
-  const preliminaryGreen = Number(desc?.audit_summary?.workflow?.submitted_green || 0);
-  const greenVerifiedShare = verifiedReportCount > 0 ? Math.round((clearedCount / verifiedReportCount) * 100) : 0;
   const confirmedCompliance = desc?.confirmed_compliance;
 
-  const inspectionAnnotation = {
-    label: "Verified Green",
-    color: COLOR.green,
-    text: `${clearedCount} of ${verifiedReportCount} verified reports (${greenVerifiedShare}%). This is a subset of the Verified stack, not an additional stack.`,
-  };
+  const operationsStatusRows = data?.operations?.inspector_status_counts || [];
+  const operationsTimeline = completeInspectionTimeline(
+    data?.operations?.inspection_status_timeline || [],
+    appliedFilters.inspection_from,
+    appliedFilters.inspection_to,
+  );
+  const operationsStatusTotals = operationsStatusRows.reduce((totals, row) => ({
+    pending: totals.pending + Number(row.pending || 0),
+    awaiting_review: totals.awaiting_review + Number(row.awaiting_review || 0),
+    verified: totals.verified + Number(row.verified || 0),
+  }), { pending: 0, awaiting_review: 0, verified: 0 });
 
 
   const activeFilterCount = countActiveBackendFilters(appliedFilters);
@@ -2104,48 +1910,31 @@ export default function AnalyticsPage() {
                 </span>
               </div>
 
-                            <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
+              <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
               <div className="analytics-census-grid">
                 <KpiCard iconVariant="plain" value={kpis?.total_businesses ?? "?"} label="Businesses in scope" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="green" value={kpis?.active_count ?? "?"} label="Active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
                 <KpiCard iconVariant="red" value={Number(kpis?.total_businesses ?? 0) - Number(kpis?.active_count ?? 0)} label="Non-active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
-              <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--registry-status" style={{ marginTop: 24 }}>
+              <div className="tier-2-card saas-card frosted-glass analytics-feature-card" style={{ marginTop: 24 }}>
                 <div className="analytics-card-heading">
                   <div>
-                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registry Businesses by Barangay and Permit Status</h3>
-                    <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>
-                      One bar per barangay, stacked by current permit status. Total: {Number(kpis?.total_businesses ?? 0).toLocaleString()} businesses.
-                    </p>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                      How are businesses of each size distributed by barangay?
+                    </h3>
                   </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(59, 130, 246, 0.1)", color: "var(--color-blue, #3b82f6)", borderRadius: 12 }}>Registry</span>
+                  <AnalyticsInfoTip label="About business size chart">
+                    Uses the selected registry filters and groups businesses by their barangay and recorded business size. Empty sizes are shown as Unknown.
+                  </AnalyticsInfoTip>
                 </div>
-                <p className="analytics-filter-scope-note">
-                  Registry filters apply: barangay, permit status, line of business, business type, business size, registration type and renewal dates. Map flag and inspection filters do not apply to this chart.
-                </p>
-                {appliedFilters.application_status && (
-                  <p className="analytics-filter-scope-note analytics-filter-scope-note--active">
-                    Filtered to permit status <strong>{appliedFilters.application_status}</strong>. The chart keeps that stack only.
-                  </p>
-                )}
-                <p className="analytics-chart-guide">
-                  Each bar is one barangay. Colored segments show how many businesses have each permit status. A color appears only when records exist; zero segments are still listed in the tooltip.
-                </p>
                 {loading ? <Skeleton h={480} /> : (
-                  <StackedBarangayChart data={registryChartData} statuses={REGISTRY_STATUS_STACKS}
-                    legendLabel="Permit status" totalLabel="businesses"
-                    emptyMessage="No registry businesses match the selected registry filters." />
+                  <StackedBarangayChart data={registrySizeChartData} statuses={businessSizeStacks}
+                    emptyMessage="No businesses match the selected filters." />
                 )}
-                <details className="analytics-profile-disclosure">
-                  <summary>Registry profile</summary>
-                  <div className="analytics-profile-grid">
-                    {profileTables.map(table => (
-                      <ProfileTable key={table.title} title={table.title} rows={table.rows}
-                        empty={`No ${table.title.toLowerCase()} data for the selected filters.`} />
-                    ))}
-                  </div>
-                </details>
+                <p className="analytics-chart-caption">
+                  Each bar shows the number of registered businesses in that barangay.
+                </p>
               </div>
 
               <div style={{ marginTop: 24 }}>
@@ -2165,8 +1954,34 @@ export default function AnalyticsPage() {
                   </div>
                 </div>
               </div>
+
+              <details className="analytics-profile-disclosure analytics-more-details">
+                <summary>More details</summary>
+                <div className="analytics-more-details-content">
+                  <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--registry-status">
+                    <div className="analytics-card-heading">
+                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                        How many businesses in each barangay have each permit status?
+                      </h3>
+                      <AnalyticsInfoTip label="About permit status chart">
+                        Uses the selected registry filters. Permit status filters limit the chart to the selected status; map and inspection filters do not affect it.
+                      </AnalyticsInfoTip>
+                    </div>
+                    {loading ? <Skeleton h={480} /> : (
+                      <StackedBarangayChart data={registryChartData} statuses={REGISTRY_STATUS_STACKS}
+                        emptyMessage="No businesses match the selected filters." />
+                    )}
+                  </div>
+                  <div className="analytics-profile-grid">
+                    {profileTables.map(table => (
+                      <ProfileTable key={table.title} title={table.title} rows={table.rows}
+                        empty={`No ${table.title.toLowerCase()} data for the selected filters.`} />
+                    ))}
+                  </div>
+                </div>
+              </details>
             </div>
-{/* SECTION B: Field Inspections Demographics */}
+            {/* SECTION B: Field Inspections Demographics */}
             <div style={{ marginBottom: 40 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>
                 <h3 style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)", margin: 0 }}>B. Field Inspections Demographics</h3>
@@ -2177,114 +1992,71 @@ export default function AnalyticsPage() {
 
               <div className="analytics-field-kpi-group">
                 <div className="analytics-field-kpi-heading">
-                  <h4>Inspection workflow</h4>
-                  <span>Linked inspection reports � one reportID per report</span>
+                  <h4>Report status</h4>
                 </div>
                 <div className="analytics-field-kpi-grid analytics-field-kpi-grid--activity">
-                  <KpiCard iconVariant="plain" value={linkedReportCount} label="Linked inspection reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
-                  <KpiCard iconVariant="gold" value={awaitingCount} label="Awaiting verification reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
-                  <KpiCard iconVariant="gold" value={verifiedReportCount} label="Verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
-                  <KpiCard iconVariant="green" value={clearedCount} label="Verified Green reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 0 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} />
+                  <KpiCard iconVariant="plain" value={linkedReportCount} label="Total reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="gold" value={awaitingCount} label="Awaiting review" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
+                  <KpiCard iconVariant="green" value={verifiedReportCount} label="Verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
                 </div>
               </div>
-              <p className="analytics-filter-scope-note">
-                Chart and report KPIs count distinct <code>inspection_reports.reportID</code> joined to a target pin. {unlinkedReportCount.toLocaleString()} {unlinkedReportCount === 1 ? "report has" : "reports have"} no linked target pin and {unlinkedReportCount === 1 ? "is" : "are"} excluded because they cannot be assigned to a barangay. This is not the Operations LEFT JOIN population.
-              </p>
 
               <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--inspection-status">
                 <div className="analytics-card-heading">
-                  <div>
-                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Inspection Reports by Barangay and Current Status</h3>
-                    <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>
-                      One bar per barangay, stacked by current report status. Total: {linkedReportCount.toLocaleString()} linked reports.
-                    </p>
-                  </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(245, 158, 11, 0.1)", color: "var(--color-orange, #f59e0b)", borderRadius: 12 }}>Inspections</span>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                    How many reports in each barangay are pending, awaiting review, or verified?
+                  </h3>
+                  <AnalyticsInfoTip label="About report status chart">
+                    Pending combines Assigned, Reassigned, In Progress, and Unassigned reports. This chart includes reports that can be placed in a barangay.
+                  </AnalyticsInfoTip>
                 </div>
-                <p className="analytics-filter-scope-note">
-                  Map and inspection filters apply: barangay, flag colour, detection dates, inspection result, current status and inspection dates. Registry status, sector, business type/size and renewal filters do not apply to this chart.
-                </p>
-                {appliedFilters.verification_status && (
-                  <p className="analytics-filter-scope-note analytics-filter-scope-note--active">
-                    Filtered to current status <strong>{appliedFilters.verification_status}</strong>. The chart keeps that stack only.
-                  </p>
-                )}
-                <p className="analytics-chart-guide">
-                  Each bar is one barangay. Colored segments show how many distinct inspection reports have each current report status. A color appears only when reports exist; zero segments are still listed in the tooltip.
-                </p>
                 {loading ? <Skeleton h={480} /> : (
                   <StackedBarangayChart data={inspectionChartData} statuses={INSPECTION_STATUS_STACKS}
-                    legendLabel="Current report status" totalLabel="reports"
-                    annotation={inspectionAnnotation}
-                    emptyMessage="No linked inspection reports match the selected map and inspection filters." />
+                    emptyMessage="No reports match the selected filters." />
                 )}
-              </div>
-
-              <div style={{ marginTop: 24 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Verified Outcome</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {auditData.length > 0 ? (() => {
-                        const top = [...auditData].sort((a, b) => b.value - a.value)[0];
-                        return `${top.name} (${verifiedReportCount > 0 ? Math.round((top.value / verifiedReportCount) * 100) : 0}%)`;
-                      })() : "N/A"}
-                    </p>
-                  </div>
-                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Verified Green Report Share</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {verifiedReportCount > 0 ? `${greenVerifiedShare}% of verified reports` : "N/A"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, marginTop: 24 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Verified inspection outcomes</h3>
-                <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 14px 0" }}>
-                  Admin-verified inspection reports only. {awaitingCount} submitted {awaitingCount === 1 ? "report awaits" : "reports await"} verification; {preliminaryGreen} preliminary Green.
+                <p className="analytics-chart-caption">
+                  {inspectionNoReportBarangays} {inspectionNoReportBarangays === 1 ? "barangay has" : "barangays have"} no reports.
                 </p>
-                {loading ? <Skeleton h={160} /> : auditData.length === 0 ? (
-                  <EmptyState h={160} title="No verified outcomes" message="No admin-verified inspection outcomes match the selected filters." />
-                ) : (
-                  <div style={{ overflowX: "auto" }}>
-                    <table className="analytics-outcome-table">
-                      <caption className="analytics-sr-only">Verified inspection outcomes, report counts and share of verified reports</caption>
-                      <thead><tr><th scope="col">Outcome</th><th scope="col">Reports</th><th scope="col">Share</th></tr></thead>
-                      <tbody>
-                        {[...auditData].sort((a, b) => b.value - a.value).map(row => (
-                          <tr key={row.name}>
-                            <td><span className="analytics-stacked-swatch" style={{ background: row.fill, marginRight: 7 }} />{row.name || "Unspecified"}</td>
-                            <td>{row.value.toLocaleString()}</td>
-                            <td>{verifiedReportCount > 0 ? `${((row.value / verifiedReportCount) * 100).toFixed(1)}%` : "0.0%"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+              </div>
+
+              <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--inspection-status" style={{ marginTop: 24 }}>
+                <div className="analytics-card-heading">
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                    What verified outcomes were found in each barangay?
+                  </h3>
+                  <AnalyticsInfoTip label="About verified outcomes chart">
+                    Shows Green, Yellow, and Red outcomes for verified reports. Other outcome values are not included in the bars.
+                  </AnalyticsInfoTip>
+                </div>
+                {loading ? <Skeleton h={480} /> : (
+                  <StackedBarangayChart data={inspectionOutcomeChartData} statuses={OUTCOME_STACKS}
+                    emptyMessage="No verified outcomes match the selected filters." />
                 )}
-                <p className="analytics-stacked-footnote">Verified Green is a subset of verified reports, not a separate stack. Submitted reports awaiting verification are excluded from this outcome table.</p>
+                <p className="analytics-chart-caption">
+                  {verifiedReportsWithoutOutcome} verified {verifiedReportsWithoutOutcome === 1 ? "report has" : "reports have"} no Green, Yellow, or Red outcome.
+                </p>
               </div>
 
-              <div className="analytics-field-kpi-group analytics-field-kpi-group--compliance" style={{ marginTop: 24 }}>
-                <div className="analytics-field-kpi-heading">
-                  <h4>Confirmed compliant businesses</h4>
-                  <span>Distinct businesses � by confirmation source</span>
+              <details className="analytics-profile-disclosure analytics-more-details">
+                <summary>More details</summary>
+                <div className="analytics-more-details-content">
+                  <div className="analytics-field-kpi-group analytics-field-kpi-group--compliance">
+                    <div className="analytics-field-kpi-heading">
+                      <h4>Confirmed compliant businesses</h4>
+                      <AnalyticsInfoTip label="About confirmed compliance">
+                        These counts include businesses confirmed through office review or verified inspection evidence; they are not a count of every Green business.
+                      </AnalyticsInfoTip>
+                    </div>
+                    <div className="analytics-field-kpi-grid analytics-field-kpi-grid--compliance">
+                      <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M4 21h16"></path><path d="M6 21V5l6-2 6 2v16"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="m9 15 2 2 4-4"></path></svg>} />
+                      <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M8 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-3"></path><path d="M8 2h8v4H8z"></path><path d="m8 13 2.5 2.5L16 10"></path></svg>} />
+                      <KpiCard iconVariant="green" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="9" cy="8" r="4"></circle><path d="M2 21v-2a7 7 0 0 1 14 0v2"></path><path d="m16 11 2 2 4-4"></path></svg>} />
+                    </div>
+                  </div>
+                  <PinMonitoringPanel nonRegistry={desc?.non_registry_monitoring}
+                    registryLinked={desc?.registry_linked_monitoring} refreshing={backgroundRefreshing} />
                 </div>
-                <div className="analytics-field-kpi-grid analytics-field-kpi-grid--compliance">
-                  <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M4 21h16"></path><path d="M6 21V5l6-2 6 2v16"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="m9 15 2 2 4-4"></path></svg>} />
-                  <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M8 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-3"></path><path d="M8 2h8v4H8z"></path><path d="m8 13 2.5 2.5L16 10"></path></svg>} />
-                  <KpiCard iconVariant="green" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="9" cy="8" r="4"></circle><path d="M2 21v-2a7 7 0 0 1 14 0v2"></path><path d="m16 11 2 2 4-4"></path></svg>} />
-                </div>
-              </div>
-              <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 24px" }}>
-                Confirmed-compliance business counts require a current Green original pin and valid office or admin-verification history. They are not a census of all Green registry businesses. {preliminaryGreen} submitted Green {preliminaryGreen === 1 ? "report is" : "reports are"} awaiting admin verification.
-              </p>
-
-              <PinMonitoringPanel nonRegistry={desc?.non_registry_monitoring}
-                registryLinked={desc?.registry_linked_monitoring} refreshing={backgroundRefreshing} />
+              </details>
             </div>
 
           </section>
@@ -3187,7 +2959,7 @@ export default function AnalyticsPage() {
             <SectionHeader
               tier="operations"
               title="Inspector Operations"
-              subtitle="Monitor inspector performance, timelines, and resolution statuses"
+              subtitle="Reports by inspector and activity over time"
             />
 
             {loading ? (
@@ -3197,147 +2969,114 @@ export default function AnalyticsPage() {
               </div>
             ) : (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 24, marginBottom: 24 }}>
+                <div className="analytics-operations-grid">
 
-                  {/* Inspector Leaderboard */}
                   <div className="saas-card frosted-glass" style={{ padding: 24, borderRadius: 16 }}>
-                    <div style={{ marginBottom: 20 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 8px 0", color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 8 }}>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLOR.blue} strokeWidth="2">
-                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                        </svg>
-                        Inspector Leaderboard
+                    <div className="analytics-card-heading">
+                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                        How many reports has each inspector handled?
                       </h3>
-                      <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        {InsightGenerator.inspectorPerformance(data?.operations?.inspector_stats)}
-                      </p>
                     </div>
-
-                    <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                        <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 10 }}>
-                          <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Inspector</th>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Work submitted</th>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Admin-verified</th>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Assigned</th>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Yellow Flags Reported</th>
-                            <th style={{ padding: "10px 12px", fontWeight: 700 }}>Avg Time (Days)</th>
-                          </tr>
-                        </thead>
+                    <table className="analytics-operations-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Pending</th>
+                          <th>Awaiting review</th>
+                          <th>Verified</th>
+                          <th>Avg days</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {operationsStatusRows.length === 0 ? (
+                          <tr><td colSpan="5"><EmptyState h={120} title="No inspector data" message="No reports match the selected filters." /></td></tr>
+                        ) : operationsStatusRows.map(row => {
+                          const stat = (data?.operations?.inspector_stats || []).find(item => item.userID === row.userID);
+                          return (
+                            <tr key={row.userID}>
+                              <td>{row.fullName}</td>
+                              <td>{Number(row.pending || 0).toLocaleString()}</td>
+                              <td>{Number(row.awaiting_review || 0).toLocaleString()}</td>
+                              <td>{Number(row.verified || 0).toLocaleString()}</td>
+                              <td>{stat?.avg_resolution_time ? (stat.avg_resolution_time / 1440).toFixed(1) : "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <details className="analytics-profile-disclosure analytics-inspector-detail">
+                      <summary>Pins flagged yellow</summary>
+                      <table className="analytics-operations-table">
+                        <thead><tr><th>Name</th><th>Pins flagged yellow</th></tr></thead>
                         <tbody>
-                          {(data?.operations?.inspector_stats || []).map((row) => (
-                            <tr key={row.userID} style={{ borderBottom: "1px solid rgba(226,232,240,0.35)" }}>
-                              <td style={{ padding: "12px", fontWeight: 600, color: "var(--color-ink)", fontSize: 13 }}>
-                                {row.fullName}
-                              </td>
-                              <td style={{ padding: "12px", fontWeight: 700, color: COLOR.green, fontSize: 13 }}>
-                                {row.total_submitted ?? row.total_completed}
-                              </td>
-                              <td style={{ padding: "12px", fontWeight: 700, color: COLOR.green, fontSize: 13 }}>{row.total_verified ?? 0}</td>
-                              <td style={{ padding: "12px", color: "var(--color-muted)", fontSize: 13 }}>
-                                {row.total_assigned}
-                              </td>
-                              <td style={{ padding: "12px", color: COLOR.gold, fontWeight: 600, fontSize: 13 }}>
-                                {row.yellow_flags_reported || 0}
-                              </td>
-                              <td style={{ padding: "12px", color: "var(--color-muted)", fontSize: 13 }}>
-                                {row.avg_resolution_time ? (row.avg_resolution_time / 1440).toFixed(1) : "-"}
-                              </td>
+                          {(data?.operations?.inspector_stats || []).map(row => (
+                            <tr key={row.userID}>
+                              <td>{row.fullName}</td>
+                              <td>{Number(row.yellow_flags_reported || 0).toLocaleString()}</td>
                             </tr>
                           ))}
-                          {(!data?.operations?.inspector_stats || data.operations.inspector_stats.length === 0) && (
-                            <tr>
-                              <td colSpan="6" style={{ padding: "24px" }}>
-                                <EmptyState h={160} title="No Inspector Data" message="No operations found for these criteria." />
-                              </td>
-                            </tr>
-                          )}
                         </tbody>
                       </table>
-                    </div>
+                    </details>
                   </div>
 
-                  {/* Status Breakdown */}
                   <div className="saas-card frosted-glass" style={{ padding: 24, borderRadius: 16 }}>
-                    <div style={{ marginBottom: 20 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 8px 0", color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 8 }}>
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLOR.blue} strokeWidth="2">
-                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>
-                        </svg>
-                        Inspection Status Breakdown
+                    <div className="analytics-card-heading">
+                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                        How are reports split across inspectors?
                       </h3>
-                      <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        {InsightGenerator.inspectionStatus(data?.operations?.status_breakdown)}
-                      </p>
+                      <AnalyticsInfoTip label="About inspector status chart">
+                        Status groups match the Field Inspections chart. Only reports linked to a barangay and assigned to an inspector are included.
+                      </AnalyticsInfoTip>
                     </div>
-
-                    {data?.operations?.status_breakdown?.length === 0 ? (
-                      <EmptyState h={260} title="No Status Data" message="No inspection status data available." />
-                    ) : (
-                      <div style={{ height: 260, width: "100%" }}>
-                        <ResponsiveChart>
-                          <PieChart>
-                            <Pie
-                              data={data?.operations?.status_breakdown || []}
-                              dataKey="count"
-                              nameKey="status"
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={60}
-                              outerRadius={90}
-                              paddingAngle={5}
-                              activeShape={false}
-                              isAnimationActive={false}
-                              label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                            >
-                              {(data?.operations?.status_breakdown || []).map((entry, index) => {
-                                const colors = { "Assigned": COLOR.orange, "In Progress": COLOR.yellow, "Reassigned": COLOR.slate, "Submitted": COLOR.blue, "Verified": COLOR.green, "Unassigned": COLOR.muted };
-                                return <Cell key={`cell-${index}`} fill={colors[entry.status] || COLOR.muted} />;
-                              })}
-                            </Pie>
-                            <Tooltip content={<CustomTooltip />} />
-                          </PieChart>
-                        </ResponsiveChart>
-                      </div>
-                    )}
+                    <StackedBarangayChart data={operationsStatusRows} statuses={INSPECTION_STATUS_STACKS}
+                      categoryKey="fullName" categoryLabel="Inspector"
+                      emptyMessage="No inspector reports match the selected filters." />
+                    <p className="analytics-chart-caption">
+                      There are {operationsStatusTotals.pending} pending, {operationsStatusTotals.awaiting_review} awaiting review, and {operationsStatusTotals.verified} verified reports.
+                    </p>
                   </div>
                 </div>
 
                 {/* Timeline */}
                 <div className="saas-card frosted-glass" style={{ padding: 24, borderRadius: 16 }}>
-                  <div style={{ marginBottom: 20 }}>
-                    <h3 style={{ fontSize: 16, fontWeight: 700, margin: "0 0 8px 0", color: "var(--color-ink)", display: "flex", alignItems: "center", gap: 8 }}>
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke={COLOR.blue} strokeWidth="2">
-                        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-                      </svg>
-                      Inspection Activity Timeline
+                  <div className="analytics-card-heading">
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: 0 }}>
+                      How did submitted and verified reports change over time?
                     </h3>
-                    <p style={{ margin: 0, fontSize: 13, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                      {InsightGenerator.opsTimeline(data?.operations?.inspection_timeline)}
-                    </p>
+                    <AnalyticsInfoTip label="About report timeline">
+                      Each bar covers one day; ranges longer than 31 days are grouped by week. Dates without reports remain visible.
+                    </AnalyticsInfoTip>
                   </div>
-
-                  {data?.operations?.inspection_timeline?.length === 0 ? (
-                    <EmptyState h={300} title="No Timeline Data" message="Not enough timeline data available." />
+                  {operationsTimeline.rows.length === 0 ? (
+                    <EmptyState h={300} title="No timeline data" message="No reports match the selected date range." />
                   ) : (
-                    <div style={{ height: 300, width: "100%" }}>
+                    <div style={{ height: 320, width: "100%" }}>
                       <ResponsiveChart>
-                        <AreaChart data={data?.operations?.inspection_timeline || []} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="opsColor" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={COLOR.blue} stopOpacity={0.3} />
-                              <stop offset="95%" stopColor={COLOR.blue} stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
+                        <BarChart data={operationsTimeline.rows} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
                           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.6)" />
-                          <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--color-muted)" }} tickMargin={10} minTickGap={20} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--color-muted)" }} />
+                          <XAxis dataKey="date" axisLine={false} tickLine={false}
+                            tick={{ fontSize: 10, fill: "var(--color-muted)" }} tickMargin={10} minTickGap={20}
+                            angle={-30} textAnchor="end" />
+                          <YAxis allowDecimals={false} axisLine={false} tickLine={false}
+                            tick={{ fontSize: 11, fill: "var(--color-muted)" }} />
                           <Tooltip content={<CustomTooltip />} />
-                          <Area type="monotone" dataKey="count" name="Inspections" stroke={COLOR.blue} strokeWidth={2} fillOpacity={1} fill="url(#opsColor)" activeDot={{ r: 6, strokeWidth: 0, fill: COLOR.blue }} />
-                        </AreaChart>
+                          {[
+                            { key: "submitted", label: "Submitted", color: COLOR.blue },
+                            { key: "verified", label: "Verified", color: COLOR.green },
+                          ].filter(status => operationsTimeline.rows.some(row => row[status.key] > 0))
+                            .map(status => (
+                              <Bar key={status.key} dataKey={status.key} name={status.label}
+                                stackId="timeline" fill={status.color} isAnimationActive={false} />
+                            ))}
+                        </BarChart>
                       </ResponsiveChart>
                     </div>
+                  )}
+                  {operationsTimeline.rows.length > 0 && (
+                    <p className="analytics-chart-caption">
+                      {operationsTimeline.interval === "week" ? "Weekly totals." : "Daily totals."}
+                    </p>
                   )}
                 </div>
               </>

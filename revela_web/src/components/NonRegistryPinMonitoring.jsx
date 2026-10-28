@@ -3,6 +3,7 @@ import { Bar, BarChart, CartesianGrid, Legend, Tooltip, XAxis, YAxis } from "rec
 import { saveAs } from "file-saver";
 import KpiCard from "./KpiCard";
 import ResponsiveChart from "./ResponsiveChart";
+import AnalyticsInfoTip from "./AnalyticsInfoTip";
 import InspectionDialog from "./InspectionDialog";
 import { formatManilaDate, paginateRecords } from "./businessCompliance";
 import {
@@ -27,8 +28,12 @@ export default function NonRegistryPinMonitoring({ snapshot, refreshing = false,
   const valid = linked ? isRegistryLinkedSnapshot(snapshot) : isNonRegistrySnapshot(snapshot);
   const rows = useMemo(() => valid ? nonRegistryRows(snapshot.records) : [], [snapshot, valid]);
   const visible = paginateRecords(rows, page, 20);
-  const colors = NON_REGISTRY_PIN_COLORS.filter(({ key }) => key !== "Unknown"
-    || (valid && snapshot.by_barangay.some(row => row.Unknown > 0)));
+  const colors = NON_REGISTRY_PIN_COLORS.filter(({ key }) => valid
+    && snapshot.by_barangay.some(row => Number(row[key] || 0) > 0));
+  const chartRows = valid ? [...snapshot.by_barangay].map(row => ({
+    ...row,
+    __total: colors.reduce((sum, { key }) => sum + Number(row[key] || 0), 0),
+  })).sort((a, b) => b.__total - a.__total || a.barangayName.localeCompare(b.barangayName)) : [];
   const exportCsv = () => {
     setExportError("");
     try {
@@ -77,11 +82,15 @@ export default function NonRegistryPinMonitoring({ snapshot, refreshing = false,
               icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="3" /></svg>} />
           ))}
         </div>
-        <p className="non-registry-note">Counts are pins, not deduplicated businesses. Under inspection includes submitted reports awaiting verification and may overlap Red/Yellow counts. Verified Green requires an eligible detection/inspector origin and current admin-verification evidence; Green colour alone is not enough.</p>
-        <h5>{linked ? "Registry-linked pins" : "Non-registry pins"} by barangay and current flag</h5>
+        <h5>
+          How many {linked ? "registry-linked" : "non-registry"} pins are in each barangay?
+          <AnalyticsInfoTip label="About pin monitoring chart">
+            These counts are map pins, not unique businesses. Under-inspection pins may overlap flag counts; verified Green requires current inspection evidence.
+          </AnalyticsInfoTip>
+        </h5>
         {snapshot.summary.total === 0 ? <p className="non-registry-empty" role="status">No {linked ? "Registry-linked" : "non-registry"} pins match the selected filters.</p> : (
-          <ResponsiveChart height={Math.max(260, snapshot.by_barangay.length * 32 + 80)}>
-            {({ width }) => <BarChart data={snapshot.by_barangay} layout="vertical" margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+          <ResponsiveChart height={Math.max(260, chartRows.length * 36 + 80)}>
+            {({ width }) => <BarChart data={chartRows} layout="vertical" margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--color-border-soft)" />
               <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11, fill: "var(--color-muted)" }} />
               <YAxis type="category" dataKey="barangayName" interval={0} width={width < 440 ? 112 : 142}
@@ -92,8 +101,12 @@ export default function NonRegistryPinMonitoring({ snapshot, refreshing = false,
             </BarChart>}
           </ResponsiveChart>
         )}
-        <p className="non-registry-note">Barangay, flag, detection-date and latest-inspection filters apply. Registry status, sector, business type/size and renewal filters do not apply to this pin population.</p>
-        <p className="non-registry-note">Snapshot: {formatManilaDate(snapshot.generated_at)}. Cards, chart, View List and CSV use the same complete filtered snapshot.{refreshing ? " Updating snapshot…" : ""}</p>
+        <div className="non-registry-note">
+          <AnalyticsInfoTip label="About pin filters and refresh">
+            Barangay, flag, detection-date, and latest-inspection filters apply. Registry status, sector, business type/size, and renewal-date filters do not apply. This panel’s cards, chart, list, and CSV use one filtered snapshot from {formatManilaDate(snapshot.generated_at)}.
+            {refreshing ? " The snapshot is refreshing." : ""}
+          </AnalyticsInfoTip>
+        </div>
       </>}
       {exportError && !open && <p role="alert" className="non-registry-error">{exportError}</p>}
       {open && valid && <InspectionDialog title={`${linked ? "Registry-Linked" : "Non-Registry"} Pin Monitoring — View List`} onClose={() => setOpen(false)}

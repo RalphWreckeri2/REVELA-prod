@@ -1341,6 +1341,27 @@ def _get_all_analytics_inner(F=None):
         for row in cur.fetchall()
     ]
 
+    _execute(cur, "descriptive.registry_size_by_barangay", f"""
+        SELECT
+            b.barangayName,
+            COALESCE(NULLIF(TRIM(o.businessSize), ''), 'Unknown') AS size_label,
+            COUNT(o.businessID) AS count
+        FROM barangays b
+        LEFT JOIN official_registry o
+          ON o.barangayID = b.barangayID {reg_o}
+        WHERE 1=1 {brgy_b}
+        GROUP BY b.barangayID, b.barangayName, size_label
+        ORDER BY b.barangayName, count DESC
+    """, reg_o_p + brgy_b_p)
+    registry_size_by_barangay = [
+        {
+            "barangayName": row["barangayName"],
+            "size_label": row["size_label"],
+            "count": row["count"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
     # Business size
     _execute(cur, "descriptive.business_size_dist", f"""
         SELECT COALESCE(businessSize, 'Unknown') AS size_label, COUNT(*) AS count
@@ -1471,6 +1492,45 @@ def _get_all_analytics_inner(F=None):
         for row in cur.fetchall()
     ]
 
+    _execute(cur, "descriptive.inspection_outcome_by_barangay", f"""
+        SELECT
+            b.barangayID,
+            b.barangayName,
+            ir.inspectionResult AS outcome,
+            COUNT(DISTINCT ir.reportID) AS count
+        FROM barangays b
+        LEFT JOIN geospatial_logs g
+          ON g.barangayID = b.barangayID {geo_on_g}
+        LEFT JOIN inspection_reports ir
+          ON ir.targetID = g.logID {insp_ir}
+         AND ir.verificationStatus = 'Verified'
+         AND ir.inspectionResult IN ('Green', 'Yellow', 'Red')
+        WHERE 1=1 {brgy_b}
+        GROUP BY b.barangayID, b.barangayName, ir.inspectionResult
+        HAVING ir.inspectionResult IS NOT NULL
+        ORDER BY b.barangayName, ir.inspectionResult
+    """, geo_on_g_p + insp_ir_p + brgy_b_p)
+    inspection_outcome_by_barangay = [
+        {
+            "barangayID": row["barangayID"],
+            "barangayName": row["barangayName"],
+            "outcome": row["outcome"],
+            "count": row["count"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
+    _execute(cur, "descriptive.verified_reports_without_outcome", f"""
+        SELECT COUNT(DISTINCT ir.reportID) AS n
+        FROM inspection_reports ir
+        JOIN geospatial_logs g ON ir.targetID = g.logID
+        WHERE ir.verificationStatus = 'Verified'
+          AND (ir.inspectionResult IS NULL
+               OR ir.inspectionResult NOT IN ('Green', 'Yellow', 'Red'))
+          {insp_ir} {geo_g}
+    """, insp_ir_p + geo_g_p)
+    verified_reports_without_outcome = cur.fetchone()["n"] or 0
+
     # The Descriptive report population is pin-linked. Count reports that
     # cannot be attributed to a barangay so the chart can disclose them rather
     # than silently folding in the Operations LEFT JOIN population.
@@ -1537,7 +1597,9 @@ def _get_all_analytics_inner(F=None):
         "enforcement_progress": enforcement_progress,
         "nature_per_barangay": nature_per_barangay,
         "registry_by_barangay_status": registry_by_barangay_status,
+        "registry_size_by_barangay": registry_size_by_barangay,
         "inspection_by_barangay_status": inspection_by_barangay_status,
+        "inspection_outcome_by_barangay": inspection_outcome_by_barangay,
         "sectoral_distribution": sectoral_distribution,
         "business_size_dist": business_size_dist,
         "business_type_dist": business_type_dist,
@@ -1549,6 +1611,7 @@ def _get_all_analytics_inner(F=None):
                            "unlinked_reports": unlinked_inspection_reports,
                            "verified_reports": workflow.get("verified_reports", 0),
                            "submitted_green": workflow.get("submitted_green", 0),
+                           "verified_reports_without_outcome": verified_reports_without_outcome,
                            "result_breakdown": result_breakdown,
                            "submitted_result_breakdown": submitted_result_breakdown,
                            "workflow": workflow},
@@ -1885,6 +1948,26 @@ def _get_all_analytics_inner(F=None):
         else:
             stat["avg_resolution_time"] = 0.0
 
+    _execute(cur, "operations.inspector_status_counts", f"""
+        SELECT
+            u.userID,
+            u.fullName,
+            COUNT(CASE
+                WHEN COALESCE(NULLIF(TRIM(ir.verificationStatus), ''), 'Unassigned')
+                     IN ('Assigned', 'Reassigned', 'In Progress', 'Unassigned')
+                     AND g.logID IS NOT NULL
+                THEN ir.reportID END) AS pending,
+            COUNT(CASE WHEN ir.verificationStatus = 'Submitted' AND g.logID IS NOT NULL THEN ir.reportID END) AS awaiting_review,
+            COUNT(CASE WHEN ir.verificationStatus = 'Verified' AND g.logID IS NOT NULL THEN ir.reportID END) AS verified
+        FROM users u
+        LEFT JOIN inspection_reports ir ON ir.userID = u.userID{insp_ir}
+        LEFT JOIN geospatial_logs g ON ir.targetID = g.logID{geo_g}
+        WHERE u.userRole = 'Inspector'
+        GROUP BY u.userID
+        ORDER BY (pending + awaiting_review + verified) DESC, u.fullName
+    """, insp_ir_p + geo_g_p)
+    inspector_status_counts = list(cur.fetchall())
+
     # 2. Inspection Status Breakdown
     _execute(cur, "operations.inspection_status_breakdown", f"""
         SELECT COALESCE(ir.verificationStatus, 'Unassigned') as status, COUNT(ir.reportID) as count
@@ -1912,10 +1995,32 @@ def _get_all_analytics_inner(F=None):
             "count": row["count"]
         })
 
+    _execute(cur, "operations.inspection_status_timeline", f"""
+        SELECT
+            DATE(ir.irTimestamp) AS date,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Submitted' THEN ir.reportID END) AS submitted,
+            COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Verified' THEN ir.reportID END) AS verified
+        FROM inspection_reports ir
+        LEFT JOIN geospatial_logs g ON ir.targetID = g.logID
+        WHERE 1=1 {insp_ir} {geo_g}
+        GROUP BY DATE(ir.irTimestamp)
+        ORDER BY date ASC
+    """, insp_ir_p + geo_g_p)
+    inspection_status_timeline = [
+        {
+            "date": row["date"].strftime("%Y-%m-%d") if row["date"] else None,
+            "submitted": row["submitted"] or 0,
+            "verified": row["verified"] or 0,
+        }
+        for row in cur.fetchall()
+    ]
+
     cur.close()
     operations = {
         "inspector_stats": inspector_stats, "status_breakdown": status_breakdown,
         "inspection_timeline": inspection_timeline,
+        "inspector_status_counts": inspector_status_counts,
+        "inspection_status_timeline": inspection_status_timeline,
     }
     _publish_analytics_section("operations", operations)
 
