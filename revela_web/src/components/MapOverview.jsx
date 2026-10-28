@@ -172,7 +172,8 @@ export default function MapOverview({ token, filters }) {
   const [activeDimension, setActiveDimension] = useState("business_size");
   const [pinView, setPinView] = useState("all");
   const [boundaryError, setBoundaryError] = useState(false);
-  const legendControlRef = useRef(null);
+  const legendToggleRef = useRef(null);
+  const legendPanelRef = useRef(null);
   const dataLayerRef = useRef(null);
   const hoverInfoWindowRef = useRef(null);
   const styleFeatureRef = useRef(null);
@@ -230,12 +231,14 @@ export default function MapOverview({ token, filters }) {
   const mapRowsById = rowsById;
 
   useEffect(() => {
-    if (isLoaded && legendControlRef.current) {
-      window.google?.maps?.OverlayView?.preventMapHitsAndGesturesFrom?.(
-        legendControlRef.current,
-      );
+    if (!isLoaded) return;
+    const preventMapGestures = window.google?.maps?.OverlayView?.preventMapHitsAndGesturesFrom;
+    if (preventMapGestures) {
+      [legendToggleRef.current, legendPanelRef.current]
+        .filter(Boolean)
+        .forEach((element) => preventMapGestures(element));
     }
-  }, [isLoaded]);
+  }, [isLoaded, legendOpen]);
 
   const styleFeature = useCallback((feature) => {
     const featureName = feature.getProperty("ADM4_EN");
@@ -566,26 +569,29 @@ export default function MapOverview({ token, filters }) {
         </div>
       </div>
 
-      <div className="map-overview-controls">
-        <label className="map-overview-select-label map-overview-select-label--filter">
-          <span>Barangay</span>
-          <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
-            <option value="">All barangays</option>
-            {barangayRows.map((row) => (
-              <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
-            ))}
-          </select>
-        </label>
-        <label className="map-overview-date-label" title="Choose the date range">
-          <span>Date range</span>
-          <select aria-label="Date range" title="Choose the date range"
-            value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
-            <option value="all">All time</option>
-            <option value="year">This year</option>
-            <option value="30days">Last 30 days</option>
-            <option value="7days">Last 7 days</option>
-          </select>
-        </label>
+      <div className="map-overview-controls" role="group" aria-label="Analytics filters">
+        <span className="map-overview-filter-by">Filter by</span>
+        <div className="map-overview-control-group">
+          <label className="map-overview-select-label map-overview-select-label--filter">
+            <span>Barangay</span>
+            <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
+              <option value="">All barangays</option>
+              {barangayRows.map((row) => (
+                <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
+              ))}
+            </select>
+          </label>
+          <label className="map-overview-date-label" title="Choose the date range">
+            <span>Date range</span>
+            <select aria-label="Date range" title="Choose the date range"
+              value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
+              <option value="all">All time</option>
+              <option value="year">This year</option>
+              <option value="30days">Last 30 days</option>
+              <option value="7days">Last 7 days</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
@@ -645,12 +651,13 @@ export default function MapOverview({ token, filters }) {
                 Barangay boundaries could not be displayed.
               </p>
             )}
-            <div ref={legendControlRef} className="map-overview-legend-control"
+            <div className="map-overview-legend-control"
               onClick={(event) => event.stopPropagation()}
+              onMouseDown={(event) => event.stopPropagation()}
               onDoubleClick={(event) => event.stopPropagation()}
               onPointerDown={(event) => event.stopPropagation()}
               onTouchStart={(event) => event.stopPropagation()}>
-              <button type="button" className="map-overview-legend-toggle"
+              <button ref={legendToggleRef} type="button" className="map-overview-legend-toggle"
                 aria-label={legendOpen ? "Close map legend" : "Open map legend"}
                 aria-expanded={legendOpen} aria-controls="map-overview-legend"
                 title={legendOpen ? "Close map legend" : "Map legend"}
@@ -662,7 +669,7 @@ export default function MapOverview({ token, filters }) {
                 </svg>
               </button>
               {legendOpen && (
-                <div id="map-overview-legend" className="map-overview-map-legend" role="group"
+                <div ref={legendPanelRef} id="map-overview-legend" className="map-overview-map-legend" role="group"
                   aria-label={mapView === "inspections"
                     ? "Inspections per barangay map legend"
                     : "Businesses per barangay map legend"}>

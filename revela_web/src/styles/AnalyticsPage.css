@@ -32,6 +32,12 @@ html.theme-dark .analytics-page .saas-content .kpi-card {
   background: var(--color-modal-bg);
   box-shadow: none;
 }
+html.theme-dark .analytics-page .saas-content .kpi-card {
+  --color-ink: #0f172a;
+  --color-muted: #475569;
+  --color-border: #cbd5e1;
+  background: #FBFCFC;
+}
 
 .analytics-page-heading {
   display: flex;
@@ -39,7 +45,7 @@ html.theme-dark .analytics-page .saas-content .kpi-card {
   align-items: flex-start;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 0;
+  margin-bottom: 18px;
 }
 
 .analytics-page-heading-copy { min-width: 240px; }

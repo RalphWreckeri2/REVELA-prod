@@ -17,12 +17,27 @@
 }
 
 .map-overview-controls {
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(190px, 240px);
-  align-items: flex-end;
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
   width: 100%;
-  justify-content: start;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.map-overview-filter-by {
+  flex: 0 0 auto;
+  color: var(--color-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.map-overview-control-group {
+  display: grid;
+  flex: 0 1 auto;
+  grid-template-columns: repeat(2, minmax(210px, 260px));
+  gap: 12px;
 }
 
 .map-overview-topbar {
@@ -81,6 +96,11 @@
   color: var(--color-muted);
   font-size: 12px;
   font-weight: 650;
+}
+
+.map-overview-select-label--filter > span,
+.map-overview-date-label > span {
+  min-height: 16px;
 }
 
 .map-overview select {
@@ -269,16 +289,19 @@
 
 .map-overview-legend-control {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  inset: 0;
   z-index: 10;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .map-overview-legend-toggle {
+  position: absolute;
+  bottom: 56px;
+  left: 14px;
   display: grid !important;
   width: 44px;
   min-height: 44px;
+  pointer-events: auto;
   place-items: center;
   padding: 10px !important;
   border: 1px solid rgba(15, 23, 42, 0.2) !important;
@@ -304,11 +327,12 @@
   align-items: flex-start;
   gap: 9px;
   position: absolute;
-  top: 0;
-  left: 54px;
-  width: min(280px, calc(100% - 66px));
-  max-height: calc(100% - 4px);
+  bottom: 56px;
+  left: 68px;
+  width: min(280px, calc(100% - 82px));
+  max-height: calc(100% - 72px);
   overflow: auto;
+  pointer-events: auto;
   padding: 12px;
   border: 1px solid var(--color-border);
   border-radius: 11px;
@@ -550,10 +574,6 @@
     padding-right: 0;
   }
 
-  .map-overview-controls {
-    grid-template-columns: minmax(220px, 300px) minmax(190px, 240px);
-  }
-
   .map-overview-panel {
     min-height: 0;
     margin-top: 20px;
@@ -567,6 +587,20 @@
   .map-overview-map-card {
     position: sticky;
     top: 16px;
+  }
+}
+
+@container analytics-content (max-width: 639px) {
+  .map-overview-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .map-overview-control-group {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 }
 
@@ -594,42 +628,56 @@
     min-height: 350px;
   }
 
-  .map-overview-controls {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .map-overview-total {
     min-height: 78px;
     padding: 14px 16px;
   }
 
   .map-overview-total strong { font-size: 27px; }
-  .map-overview-legend-control { top: 10px; left: 10px; }
+  .map-overview-legend-toggle { bottom: 56px; left: 10px; }
+  .map-overview-map-legend {
+    bottom: 56px;
+    left: 64px;
+    width: calc(100% - 74px);
+    max-height: calc(100% - 72px);
+  }
   .map-overview-legend-ranges { grid-template-columns: minmax(0, 1fr); }
   .map-overview-layout { padding: 14px; }
 }
 
 html.theme-dark .map-overview-map-card,
-html.theme-dark .map-overview-detail-card,
+html.theme-dark .map-overview-detail-card {
+  background: transparent;
+}
+
 html.theme-dark .map-overview-total,
 html.theme-dark .map-overview-layout {
-  background: var(--color-modal-bg);
+  --color-ink: #0f172a;
+  --color-muted: #475569;
+  --color-border: #cbd5e1;
+  --color-border-soft: #e2e8f0;
+  --color-surface: #FBFCFC;
+  background: #FBFCFC;
 }
 
 html.theme-dark .map-overview-map-legend {
-  border-color: var(--color-border);
-  background: #1e293b;
-  color: #e2e8f0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-html.theme-dark .map-overview-legend-toggle {
-  border-color: var(--color-border) !important;
-  background: var(--color-modal-bg) !important;
-  color: var(--color-ink) !important;
+  border-color: #cbd5e1;
+  background: #FBFCFC;
+  color: #334155;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
 }
 
 html.theme-dark .map-overview-legend-title,
 html.theme-dark .map-overview-legend-empty {
-  color: #f8fafc;
+  color: #0f172a;
+}
+
+html.theme-dark .map-overview-map-legend .map-overview-legend-ranges {
+  color: #334155;
+}
+
+html.theme-dark .map-overview-legend-toggle {
+  border-color: #cbd5e1 !important;
+  background: #FBFCFC !important;
+  color: #1e293b !important;
 }
