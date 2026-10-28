@@ -992,7 +992,6 @@ export default function AnalyticsPage() {
   const prescWeight = (key) =>
     typeof prescWeights?.[key] === "number" ? `${(prescWeights[key] * 100).toFixed(1)}%` : "—";
   const kpis = desc?.kpis;
-  const reportingYear = kpis?.reporting_year ?? Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Manila", year: "numeric" }));
 
 
 
@@ -1582,7 +1581,8 @@ export default function AnalyticsPage() {
         </div>
 
         {/* ANALYTICS FILTERS — redesigned: chips + accordion + sticky footer */}
-        <div className="saas-card frosted-glass" style={{ marginBottom: 24, padding: "20px 22px", maxHeight: showFilters ? "85vh" : "auto", overflowY: showFilters ? "auto" : "visible" }}>
+        {showFilters && <div className="analytics-filter-backdrop" onClick={() => setShowFilters(false)} />}
+        <div id="analytics-filter-panel" className={`saas-card frosted-glass analytics-filter-panel${showFilters ? " is-open" : ""}`} style={{ marginBottom: 24, padding: "20px 22px", maxHeight: showFilters ? "85vh" : "auto", overflowY: showFilters ? "auto" : "visible" }}>
           {/* ── Header row: title + collapse toggle ── */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 14, marginBottom: showFilters ? 16 : 0 }}>
             <div
@@ -1973,6 +1973,12 @@ export default function AnalyticsPage() {
           })}
         </nav>
 
+        <div className="analytics-filter-sticky-control">
+          <button type="button" className="analytics-filter-sticky-btn" onClick={() => setShowFilters((value) => !value)} aria-expanded={showFilters} aria-controls="analytics-filter-panel">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+            Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </button>
+        </div>
         {(error || offline) && (
           <div role="status" style={{
             background: COLOR.redLight, border: `1px solid ${COLOR.red}`, borderRadius: 10,
@@ -2020,42 +2026,6 @@ export default function AnalyticsPage() {
               subtitle="Current-state demographic profile and field inspection summaries"
             />
 
-            {presc?.dispatch_recommendations && presc.dispatch_recommendations.length > 0 && (
-              <div className="tier-1-card saas-card frosted-glass" style={{ marginBottom: 24, padding: "20px", borderRadius: 12 }}>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 12px 0", display: "flex", alignItems: "center", gap: 8 }}>
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: "#6366f1" }}>
-                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-                  </svg>
-                  Priority Dispatch Overview
-                </h3>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {presc.dispatch_recommendations.slice(0, 3).map((rec, idx) => (
-                    <div key={idx} style={{ background: "rgba(99,102,241,0.04)", padding: "14px 18px", borderRadius: 10, border: "1px solid rgba(99,102,241,0.12)", transition: "background 0.2s" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <span style={{ background: "#6366f1", color: "#fff", fontWeight: 800, fontSize: 13, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%", flexShrink: 0 }}>
-                          {rec.rank}
-                        </span>
-                        <span style={{ fontWeight: 700, fontSize: 15, color: "var(--color-ink)", flex: 1 }}>{rec.barangayName}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99, color: rec.urgencyColor, background: `${rec.urgencyColor}15`, border: `1px solid ${rec.urgencyColor}40`, letterSpacing: "0.05em" }}>{rec.urgency || "—"}</span>
-                        <span style={{ fontSize: 12, color: "var(--color-muted)", fontWeight: 600 }}>OPS {rec.ops_score ?? "—"}</span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--color-muted)" }}>
-                          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                            {rec.allocation_status === "deferred" ? "Deferred" : rec.inspectors ?? 0}
-                          </span>
-                          <span>&middot;</span>
-                          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
-                            {rec.flagged_count ?? 0}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* SECTION A: Official Registry Demographics */}
             <div style={{ marginBottom: 40 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>
@@ -2067,14 +2037,9 @@ export default function AnalyticsPage() {
 
                             <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
               <div className="analytics-census-grid">
-                <KpiCard iconVariant="gold" value={kpis?.current_year_registered_count ?? kpis?.current_year_count ?? "�"} label={`Registered Current Year (${reportingYear})`} icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="green" value={kpis?.upcoming_year_renewal_count ?? "�"} label={`Scheduled Renewal (${reportingYear + 1})`} icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M23 4v6h-6"></path><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="plain" value={kpis?.new_registration_count ?? "�"} label="New Registrations" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="gold" value={kpis?.renewal_registration_count ?? "�"} label="Renewals" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>} style={{ padding: "14px 12px" }} />
-                <KpiCard iconVariant="green" value={kpis?.active_count ?? "�"} label="Active Permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="red" value={kpis?.expired_count ?? "�"} label="Expired" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="gold" value={kpis?.pending_count ?? "�"} label="Pending" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="red" value={kpis?.closed_count ?? "�"} label="Closed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="9" x2="15" y2="15"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="plain" value={kpis?.total_businesses ?? "?"} label="Businesses in scope" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="green" value={kpis?.active_count ?? "?"} label="Active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={Number(kpis?.total_businesses ?? 0) - Number(kpis?.active_count ?? 0)} label="Non-active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
               <div className="tier-2-card saas-card frosted-glass analytics-feature-card analytics-feature-card--registry-status" style={{ marginTop: 24 }}>
@@ -2095,6 +2060,9 @@ export default function AnalyticsPage() {
                     Filtered to permit status <strong>{appliedFilters.application_status}</strong>. The chart keeps that stack only.
                   </p>
                 )}
+                <p className="analytics-chart-guide">
+                  Each bar is one barangay. Colored segments show how many businesses have each permit status. A color appears only when records exist; zero segments are still listed in the tooltip.
+                </p>
                 {loading ? <Skeleton h={480} /> : (
                   <StackedBarangayChart data={registryChartData} statuses={REGISTRY_STATUS_STACKS}
                     legendLabel="Permit status" totalLabel="businesses"
@@ -2113,7 +2081,7 @@ export default function AnalyticsPage() {
 
               <div style={{ marginTop: 24 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+                <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                   <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
                     <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Business Type</p>
                     <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -2124,18 +2092,6 @@ export default function AnalyticsPage() {
                     <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Dominant Economic Sector</p>
                     <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {sectoralData?.[0] ? sectoralData[0].name : "N/A"}
-                    </p>
-                  </div>
-                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-orange)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Active Permit Share</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {kpis?.compliance_rate != null ? `${kpis.compliance_rate}% of registry rows` : "N/A"}
-                    </p>
-                  </div>
-                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-red)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Registry Rows in Scope</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {Number(kpis?.total_businesses ?? 0).toLocaleString()}
                     </p>
                   </div>
                 </div>
@@ -2160,8 +2116,6 @@ export default function AnalyticsPage() {
                   <KpiCard iconVariant="gold" value={awaitingCount} label="Awaiting verification reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
                   <KpiCard iconVariant="gold" value={verifiedReportCount} label="Verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
                   <KpiCard iconVariant="green" value={clearedCount} label="Verified Green reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 0 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} />
-                  <KpiCard iconVariant="gold" value={`${greenVerifiedShare}%`} label="Green share of verified reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>} />
-                  <KpiCard iconVariant="red" value={unlinkedReportCount} label="Reports excluded (no linked pin)" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>} />
                 </div>
               </div>
               <p className="analytics-filter-scope-note">
@@ -2186,6 +2140,9 @@ export default function AnalyticsPage() {
                     Filtered to current status <strong>{appliedFilters.verification_status}</strong>. The chart keeps that stack only.
                   </p>
                 )}
+                <p className="analytics-chart-guide">
+                  Each bar is one barangay. Colored segments show how many distinct inspection reports have each current report status. A color appears only when reports exist; zero segments are still listed in the tooltip.
+                </p>
                 {loading ? <Skeleton h={480} /> : (
                   <StackedBarangayChart data={inspectionChartData} statuses={INSPECTION_STATUS_STACKS}
                     legendLabel="Current report status" totalLabel="reports"
@@ -2196,7 +2153,7 @@ export default function AnalyticsPage() {
 
               <div style={{ marginTop: 24 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Quick Insights (FAQ)</h3>
-                <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+                <div className="analytics-insights-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
                   <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-blue)", minWidth: 0 }}>
                     <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Most Common Verified Outcome</p>
                     <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -2210,18 +2167,6 @@ export default function AnalyticsPage() {
                     <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Verified Green Report Share</p>
                     <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {verifiedReportCount > 0 ? `${greenVerifiedShare}% of verified reports` : "N/A"}
-                    </p>
-                  </div>
-                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-red)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Awaiting Verification</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {awaitingCount.toLocaleString()} {awaitingCount === 1 ? "report" : "reports"}
-                    </p>
-                  </div>
-                  <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 12, borderLeft: "4px solid var(--color-green)", minWidth: 0 }}>
-                    <p style={{ fontSize: 11, color: "var(--color-muted)", margin: "0 0 4px 0", fontWeight: 600, textTransform: "uppercase" }}>Reports Excluded</p>
-                    <p style={{ fontSize: 14, color: "var(--color-ink)", margin: 0, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {unlinkedReportCount.toLocaleString()} without a linked pin
                     </p>
                   </div>
                 </div>

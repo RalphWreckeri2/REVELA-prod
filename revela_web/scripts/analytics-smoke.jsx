@@ -25,7 +25,7 @@ const wait = async (predicate, label) => {
   throw new Error(`Timed out: ${label}`);
 };
 const button = (text) => [...document.querySelectorAll("button")].find((node) => node.textContent.trim() === text);
-const activeCount = () => [...document.querySelectorAll(".kpi-card")].find((node) => node.textContent.includes("Active Permits"))?.querySelector("h3")?.textContent;
+const activeCount = () => [...document.querySelectorAll(".kpi-card")].find((node) => node.textContent.includes("Active permits"))?.querySelector("h3")?.textContent;
 const pinPanel = () => document.querySelector(".pin-monitoring-panel");
 const openPinPanel = async () => {
   const panel = pinPanel();
@@ -233,7 +233,7 @@ try {
     && document.querySelector(".analytics-census-grid") && button("Refresh") && !button("Refresh").disabled, "completed descriptive load");
   check(document.querySelectorAll('nav[aria-label="Analytics sections"]').length === 1 && !document.querySelector(".analytics-quick-nav"), "Floating navigation stays hidden while the main tabs are visible");
   check(document.querySelector(".analytics-tab-subtitle").textContent === "What is happening?", "Navigation subtitles are restored");
-  check(document.querySelector(".analytics-census-grid").textContent.includes("Registered Current Year (2031)") && document.querySelector(".analytics-census-grid").textContent.includes("Scheduled Renewal (2032)"), "Census years follow the backend reporting year");
+  check(document.querySelector(".analytics-census-grid").textContent.includes("Businesses in scope") && document.querySelector(".analytics-census-grid").textContent.includes("Active permits"), "Registry KPIs match the stacked chart population");
   const content = document.querySelector(".saas-content");
   const mainNav = document.querySelector(".analytics-section-nav");
   content.scrollTop = mainNav.offsetTop + mainNav.offsetHeight + 32;

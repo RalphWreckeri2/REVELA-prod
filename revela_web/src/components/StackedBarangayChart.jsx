@@ -61,6 +61,14 @@ export default function StackedBarangayChart({
 
   const hasData = rows.some(row => row.__total > 0);
   const chartHeight = Math.max(280, rows.length * 34 + 70);
+  const statusTotals = statuses.map(status => ({
+    ...status,
+    total: rows.reduce((sum, row) => sum + Number(row.__counts?.[status.key] || 0), 0),
+  }));
+  const nonzeroStatuses = statusTotals.filter(status => status.total > 0);
+  const singleCategoryNote = nonzeroStatuses.length === 1
+    ? `All ${nonzeroStatuses[0].total.toLocaleString()} ${totalLabel} in this filtered view are ${nonzeroStatuses[0].label}.`
+    : null;
 
   if (!hasData) {
     return (
@@ -99,6 +107,7 @@ export default function StackedBarangayChart({
         </p>
       )}
 
+      {singleCategoryNote && <p className="analytics-stacked-footnote">{singleCategoryNote}</p>}
       <div className="analytics-stacked-scroll" tabIndex={0} aria-label={`Scrollable ${legendLabel.toLowerCase()} chart by barangay`}>
         <ResponsiveChart height={chartHeight}>
           {({ width }) => {
