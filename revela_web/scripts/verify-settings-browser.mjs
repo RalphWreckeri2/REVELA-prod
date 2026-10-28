@@ -21,10 +21,25 @@ function installFixtures() {
   localStorage.setItem("revela-theme", "light");
   localStorage.setItem("revela_emailAlerts", "true");
   const audit = window.__settings = {
-    requests: [], modes: { preferences: "failure", setup: "failure" }, pendingCleanup: false,
+    requests: [], modes: { preferences: "failure", setup: "failure", backup: "unconfigured" }, pendingCleanup: false,
     user: { id: 17, fullName: "Synthetic Settings Admin", email: "settings@example.test", role: "Admin", emailInspectionAlerts: true, is_2fa_enabled: false },
     policy: { w1_risk: 68, w2_sector: 7, w3_distance: 25, bplo_lat: 13.960413, bplo_lng: 121.114547 },
+    backup: {
+      status: "not_configured", configured: false, lastSuccessfulBackup: null, history: null,
+      reason: "Database backup runtime configuration is incomplete.",
+      schedule: { configured: false, enabled: false, nextRunAt: null, summary: null },
+      retention: { configured: false, summary: null },
+      historyUnavailableReason: "Backup history is unavailable until backup storage configuration is complete.",
+      manualBackupDisabledReason: "Database backup runtime configuration is incomplete.",
+      downloadDisabledReason: "Authenticated backup downloads require configured private storage.",
+      canManualBackup: false, canDownload: false, configurationIssues: ["runtime configuration incomplete"],
+      automaticExecutionEnabled: false,
+      automaticExecutionStatus: "not_ready",
+      automaticExecutionReason: "No external scheduled trigger is integrated. The in-process scheduler can stop when the API sleeps.",
+      externalTriggerConfigured: false,
+    },
   };
+  audit.originalBackup = structuredClone(audit.backup);
   const nativeFetch = window.fetch.bind(window);
   const nativeSetItem = Storage.prototype.setItem;
   Storage.prototype.setItem = function (key, value) {
@@ -39,7 +54,7 @@ function installFixtures() {
     }
     const path = url.pathname, method = options.method || "GET";
     const body = options.body ? JSON.parse(options.body) : null;
-    audit.requests.push({ path, method, body });
+    audit.requests.push({ path, method, body, authorization: new Headers(options.headers).get("Authorization") });
     const json = (data, status = 200) => {
       const response = Response.json(data, { status });
       Object.defineProperty(response, "url", { value: url.href });
@@ -70,6 +85,21 @@ function installFixtures() {
     if (path.endsWith("/analytics/wlc-config")) {
       if (method === "PUT") Object.assign(audit.policy, body);
       return json(method === "PUT" ? { data: audit.policy } : audit.policy);
+    }
+    if (path.endsWith("/admin-settings/database-backup/status")) {
+      if (audit.modes.backup === "held") await new Promise(resolve => { audit.releaseBackup = resolve; });
+      if (audit.modes.backup === "failure") return json({ error: "Synthetic backup status outage" }, 503);
+      if (audit.modes.backup === "missing") return json({ error: "Not found" }, 404);
+      if (audit.modes.backup === "incomplete") return json({ status: "ready" });
+      return json(audit.backup);
+    }
+    if (path.endsWith("/admin-settings/backups/run") && method === "POST") {
+      return json({ message: "Database backup started.", status: "running" }, 202);
+    }
+    if (/\/admin-settings\/backups\/[0-9a-f]{32}\/download$/.test(path)) {
+      return new Response(new Uint8Array([0x1f, 0x8b, 0x08]), {
+        headers: { "Content-Type": "application/gzip", "Content-Disposition": 'attachment; filename="revela-test.sql.gz"' },
+      });
     }
     if (path.endsWith("/inspections/evidence-storage-stats")) {
       const count = audit.pendingCleanup || audit.cleaned ? 0 : 2;
@@ -167,6 +197,96 @@ try {
   await call("Page.navigate", { url: `${origin}/settings` });
   await wait(`document.querySelector('#settings-preferences-body') && !document.querySelector('#settings-policy-state')`, "Settings ready");
   for (const section of ["security", "evidence", "manual"]) await evaluate(`document.querySelector('#settings-${section}-title').closest('button').click()`);
+
+  const backupPath = "/admin-settings/database-backup/status";
+  const backupScope = "#settings-database-backup-body";
+  await wait(`document.querySelector('#settings-database-backup-summary')?.textContent === 'Not configured · No successful backup yet'`, "unconfigured backend status");
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('.settings-section')].map(e => e.getAttribute('aria-labelledby')).filter(id => /evidence|database-backup|manual/.test(id))`),
+    ["settings-evidence-title", "settings-database-backup-title", "settings-manual-title"]);
+  assert.equal(await evaluate(`document.querySelector('${backupScope}').hidden`), true);
+  await evaluate(`document.querySelector('#settings-database-backup-title').closest('button').focus()`);
+  await key("Enter", "Enter", 13);
+  assert.equal(await evaluate(`document.querySelector('${backupScope}').hidden`), false);
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-description').textContent.trim()`),
+    "Create and download recovery copies of system database records. Inspection photo files are managed separately under Inspection Evidence Storage & Archival.");
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
+  assert.ok(await evaluate(`document.querySelector('#database-backup-action-reason').textContent.includes('runtime configuration is incomplete')`));
+  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody tr').length`), 1);
+  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody button, ${backupScope} a').length`), 0);
+  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Not scheduled");
+  assert.ok(await evaluate(`document.querySelector('.database-backup-policy').textContent.includes('Proposal only')`));
+  assert.ok(await evaluate(`__settings.requests.filter(r => r.path.endsWith('${backupPath}')).every(r => r.authorization === 'Bearer settings-synthetic-token')`));
+  record("Database Backup is a native collapsible card in the requested order with honest unconfigured status and inactive proposal");
+
+  const backupBefore = await count(backupPath);
+  await evaluate(`__settings.modes.backup = 'held'; (() => { const button = document.querySelector('${backupScope} .ghost-btn'); button.click(); button.click(); })()`);
+  await wait(`typeof __settings.releaseBackup === 'function' && document.querySelector('${backupScope} .ghost-btn').disabled`, "pending status refresh");
+  assert.equal(await count(backupPath), backupBefore + 1);
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
+  assert.ok(await evaluate(`document.querySelector('${backupScope}').textContent.includes('Loading backup history')`));
+  await evaluate(`__settings.modes.backup = 'unconfigured'; __settings.releaseBackup()`);
+  await wait(`!document.querySelector('${backupScope} .ghost-btn').disabled`, "status refresh finished");
+  for (const [mode, expected] of [["failure", "Synthetic backup status outage"], ["missing", "GET /api/admin-settings/database-backup/status"], ["incomplete", "incomplete database backup status"]]) {
+    await evaluate(`__settings.modes.backup = '${mode}'`);
+    await click(`${backupScope} button`, "Refresh Status");
+    await wait(`document.querySelector('${backupScope} [role="alert"]')?.textContent.includes(${JSON.stringify(expected)})`, `${mode} status response`);
+    assert.equal(await evaluate(`document.querySelector('#settings-database-backup-state').textContent`), "Status unavailable");
+    assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
+    assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Unavailable");
+  }
+  await evaluate(`__settings.modes.backup = 'unconfigured'`);
+  await click(`${backupScope} button`, "Refresh Status");
+  await wait(`!document.querySelector('${backupScope} [role="alert"]')`, "status retry succeeds");
+  record("Status refresh uses Bearer auth, deduplicates concurrent clicks, and handles loading/outage/missing/invalid responses without fake backup failures");
+
+  await evaluate(`(() => {
+    const completed = { id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', trigger: 'manual', status: 'completed', completedAt: '2026-10-23T11:00:00Z', sizeBytes: 1048576 };
+    __settings.backup = { ...__settings.backup, status: 'ready', configured: true, reason: null,
+      canManualBackup: true, canDownload: true, configurationIssues: [], automaticExecutionEnabled: false,
+      lastSuccessfulBackup: completed, history: [completed,
+        { id: 'cccccccccccccccccccccccccccccccc', trigger: 'automatic', status: 'completed', startedAt: '2026-10-23T11:00:00Z', completedAt: '2026-10-23T11:01:00Z', sizeBytes: 2048, monthlyArchive: true },
+        { id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', trigger: 'automatic', status: 'failed', startedAt: '2026-10-24T11:00:00Z', sizeBytes: null }],
+      schedule: { configured: true, enabled: false, nextRunAt: null, summary: 'Every Friday at 7:00 PM Asia/Manila; monthly archive' },
+      retention: { configured: true, summary: 'Proposed retention: keep 4 successful weekly copies and 3 monthly archives; manual backups are a separate category proposed for 30 days. Automatic cleanup is disabled.', cleanupEnabled: false,
+        policy: { weekly_successful_copies: 4, monthly_archives: 3, manual_days_proposed: 30, cleanup_enabled: false } },
+      automaticExecutionStatus: 'not_ready',
+      automaticExecutionReason: 'No external scheduled trigger is integrated. The in-process scheduler can stop when the API sleeps.',
+      externalTriggerConfigured: false };
+  })()`);
+  await click(`${backupScope} button`, "Refresh Status");
+  await wait(`document.querySelector('#settings-database-backup-state').textContent === 'Ready'`, "backend supplied completed history");
+  assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.includes('7:00 PM') && document.querySelectorAll('${backupScope} dd')[1].textContent.includes('1 MB')`));
+  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Not scheduled");
+  assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-policy').textContent.includes('30 days')`));
+  assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-policy').textContent.includes('Cleanup is disabled')`));
+  assert.ok(await evaluate(`[...document.querySelectorAll('${backupScope} [role="status"]')].some(node => node.textContent.includes('Automatic backup is not ready'))`));
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${backupScope} tbody tr')].map(r => r.cells[1].textContent)`), ["Manual", "Monthly archive", "Automatic"]);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('${backupScope} tbody tr')].map(r => r.cells[3].textContent)`), ["1 MB", "2 KB", "—"]);
+  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody button').length`), 2);
+  assert.equal(await evaluate(`document.querySelector('${backupScope} tbody button').disabled`), false);
+  await click(`${backupScope} tbody button`, "Download");
+  assert.equal(await evaluate(`__settings.requests.at(-1).method`), "GET");
+  assert.ok(await evaluate(`__settings.requests.at(-1).path.endsWith('/admin-settings/backups/${"a".repeat(32)}/download')`));
+  await click(`${backupScope} .primary-btn`, "Back Up Now");
+  assert.equal(await evaluate(`__settings.requests.find(r => r.path.endsWith('/admin-settings/backups/run'))?.method`), "POST");
+  for (const state of ["running", "failed"]) {
+    await evaluate(`__settings.backup.status = '${state}'; __settings.backup.schedule.enabled = false`);
+    await click(`${backupScope} button`, "Refresh Status");
+    await wait(`document.querySelector('#settings-database-backup-state').textContent === '${state === "running" ? "Running" : "Failed"}'`, `${state} backup response`);
+    assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Not scheduled");
+    assert.equal(
+      await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`),
+      state === "running",
+    );
+  }
+  await evaluate(`__settings.backup = { ...__settings.originalBackup, history: [] }`);
+  await click(`${backupScope} button`, "Refresh Status");
+  await wait(`document.querySelector('${backupScope} tbody').textContent.includes('No backup runs have been reported')`, "actual empty ledger");
+  await evaluate(`__settings.backup = structuredClone(__settings.originalBackup)`);
+  await click(`${backupScope} button`, "Refresh Status");
+  await wait(`document.querySelector('#settings-database-backup-state').textContent === 'Not configured'`, "unconfigured status restored");
+  assert.ok(await evaluate(`__settings.requests.filter(r => r.path.includes('database-backup')).every(r => r.method === 'GET')`));
+  record("Backend-supplied Ready/Running/Failed, Manila timestamps, sizes, monthly history, authenticated actions, and the disabled schedule render accurately");
 
   await click("#settings-preferences-body button", "Dark");
   await click("#settings-preferences-body button", "Off");
@@ -278,6 +398,32 @@ try {
   await closeAlert();
   await wait(`!document.querySelector('#settings-evidence-body .settings-warning')`, "recovery warning clears");
   record("Cleanup failures never show success; pending recovery warns and remains retryable with zero eligible reports");
+
+  for (const section of ["preferences", "security", "evidence", "manual"]) {
+    await evaluate(`(() => { const button = document.querySelector('#settings-${section}-title').closest('button'); if (button.getAttribute('aria-expanded') === 'true') button.click(); })()`);
+  }
+  for (const theme of ["light", "dark"]) {
+    await evaluate(`document.documentElement.classList.toggle('theme-dark', ${theme === "dark"}); document.documentElement.classList.toggle('theme-light', ${theme === "light"})`);
+    for (const width of [1440, 1280, 1024, 768, 600]) {
+      await call("Emulation.setDeviceMetricsOverride", { width, height: 1100, deviceScaleFactor: 1, mobile: false, screenWidth: width, screenHeight: 1100 });
+      await sleep(200);
+      await evaluate(`document.querySelector('#settings-database-backup-title').scrollIntoView({ block: 'start' })`);
+      const layout = await evaluate(`(() => {
+        const section = document.querySelector('#settings-database-backup-title').closest('section');
+        const panel = document.querySelector('.database-backup-panel');
+        const b = section.getBoundingClientRect();
+        return { viewportOverflow: document.documentElement.scrollWidth > innerWidth, sectionOverflow: section.scrollWidth > section.clientWidth + 1,
+          panelOverflow: panel.scrollWidth > panel.clientWidth + 1, cardInViewport: b.left >= 0 && b.right <= innerWidth,
+          buttonsFit: [...panel.querySelectorAll('.database-backup-buttons button')].every(button => { const r = button.getBoundingClientRect(); return r.left >= b.left && r.right <= b.right; }),
+          titleFont: getComputedStyle(document.querySelector('#settings-database-backup-title')).fontSize,
+          matchingBorder: getComputedStyle(section).borderRadius === getComputedStyle(document.querySelector('#settings-evidence-title').closest('section')).borderRadius };
+      })()`);
+      assert.deepEqual(layout, { viewportOverflow: false, sectionOverflow: false, panelOverflow: false, cardInViewport: true, buttonsFit: true, titleFont: "18px", matchingBorder: true }, `${theme} ${width}px backup layout`);
+      const { data } = await call("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
+      await writeFile(join(profile, `database-backup-${theme}-${width}.png`), Buffer.from(data, "base64"));
+    }
+  }
+  record("Database Backup matches existing card typography/radius and fits 600–1440px in light/dark themes without overflow");
   assert.deepEqual(exceptions, []);
   console.log(JSON.stringify({ checks, exceptions, profile, note: "Synthetic API only; no live account, database, evidence, or provider changed." }, null, 2));
 } catch (error) {

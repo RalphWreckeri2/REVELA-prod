@@ -1,4 +1,4 @@
-ARG PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python:3.13-slim-bookworm
+ARG PYTHON_BASE_IMAGE=docker.io/library/python:3.13-slim-bookworm
 FROM ${PYTHON_BASE_IMAGE}
 
 ARG MYSQL_APT_COMPONENT=mysql-9.7-lts

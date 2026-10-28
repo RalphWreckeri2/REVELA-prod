@@ -1,4 +1,5 @@
 import { readDeviceAccessHints } from "../components/mobileDetection.js";
+import { validateBackupStatus } from "../components/backupStatusView.js";
 
 export const API_ORIGIN =
   import.meta.env.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
@@ -1641,6 +1642,79 @@ export async function snapUnresolvedPinsRequest(token, limit = 200) {
 }
 
 // ── API Usage & Testing (admin) ──────────────────────────────────────────────
+
+/** GET /api/admin-settings/database-backup/status — authenticated backup status/history. */
+export async function getDatabaseBackupStatusRequest(token, { signal } = {}) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/database-backup/status`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal,
+    });
+    return validateBackupStatus(await handleResponse(res));
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** POST /api/admin-settings/backups/run — start an admin-requested database backup. */
+export async function startDatabaseBackupRequest(token) {
+  if (!token) throw new Error("Missing authentication token.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/backups/run`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+/** Download one private backup through the admin-authenticated API. */
+export async function downloadDatabaseBackupRequest(token, identifier) {
+  if (!token) throw new Error("Missing authentication token.");
+  if (typeof identifier !== "string" || !/^[0-9a-f]{32}$/.test(identifier)) {
+    throw new Error("Invalid database backup identifier.");
+  }
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/backups/${identifier}/download`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      let message = `Download failed with status ${res.status}`;
+      try {
+        const data = await res.json();
+        if (data.error) message = data.error;
+      } catch (parseError) {
+        if (!(parseError instanceof SyntaxError)) throw parseError;
+      }
+      throw new Error(message);
+    }
+
+    let filename = `revela-database-backup-${identifier}.sql.gz`;
+    const disposition = res.headers.get("Content-Disposition");
+    const match = disposition?.match(/filename="([^"]+)"/);
+    if (match?.[1] && /^[A-Za-z0-9_.-]+$/.test(match[1])) filename = match[1];
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = downloadUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(downloadUrl);
+    return { filename };
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
 
 /** GET /api/admin-settings/usage — usage, limits, and cost per API method */
 export async function getApiUsageReportRequest(token) {
