@@ -1868,16 +1868,27 @@ export default function AnalyticsPage() {
           OVERVIEW SUMMARY
       ══════════════════════════════════════════════════════════════════════ */}
         {snapshotIsExpired && (
-          <div role="alert" className="saas-card" style={{ padding: 20, marginBottom: 24, color: COLOR.red }}>
-            <strong>Stale analytics — historical snapshot, not current rankings.</strong>
-            <p>The server's maximum fresh age is 15 minutes. Last successfully loaded results remain visible
-              for reference only; do not use them as current dispatch priorities.</p>
-            <p>Last computed: {cacheMetadata?.computed_at || "Unavailable"}.</p>
-            <p>{cacheMetadata?.refresh_failed
-              ? "The refresh failed. The next request will retry after the backoff."
-              : backgroundRefreshing ? "Waiting for the background refresh."
-                  : "Refresh Analytics to request an updated snapshot."}</p>
-            <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
+          <div role="alert" className="saas-card analytics-stale-alert">
+            <svg className="analytics-stale-alert-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3.5 22 20.5H2L12 3.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+              <path d="M12 9v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <circle cx="12" cy="17" r="1" fill="currentColor" />
+            </svg>
+            <div className="analytics-stale-alert-copy">
+              <strong className="analytics-stale-alert-title">Stale analytics — historical snapshot, not current rankings.</strong>
+              <p className="analytics-stale-alert-description">
+                The server's maximum fresh age is 15 minutes. Last successfully loaded results remain visible
+                for reference only; do not use them as current dispatch priorities.
+              </p>
+              <p className="analytics-stale-alert-meta">
+                Last computed: {cacheMetadata?.computed_at || "Unavailable"}.{" "}
+                {cacheMetadata?.refresh_failed
+                  ? "The refresh failed. The next request will retry after the backoff."
+                  : backgroundRefreshing ? "Waiting for the background refresh."
+                    : "Refresh Analytics to request an updated snapshot."}
+              </p>
+            </div>
+            <button type="button" className="ghost-btn analytics-stale-alert-action" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}
         {activeTab === "descriptive" && (

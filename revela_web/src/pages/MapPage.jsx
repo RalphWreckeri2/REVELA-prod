@@ -40,6 +40,7 @@ import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark, mapReady } from "../services/responsivenessBenchmark";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import { getBarangayIdForGeoJsonName, normalizeGeoJsonWinding } from "../components/barangayMapMapping";
 import {
   BARANGAY_CENTROIDS,
   DEFAULT_MAP_CENTER,
@@ -418,9 +419,8 @@ const REVIEW_QUEUE_PAGE_SIZE = 20;
 const MUNICIPAL_MAP_PADDING = 28;
 const MUNICIPAL_PAN_ALLOWANCE_RATIO = 0.03;
 
-// `public/data/mataasnakahoy.json` is a single outer boundary for the whole
-// municipality. Feature names must be listed here so the heatmap sums all
-// per-barangay Red Flag counts instead of matching barangay names to "Mataasnakahoy".
+// The current GeoJSON has 16 ADM4_EN barangay features. Retain this fallback
+// for any older municipal-only boundary used with the risk heatmap.
 const MUNICIPAL_BOUNDARY_NAMES = new Set(["mataasnakahoy", "mataas na kahoy"]);
 // const MAP_OPTIONS        = {
 //  disableDefaultUI: true,
@@ -688,8 +688,14 @@ function computeMunicipalOutline(features) {
   }
 
   if (rings.length === 0) return null;
+  // The outer perimeter encloses the greatest area; an interior hole or a
+  // detailed fragment can have more vertices without being the municipality.
+  const area = (ring) => Math.abs(ring.reduce((sum, [x, y], i) => {
+    const [nextX, nextY] = ring[(i + 1) % ring.length];
+    return sum + x * nextY - nextX * y;
+  }, 0));
   let largest = rings[0];
-  for (const r of rings) if (r.length > largest.length) largest = r;
+  for (const r of rings) if (area(r) > area(largest)) largest = r;
   return largest;
 }
 
@@ -1150,6 +1156,9 @@ function MapCanvas({
   mapRef,
   layers,
   flags,
+  boundaryFeatures,
+  barangays,
+  selectedBarangayId,
   barangayRiskLevels,
   selectedFlagId,
   onMarkerClick,
@@ -1182,6 +1191,8 @@ function MapCanvas({
   const diagnosticCircleRefs = useRef([]);
   const geoJsonDataRef = useRef(null);
   const municipalOutlineRef = useRef(null);
+  const hoverInfoWindowRef = useRef(null);
+  const [hoveredBarangayId, setHoveredBarangayId] = useState(null);
   const mapContainerRef = useRef(null);
   const minZoomRef = useRef(null);
   const restrictionBoundsRef = useRef(null);
@@ -1362,6 +1373,7 @@ function MapCanvas({
 
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
+    hoverInfoWindowRef.current = new window.google.maps.InfoWindow({ disableAutoPan: true });
     setMapInstance(map);
     setCurrentZoom(map.getZoom() || zoom || 13);
     if (mapRef) mapRef.current = map;
@@ -1445,6 +1457,8 @@ function MapCanvas({
   }, [isLoaded, mapInstance, applyMunicipalViewLimits]);
 
   const handleMapUnmount = useCallback(() => {
+    hoverInfoWindowRef.current?.close();
+    hoverInfoWindowRef.current = null;
     streetViewCoverageLayerRef.current?.setMap(null);
     streetViewCoverageLayerRef.current = null;
     markerRefs.current.forEach(m => {
@@ -1462,9 +1476,23 @@ function MapCanvas({
 
   // google.maps.Data does not re-apply the react-google-maps <Data> `options`
   // prop after mount — we keep a ref and call data.setStyle() imperatively.
+  const showBoundaries = layers.barangay || layers.diagnostics || isPickingLocation;
+  const municipalOutline = useMemo(() => computeMunicipalOutline(boundaryFeatures), [boundaryFeatures]);
   const geoJsonFeatureStyle = useMemo(
     () => (feature) => {
-      if (!layers.barangay && !layers.diagnostics && !isPickingLocation) return { visible: false };
+      if (!showBoundaries) return { visible: false };
+      const id = getBarangayIdForGeoJsonName(feature.getProperty("ADM4_EN"));
+      const selected = id != null && String(id) === selectedBarangayId;
+      const hovered = id != null && id === hoveredBarangayId && !selected;
+      const border = {
+        strokeColor: selected ? (isDark || satellite ? "#fbbf24" : "#b45309")
+          : hovered ? (isDark || satellite ? "#a7f3d0" : "#047857")
+            : satellite ? "#f8fafc" : isDark ? "#d1fae5" : "#166534",
+        strokeWeight: selected ? 2.5 : hovered ? 2 : 1.4,
+        strokeOpacity: selected ? 1 : hovered ? 0.95 : 0.78,
+        zIndex: selected ? 8 : hovered ? 6 : 1,
+        cursor: isPickingLocation ? "crosshair" : "pointer",
+      };
 
       if (layers.diagnostics) {
         const rawName = (
@@ -1525,20 +1553,44 @@ function MapCanvas({
 
         const tier = heatmapTierKey(riskLevel, count);
         const s = HEATMAP_RISK_STYLE[tier];
-        return { ...s, visible: true };
+        return { ...s, ...border, fillOpacity: selected ? 0.82 : s.fillOpacity, visible: true };
       }
 
       // Base barangay boundaries style
       return {
-        fillColor: "#1f7a1f",
-        fillOpacity: 0.1,
-        strokeColor: isDark ? "#86efac" : "#15803d",
-        strokeWeight: 2,
+        ...border,
+        fillColor: selected ? (isDark || satellite ? "#fbbf24" : "#f59e0b") : "#10b981",
+        fillOpacity: selected ? 0.25 : hovered ? 0.16 : 0.05,
         visible: true,
       };
     },
-    [layers.barangay, layers.diagnostics, barangayRiskLevels, barangayRedFlagCounts, isPickingLocation, isDark],
+    [showBoundaries, layers.diagnostics, barangayRiskLevels, barangayRedFlagCounts, isPickingLocation, isDark, satellite, selectedBarangayId, hoveredBarangayId],
   );
+
+  const handleBoundaryMouseOver = useCallback((event) => {
+    if (isPickingLocation) return;
+    const name = event.feature?.getProperty("ADM4_EN");
+    const id = getBarangayIdForGeoJsonName(name);
+    if (id == null) return;
+    setHoveredBarangayId(id);
+    const label = barangays.find(b => Number(b.barangayID) === id)?.barangayName || name;
+    const content = document.createElement("strong");
+    content.textContent = label;
+    hoverInfoWindowRef.current?.setContent(content);
+    if (event.latLng) {
+      hoverInfoWindowRef.current?.setPosition(event.latLng);
+      hoverInfoWindowRef.current?.open({ map: internalMapRef.current });
+    }
+  }, [barangays, isPickingLocation]);
+
+  const handleBoundaryMouseOut = useCallback(() => {
+    setHoveredBarangayId(null);
+    hoverInfoWindowRef.current?.close();
+  }, []);
+
+  useEffect(() => {
+    if (!showBoundaries || isPickingLocation) hoverInfoWindowRef.current?.close();
+  }, [showBoundaries, isPickingLocation]);
 
   useEffect(() => {
     const dl = geoJsonDataRef.current;
@@ -1546,47 +1598,31 @@ function MapCanvas({
     dl.setStyle(geoJsonFeatureStyle);
   }, [geoJsonFeatureStyle]);
 
-  // Render Mataasnakahoy's municipal outline as a thicker overlay so it is
-  // easy to distinguish from the internal barangay boundaries.
+  // Draw exactly one outer perimeter, above the thinner Data borders. It is
+  // non-clickable so the polygon beneath remains the interaction target.
   useEffect(() => {
     if (municipalOutlineRef.current) {
       municipalOutlineRef.current.setMap(null);
       municipalOutlineRef.current = null;
     }
-    if (!isLoaded || !mapInstance || !window.google?.maps) return;
-    const show = Boolean(layers.barangay || layers.diagnostics || isPickingLocation);
-    if (!show) return;
-    let cancelled = false;
-    fetch("/data/mataasnakahoy.json")
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled || !mapInstance) return;
-        const features = Array.isArray(json?.features) ? json.features : [];
-        const ring = computeMunicipalOutline(features);
-        if (!ring || ring.length < 3) return;
-        const path = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
-        const poly = new window.google.maps.Polygon({
-          paths: path,
-          strokeColor: isDark ? "#fcd34d" : "#14532d",
-          strokeWeight: 5,
-          strokeOpacity: 1,
-          fillColor: isDark ? "#14532d" : "#166534",
-          fillOpacity: 0,
-          clickable: false,
-          zIndex: 10,
-        });
-        poly.setMap(mapInstance);
-        municipalOutlineRef.current = poly;
-      })
-      .catch(() => {});
+    if (!isLoaded || !mapInstance || !window.google?.maps || !showBoundaries || !municipalOutline) return;
+    const path = municipalOutline.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
+    const poly = new window.google.maps.Polygon({
+      paths: path,
+      strokeColor: isDark || satellite ? "#fcd34d" : "#14532d",
+      strokeWeight: 3,
+      strokeOpacity: 1,
+      fillOpacity: 0,
+      clickable: false,
+      zIndex: 10,
+    });
+    poly.setMap(mapInstance);
+    municipalOutlineRef.current = poly;
     return () => {
-      cancelled = true;
-      if (municipalOutlineRef.current) {
-        municipalOutlineRef.current.setMap(null);
-        municipalOutlineRef.current = null;
-      }
+      poly.setMap(null);
+      if (municipalOutlineRef.current === poly) municipalOutlineRef.current = null;
     };
-  }, [isLoaded, mapInstance, layers.barangay, layers.diagnostics, isPickingLocation, isDark]);
+  }, [isLoaded, mapInstance, showBoundaries, municipalOutline, isDark, satellite]);
 
   // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
   const buildMarkerContent = useCallback((flag, selected, isAdjusting = false) => {
@@ -1978,17 +2014,18 @@ function MapCanvas({
         onUnmount={handleMapUnmount}
         onClick={onMapClick}
       >
-        {(layers.barangay || layers.diagnostics || isPickingLocation) && (
+        {showBoundaries && boundaryFeatures?.length > 0 && (
           <Data
             onClick={onDataClick}
+            onMouseOver={handleBoundaryMouseOver}
+            onMouseOut={handleBoundaryMouseOut}
             onLoad={(dataLayer) => {
               geoJsonDataRef.current = dataLayer;
               dataLayer.setStyle(geoJsonFeatureStyle);
-              Promise.resolve(dataLayer.loadGeoJson("/data/mataasnakahoy.json")).then(() => {
-                dataLayer.setStyle(geoJsonFeatureStyle);
-              });
+              dataLayer.addGeoJson(normalizeGeoJsonWinding({ type: "FeatureCollection", features: boundaryFeatures }));
             }}
             onUnmount={(dataLayer) => {
+              handleBoundaryMouseOut();
               geoJsonDataRef.current = null;
               dataLayer.setMap(null);
             }}
@@ -2706,6 +2743,7 @@ export default function MapPage() {
 
   const [flags, setFlags, hasFlags] = useSessionDataset("map", "flags", []);
   const [municipalBounds, setMunicipalBounds] = useState(null);
+  const [boundaryFeatures, setBoundaryFeatures] = useState(null);
   const [barangayRiskLevels, setBarangayRiskLevels] = useSessionDataset("map", "riskLevels", {});
   const [loadingFlags, setLoadingFlags] = useState(() => !hasFlags);
   const [flagsError, setFlagsError] = useState("");
@@ -3150,6 +3188,7 @@ export default function MapPage() {
         const features = Array.isArray(json.features) ? json.features : [];
         geoJsonFeaturesRef.current = features;
         setMunicipalBounds(computeGeoJsonBounds(features));
+        setBoundaryFeatures(features);
       })
       .catch(err => console.warn("Could not pre-load GeoJSON for PiP checks", err));
     return () => { cancelled = true; };
@@ -4366,9 +4405,9 @@ export default function MapPage() {
   }, [adjustingFlagId, isPickingYellowLocation, barangays]);
 
   const handleDataClick = useCallback((e) => {
+    e.stop(); // Do not forward a polygon click to the map or a marker behind it.
     if (adjustingFlagId) {
       if (e && e.latLng) {
-        if (typeof e.stop === 'function') e.stop();
         const lat = typeof e.latLng.lat === 'function' ? e.latLng.lat() : e.latLng.lat;
         const lng = typeof e.latLng.lng === 'function' ? e.latLng.lng() : e.latLng.lng;
         setAdjustingLatLng({ lat: Number(lat), lng: Number(lng) });
@@ -4377,7 +4416,6 @@ export default function MapPage() {
     }
 
     if (isPickingYellowLocation) {
-      e.stop(); // Prevent base map click
       const lat = e.latLng.lat();
       const lng = e.latLng.lng();
 
@@ -4395,8 +4433,15 @@ export default function MapPage() {
       }));
       setIsPickingYellowLocation(false);
       setShowYellowModal(true);
+      return;
     }
-  }, [adjustingFlagId, isPickingYellowLocation, barangays]);
+
+    if (!layers.barangay && !layers.diagnostics) return;
+    const id = getBarangayIdForGeoJsonName(e.feature?.getProperty("ADM4_EN"));
+    if (id == null) return;
+    setFilterBarangay(String(id));
+    setLocationsPage(1);
+  }, [adjustingFlagId, isPickingYellowLocation, barangays, layers.barangay, layers.diagnostics]);
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const visibleFlags = flags.filter(flag => matchesMapFilters(flag, {
@@ -4962,6 +5007,9 @@ export default function MapPage() {
               mapRef={mapRef}
               layers={layers}
               flags={visibleFlags}
+              boundaryFeatures={boundaryFeatures}
+              barangays={barangays}
+              selectedBarangayId={filterBarangay}
               barangayRiskLevels={barangayRiskLevels}
               selectedFlagId={selectedFlag}
               onMarkerClick={handleMarkerClick}

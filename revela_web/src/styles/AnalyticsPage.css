@@ -53,6 +53,44 @@ html.theme-dark .analytics-page .saas-content .kpi-card {
 .analytics-page-heading-copy .page-title { margin-bottom: 4px; }
 .analytics-page-heading-copy .page-subtitle { max-width: 560px; }
 
+.analytics-stale-alert.saas-card {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 14px 16px;
+  margin: 0;
+  border-color: color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-modal-bg));
+}
+.analytics-stale-alert-icon {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--color-warning);
+}
+.analytics-stale-alert-copy { min-width: 0; }
+.analytics-stale-alert-title {
+  display: block;
+  color: var(--color-ink);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.analytics-stale-alert-description,
+.analytics-stale-alert-meta {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.analytics-stale-alert-description { color: var(--color-ink); }
+.analytics-stale-alert-meta { color: var(--color-muted); }
+.analytics-stale-alert-action {
+  align-self: center;
+  padding: 8px 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .analytics-section-nav {
   display: flex;
   flex-wrap: wrap;
@@ -102,6 +140,17 @@ html.theme-dark .analytics-tab-btn:hover:not(.active) { background: rgba(255, 25
 @media (max-width: 980px) {
   .analytics-page-heading { align-items: flex-start; }
   .analytics-section-nav { justify-content: flex-start; }
+}
+@media (max-width: 640px) {
+  .analytics-stale-alert.saas-card {
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 8px 10px;
+    padding: 12px;
+  }
+  .analytics-stale-alert-action {
+    grid-column: 2;
+    justify-self: start;
+  }
 }
 
 .analytics-census-grid {
