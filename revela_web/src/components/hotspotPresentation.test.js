@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  analyticsDetectionScanSummary,
   hotspotOverlayRadius,
+  hotspotMethodNote,
   hotspotRequestParams,
   hotspotScanNote,
   hotspotSummary,
@@ -78,6 +80,7 @@ test("overlay radius adds padding and incomplete scan note is explicit", () => {
     text: "Last detection scan: 2026-10-29 · Partial · Stop reason: reason not recorded",
     coverageIncomplete: true,
   });
+
   assert.deepEqual(hotspotScanNote({
     date: "2026-10-29T04:30:00Z",
     status: "partial",
@@ -94,4 +97,24 @@ test("overlay radius adds padding and incomplete scan note is explicit", () => {
   assert.match(mapOverviewSource, /clickable: false,[\s\S]*?zIndex: 200/);
   assert.match(mapOverviewSource, /No nearby groups for this period\./);
   assert.match(mapOverviewSource, /Nearby groups are possible hotspots only; they do not confirm a violation\./);
+});
+
+test("hotspot method note separates eligible detection clusters from map fill measures", () => {
+  assert.equal(hotspotMethodNote({
+    eps_m: 50,
+    min_samples: 3,
+  }, "registered"),
+  "DBSCAN groups eligible effective-Red detection pins (Haversine eps 50 m; MinPts 3). Orange circles show hotspot groups; polygon fills show registered-business counts, not OPS tiers.");
+  assert.match(mapOverviewSource, /hotspotMethodNote\(hotspotData\.parameters_used, mapView\)/);
+  assert.match(mapOverviewSource, /eligible effective-Red detection pins/);
+});
+
+test("analytics scan summary includes the latest date, status, and stop reason", () => {
+  assert.equal(analyticsDetectionScanSummary({
+    date: "2026-10-29T04:30:00Z",
+    status: "completed_with_gaps",
+    stop_reason: "places_quota",
+  }), "Last detection scan: 2026-10-29 · Completed With Gaps · Stop reason: Places quota");
+  assert.equal(analyticsDetectionScanSummary(null),
+    "Last detection scan: unavailable · Stop reason: unavailable");
 });

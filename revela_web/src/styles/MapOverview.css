@@ -354,6 +354,11 @@
   color: var(--color-muted);
 }
 
+.map-overview-hotspot-method {
+  color: var(--color-muted);
+  font-size: 11px !important;
+}
+
 .map-overview-segmented button.active,
 .map-overview-choice-row button.active {
   border-color: #2563eb;

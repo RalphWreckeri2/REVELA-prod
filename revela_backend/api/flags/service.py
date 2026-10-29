@@ -7,8 +7,6 @@ from api.models.detection_runs import (
 import difflib
 import hashlib
 import math
-import numpy as np
-from sklearn.cluster import DBSCAN
 import os
 import random
 import time
@@ -21,6 +19,14 @@ from app import mysql
 from api.registry.service import _flag_source_sql, _has_enforcement_columns
 from api.flags.compliance import (
     decorate_compliance, origin_source_sql, registry_link_sql, verified_green_at_sql,
+)
+from api.analytics.hotspots import (
+    build_hotspot_population_sql,
+    cluster_hotspot_rows,
+    load_barangay_polygons,
+    read_hotspot_settings,
+    resolve_hotspot_parameters,
+    serialize_map_hotspot_clusters,
 )
 from api.models.geospatial import (
     SOURCE_DETECTION,
@@ -4336,139 +4342,37 @@ def delete_flag(log_id, actor_role=None):
             cursor.close()
 
 
-# ── DBSCAN parameters (recalibrate during testing if over/under-clustering) ───
-#
-# DBSCAN_EPS_RAD   — neighbourhood search radius expressed in radians.
-#                    20 m is chosen to match the ~8–15 m commercial lot
-#                    frontage typical of a rural Filipino municipality;
-#                    two adjacent flagged venues will therefore be pulled
-#                    into the same cluster only if they are genuinely
-#                    co-located, not merely on the same street block.
-#
-# DBSCAN_MIN_SAMPLES — minimum flags required to form a dense cluster.
-#                    Set to 3 so that a pair of adjacent detections does
-#                    NOT qualify as a systemic hotspot; at least three
-#                    co-located Red Flags must exist. Isolated detections
-#                    (label == -1) are treated as statistical anomalies
-#                    and are discarded before the result is returned.
-#
-# To recalibrate: adjust DBSCAN_EPS_M (converted automatically) and/or
-# DBSCAN_MIN_SAMPLES, then re-run and inspect cluster counts vs map.
-EARTH_RADIUS_M = 6_371_000
-DBSCAN_EPS_M = 20                            # metres  ← change this to retune
-DBSCAN_EPS_RAD = DBSCAN_EPS_M / EARTH_RADIUS_M  # radians fed to sklearn
-# MinPts  ← change this to retune
-DBSCAN_MIN_SAMPLES = 3
-
-
 def get_red_flag_clusters():
     """
-    Barangay Risk Heatmap — geographic hotspot detection for Red Flags.
-
-    Implements the second analytic level described in the system design:
-    DBSCAN is used to collate neighbouring Red Flags into dense clusters
-    while discarding single detections as statistical anomalies (noise).
-
-    Algorithm
-    ---------
-    1. Pull every Red Flag coordinate from geospatial_logs.
-    2. Run DBSCAN (haversine metric, eps = DBSCAN_EPS_M metres,
-       min_samples = DBSCAN_MIN_SAMPLES) to identify spatially dense
-       groups without requiring a pre-specified cluster count.
-    3. Discard noise points (label == -1) — isolated flags are treated
-       as anomalies, not hotspots.
-    4. For each true cluster compute:
-         • centroid  – mean lat/lng of member flags
-         • size      – number of Red Flags in the cluster
-         • logIDs    – contributing log IDs (for drill-down)
-         • radius_m  – max geodesic distance from centroid to any member
-           (used by the front end to size the circle overlay)
-    5. Return clusters sorted largest-first.
-
-    Returns
-    -------
-    (list[dict], None)   on success
-    (None, str)          on error
+    Return eligible effective-Red detection clusters using shared hotspot rules.
     """
+    cursor = None
     try:
         cursor = mysql.connection.cursor()
-        cursor.execute("""
-            SELECT logID, latitude, longitude
-            FROM   geospatial_logs
-            WHERE  flagColor = 'Red'
-              AND  latitude  IS NOT NULL
-              AND  longitude IS NOT NULL
-        """)
-        rows = cursor.fetchall()
-        cursor.close()
+        ladder = ladder_columns_available(cursor)
+        parameters, _ = resolve_hotspot_parameters(read_hotspot_settings(cursor))
+        population_sql, population_params = build_hotspot_population_sql(
+            _effective_flag_color_sql("g", ladder=ladder),
+            registry_link_sql("g"),
+            None,
+            None,
+        )
+        cursor.execute(population_sql, population_params)
+        population_rows = list(cursor.fetchall() or [])
 
-        if not rows:
-            return [], None
-
-        # ── Build coordinate matrix in radians ──────────────────────────────
-        log_ids = [r["logID"] for r in rows]
-        lats = [float(r["latitude"]) for r in rows]
-        lngs = [float(r["longitude"]) for r in rows]
-
-        coords_rad = np.radians(np.column_stack([lats, lngs]))   # (N, 2)
-
-        # ── DBSCAN ──────────────────────────────────────────────────────────
-        db = DBSCAN(
-            eps=DBSCAN_EPS_RAD,
-            min_samples=DBSCAN_MIN_SAMPLES,
-            algorithm="ball_tree",
-            metric="haversine",
-        ).fit(coords_rad)
-
-        labels = db.labels_   # -1 = noise (isolated flag)
-
-        # ── Aggregate per cluster ────────────────────────────────────────────
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for idx, label in enumerate(labels):
-            groups[label].append(idx)
-
-        clusters = []
-        for label, indices in groups.items():
-
-            # label == -1 → DBSCAN noise: isolated flags that do not share a
-            # 20-m neighbourhood with ≥ 2 others.  Per the system design these
-            # are statistical anomalies and are intentionally discarded here.
-            if label == -1:
-                continue
-
-            member_lats = [lats[i] for i in indices]
-            member_lngs = [lngs[i] for i in indices]
-            member_ids = [log_ids[i] for i in indices]
-
-            centroid_lat = sum(member_lats) / len(member_lats)
-            centroid_lng = sum(member_lngs) / len(member_lngs)
-
-            # Radius = max geodesic distance from centroid to any member flag.
-            # A minimum of DBSCAN_EPS_M is enforced so that very tight clusters
-            # (e.g. two flags at nearly identical coordinates) are still visible
-            # as a circle on the map at town-level zoom.
-            radius_m = 0.0
-            for mlat, mlng in zip(member_lats, member_lngs):
-                from geopy.distance import geodesic
-                d = geodesic((centroid_lat, centroid_lng), (mlat, mlng)).meters
-                if d > radius_m:
-                    radius_m = d
-
-            radius_m = max(radius_m, DBSCAN_EPS_M)
-
-            clusters.append({
-                "clusterID":   int(label),
-                "centroidLat": round(centroid_lat, 7),
-                "centroidLng": round(centroid_lng, 7),
-                "size":        len(indices),
-                "radius_m":    round(radius_m, 1),
-                "logIDs":      member_ids,
-            })
-
-        # Largest hotspots first
-        clusters.sort(key=lambda c: c["size"], reverse=True)
-        return clusters, None
+        cursor.execute(
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID"
+        )
+        barangay_rows = list(cursor.fetchall() or [])
+        clusters, _ = cluster_hotspot_rows(
+            population_rows,
+            parameters,
+            load_barangay_polygons(barangay_rows),
+        )
+        return serialize_map_hotspot_clusters(clusters, parameters), None
 
     except Exception as e:
         return None, str(e)
+    finally:
+        if cursor is not None:
+            cursor.close()

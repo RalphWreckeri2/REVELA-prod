@@ -9,7 +9,7 @@ geospatial_bp = Blueprint("geospatial", __name__)
 @geospatial_bp.route("/diagnostics/clusters", methods=["GET"])
 @jwt_required()
 def diagnostic_clusters_route():
-    """Return DBSCAN-derived Red Flag hotspot clusters for map diagnostics."""
+    """Return shared DBSCAN clusters of eligible effective-Red detection pins."""
     clusters, error = get_red_flag_clusters()
     if error:
         return jsonify({"error": error}), 500

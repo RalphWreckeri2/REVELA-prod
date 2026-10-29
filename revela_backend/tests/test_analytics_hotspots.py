@@ -1,5 +1,6 @@
 import unittest
 from datetime import date
+from unittest.mock import Mock, patch
 
 from shapely.geometry import box
 
@@ -12,9 +13,11 @@ from api.analytics.hotspots import (
     cache_hotspots,
     count_hotspot_dispositions,
     get_cached_hotspots,
+    hotspot_cluster_memberships,
     hotspot_date_window,
     invalidate_hotspots_cache,
     resolve_hotspot_parameters,
+    serialize_map_hotspot_clusters,
 )
 
 
@@ -96,9 +99,28 @@ class HotspotPopulationTests(unittest.TestCase):
         self.assertIn("DATE_ADD(%s, INTERVAL 1 DAY)", sql)
         self.assertIn("registry_linked", sql)
         self.assertIn("missing_coordinates", sql)
+        self.assertIn("COALESCE(g.source, 'unknown') <> 'detection'", sql)
+        self.assertIn("g.businessID IS NOT NULL", sql)
+        self.assertIn("g.latitude IS NULL OR g.longitude IS NULL", sql)
         self.assertEqual(params, [
             date(2026, 10, 23),
             date(2026, 10, 29),
+        ])
+
+    def test_population_sql_appends_shared_page_scope_after_date_parameters(self):
+        sql, params = build_hotspot_population_sql(
+            "effective_color(g)",
+            "registry_linked(g)",
+            date(2026, 10, 23),
+            date(2026, 10, 29),
+            extra_where_sql=" AND g.barangayID = %s",
+            extra_params=(7,),
+        )
+        self.assertIn("AND g.barangayID = %s", sql)
+        self.assertEqual(params, [
+            date(2026, 10, 23),
+            date(2026, 10, 29),
+            7,
         ])
 
     def test_population_exclusions_are_mutually_exclusive_and_account_for_red_rows(self):
@@ -164,6 +186,119 @@ class HotspotAttributionTests(unittest.TestCase):
             "noise_points": 1,
             "uncertain_points": 1,
         })
+
+    def test_canonical_50m_contract_clusters_detection_pins_and_preserves_noise(self):
+        rows = [
+            {
+                "logID": 11,
+                "latitude": 10.0,
+                "longitude": 121.0,
+                "disposition": "eligible",
+            },
+            {
+                "logID": 12,
+                "latitude": 10.00027,
+                "longitude": 121.0,
+                "disposition": "eligible",
+            },
+            {
+                "logID": 13,
+                "latitude": 10.00054,
+                "longitude": 121.0,
+                "disposition": "eligible",
+            },
+            {
+                "logID": 14,
+                "latitude": 10.00028,
+                "longitude": 121.0,
+                "disposition": "not_detection",
+            },
+            {
+                "logID": 15,
+                "latitude": 10.01,
+                "longitude": 121.0,
+                "disposition": "eligible",
+            },
+        ]
+        parameters, _ = resolve_hotspot_parameters({})
+        clusters, totals = cluster_hotspot_rows(rows, parameters, self.polygons)
+        memberships, primary_cluster_id = hotspot_cluster_memberships(rows, clusters)
+
+        self.assertEqual(parameters["eps_m"], 50)
+        self.assertEqual(parameters["min_samples"], 3)
+        self.assertEqual([cluster["size"] for cluster in clusters], [3])
+        self.assertEqual(clusters[0]["log_ids"], [11, 12, 13])
+        self.assertEqual(memberships, {11: 0, 12: 0, 13: 0, 15: -1})
+        self.assertEqual(primary_cluster_id, 0)
+        self.assertEqual(totals["noise_points"], 1)
+
+
+class MapHotspotEndpointContractTests(unittest.TestCase):
+    def test_map_endpoint_uses_shared_population_parameters_and_clusterer(self):
+        from api.flags import service
+
+        cursor = Mock()
+        fake_mysql = Mock()
+        fake_mysql.connection.cursor.return_value = cursor
+        cursor.fetchall.side_effect = [
+            [],
+            [
+                {"logID": 21, "latitude": 10.0, "longitude": 121.0,
+                 "disposition": "eligible"},
+                {"logID": 22, "latitude": 10.00027, "longitude": 121.0,
+                 "disposition": "eligible"},
+                {"logID": 23, "latitude": 10.00054, "longitude": 121.0,
+                 "disposition": "eligible"},
+                {"logID": 24, "latitude": 10.00028, "longitude": 121.0,
+                 "disposition": "business_id_present"},
+            ],
+            [{"barangayID": 1, "barangayName": "Barangay One"}],
+        ]
+        polygons = [{
+            "barangay_id": 1,
+            "barangay_name": "Barangay One",
+            "geometry": box(120, 9, 122, 11),
+        }]
+
+        with patch("api.flags.service.mysql", fake_mysql), \
+                patch("api.flags.service.ladder_columns_available", return_value=False), \
+                patch("api.flags.service._effective_flag_color_sql", return_value="effective_color(g)"), \
+                patch("api.flags.service.load_barangay_polygons", return_value=polygons):
+            clusters, error = service.get_red_flag_clusters()
+
+        self.assertIsNone(error)
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0]["size"], 3)
+        self.assertEqual(clusters[0]["logIDs"], [21, 22, 23])
+        self.assertEqual(clusters[0]["eps_m"], 50)
+        self.assertEqual(clusters[0]["min_samples"], 3)
+        population_sql = cursor.execute.call_args_list[1].args[0]
+        self.assertIn("(effective_color(g)) = 'Red'", population_sql)
+        self.assertIn("COALESCE(g.source, 'unknown') <> 'detection'", population_sql)
+        self.assertIn("g.businessID IS NOT NULL", population_sql)
+        self.assertTrue(cursor.close.called)
+
+    def test_map_endpoint_adapter_keeps_legacy_fields_and_shared_parameters(self):
+        clusters = [{
+            "cluster_id": 4,
+            "centroid": {"lat": 10.5, "lng": 121.2},
+            "radius_m": 31.7,
+            "size": 3,
+            "log_ids": [4, 8, 12],
+        }]
+        self.assertEqual(serialize_map_hotspot_clusters(clusters, {
+            "eps_m": 50,
+            "min_samples": 3,
+        }), [{
+            "clusterID": 4,
+            "centroidLat": 10.5,
+            "centroidLng": 121.2,
+            "radius_m": 31.7,
+            "size": 3,
+            "logIDs": [4, 8, 12],
+            "eps_m": 50,
+            "min_samples": 3,
+        }])
 
 
 if __name__ == "__main__":

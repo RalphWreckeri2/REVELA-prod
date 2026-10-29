@@ -4,9 +4,8 @@ import { useSearchParams } from "react-router-dom";
 import { analyticsRoute } from "./analyticsNavigation";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  Cell, RadarChart, Radar, PolarGrid,
-  PolarAngleAxis, PolarRadiusAxis, LabelList,
-  ScatterChart, Scatter, ZAxis, ReferenceLine
+  RadarChart, Radar, PolarGrid,
+  PolarAngleAxis, PolarRadiusAxis
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
@@ -29,7 +28,7 @@ import {
   recommendationReason,
   rankedRecommendationRows,
 } from "../components/analyticsPresentation";
-import { formatScanHistoryTimestamp } from "../components/scanHistory";
+import { analyticsDetectionScanSummary } from "../components/hotspotPresentation";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useSessionDataset } from "../components/useAppDataRefresh";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
@@ -39,6 +38,7 @@ import {
   updateWlcConfigRequest,
   getAnalyticsFilterMetadataRequest,
   getBarangaysRequest,
+  getAnalyticsHotspotsRequest,
   sendAnalyticsChatRequest,
 } from "../services/api";
 
@@ -91,36 +91,6 @@ const BUSINESS_SIZE_COLORS = {
   Large: "#f59e0b",
   Unknown: "#64748b",
 };
-
-// ── Detection scan outcomes ───────────────────────────────────────────────────
-// `completed_with_gaps` processed every cell and recorded bounded saturated
-// cells as coverage gaps. It consumed a monthly scan and a real POI set, so
-// it renders as a finished scan (amber) rather than an interruption.
-const SCAN_STATUS_LABEL = {
-  completed: "Completed",
-  completed_with_gaps: "Completed w/ Gaps",
-  partial: "Partial",
-  cancelled: "Cancelled",
-  failed: "Failed",
-  reset: "Reset",
-  running: "Running",
-};
-
-const SCAN_STATUS_COLOR = {
-  completed: COLOR.green,
-  completed_with_gaps: COLOR.yellow,
-  partial: COLOR.orange,
-  cancelled: COLOR.slate,
-  failed: COLOR.red,
-  reset: COLOR.slate,
-  running: COLOR.blue,
-};
-
-// Runs that consumed a monthly scan and therefore have a comparable yield rate.
-const SCAN_STATUS_COMPARABLE_YIELD = new Set([
-  "completed",
-  "completed_with_gaps",
-]);
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 const shortBarangay = (name = "") =>
@@ -644,9 +614,6 @@ export default function AnalyticsPage() {
   });
   const [showFloatingNav, setShowFloatingNav] = useState(false);
   const sectionNavRef = useRef(null);
-  const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
-  const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
-
   const [draftFilters, setDraftFilters] = useState(() => ({ ...createEmptyFilters(), barangay_ids: route.barangayId ? [route.barangayId] : [] }));
   const [appliedFilters, setAppliedFilters] = useState(() => ({ ...createEmptyFilters(), barangay_ids: route.barangayId ? [route.barangayId] : [] }));
   const routeBarangay = route.barangayId;
@@ -668,7 +635,8 @@ export default function AnalyticsPage() {
   const wlcValidationError = wlcPolicyError(wlcConfig);
   const [expandedDispatch, setExpandedDispatch] = useState({});
   const [showAllRecommendations, setShowAllRecommendations] = useState(false);
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [lastDetectionRun, setLastDetectionRun] = useState(null);
+  const [lastDetectionRunError, setLastDetectionRunError] = useState("");
   const [filterOptions, setFilterOptions] = useSessionDataset("analytics:options", "filters", null,
     `analytics:${JSON.stringify(effectiveFilters)}`);
   const filterMeta = filterOptions?.meta ?? null;
@@ -793,9 +761,27 @@ export default function AnalyticsPage() {
     if (filterRetry) void loadFilterOptions();
   }, [filterRetry, loadFilterOptions]);
 
+  useEffect(() => {
+    if (!token || activeTab !== "prescriptive") return undefined;
+    const controller = new AbortController();
+    getAnalyticsHotspotsRequest(token, "all", { signal: controller.signal })
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        setLastDetectionRun(response?.last_detection_run ?? null);
+        setLastDetectionRunError("");
+      })
+      .catch((requestError) => {
+        if (controller.signal.aborted || requestError.name === "AbortError") return;
+        setLastDetectionRun(null);
+        setLastDetectionRunError(
+          requestError.message || "Detection scan status could not be loaded.",
+        );
+      });
+    return () => controller.abort();
+  }, [activeTab, token]);
+
   // ── Derived shorthand references ──────────────────────────────────────────
   const desc = data?.descriptive;
-  const diag = data?.diagnostic;
   const presc = data?.prescriptive;
   const prescWorkforce = presc?.workforce;
   const prescModel = presc?.model;
@@ -859,22 +845,6 @@ export default function AnalyticsPage() {
   const verifiedReportsWithoutOutcome = Number(
     desc?.audit_summary?.verified_reports_without_outcome ?? 0,
   );
-
-  const categoryLinkageSummary = diag?.category_linkage_summary || {};
-  const categoryData = (diag?.category_risk_drivers || []).map((row) => {
-    const flaggedCount = Number(row.flagged_count || 0);
-    const totalRegistered = Number(row.total_registered || 0);
-    const nonGreenRate = Number(row.non_green_rate || 0);
-    return {
-      name: row.category,
-      flagged_count: flaggedCount,
-      total_registered: totalRegistered,
-      non_green_rate: nonGreenRate,
-      label: `${flaggedCount} / ${totalRegistered} (${nonGreenRate.toFixed(1)}%)`,
-    };
-  });
-
-  const scanHistory = diag?.scan_history || [];
 
   // ── Prescriptive: WLC radar (top 8) ──────────────────────────────────────
   const radarData = opsRadarData(presc?.rankings, shortBarangay);
@@ -2249,401 +2219,13 @@ export default function AnalyticsPage() {
                 <p className="analytics-no-active-flags">
                   {activeRecommendations.noActiveFlagsCount} {activeRecommendations.noActiveFlagsCount === 1 ? "barangay has" : "barangays have"} no active flags.
                 </p>
+                <p className="analytics-scan-summary" role="status">
+                  {analyticsDetectionScanSummary(lastDetectionRun)}
+                  {lastDetectionRunError ? ` · ${lastDetectionRunError}` : ""}
+                </p>
               </>
             )}
           </section>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════════════
-          DIAGNOSTIC EVIDENCE
-      ══════════════════════════════════════════════════════════════════════ */}
-        {data.diagnostic && activeTab === "prescriptive" && (
-          <details className="analytics-evidence-disclosure"
-            onToggle={event => setEvidenceOpen(event.currentTarget.open)}>
-            <summary>Evidence: nearby records, scan history, and diagnostic charts</summary>
-            {evidenceOpen && (
-              <>
-                <p className="analytics-evidence-note">
-                  Spatial clusters and scan history are supporting evidence only; DBSCAN cluster membership does not enter the OPS score.
-                </p>
-            <section style={{ marginBottom: 52 }}>
-            <SectionHeader
-              tier="diagnostic"
-              title="Diagnostic Analysis"
-              subtitle="Automated risk intelligence, historical trends, and sector-level risk drivers"
-            />
-
-            {/* D1. NARRATIVES */}
-            <div style={{ marginBottom: 40 }}>
-               <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>D1. Location Patterns</h3>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-                    <div style={{ color: "#8b5cf6" }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="8" x2="12" y2="12" />
-                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                      </svg>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Nearby flagged records</h3>
-                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.5 }}>
-                        Groups geolocated flagged records by proximity, regardless of barangay totals.
-                      </p>
-                      <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
-                        <p style={{ margin: "6px 0 0" }}>
-                          Each dot is one geospatial log record (not necessarily a distinct business) with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report. DBSCAN uses Haversine distance, a 20 m neighborhood, and min_samples=3 (including each record itself); linked neighborhoods can form a group, and groups can cross barangay boundaries. Records outside a group are still shown as ungrouped. This chart and the barangay chart use the selected barangay, effective flag-color, and detection-date filters; a selected flag-color further narrows the Red/Black records. Registry/business and inspection filters do not apply. Proximity alone does not prove a violation or its cause.
-                        </p>
-                      </details>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
-                        {loading ? "Analyzing nearby records..." : diag?.dbscan_insight || "Hotspot analysis is temporarily unavailable."}
-                      </p>
-
-                      {diag?.dbscan_clusters && diag.dbscan_clusters.length > 0 && (
-                        (() => {
-                          const displayClusters = [];
-                          const seenClusters = new Set();
-                          const clusterSizes = new Map();
-                          diag.dbscan_clusters.forEach(entry => {
-                            clusterSizes.set(entry.cluster, (clusterSizes.get(entry.cluster) || 0) + 1);
-                          });
-                          diag.dbscan_clusters.forEach(entry => {
-                            if (entry.cluster === -1) {
-                              displayClusters.push({ ...entry, renderType: 'noise' });
-                            } else {
-                              // 1. Render the centroid as a large hollow ring (only once per cluster)
-                              if (!seenClusters.has(entry.cluster)) {
-                                seenClusters.add(entry.cluster);
-                                displayClusters.push({ ...entry, renderType: 'centroid' });
-                              }
-                              displayClusters.push({ ...entry, renderType: 'point' });
-                            }
-                          });
-                          const selectedEntries = selectedDbscanCluster === null
-                            ? []
-                            : diag.dbscan_clusters.filter(entry => entry.cluster === selectedDbscanCluster);
-                          const selectedIsPrimary = selectedEntries.some(entry => entry.is_primary);
-
-                          return (
-                            <>
-                              <div style={{ height: 260, width: "100%", marginTop: 16 }}>
-                                <ResponsiveChart>
-                                  <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
-                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--analytics-grid-color)" />
-                                    <XAxis type="number" dataKey="lng" name="Longitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Longitude", position: "insideBottom", offset: -12, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
-                                    <YAxis type="number" dataKey="lat" name="Latitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Latitude", angle: -90, position: "insideLeft", offset: 10, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
-                                    <ZAxis type="category" dataKey="barangay" name="Barangay" />
-                                    <Tooltip
-                                      cursor={{ strokeDasharray: '3 3' }}
-                                       contentStyle={{ borderRadius: 8, border: "1px solid var(--color-border)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-modal-bg)", color: "var(--color-ink)", fontSize: 12 }}
-                                      content={({ active, payload }) => {
-                                        if (!active || !payload?.length) return null;
-                                        const d = payload[0]?.payload;
-                                        if (!d) return null;
-                                        const groupLabel = d.cluster === -1
-                                          ? "No nearby group"
-                                          : `${clusterSizes.get(d.cluster)} records in the ${d.is_primary ? "largest" : "nearby"} group`;
-                                        return (
-                                          <div style={{ background: "#111827", border: "1px solid #374151", color: "#ffffff", borderRadius: 8, padding: "8px 12px", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontSize: 12, lineHeight: 1.6 }}>
-                                            <div style={{ fontWeight: 700, color: "#ffffff", marginBottom: 2 }}>{d.detected_name || "Unnamed record"}</div>
-                                            <div style={{ color: "#e5e7eb" }}>{d.barangay || "Unknown area"} · {d.flag_color || "No flag status"} flag · Record ID {d.log_id}</div>
-                                            <div style={{ color: "#e5e7eb" }}>{groupLabel}</div>
-                                            <div style={{ color: "#e5e7eb", fontSize: 11 }}>Flagged: {d.detected_date || "Unknown date"}</div>
-                                            <div style={{ color: "#e5e7eb", fontSize: 11, marginTop: 2 }}>Click to view records in this group</div>
-                                          </div>
-                                        );
-                                      }}
-                                    />
-                                    <Scatter
-                                      name="Clusters"
-                                      data={displayClusters}
-                                      shape={(props) => {
-                                        const { cx, cy, payload } = props;
-                                        const isPrimary = payload.is_primary;
-                                        const baseColor = isPrimary ? "#6366f1" : COLOR.orange;
-                                        const focusCluster = hoveredDbscanCluster ?? selectedDbscanCluster;
-                                        const isDimmed = focusCluster !== null && focusCluster !== payload.cluster;
-                                        const isFocused = focusCluster === payload.cluster;
-                                        const selectCluster = (event) => {
-                                          event.stopPropagation();
-                                          setSelectedDbscanCluster(current => current === payload.cluster ? null : payload.cluster);
-                                        };
-                                        const markerLabel = payload.cluster === -1
-                                          ? "View records without a nearby group"
-                                          : `View ${clusterSizes.get(payload.cluster)} records in ${isPrimary ? "the largest" : "a nearby"} group`;
-                                        const markerKeyboardProps = payload.renderType === 'centroid' ? {
-                                          role: "button",
-                                          tabIndex: 0,
-                                          "aria-label": markerLabel,
-                                          onKeyDown: (event) => {
-                                            if (event.key === "Enter" || event.key === " ") selectCluster(event);
-                                          },
-                                        } : {};
-                                        const interactionProps = {
-                                          ...markerKeyboardProps,
-                                          onClick: selectCluster,
-                                          onMouseEnter: () => setHoveredDbscanCluster(payload.cluster),
-                                          onMouseLeave: () => setHoveredDbscanCluster(null),
-                                          style: { cursor: "pointer" },
-                                        };
-
-                                        if (payload.renderType === 'noise') {
-                                          return <circle {...interactionProps} cx={cx} cy={cy} r={isFocused ? 5 : 4} fill={COLOR.slate} opacity={isDimmed ? 0.12 : 0.75} />;
-                                        }
-
-                                        if (payload.renderType === 'centroid') {
-                                          const radius = isPrimary ? 14 : 10;
-                                          return (
-                                            <circle
-                                              {...interactionProps}
-                                              cx={cx} cy={cy} r={isFocused ? radius + 2 : radius}
-                                              fill={baseColor} fillOpacity={isDimmed ? 0.03 : 0.1}
-                                              stroke={baseColor} strokeWidth={isFocused ? 3 : 2} strokeOpacity={isDimmed ? 0.2 : 1}
-                                            />
-                                          );
-                                        }
-
-                                        return <circle {...interactionProps} cx={cx} cy={cy} r={isFocused ? 5 : 3} fill={baseColor} opacity={isDimmed ? 0.12 : 0.8} />;
-                                      }}
-                                    />
-                                  </ScatterChart>
-                                </ResponsiveChart>
-                              </div>
-
-                              {selectedDbscanCluster === null ? (
-                                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-muted)" }}>
-                                  Hover over a dot to highlight its group. Click a dot or ring to view the records in that group.
-                                </p>
-                              ) : (
-                                <div style={{ marginTop: 12 }}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
-                                    <div>
-                                      <h4 style={{ margin: 0, fontSize: 14, color: "var(--color-ink)" }}>
-                                        {selectedDbscanCluster === -1
-                                          ? "Records without a nearby group"
-                                          : `${selectedIsPrimary ? "Largest nearby group" : "Nearby group"} · ${selectedEntries.length} records`}
-                                      </h4>
-                                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>
-                                        One row per flagged record. The ID helps locate it in REVELA; the flag is its current status.
-                                      </p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedDbscanCluster(null)}
-                                      aria-label="Hide selected group records"
-                                      style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)", color: "var(--color-ink)", borderRadius: 6, padding: "5px 9px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
-                                    >
-                                      Hide records
-                                    </button>
-                                  </div>
-                                  <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid var(--color-border)", borderRadius: 8 }}>
-                                    <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                                      <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
-                                        <tr style={{ color: "var(--color-muted)", fontSize: 10, textTransform: "uppercase" }}>
-                                          <th style={{ padding: "7px 8px" }}>Business / record ID</th>
-                                          <th style={{ padding: "7px 8px" }}>Barangay</th>
-                                          <th style={{ padding: "7px 8px" }}>Current flag</th>
-                                          <th style={{ padding: "7px 8px" }}>Date flagged</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {selectedEntries.map((entry) => (
-                                          <tr key={entry.log_id} style={{ borderTop: "1px solid var(--color-border)" }}>
-                                            <td style={{ padding: "7px 8px", fontSize: 11, color: "var(--color-ink)" }}>
-                                              {entry.detected_name || "Unnamed record"} <span style={{ color: "var(--color-muted)" }}>#{entry.log_id}</span>
-                                            </td>
-                                            <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.barangay || "Unknown area"}</td>
-                                            <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.flag_color || "Unknown"}</td>
-                                            <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.detected_date || "Unknown date"}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* ── DBSCAN Legend ─────────────────────── */}
-                              <div style={{
-                                display: "flex", flexWrap: "wrap", gap: "12px 20px",
-                                marginTop: 10, padding: "8px 12px",
-                                background: "rgba(255,255,255,0.05)", border: "1px solid rgba(229,231,235,0.16)", borderRadius: 8,
-                                fontSize: 11, color: "var(--color-muted)", lineHeight: 1.4
-                              }}>
-                                {/* Primary hotspot */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="2" /></svg>
-                                  <span><b style={{ color: "#6366f1" }}>Largest group</b> — most nearby flagged records</span>
-                                </span>
-                                {/* Secondary cluster */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill={COLOR.orange} fillOpacity="0.15" stroke={COLOR.orange} strokeWidth="2" /></svg>
-                                  <span><b style={{ color: COLOR.orange }}>Other groups</b> — smaller nearby groups</span>
-                                </span>
-                                {/* Flagged businesses */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" fill="#6366f1" opacity="0.7" /><circle cx="13" cy="12" r="2.5" fill={COLOR.orange} opacity="0.7" /></svg>
-                                  <span>Flagged records belonging to a group</span>
-                                </span>
-                                {/* Isolated / noise */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill={COLOR.slate} opacity="0.3" /></svg>
-                                  <span>Flagged records with no nearby group</span>
-                                </span>
-                              </div>
-                            </>
-                          );
-                        })()
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-                    <div style={{ color: "#7c3aed" }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3" />
-                        <circle cx="6" cy="12" r="3" />
-                        <circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                      </svg>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Severe flags by barangay</h3>
-                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.5 }}>
-                        Compares Red and Black geospatial-record totals within barangay boundaries.
-                      </p>
-                      <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
-                        <p style={{ margin: "6px 0 0" }}>
-                          Each bar counts distinct eligible geospatial record IDs with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report—not distinct businesses. The dashed benchmark is NumPy's 75th percentile of those counts across geolocated barangays, using its default linear interpolation; a barangay is highlighted only when its count is strictly above that benchmark. At least 4 geolocated barangays are needed to calculate the comparison. This chart uses the selected barangay, effective flag-color, and detection-date filters; a selected flag-color further narrows the Red/Black records. Registry/business and inspection filters do not apply. A high total does not mean records are near one another and does not prove a violation or its cause.
-                        </p>
-                      </details>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
-                        <strong>Regional spacing note (barangay centers, not business clusters):</strong>{" "}
-                        {loading ? "Comparing barangays..." : diag?.morans_insight || "Regional comparison is temporarily unavailable."}
-                      </p>
-
-                      {diag?.morans_data?.points && diag.morans_data.points.length > 0 && (
-                        <div style={{ height: 260, width: "100%", marginTop: 16 }}>
-                          <ResponsiveChart>
-                            <BarChart data={diag.morans_data.points} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--analytics-grid-color)" />
-                              <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
-                              <YAxis tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                              <Tooltip
-                                 cursor={{ fill: "var(--analytics-chart-hover)" }}
-                                 contentStyle={{ borderRadius: 8, border: "1px solid var(--color-border)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-modal-bg)", color: "var(--color-ink)", fontSize: 12 }}
-                                formatter={(value) => [`${value} distinct geospatial records`, "Red/Black flagged records"]}
-                              />
-                               <ReferenceLine y={diag.morans_data.threshold} stroke="var(--analytics-indigo)" strokeDasharray="3 3" label={{ position: 'top', value: 'Upper-quartile benchmark', fill: "var(--analytics-indigo)", fontSize: 9 }} />
-                              <Bar dataKey="risk" name="Red/black flagged records" radius={[2, 2, 0, 0]}>
-                                {diag.morans_data.points.map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={entry.is_high_risk ? "#6366f1" : "#8b5cf6"} opacity={entry.is_high_risk ? 0.9 : 0.4} />
-                                ))}
-                              </Bar>
-                            </BarChart>
-                          </ResponsiveChart>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                    <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registry-Linked Status by Sector</h3>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Unique registry businesses with a current non-Green flag</p>
-                    </div>
-                  </div>
-                  {loading ? <Skeleton h={220} /> : categoryData.length === 0 ? (
-                    <EmptyState h={220} title="No Linked Status Data" />
-                  ) : (
-                    <div style={{ height: 280, width: "100%" }}>
-                      <ResponsiveChart>
-                        <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 120, left: 10, bottom: 0 }}>
-                           <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="var(--analytics-grid-color)" />
-                          <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--color-ink)", fontWeight: 500 }} width={120} axisLine={false} tickLine={false} tickFormatter={(val) => typeof val === 'string' && val.length > 18 ? val.substring(0, 18) + '…' : val} />
-                           <Tooltip cursor={{ fill: "var(--analytics-chart-hover)" }} contentStyle={{ borderRadius: 8, border: "1px solid var(--color-border)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-modal-bg)", color: "var(--color-ink)" }} />
-                          <Bar dataKey="flagged_count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Registry-linked businesses">
-                            <LabelList dataKey="label" position="right" fill="var(--color-ink)" fontSize={10} fontWeight={600} />
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveChart>
-                    </div>
-                  )}
-                  {!loading && categoryData.length > 0 && (
-                    <p style={{ margin: "12px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                      Bars show unique linked businesses / registry businesses in the sector and their non-Green status rate, not confirmed violations. Record linkage: {categoryLinkageSummary.linked_records ?? 0} of {categoryLinkageSummary.total_flagged_records ?? 0} flagged records ({categoryLinkageSummary.linkage_rate ?? 0}%); {categoryLinkageSummary.unlinked_records ?? 0} unlinked and {categoryLinkageSummary.ambiguous_records ?? 0} ambiguous records are excluded from sector rates.
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
-              {/* D2. TREND ANALYSIS */}
-              <div>
-                 <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>D2. Trend Analysis</h3>
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, height: "calc(100% - 46px)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                    <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Detection Scan History</h3>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>Municipality-wide scan attempts; not affected by the dashboard filters.</p>
-                    </div>
-                  </div>
-                  {loading ? <Skeleton h={220} /> : scanHistory.length === 0 ? (
-                    <EmptyState h={220} title="No Scan History" message="Completed and partial detection scans will appear here." />
-                  ) : (
-                    <div style={{ maxHeight: 280, overflowY: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                        <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
-                           <tr style={{ borderBottom: "2px solid var(--color-border)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
-                            <th style={{ padding: "9px 8px" }}>Started</th>
-                            <th style={{ padding: "9px 8px" }}>Status</th>
-                            <th style={{ padding: "9px 8px", textAlign: "right" }}>Places results</th>
-                            <th style={{ padding: "9px 8px", textAlign: "right" }}>New candidates</th>
-                            <th style={{ padding: "9px 8px", textAlign: "right" }}>Yield</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {scanHistory.map((run) => {
-                            const checked = Number(run.total_checked || 0);
-                            const newFlags = Number(run.new_flags || 0);
-                            const yieldRate = SCAN_STATUS_COMPARABLE_YIELD.has(run.status) && checked > 0
-                              ? `${((newFlags / checked) * 100).toFixed(1)}%`
-                              : "—";
-                            return (
-                               <tr key={run.run_id} style={{ borderBottom: "1px solid var(--color-border-soft)" }}>
-                                <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{formatScanHistoryTimestamp(run.started_at)}</td>
-                                <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: SCAN_STATUS_COLOR[run.status] || COLOR.orange, whiteSpace: "nowrap" }}>{SCAN_STATUS_LABEL[run.status] || run.status}</td>
-                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{checked}</td>
-                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{newFlags}</td>
-                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12, fontWeight: 700 }}>{yieldRate}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      <p style={{ margin: "10px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        Completed-scan yield = new candidate flags / Places results processed. The denominator includes out-of-area and non-business results. Interrupted runs (partial, cancelled, failed) have no comparable yield; completed-with-gaps runs do, but some dense grid cells stayed saturated.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            </section>
-              </>
-            )}
-          </details>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════

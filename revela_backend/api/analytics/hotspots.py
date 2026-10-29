@@ -1,4 +1,4 @@
-"""Read-only DBSCAN aggregates for the Overview map."""
+"""Shared DBSCAN population, parameter, and aggregation helpers."""
 
 import json
 import math
@@ -112,17 +112,30 @@ def hotspot_date_window(date_preset, today=None):
     return start, local_today
 
 
-def build_hotspot_population_sql(effective_flag_sql, registry_link_sql, start, end):
+def build_hotspot_population_sql(
+    effective_flag_sql,
+    registry_link_sql,
+    start,
+    end,
+    *,
+    extra_where_sql="",
+    extra_params=(),
+):
     """Build exclusive disposition rows for all effective-Red pins in scope."""
     date_sql = ""
     params = []
     if start is not None and end is not None:
         date_sql = " AND g.detectedDate >= %s AND g.detectedDate < DATE_ADD(%s, INTERVAL 1 DAY)"
         params.extend((start, end))
+    params.extend(extra_params)
+    extra_where = f" {extra_where_sql}" if extra_where_sql else ""
 
     sql = f"""
-        SELECT g.logID, g.latitude, g.longitude, g.barangayID, g.source,
-               g.businessID,
+        SELECT g.logID, g.detectedName, g.detectedDate,
+               ({effective_flag_sql}) AS flagColor,
+               g.latitude, g.longitude, g.barangayID,
+               COALESCE(b.barangayName, 'Unknown Area') AS barangayName,
+               g.source, g.businessID,
                CASE
                  WHEN COALESCE(g.source, 'unknown') <> 'detection'
                    THEN 'not_detection'
@@ -135,7 +148,8 @@ def build_hotspot_population_sql(effective_flag_sql, registry_link_sql, start, e
                  ELSE 'eligible'
                END AS disposition
         FROM geospatial_logs g
-        WHERE ({effective_flag_sql}) = 'Red' {date_sql}
+        LEFT JOIN barangays b ON b.barangayID = g.barangayID
+        WHERE ({effective_flag_sql}) = 'Red' {date_sql}{extra_where}
         ORDER BY g.logID
     """
     return sql, params
@@ -274,6 +288,7 @@ def cluster_hotspot_rows(rows, parameters, polygons):
             "centroid": {"lat": centroid[0], "lng": centroid[1]},
             "radius_m": round(radius_m, 1),
             "size": len(members),
+            "log_ids": [int(row["logID"]) for row in members],
             "per_barangay": sorted(
                 barangay_counts.values(),
                 key=lambda item: (item["barangay_name"] or "", item["barangay_id"]),
@@ -286,6 +301,39 @@ def cluster_hotspot_rows(rows, parameters, polygons):
         "noise_points": noise_points,
         "uncertain_points": uncertain_points,
     }
+
+
+def hotspot_cluster_memberships(rows, clusters):
+    """Map eligible point IDs to DBSCAN labels, retaining -1 for noise."""
+    memberships = {
+        int(row["logID"]): -1
+        for row in rows
+        if row.get("disposition") == "eligible"
+        and row.get("latitude") is not None
+        and row.get("longitude") is not None
+    }
+    for cluster in clusters:
+        for log_id in cluster["log_ids"]:
+            memberships[log_id] = cluster["cluster_id"]
+    primary_cluster_id = clusters[0]["cluster_id"] if clusters else -1
+    return memberships, primary_cluster_id
+
+
+def serialize_map_hotspot_clusters(clusters, parameters):
+    """Preserve the map endpoint's legacy shape using canonical cluster data."""
+    return [
+        {
+            "clusterID": cluster["cluster_id"],
+            "centroidLat": round(cluster["centroid"]["lat"], 7),
+            "centroidLng": round(cluster["centroid"]["lng"], 7),
+            "size": cluster["size"],
+            "radius_m": cluster["radius_m"],
+            "logIDs": cluster["log_ids"],
+            "eps_m": parameters["eps_m"],
+            "min_samples": parameters["min_samples"],
+        }
+        for cluster in clusters
+    ]
 
 
 def count_hotspot_dispositions(rows):

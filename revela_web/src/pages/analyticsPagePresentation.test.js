@@ -24,11 +24,17 @@ test("ranked row owns its single expandable dispatch detail surface", () => {
   assert.match(pageSource, /ADMIN_PRESCRIPTIVE_DETAILS_ENABLED\s*=\s*false/);
 });
 
-test("recommendation controls use the agreed wording and lazily mount Evidence", () => {
+test("recommendation controls retain wording and show one scan summary without Evidence", () => {
   assert.match(pageSource, /Dispatch recommendations cover up to 3 barangays; others wait for a free inspector\./);
   assert.match(pageSource, /Show all \$\{activeRecommendations\.rows\.length\}/);
   assert.match(pageSource, /activeRecommendations\.noActiveFlagsCount[\s\S]*?no active flags\./);
   assert.match(pageSource, /straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records/);
   assert.match(pageSource, /sector score is a configured policy input, not measured industry risk/);
-  assert.match(pageSource, /evidenceOpen && \([\s\S]*?Spatial clusters and scan history are supporting evidence only/);
+  assert.doesNotMatch(pageSource, /analytics-evidence-disclosure|Evidence: nearby records/);
+  assert.doesNotMatch(pageSource, /Nearby flagged records|Severe flags by barangay|Registry-Linked Status by Sector|Detection Scan History/);
+  assert.match(pageSource, /analyticsDetectionScanSummary\(lastDetectionRun\)/);
+  assert.match(pageSource, /getAnalyticsHotspotsRequest\(token, "all"/);
+  assert.match(pageSource, /categoryRiskDrivers: data\?\.diagnostic\?\.category_risk_drivers/);
+  assert.match(pageSource, /scanHistory: data\?\.diagnostic\?\.scan_history/);
+  assert.match(pageSource, /dbscan_clusters/);
 });

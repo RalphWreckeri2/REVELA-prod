@@ -1,6 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, rebalanceWlcWeight, hasDispatchableWlcTargets, wlcEligibilityLabel } from "./wlcPolicy.js";
+
+const analyticsPageSource = readFileSync(
+  new URL("../pages/AnalyticsPage.jsx", import.meta.url),
+  "utf8",
+);
+const settingsPageSource = readFileSync(
+  new URL("../pages/SettingsPage.jsx", import.meta.url),
+  "utf8",
+);
 
 test("interview-derived defaults remain exactly 68/7/25", () => {
   assert.deepEqual(DEFAULT_WLC_WEIGHTS, { w1_risk: 68, w2_sector: 7, w3_distance: 25 });
@@ -52,6 +62,13 @@ test("sector weight is not gated or zeroed by missing sector data", () => {
   const next = rebalanceWlcWeight(DEFAULT_WLC_WEIGHTS, "w2_sector", 20);
   assert.equal(next.w2_sector, 20);
   assert.equal(wlcPolicyError(next), "");
+});
+
+test("analytics and policy settings disclose the neutral sector fallback", () => {
+  assert.match(analyticsPageSource, /Missing sector overrides use the existing neutral score of 50/);
+  assert.match(analyticsPageSource, /configured sector weight is retained; weights are not redistributed/i);
+  assert.match(settingsPageSource, /Missing sector overrides use the existing neutral score of 50/);
+  assert.match(settingsPageSource, /saved weights are applied unchanged, not redistributed/i);
 });
 
 test("field queues skip Black-only and fully assigned barangays while retaining WLC risk context", () => {

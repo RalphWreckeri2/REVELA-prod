@@ -33,6 +33,7 @@ import {
 } from "./barangayOverviewPresentation";
 import {
   hotspotOverlayRadius,
+  hotspotMethodNote,
   hotspotRequestParams,
   hotspotScanNote,
   hotspotSummary,
@@ -895,7 +896,7 @@ export default function MapOverview({ token, filters }) {
               <p>No nearby groups for this period.</p>
             ) : (
               <p>
-                Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} flagged locations)
+                Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} eligible effective-Red detection pins)
               </p>
             )}
             {!selectedRow && hotspotStats.uncertainCount > 0 && (
@@ -906,6 +907,11 @@ export default function MapOverview({ token, filters }) {
             <p className="map-overview-hotspot-caveat">
               Nearby groups are possible hotspots only; they do not confirm a violation.
             </p>
+            {hotspotData?.parameters_used && (
+              <p className="map-overview-hotspot-method">
+                {hotspotMethodNote(hotspotData.parameters_used, mapView)}
+              </p>
+            )}
           </section>
 
           <section className="map-overview-detail-card">

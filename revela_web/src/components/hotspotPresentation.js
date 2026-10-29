@@ -30,6 +30,14 @@ export function hotspotSummary(data, selectedBarangayId = null) {
   };
 }
 
+export function hotspotMethodNote(parameters, mapView) {
+  if (!parameters) return "";
+  const polygonMeasure = mapView === "inspections"
+    ? "inspection counts"
+    : "registered-business counts";
+  return `DBSCAN groups eligible effective-Red detection pins (Haversine eps ${Number(parameters.eps_m)} m; MinPts ${Number(parameters.min_samples)}). Orange circles show hotspot groups; polygon fills show ${polygonMeasure}, not OPS tiers.`;
+}
+
 export function hotspotOverlayRadius(radiusMeters) {
   const radius = Number(radiusMeters) || 0;
   return radius + Math.max(8, radius * 0.1);
@@ -42,6 +50,7 @@ export function hotspotScanNote(lastDetectionRun) {
       coverageIncomplete: false,
     };
   }
+
   const date = String(lastDetectionRun.date || "").slice(0, 10) || "unknown date";
   const status = String(lastDetectionRun.status || "unknown")
     .replaceAll("_", " ")
@@ -68,4 +77,26 @@ export function hotspotScanNote(lastDetectionRun) {
     text: `Last detection scan: ${date} · ${status}${stopDetail}`,
     coverageIncomplete,
   };
+}
+
+export function analyticsDetectionScanSummary(lastDetectionRun) {
+  if (!lastDetectionRun) {
+    return "Last detection scan: unavailable · Stop reason: unavailable";
+  }
+  const date = String(lastDetectionRun.date || "").slice(0, 10) || "unknown date";
+  const status = String(lastDetectionRun.status || "unknown")
+    .replaceAll("_", " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  const reasonLabels = {
+    completed: "Completed normally",
+    completed_with_gaps: "Coverage gaps",
+    work_budget: "Work budget",
+    places_quota: "Places quota",
+    api_error: "API error",
+    request_limit: "Request limit",
+  };
+  const rawReason = lastDetectionRun.stop_reason;
+  const stopReason = reasonLabels[rawReason]
+    || (rawReason ? String(rawReason).replaceAll("_", " ") : "not recorded");
+  return `Last detection scan: ${date} · ${status} · Stop reason: ${stopReason}`;
 }

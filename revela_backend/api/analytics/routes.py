@@ -11,7 +11,6 @@ import numpy as np
 from collections import Counter
 from concurrent.futures import Future
 from datetime import datetime, timezone
-from sklearn.cluster import DBSCAN
 from flask import Blueprint, current_app, g, has_app_context, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from google import genai
@@ -36,6 +35,7 @@ from api.analytics.hotspots import (
     cluster_hotspot_rows,
     count_hotspot_dispositions,
     get_cached_hotspots,
+    hotspot_cluster_memberships,
     hotspot_date_window,
     invalidate_hotspots_cache,
     load_barangay_polygons,
@@ -692,7 +692,7 @@ def get_all_analytics():
 @analytics_bp.route("/hotspots", methods=["GET"])
 @jwt_required()
 def get_analytics_hotspots():
-    """Return date-scoped DBSCAN groups of detected pins not linked to registry."""
+    """Return date-scoped groups of eligible effective-Red detection pins."""
     date_preset = (request.args.get("date_preset") or "all").strip().lower()
     try:
         start, end = hotspot_date_window(date_preset)
@@ -2242,70 +2242,83 @@ def _get_all_analytics_inner(F=None):
     dbscan_clusters = []
     _dbscan_t0 = _phase_start(phases)
     try:
-        _execute(cur, "diagnostic.dbscan_hotspots", f"""
-                 SELECT g.logID, g.detectedName, g.detectedDate,
-                     {effective_flag_color} AS flagColor,
-                     g.latitude, g.longitude,
-                     COALESCE(b.barangayName, 'Unknown Area') as barangayName
-            FROM geospatial_logs g
-            LEFT JOIN barangays b ON g.barangayID = b.barangayID
-            WHERE {effective_flag_color} IN ('Red', 'Black')
-              AND g.latitude IS NOT NULL
-              AND g.longitude IS NOT NULL
-              AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
-        """, geo_g_p)
-        hotspot_data = cur.fetchall()
+        parameters, _ = resolve_hotspot_parameters(read_hotspot_settings(cur))
+        dbscan_settings = (
+            f"DBSCAN settings: Haversine eps={parameters['eps_m']:g} m, "
+            f"min_samples={parameters['min_samples']}."
+        )
+        population_sql, population_params = build_hotspot_population_sql(
+            effective_flag_color,
+            registry_link_sql("g"),
+            None,
+            None,
+            extra_where_sql=geo_g,
+            extra_params=geo_g_p,
+        )
+        _execute(
+            cur, "diagnostic.dbscan_hotspots", population_sql, population_params
+        )
+        hotspot_data = list(cur.fetchall() or [])
+        _execute(
+            cur,
+            "diagnostic.dbscan_barangays",
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID",
+        )
+        barangay_rows = list(cur.fetchall() or [])
+        hotspot_groups, _ = cluster_hotspot_rows(
+            hotspot_data,
+            parameters,
+            load_barangay_polygons(barangay_rows),
+        )
+        memberships, primary_cluster_id = hotspot_cluster_memberships(
+            hotspot_data, hotspot_groups
+        )
 
-        if len(hotspot_data) >= 3:
-            import numpy as np
-            from sklearn.cluster import DBSCAN
-            from collections import Counter
+        for row in hotspot_data:
+            if row.get("disposition") != "eligible":
+                continue
+            cluster_id = memberships[int(row["logID"])]
+            detected_date = row.get("detectedDate")
+            dbscan_clusters.append({
+                "log_id": int(row["logID"]),
+                "detected_name": row.get("detectedName"),
+                "detected_date": (
+                    detected_date.strftime("%Y-%m-%d %H:%M")
+                    if detected_date else None
+                ),
+                "flag_color": row.get("flagColor"),
+                "lat": float(row["latitude"]),
+                "lng": float(row["longitude"]),
+                "cluster": cluster_id,
+                "is_primary": cluster_id == primary_cluster_id and cluster_id != -1,
+                "barangay": row.get("barangayName") or "Unknown Area",
+            })
 
-            # Convert coords to radians for Haversine distance
-            coords = np.radians(
-                [[float(r['latitude']), float(r['longitude'])] for r in hotspot_data])
-
-            # 20 meters in radians (10m is often too strict due to GPS drift, 20m provides a better result)
-            kms_per_radian = 6371.0088
-            epsilon = 0.02 / kms_per_radian
-
-            db = DBSCAN(eps=epsilon, min_samples=3,
-                        algorithm='ball_tree', metric='haversine').fit(coords)
-            labels = db.labels_
-
-            valid_labels = [lbl for lbl in labels if lbl != -1]  # -1 is noise
-            largest_cluster_label = -1
-            if valid_labels:
-                # Find largest cluster
-                largest_cluster_label = Counter(
-                    valid_labels).most_common(1)[0][0]
-                cluster_size = Counter(valid_labels).most_common(1)[0][1]
-
-            # Export points for visualization
-            for idx, row in enumerate(hotspot_data):
-                dbscan_clusters.append({
-                    "log_id": int(row['logID']),
-                    "detected_name": row['detectedName'],
-                    "detected_date": row['detectedDate'].strftime("%Y-%m-%d %H:%M") if row['detectedDate'] else None,
-                    "flag_color": row['flagColor'],
-                    "lat": float(row['latitude']),
-                    "lng": float(row['longitude']),
-                    "cluster": int(labels[idx]),
-                    "is_primary": bool(int(labels[idx]) == largest_cluster_label and int(labels[idx]) != -1),
-                    "barangay": row['barangayName']
-                })
-
-            if valid_labels:
-
-                # Find dominant barangay in this cluster
-                cluster_barangays = [hotspot_data[i]['barangayName'] for i, lbl in enumerate(
-                    labels) if lbl == largest_cluster_label]
-                dominant_barangay = Counter(
-                    cluster_barangays).most_common(1)[0][0]
-
-                dbscan_insight = f"Largest nearby group: {cluster_size} flagged records around {dominant_barangay}. Consider prioritizing this area for inspection; proximity alone does not confirm a violation."
-            else:
-                dbscan_insight = "No nearby groups of flagged records were found."
+        if hotspot_groups:
+            largest_group = hotspot_groups[0]
+            dominant_barangay = "Unknown Area"
+            if largest_group["per_barangay"]:
+                dominant_barangay = max(
+                    largest_group["per_barangay"],
+                    key=lambda row: row["count"],
+                )["barangay_name"]
+            dbscan_insight = (
+                f"Largest nearby group: {largest_group['size']} eligible "
+                f"effective-Red detection pins around {dominant_barangay}. "
+                f"{dbscan_settings} Consider "
+                "prioritizing this area for inspection; proximity alone does "
+                "not confirm a violation."
+            )
+        elif dbscan_clusters:
+            dbscan_insight = (
+                "No nearby groups of eligible effective-Red detection pins "
+                f"were found. {dbscan_settings}"
+            )
+        else:
+            dbscan_insight = (
+                "There is not enough eligible effective-Red detection-pin "
+                f"location data to form a group. {dbscan_settings}"
+            )
     except Exception as e:
         print(f"DBSCAN Error: {e}")
         dbscan_insight = "Hotspot detection temporarily unavailable."
@@ -3198,9 +3211,9 @@ def analytics_chat():
             "- **Registry active-flag rate**: Unique current Red/Yellow/Black registry businesses / all registry businesses; null means N/A. Not a confirmed non-compliance rate. Unregistered candidates are a separate count\n"
             "- **Risk Level**: Derived from OPS score — High (>=60), Medium (>=30), Low (<30)\n"
             "- **Dispatch Recommendations**: Deterministic WLC-ranked plans, not AI-generated allocations. High priority starts at OPS 60, Standard at 30, Monitor below 30. Only currently free inspectors are allocated (maximum six). Deferred plans have zero inspectors; never invent staffing or promise a deployment date for them. Black-only barangays and already-assigned targets are skipped: dispatchable_count must be positive for a new field plan. Black flags are administrative risk context, never an authorization for redispatch\n"
-            "- **Nearby flagged records (DBSCAN)**: Uses geospatial log records whose effective flag is Red or Black, which have coordinates, and which have a place ID, reporter, stored Orange flag, or linked inspection report. Each dot and each group size count records, not distinct businesses. DBSCAN uses Haversine distance with a 20 m neighborhood and min_samples=3 (including the point itself); connected neighborhoods can extend beyond 20 m end-to-end, and groups may cross barangay boundaries. Isolated records are not part of a group. The number of groups is not the number of records in a group\n"
+            "- **Nearby flagged records (DBSCAN)**: Uses eligible geospatial log records with effective Red flag, detection origin, coordinates, no businessID, and no registry link. This is the shared population used by Analytics and Map cluster views. Each dot and group size counts detection records, not distinct businesses. Uses Haversine distance and the shared configurable parameters (default eps=50 m, min_samples=3 including the point itself); the actual settings are included in dbscan_insight. Connected neighborhoods can extend beyond eps end-to-end, and groups may cross barangay boundaries. Isolated eligible records are noise, not clusters. The number of groups is not the number of records in a group\n"
             "- **Severe flags by barangay**: Separately counts distinct eligible geospatial log IDs with effective Red or Black flags and coordinates, grouped within barangay boundaries. Its dashed benchmark is NumPy's 75th percentile (default linear interpolation) of those counts across geolocated barangays; at least four such barangays are required, and only positive counts strictly above the benchmark are highlighted. A high count is not a spatial group\n"
-            "- **Filters for these two spatial charts**: Both apply selected barangay, effective flag-color, and detection-date filters; a selected flag color further narrows the Red/Black records required by these charts. Registry/business and inspection filters do not affect these geospatial calculations\n"
+            "- **Filters for these two spatial charts**: DBSCAN applies selected barangay, effective flag-color, and detection-date filters to eligible effective-Red detection pins; a selected flag color further narrows the effective-Red input. The separate severe-flags chart counts effective Red or Black records and also applies those geospatial filters. Registry/business and inspection filters do not affect these calculations\n"
             "- **Unavailable chart data**: In spatialDiagnostics, analysisAvailable=false means the corresponding chart could not be calculated from sufficient available data; do not present empty arrays or zero counts as evidence that there were no groups or severe flags\n"
             "- **Keep spatial measures distinct**: Spatial-group count, records per group, number of above-benchmark barangays, and OPS/WLC inspection-priority rankings are different measures. OPS rankings are not calculated from the number of DBSCAN groups or from the chart's above-benchmark count. Neither proximity nor a high count proves a violation or its cause\n"
             "- **Inspector Stats**: Performance metrics for individual inspectors (inspections completed, resolution time, etc.).\n"

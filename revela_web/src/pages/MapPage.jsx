@@ -29,6 +29,7 @@ import {
 } from "../components/locationReviewPolicy";
 import { activeInspectorsForDispatch, canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
+import { hotspotCircleSummary, opsRiskTooltipLines } from "../components/mapRiskPresentation";
 import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
@@ -434,7 +435,7 @@ const LAYER_OPTIONS = [
   { id: "base", label: "Base Map" },
   { id: "flags", label: "Flag Markers" },
   { id: "barangay", label: "Barangay Boundaries" },
-  { id: "diagnostics", label: "Risk Heatmap" },
+  { id: "diagnostics", label: "OPS Priority Tiers" },
 ];
 
 // Flag color â†’ UI color mapping
@@ -1264,17 +1265,18 @@ function MapCanvas({
         clickable: true,
       });
 
+      const summary = hotspotCircleSummary(cl);
       const infoWindow = new window.google.maps.InfoWindow({
         content: `
           <div style="font-family:sans-serif;font-size:13px;line-height:1.6;padding:4px 6px;">
             <strong style="color:#b91c1c;">
-              Risk Heatmap Cluster #${cl.clusterID}
+              ${summary.title}
             </strong><br/>
             <span style="color:#475569;">
-              ${cl.size} Red Flag${cl.size !== 1 ? "s" : ""} within ${cl.radius_m} m
+              ${summary.members}; radius ${summary.radius}
             </span><br/>
             <span style="color:#94a3b8;font-size:11px;">
-              eps = 20 m · MinPts = 3  · 
+              ${summary.parameters} ·
               IDs: ${cl.logIDs.slice(0, 6).map(id => `#${id}`).join(", ")}${cl.logIDs.length > 6 ? "…" : ""}
             </span>
           </div>
@@ -1574,14 +1576,26 @@ function MapCanvas({
     if (id == null) return;
     setHoveredBarangayId(id);
     const label = barangays.find(b => Number(b.barangayID) === id)?.barangayName || name;
-    const content = document.createElement("strong");
-    content.textContent = label;
+    const content = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = label;
+    content.append(title);
+    if (layers.diagnostics) {
+      const ranking = Object.values(barangayRiskLevels || {}).find(
+        (entry) => Number(entry?.barangayID) === id,
+      );
+      opsRiskTooltipLines(ranking).forEach((line) => {
+        const detail = document.createElement("div");
+        detail.textContent = line;
+        content.append(detail);
+      });
+    }
     hoverInfoWindowRef.current?.setContent(content);
     if (event.latLng) {
       hoverInfoWindowRef.current?.setPosition(event.latLng);
       hoverInfoWindowRef.current?.open({ map: internalMapRef.current });
     }
-  }, [barangays, isPickingLocation]);
+  }, [barangays, barangayRiskLevels, isPickingLocation, layers.diagnostics]);
 
   const handleBoundaryMouseOut = useCallback(() => {
     setHoveredBarangayId(null);
@@ -3062,8 +3076,10 @@ export default function MapPage() {
             .replace("barangay ", "").replace("brgy. ", "")
             .replace("san sebastian", "san seb.").trim();
           riskMap[bName] = {
-            risk_level: r.risk_level,             // "High" | "Medium" | "Low"
-            redFlagCount: r.flagged_count ?? 0,
+            barangayID: r.barangayID,
+            risk_level: r.risk_level,
+            ops_score: r.ops_score,
+            risk_score: r.risk_score,
           };
         });
         setBarangayRiskLevels(riskMap);
@@ -5037,7 +5053,7 @@ export default function MapPage() {
               handleCancelDetection={handleCancelDetection}
               loadingFlags={loadingFlags}
             />
-            {/* Discrete risk legend â€” matches HEATMAP_RISK_STYLE on the Data layer */}
+            {/* Polygon fills show OPS tiers; DBSCAN circles are a separate detection hotspot layer. */}
             {layers.diagnostics && (
               <div style={{
                 position: "absolute",
@@ -5052,15 +5068,18 @@ export default function MapPage() {
                 minWidth: 168,
               }}>
                 <p style={{ fontSize: 10, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
-                  Barangay risk index
+                  OPS priority tiers
+                </p>
+                <p style={{ fontSize: 10, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.4 }}>
+                  Polygon colors use OPS = W1*Risk + W2*Sector + W3*Proximity, not DBSCAN cluster density.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {[
-                    { tier: "High", label: "High risk" },
-                    { tier: "Medium", label: "Moderate risk" },
-                    { tier: "Low", label: "Low risk" },
-                    { tier: "unranked", label: "Red flags (unranked)" },
-                    { tier: "none", label: "No red flags" },
+                    { tier: "High", label: "High OPS priority (>=60)" },
+                    { tier: "Medium", label: "Medium OPS priority (>=30)" },
+                    { tier: "Low", label: "Low OPS priority (<30)" },
+                    { tier: "unranked", label: "Red pins (unranked)" },
+                    { tier: "none", label: "No Red pins shown" },
                   ].map(({ tier, label }) => {
                     const row = HEATMAP_RISK_STYLE[tier];
                     return (

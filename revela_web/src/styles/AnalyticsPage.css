@@ -651,7 +651,6 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
 }
 .analytics-recommendation-row > summary::-webkit-details-marker { display: none; }
 .analytics-recommendation-row > summary:focus-visible,
-.analytics-evidence-disclosure > summary:focus-visible,
 .analytics-calculation-disclosure > summary:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
@@ -719,6 +718,13 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
   font-size: 12px;
   text-align: center;
 }
+.analytics-scan-summary {
+  margin: 10px 0 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
 .analytics-recommendation-score-breakdown {
   display: flex;
   flex-wrap: wrap;
@@ -727,14 +733,12 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
   color: var(--color-muted);
   font-size: 11px;
 }
-.analytics-evidence-disclosure,
 .analytics-calculation-disclosure {
   margin: 12px 0;
   border: 1px solid var(--color-border-soft);
   border-radius: 12px;
   background: var(--color-surface);
 }
-.analytics-evidence-disclosure > summary,
 .analytics-calculation-disclosure > summary {
   padding: 14px 16px;
   color: var(--color-ink);
@@ -742,15 +746,8 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
   font-weight: 750;
   cursor: pointer;
 }
-.analytics-evidence-disclosure[open] > summary,
 .analytics-calculation-disclosure[open] > summary {
   border-bottom: 1px solid var(--color-border-soft);
-}
-.analytics-evidence-note {
-  margin: 14px 16px 0;
-  color: var(--color-muted);
-  font-size: 12px;
-  line-height: 1.5;
 }
 .analytics-calculation-disclosure > section { padding: 0 16px 16px; }
 .analytics-chart-area { height: 240px; width: 100%; min-width: 0; flex: 0 0 auto; }
