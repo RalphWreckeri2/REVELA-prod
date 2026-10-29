@@ -85,7 +85,28 @@ def create_detection_run(user_id=None):
     return run_id
 
 
-def update_detection_run_status(run_id, status, new_flags=0, total_checked=0):
+def _is_missing_stop_metadata_column(error):
+    """Return whether MySQL rejected an optional detection metadata column."""
+    error_code = getattr(error, "errno", None)
+    if error_code is None and getattr(error, "args", None):
+        error_code = error.args[0]
+    message = str(error).lower()
+    return error_code == 1054 and any(
+        column.lower() in message
+        for column in ("stopReason", "requestsUsed", "maxRequests", "maxSeconds")
+    )
+
+
+def update_detection_run_status(
+    run_id,
+    status,
+    new_flags=0,
+    total_checked=0,
+    stop_reason=None,
+    requests_used=None,
+    max_requests=None,
+    max_seconds=None,
+):
     """
     Update detection run outcome (status='completed', 'cancelled', or 'failed').
     """
@@ -93,16 +114,50 @@ def update_detection_run_status(run_id, status, new_flags=0, total_checked=0):
         return
     ensure_detection_runs_table()
     cur = mysql.connection.cursor()
-    cur.execute("""
-        UPDATE detection_runs
-        SET status = %s,
-            completedAt = UTC_TIMESTAMP(),
-            newFlags = %s,
-            totalChecked = %s
-        WHERE runID = %s
-    """, (status, new_flags, total_checked, run_id))
-    mysql.connection.commit()
-    cur.close()
+    try:
+        params = (status, new_flags, total_checked, run_id)
+        if any(value is not None for value in (
+            stop_reason, requests_used, max_requests, max_seconds
+        )):
+            try:
+                cur.execute("""
+                    UPDATE detection_runs
+                    SET status = %s,
+                        completedAt = UTC_TIMESTAMP(),
+                        newFlags = %s,
+                        totalChecked = %s,
+                        stopReason = %s,
+                        requestsUsed = %s,
+                        maxRequests = %s,
+                        maxSeconds = %s
+                    WHERE runID = %s
+                """, (
+                    status, new_flags, total_checked, stop_reason,
+                    requests_used, max_requests, max_seconds, run_id,
+                ))
+            except Exception as error:
+                if not _is_missing_stop_metadata_column(error):
+                    raise
+                cur.execute("""
+                    UPDATE detection_runs
+                    SET status = %s,
+                        completedAt = UTC_TIMESTAMP(),
+                        newFlags = %s,
+                        totalChecked = %s
+                    WHERE runID = %s
+                """, params)
+        else:
+            cur.execute("""
+                UPDATE detection_runs
+                SET status = %s,
+                    completedAt = UTC_TIMESTAMP(),
+                    newFlags = %s,
+                    totalChecked = %s
+                WHERE runID = %s
+            """, params)
+        mysql.connection.commit()
+    finally:
+        cur.close()
 
 
 def get_latest_detection_run():

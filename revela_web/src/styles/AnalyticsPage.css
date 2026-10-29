@@ -5,9 +5,8 @@
 }
 
 .analytics-page-shell {
-  width: min(100%, 1280px);
+  width: 100%;
   min-width: 0;
-  margin-inline: auto;
 }
 
 .analytics-page .saas-content > *,

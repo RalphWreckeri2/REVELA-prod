@@ -1,0 +1,5 @@
+ALTER TABLE detection_runs
+    ADD COLUMN stopReason VARCHAR(32) NULL,
+    ADD COLUMN requestsUsed INT UNSIGNED NULL,
+    ADD COLUMN maxRequests INT UNSIGNED NULL,
+    ADD COLUMN maxSeconds INT UNSIGNED NULL;

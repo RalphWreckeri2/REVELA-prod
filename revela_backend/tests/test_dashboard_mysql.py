@@ -113,7 +113,8 @@ class DashboardMySQLTests(unittest.TestCase):
                 ) ENGINE=InnoDB""",
                 """CREATE TABLE detection_runs (
                     runID INT PRIMARY KEY, startedAt DATETIME NOT NULL,
-                    status VARCHAR(32) NOT NULL
+                    completedAt DATETIME NULL, status VARCHAR(32) NOT NULL,
+                    newFlags INT DEFAULT 0, totalChecked INT DEFAULT 0
                 ) ENGINE=InnoDB""",
                 "CREATE TABLE users (userID INT PRIMARY KEY, fullName VARCHAR(80), userRole VARCHAR(30)) ENGINE=InnoDB",
                 """CREATE TABLE revela_app_settings (
@@ -223,9 +224,88 @@ class DashboardMySQLTests(unittest.TestCase):
             "missing_coordinates": 1,
         })
         self.assertEqual(payload["last_detection_run"]["status"], "partial")
+        self.assertIsNone(payload["last_detection_run"]["stop_reason"])
         self.assertEqual(filtered_payload["population"], payload["population"])
         self.assertEqual(filtered_payload["clusters"], payload["clusters"])
         self.assertEqual(filtered_payload["totals"], payload["totals"])
+
+    def test_detection_run_stop_metadata_migration_and_pre_migration_fallback(self):
+        from pathlib import Path
+
+        from flask import Flask
+        from api.analytics import routes as analytics_routes
+        from api.analytics.hotspots import invalidate_hotspots_cache
+        from api.models import detection_runs
+
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "20261029_03_detection_run_stop_metadata.sql"
+        )
+        with self.db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO detection_runs "
+                "(runID,startedAt,status,newFlags,totalChecked) "
+                "VALUES (9,UTC_TIMESTAMP(),'running',0,0)"
+            )
+        self.db.commit()
+
+        database = SimpleNamespace(connection=self.db)
+        with patch.object(detection_runs, "mysql", database):
+            detection_runs.update_detection_run_status(
+                9, "partial", new_flags=2, total_checked=15,
+                stop_reason="work_budget", requests_used=8,
+                max_requests=20, max_seconds=120,
+            )
+
+        with self.db.cursor() as cur:
+            cur.execute(
+                "SELECT status,newFlags,totalChecked FROM detection_runs "
+                "WHERE runID=9"
+            )
+            legacy_row = cur.fetchone()
+            self.assertEqual(
+                (legacy_row["status"], legacy_row["newFlags"],
+                 legacy_row["totalChecked"]),
+                ("partial", 2, 15),
+            )
+            cur.execute(migration.read_text(encoding="utf-8"))
+        self.db.commit()
+
+        with patch.object(detection_runs, "mysql", database):
+            detection_runs.update_detection_run_status(
+                9, "partial", new_flags=3, total_checked=21,
+                stop_reason="request_limit", requests_used=20,
+                max_requests=20, max_seconds=120,
+            )
+
+        with self.db.cursor() as cur:
+            cur.execute(
+                """SELECT status,newFlags,totalChecked,stopReason,
+                          requestsUsed,maxRequests,maxSeconds
+                   FROM detection_runs WHERE runID=9"""
+            )
+            row = cur.fetchone()
+        self.assertEqual(
+            (row["status"], row["newFlags"], row["totalChecked"],
+             row["stopReason"], row["requestsUsed"], row["maxRequests"],
+             row["maxSeconds"]),
+            ("partial", 3, 21, "request_limit", 20, 20, 120),
+        )
+        with patch.object(analytics_routes, "mysql", database):
+            with Flask(__name__).test_request_context(
+                "/api/analytics/hotspots?date_preset=all"
+            ):
+                invalidate_hotspots_cache()
+                response, status = (
+                    analytics_routes.get_analytics_hotspots.__wrapped__()
+                )
+                payload = response.get_json()
+        invalidate_hotspots_cache()
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            payload["last_detection_run"]["stop_reason"], "request_limit"
+        )
 
     def seed(self, log_id, status=None, *, report_id=None, barangay=1, source="detection",
              business_id=None, deadline=None, start=None, received=None, minutes=None, ir_timestamp=None):

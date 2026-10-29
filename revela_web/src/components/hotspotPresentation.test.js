@@ -75,9 +75,22 @@ test("overlay radius adds padding and incomplete scan note is explicit", () => {
     date: "2026-10-29T04:30:00Z",
     status: "partial",
   }), {
-    text: "Last detection scan: 2026-10-29 · Partial",
+    text: "Last detection scan: 2026-10-29 · Partial · Stop reason: reason not recorded",
     coverageIncomplete: true,
   });
+  assert.deepEqual(hotspotScanNote({
+    date: "2026-10-29T04:30:00Z",
+    status: "partial",
+    stop_reason: "places_quota",
+  }), {
+    text: "Last detection scan: 2026-10-29 · Partial · Stop reason: Places quota",
+    coverageIncomplete: true,
+  });
+  assert.match(hotspotScanNote({
+    date: "2026-10-29T04:30:00Z",
+    status: "partial",
+    stop_reason: "api_error",
+  }).text, /Stop reason: API error$/);
   assert.match(mapOverviewSource, /clickable: false,[\s\S]*?zIndex: 200/);
   assert.match(mapOverviewSource, /No nearby groups for this period\./);
   assert.match(mapOverviewSource, /Nearby groups are possible hotspots only; they do not confirm a violation\./);

@@ -49,8 +49,23 @@ export function hotspotScanNote(lastDetectionRun) {
   const coverageIncomplete = ["partial", "completed with gaps"].includes(
     status.toLowerCase(),
   );
+  const reasonLabels = {
+    completed: "Completed",
+    work_budget: "Work budget",
+    places_quota: "Places quota",
+    api_error: "API error",
+    request_limit: "Request limit",
+  };
+  const rawReason = lastDetectionRun.stop_reason;
+  const stopReason = reasonLabels[rawReason]
+    || (rawReason
+      ? String(rawReason).replaceAll("_", " ")
+      : "reason not recorded");
+  const stopDetail = status.toLowerCase() === "partial"
+    ? ` · Stop reason: ${stopReason}`
+    : "";
   return {
-    text: `Last detection scan: ${date} · ${status}`,
+    text: `Last detection scan: ${date} · ${status}${stopDetail}`,
     coverageIncomplete,
   };
 }

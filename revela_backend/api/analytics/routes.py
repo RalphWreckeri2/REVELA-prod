@@ -26,7 +26,10 @@ from api.analytics.non_registry import (
 )
 from api.flags.compliance import origin_source_sql, current_confirmation_rows, confirmation_summary
 from api.flags.compliance import registry_link_sql
-from api.models.detection_runs import get_recent_detection_runs
+from api.models.detection_runs import (
+    _is_missing_stop_metadata_column,
+    get_recent_detection_runs,
+)
 from api.analytics.hotspots import (
     build_hotspot_population_sql,
     cache_hotspots,
@@ -727,11 +730,23 @@ def get_analytics_hotspots():
             "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID"
         )
         barangay_rows = list(cursor.fetchall() or [])
-        cursor.execute(
-            "SELECT startedAt, status FROM detection_runs "
-            "ORDER BY startedAt DESC, runID DESC LIMIT 1"
-        )
-        latest_run = cursor.fetchone()
+        try:
+            cursor.execute(
+                "SELECT startedAt, status, stopReason FROM detection_runs "
+                "ORDER BY startedAt DESC, runID DESC LIMIT 1"
+            )
+        except Exception as error:
+            if not _is_missing_stop_metadata_column(error):
+                raise
+            cursor.execute(
+                "SELECT startedAt, status FROM detection_runs "
+                "ORDER BY startedAt DESC, runID DESC LIMIT 1"
+            )
+            latest_run = cursor.fetchone()
+            if latest_run:
+                latest_run["stopReason"] = None
+        else:
+            latest_run = cursor.fetchone()
     except Exception:
         current_app.logger.exception("Failed to load analytics hotspots")
         return jsonify({"error": "Failed to load analytics hotspots"}), 500
@@ -765,6 +780,7 @@ def get_analytics_hotspots():
             "last_detection_run": ({
                 "date": latest_run_date,
                 "status": latest_run["status"],
+                "stop_reason": latest_run.get("stopReason"),
             } if latest_run else None),
         }
     except Exception:

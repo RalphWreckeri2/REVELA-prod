@@ -1626,6 +1626,21 @@ def _detection_work_limit_metrics():
     }
 
 
+def _detection_requests_used():
+    calls = getattr(_places_run_state, "calls", {})
+    return int(calls.get("legacy_nearby", 0) + calls.get("new_nearby", 0))
+
+
+def _detection_stop_metadata(stop_reason):
+    limits = _detection_work_limit_metrics()
+    return {
+        "stop_reason": stop_reason,
+        "requests_used": _detection_requests_used(),
+        "max_requests": limits["work_budget_max_requests"],
+        "max_seconds": limits["work_budget_max_seconds"],
+    }
+
+
 def _detection_result_processing_stopped():
     """Stop local result processing for elapsed-time limits, not request caps."""
     if not _detection_work_budget_reached():
@@ -2830,7 +2845,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         if terminal_gaps:
             update_detection_run_status(
                 run_id, "completed_with_gaps",
-                new_flags=new_flags, total_checked=total_checked)
+                new_flags=new_flags, total_checked=total_checked,
+                **_detection_stop_metadata("completed"))
             msg = (
                 f"Scan reached all {state['total_points']} grid points, but "
                 f"{state['incomplete_points']} dense cells remained saturated. "
@@ -2842,8 +2858,22 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "percentage": 100, "status": msg
             })
         elif not scan_terminal:
+            work_budget_reason = getattr(
+                _places_run_state, "work_budget_reason", None
+            )
+            if state["api_error_stop"]:
+                stop_reason = "api_error"
+            elif (
+                state.get("work_budget_stop")
+                and work_budget_reason == "request_limit"
+            ):
+                stop_reason = "request_limit"
+            else:
+                stop_reason = "work_budget"
             update_detection_run_status(
-                run_id, "partial", new_flags=new_flags, total_checked=total_checked)
+                run_id, "partial", new_flags=new_flags,
+                total_checked=total_checked,
+                **_detection_stop_metadata(stop_reason))
             msg = (
                 f"Scan partial: {done_total} of {state['total_points']} grid points completed. "
                 f"{new_flags} new flags recorded. "
@@ -2866,7 +2896,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             })
         else:
             update_detection_run_status(
-                run_id, "completed", new_flags=new_flags, total_checked=total_checked)
+                run_id, "completed", new_flags=new_flags,
+                total_checked=total_checked,
+                **_detection_stop_metadata("completed"))
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
@@ -2935,7 +2967,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         )
         update_detection_run_status(
             run_id, "partial",
-            new_flags=counters["new_flags"], total_checked=counters["total_checked"])
+            new_flags=counters["new_flags"],
+            total_checked=counters["total_checked"],
+            **_detection_stop_metadata("places_quota"))
         msg = (f"{be} Progress is saved: {done_total} of {state['total_points']} grid points are done, "
                f"{counters['new_flags']} new flag(s) recorded in this run. Run Detection again later to continue "
                "where it stopped. This did not use one of your monthly scans.")

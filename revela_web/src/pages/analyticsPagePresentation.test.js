@@ -8,7 +8,7 @@ const mapStylesheet = readFileSync(new URL("../styles/MapOverview.css", import.m
 
 test("Overview and Recommendations share one centered width and title wrapper", () => {
   assert.match(pageSource, /<div className="analytics-page-shell">[\s\S]*?analytics-page-heading[\s\S]*?analytics-recommendation-list/);
-  assert.match(stylesheet, /\.analytics-page-shell\s*\{\s*width:\s*min\(100%,\s*1280px\);\s*min-width:\s*0;\s*margin-inline:\s*auto;/);
+  assert.match(stylesheet, /\.analytics-page-shell\s*\{\s*width:\s*100%;\s*min-width:\s*0;/);
   assert.doesNotMatch(stylesheet, /\.analytics-page--prescriptive\s+\.saas-content/);
 });
 
