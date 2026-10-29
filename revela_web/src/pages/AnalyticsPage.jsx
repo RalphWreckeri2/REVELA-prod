@@ -2148,7 +2148,7 @@ export default function AnalyticsPage() {
                       Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
                     </AnalyticsInfoTip>
                   </span>
-                  <span>Dispatch</span>
+                  <span className="analytics-recommendation-dispatch-label">Dispatch</span>
                 </div>
                 {activeRecommendations.rows.length > 0 ? (
                   <div className="analytics-recommendation-rows">
@@ -2176,24 +2176,32 @@ export default function AnalyticsPage() {
                       <div className="analytics-recommendation-detail">
                         {dispatch ? (
                           <>
+                            <dl className="analytics-recommendation-executive-metrics">
+                              <div>
+                                <dt>Priority level</dt>
+                                <dd>{row.priority_label || row.risk_level || "No priority"}</dd>
+                              </div>
+                              <div>
+                                <dt>Unregistered flags</dt>
+                                <dd>{Number(row.unregistered_candidate_count || 0).toLocaleString()}</dd>
+                              </div>
+                              <div>
+                                <dt>Distance from BPLO</dt>
+                                <dd>
+                                  {row.distance_km != null && Number.isFinite(Number(row.distance_km))
+                                    ? `${Number(row.distance_km).toFixed(1)} km`
+                                    : "Unavailable"}
+                                </dd>
+                              </div>
+                            </dl>
                             <p>{dispatch.recommendation}</p>
-                            {dispatch.actionSteps?.length > 0 && (
+                            <h4>Action steps</h4>
+                            {dispatch.actionSteps?.length > 0 ? (
                               <ol>
                                 {dispatch.actionSteps.map((step, index) => <li key={`${row.barangayID}-${index}`}>{step}</li>)}
                               </ol>
-                            )}
-                            {dispatch.scoreBreakdown && (
-                              <div className="analytics-recommendation-score-breakdown">
-                                {[
-                                  ["Risk", dispatch.scoreBreakdown.risk],
-                                  ["Sector", dispatch.scoreBreakdown.sector],
-                                  ["Proximity", dispatch.scoreBreakdown.distance],
-                                ].map(([label, score]) => (
-                                  <span key={label}>
-                                    {label}: {score?.raw ?? "—"} (weight {score?.weight ?? "—"}%)
-                                  </span>
-                                ))}
-                              </div>
+                            ) : (
+                              <p>No additional action steps listed.</p>
                             )}
                           </>
                         ) : (

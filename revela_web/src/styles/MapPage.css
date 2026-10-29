@@ -44,6 +44,34 @@
   min-height: 0;
 }
 
+.map-hotspot-info-window {
+  display: flex;
+  max-width: 280px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+  color: #475569;
+  font: 13px/1.45 system-ui, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.map-hotspot-info-window__header {
+  padding-right: 32px;
+  color: #b91c1c;
+  line-height: 1.35;
+}
+
+.map-hotspot-info-window__body {
+  margin: 0;
+}
+
+.map-hotspot-info-window__footer {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 /* .saas-content is the page scroller and starts below the app header. A grid
    item sticks within .map-layout, so it releases before the in-flow footer.
    The measured mode switches to the full-width OPS row if it cannot fit. */

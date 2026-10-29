@@ -1268,17 +1268,17 @@ function MapCanvas({
       const summary = hotspotCircleSummary(cl);
       const infoWindow = new window.google.maps.InfoWindow({
         content: `
-          <div style="font-family:sans-serif;font-size:13px;line-height:1.6;padding:4px 6px;">
-            <strong style="color:#b91c1c;">
-              ${summary.title}
-            </strong><br/>
-            <span style="color:#475569;">
+          <div class="map-hotspot-info-window">
+            <div class="map-hotspot-info-window__header">
+              <strong>${summary.title}</strong>
+            </div>
+            <div class="map-hotspot-info-window__body">
               ${summary.members}; radius ${summary.radius}
-            </span><br/>
-            <span style="color:#94a3b8;font-size:11px;">
+            </div>
+            <div class="map-hotspot-info-window__footer">
               ${summary.parameters} ·
               IDs: ${cl.logIDs.slice(0, 6).map(id => `#${id}`).join(", ")}${cl.logIDs.length > 6 ? "…" : ""}
-            </span>
+            </div>
           </div>
         `,
       });

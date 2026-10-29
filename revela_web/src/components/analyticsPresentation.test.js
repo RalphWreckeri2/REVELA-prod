@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   activeInspectorWorkload,
@@ -12,6 +13,15 @@ import {
   recommendationReason,
   rankedRecommendationRows,
 } from "./analyticsPresentation.js";
+
+const analyticsPageSource = readFileSync(
+  new URL("../pages/AnalyticsPage.jsx", import.meta.url),
+  "utf8",
+);
+const analyticsPageStyles = readFileSync(
+  new URL("../styles/AnalyticsPage.css", import.meta.url),
+  "utf8",
+);
 
 test("groups inspection statuses and excludes barangays with no reports", () => {
   const rows = groupInspectionStatuses([
@@ -122,6 +132,35 @@ test("recommendation wording uses requested reason and allocation phrases", () =
   assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 2 }), "2 inspectors allocated");
   assert.equal(recommendationAllocationLabel({ allocation_status: "deferred", inspectors: 0 }), "Waiting for a free inspector");
   assert.equal(recommendationAllocationLabel(null), "Not scheduled yet");
+});
+
+test("recommendation columns align with priority and dispatch values", () => {
+  assert.match(
+    analyticsPageStyles,
+    /\.analytics-recommendation-columns > span:nth-child\(3\),\s*\.analytics-recommendation-dispatch-label\s*\{[^}]*justify-self:\s*end;[^}]*text-align:\s*right;/,
+  );
+  assert.match(
+    analyticsPageStyles,
+    /\.analytics-recommendation-priority\s*\{[^}]*justify-self:\s*end;/,
+  );
+  assert.match(
+    analyticsPageStyles,
+    /\.analytics-recommendation-assignment\s*\{[^}]*justify-self:\s*end;/,
+  );
+});
+
+test("expanded recommendations show executive metrics without raw score weights", () => {
+  const recommendationDisclosure = analyticsPageSource.slice(
+    analyticsPageSource.indexOf('className="analytics-recommendation-detail"'),
+    analyticsPageSource.indexOf('className="analytics-recommendation-toggle"'),
+  );
+  assert.match(recommendationDisclosure, /Priority level/);
+  assert.match(recommendationDisclosure, /Unregistered flags/);
+  assert.match(recommendationDisclosure, /Distance from BPLO/);
+  assert.match(recommendationDisclosure, /Action steps/);
+  assert.match(recommendationDisclosure, /dispatch\.actionSteps/);
+  assert.doesNotMatch(recommendationDisclosure, /scoreBreakdown|weight \{score\?\.weight/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-executive-metrics\s*\{/);
 });
 
 test("pivots grouped counts by barangay", () => {

@@ -631,6 +631,11 @@ html.theme-dark .analytics-recommendation-list {
   align-items: center;
   gap: 6px;
 }
+.analytics-recommendation-columns > span:nth-child(3),
+.analytics-recommendation-dispatch-label {
+  justify-self: end;
+  text-align: right;
+}
 .analytics-recommendation-rows { display: grid; gap: 8px; }
 .analytics-recommendation-row {
   overflow: hidden;
@@ -676,11 +681,13 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
   white-space: nowrap;
 }
 .analytics-recommendation-priority {
+  justify-self: end;
   font-size: 12px;
   font-weight: 750;
   white-space: nowrap;
 }
 .analytics-recommendation-assignment {
+  justify-self: end;
   padding: 5px 8px;
   border: 1px solid var(--color-border-soft);
   border-radius: 8px;
@@ -696,8 +703,40 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
   font-size: 13px;
 }
 .analytics-recommendation-detail p { margin: 0 0 8px; }
+.analytics-recommendation-detail h4 {
+  margin: 12px 0 6px;
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 750;
+}
 .analytics-recommendation-detail ol { margin: 0; padding-left: 20px; }
 .analytics-recommendation-detail li { margin: 4px 0; }
+.analytics-recommendation-executive-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.analytics-recommendation-executive-metrics > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 9px;
+  background: var(--color-surface);
+}
+.analytics-recommendation-executive-metrics dt {
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.analytics-recommendation-executive-metrics dd {
+  margin: 4px 0 0;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
 .analytics-recommendation-toggle {
   display: block;
   margin: 12px auto 0;
@@ -724,14 +763,6 @@ html.theme-dark .analytics-recommendation-row { background: var(--color-modal-bg
   font-size: 11px;
   line-height: 1.45;
   text-align: center;
-}
-.analytics-recommendation-score-breakdown {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  margin-top: 12px;
-  color: var(--color-muted);
-  font-size: 11px;
 }
 .analytics-calculation-disclosure {
   margin: 12px 0;
@@ -1065,6 +1096,9 @@ html.theme-dark .analytics-quick-nav-btn:focus-visible {
     justify-self: start;
   }
   .analytics-recommendation-detail { padding: 12px 14px; }
+  .analytics-recommendation-executive-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .analytics-assistant { right: max(10px, env(safe-area-inset-right)); bottom: max(10px, env(safe-area-inset-bottom)); }
   .analytics-assistant-panel,
   .analytics-assistant-panel.is-reading {
