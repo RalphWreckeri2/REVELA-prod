@@ -7,6 +7,7 @@ import {
   hotspotOverlayRadius,
   hotspotClusterDetails,
   hotspotMethodNote,
+  hotspotPinMapPath,
   hotspotRequestParams,
   hotspotScanNote,
   hotspotSummary,
@@ -15,6 +16,14 @@ import {
 
 const mapOverviewSource = readFileSync(
   new URL("./MapOverview.jsx", import.meta.url),
+  "utf8",
+);
+const mapOverviewStyles = readFileSync(
+  new URL("../styles/MapOverview.css", import.meta.url),
+  "utf8",
+);
+const mapPageSource = readFileSync(
+  new URL("../pages/MapPage.jsx", import.meta.url),
   "utf8",
 );
 const apiSource = readFileSync(
@@ -125,6 +134,38 @@ test("enabling hotspots overrides map mode and hides registered/inspection contr
   assert.match(mapOverviewSource, /const transition = hotspotViewTransition\(next\)/);
 });
 
+test("map stage stretches with its panel and map zoom stays focused on the municipality", () => {
+  assert.match(mapOverviewStyles, /\.map-overview-layout\s*\{[^}]*align-items:\s*stretch/);
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-map-stage\s*\{[^}]*flex:\s*1 1 auto;[^}]*height:\s*auto;/,
+  );
+  assert.match(mapOverviewSource, /const MAP_MIN_ZOOM = 12/);
+  assert.match(
+    mapOverviewSource,
+    /minZoom:\s*Math\.max\(MIN_BARANGAY_MAP_ZOOM,\s*MAP_MIN_ZOOM\)/,
+  );
+});
+
+test("hotspot panel shows only its summary and selected-cluster content", () => {
+  assert.match(
+    mapOverviewSource,
+    /showHotspots && \(\s*<>[\s\S]*?<h4>Possible nearby groups<\/h4>[\s\S]*?selectedCluster && clusterDetail[\s\S]*?Select an orange hotspot cluster on the map[\s\S]*?<\/>\s*\)/,
+  );
+  assert.match(
+    mapOverviewSource,
+    /!showHotspots && \(\s*<div className="map-overview-panel-heading">/,
+  );
+  assert.match(
+    mapOverviewSource,
+    /!showHotspots && \(\s*<>[\s\S]*?A\. Official Registry[\s\S]*?B\. Field Inspections[\s\S]*?Inspections ·[\s\S]*?<\/>\s*\)/,
+  );
+  assert.match(
+    mapOverviewSource,
+    /map-overview-cluster-prompt" role="status"/,
+  );
+});
+
 test("selected hotspot details itemize pins from existing flag pages", async () => {
   const cluster = {
     cluster_id: 7,
@@ -178,22 +219,32 @@ test("selected hotspot details itemize pins from existing flag pages", async () 
       logID: 101,
       name: "Corner Store",
       landmark: "Near the plaza",
-      latitude: 13.951,
-      longitude: 121.112,
-      detailsAvailable: true,
     },
     {
       logID: 102,
       name: "Market Stall",
       landmark: "Main road",
-      latitude: 13.952,
-      longitude: 121.113,
-      detailsAvailable: true,
     },
   ]);
   assert.match(mapOverviewSource, /aria-label="Clear selected hotspot cluster"/);
   assert.match(mapOverviewSource, /onClick=\{clearSelectedCluster\}/);
   assert.match(mapOverviewSource, /setSelectedClusterId\(Number\(cluster\.cluster_id\)\)/);
+  assert.match(mapOverviewSource, /className="map-overview-cluster-pin"[\s\S]*?navigate\(pinPath\)/);
+  assert.doesNotMatch(mapOverviewSource, /<span>Pin #\$\{pin\.logID\}<\/span>/);
+  assert.doesNotMatch(mapOverviewSource, /pin\.latitude\.toFixed|pin\.longitude\.toFixed/);
+  assert.match(mapOverviewStyles, /\.map-overview-cluster-pin:not\(:disabled\):hover/);
+  assert.match(mapOverviewStyles, /\.map-overview-cluster-pin:focus-visible/);
+});
+
+test("cluster pin navigation reuses Maps & Flags deep-link selection and map focus", () => {
+  assert.equal(hotspotPinMapPath(325), "/map?flag=325");
+  assert.equal(hotspotPinMapPath("325"), "/map?flag=325");
+  assert.equal(hotspotPinMapPath(0), null);
+  assert.equal(hotspotPinMapPath("invalid"), null);
+  assert.match(mapPageSource, /searchParams\.get\("flag"\)/);
+  assert.match(mapPageSource, /flags\.find\(f => String\(f\.logID \|\| f\.id\) === flagId\)/);
+  assert.match(mapPageSource, /mapRef\.current\.panTo\(\{ lat: Number\(found\.latitude\), lng: Number\(found\.longitude\) \}\)/);
+  assert.match(mapPageSource, /setModalFlag\(found\)/);
 });
 
 test("analytics scan summary includes the latest date, status, and stop reason", () => {

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Data, GoogleMap, Marker } from "@react-google-maps/api";
+import { useNavigate } from "react-router-dom";
 import AnalyticsInfoTip from "./AnalyticsInfoTip";
 import {
   getFlagsRequest,
@@ -37,6 +38,7 @@ import {
   hotspotMethodNote,
   fetchHotspotClusterPins,
   hotspotClusterDetails,
+  hotspotPinMapPath,
   hotspotViewTransition,
   hotspotRequestParams,
   hotspotScanNote,
@@ -45,6 +47,7 @@ import {
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+const MAP_MIN_ZOOM = 12;
 const MAP_MAX_ZOOM = 20;
 const MAX_SELECTED_BARANGAY_ZOOM = 16;
 const CHOROPLETH_COLORS = {
@@ -166,6 +169,7 @@ function useBarangayOverview(token, filters, datePreset) {
 }
 
 export default function MapOverview({ token, filters }) {
+  const navigate = useNavigate();
   const { isDark } = useTheme();
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
@@ -840,7 +844,7 @@ export default function MapOverview({ token, filters }) {
                   streetViewControl: false,
                   fullscreenControl: true,
                   zoomControl: true,
-                  minZoom: MIN_BARANGAY_MAP_ZOOM,
+                  minZoom: Math.max(MIN_BARANGAY_MAP_ZOOM, MAP_MIN_ZOOM),
                   maxZoom: MAP_MAX_ZOOM,
                 }}
               >
@@ -956,22 +960,58 @@ export default function MapOverview({ token, filters }) {
         </section>
 
         <aside className="map-overview-panel" aria-label="Barangay details">
-          <div className="map-overview-panel-heading">
-            {selectedRow ? (
-              <span className="map-overview-selection-chip">
-                {shortBarangay(selectedRow.barangayName)}
-                <button type="button" aria-label="Show all barangays"
-                  onClick={fitAllBarangays}>×</button>
-              </span>
-            ) : (
-              <h3>All barangays</h3>
-            )}
-            {selectedRow && (
-              <button className="map-overview-reset" type="button"
-                onClick={fitAllBarangays}>Show all barangays</button>
-            )}
-          </div>
-          {selectedCluster && clusterDetail ? (
+          {!showHotspots && (
+            <div className="map-overview-panel-heading">
+              {selectedRow ? (
+                <span className="map-overview-selection-chip">
+                  {shortBarangay(selectedRow.barangayName)}
+                  <button type="button" aria-label="Show all barangays"
+                    onClick={fitAllBarangays}>×</button>
+                </span>
+              ) : (
+                <h3>All barangays</h3>
+              )}
+              {selectedRow && (
+                <button className="map-overview-reset" type="button"
+                  onClick={fitAllBarangays}>Show all barangays</button>
+              )}
+            </div>
+          )}
+          {showHotspots && (
+            <>
+              <section className="map-overview-hotspot-summary" aria-live="polite">
+                <div className="map-overview-card-heading">
+                  <h4>Possible nearby groups</h4>
+                  <AnalyticsInfoTip label="About hotspot locations">
+                    Group locations are assigned by map position, which can differ slightly from the barangay recorded on each pin.
+                  </AnalyticsInfoTip>
+                </div>
+                {hotspotLoading ? (
+                  <p>Loading possible groups…</p>
+                ) : hotspotError ? (
+                  <p role="alert">{hotspotError}</p>
+                ) : hotspotStats.clusterCount === 0 ? (
+                  <p>No nearby groups for this period.</p>
+                ) : (
+                  <p>
+                    Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} eligible effective-Red detection pins)
+                  </p>
+                )}
+                {!selectedRow && hotspotStats.uncertainCount > 0 && (
+                  <p>
+                    {hotspotStats.uncertainCount.toLocaleString()} locations could not be assigned to a barangay.
+                  </p>
+                )}
+                <p className="map-overview-hotspot-caveat">
+                  Nearby groups are possible hotspots only; they do not confirm a violation.
+                </p>
+                {hotspotData?.parameters_used && (
+                  <p className="map-overview-hotspot-method">
+                    {hotspotMethodNote(hotspotData.parameters_used, mapView)}
+                  </p>
+                )}
+              </section>
+              {selectedCluster && clusterDetail ? (
             <section className="map-overview-hotspot-summary map-overview-cluster-detail" aria-live="polite">
               <div className="map-overview-card-heading">
                 <div>
@@ -995,61 +1035,39 @@ export default function MapOverview({ token, filters }) {
                       Retry details
                     </button>
                   </div>
-                ) : clusterDetail.pins.map((pin) => (
-                  <article className="map-overview-cluster-pin" key={pin.logID}>
-                    <strong>{pin.name}</strong>
-                    <span>Pin #{pin.logID}</span>
-                    {pin.landmark && <span>{pin.landmark}</span>}
-                    {pin.latitude != null && pin.longitude != null && (
-                      <span>{pin.latitude.toFixed(6)}, {pin.longitude.toFixed(6)}</span>
-                    )}
-                    {!pin.detailsAvailable && (
-                      <span className="map-overview-cluster-pin-unavailable">
-                        Individual pin details were not returned.
-                      </span>
-                    )}
-                  </article>
-                ))}
+                ) : clusterDetail.pins.map((pin) => {
+                  const pinPath = hotspotPinMapPath(pin.logID);
+                  return (
+                    <button
+                      type="button"
+                      className="map-overview-cluster-pin"
+                      key={pin.logID}
+                      disabled={!pinPath}
+                      onClick={() => pinPath && navigate(pinPath)}
+                    >
+                      <strong>{pin.name}</strong>
+                      {pin.landmark && <span>{pin.landmark}</span>}
+                    </button>
+                  );
+                })}
               </div>
               <p className="map-overview-hotspot-caveat">
                 Nearby groups are possible hotspots only; they do not confirm a violation. Click the map or Clear to return to the hotspot summary.
               </p>
             </section>
-          ) : (
-            <section className="map-overview-hotspot-summary" aria-live="polite">
-              <div className="map-overview-card-heading">
-                <h4>Possible nearby groups</h4>
-                <AnalyticsInfoTip label="About hotspot locations">
-                  Group locations are assigned by map position, which can differ slightly from the barangay recorded on each pin.
-                </AnalyticsInfoTip>
-              </div>
-              {hotspotLoading ? (
-                <p>Loading possible groups…</p>
-              ) : hotspotError ? (
-                <p role="alert">{hotspotError}</p>
-              ) : hotspotStats.clusterCount === 0 ? (
-                <p>No nearby groups for this period.</p>
               ) : (
-                <p>
-                  Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} eligible effective-Red detection pins)
-                </p>
+                <section className="map-overview-hotspot-summary map-overview-cluster-prompt" role="status">
+                  <h4>Select a hotspot cluster</h4>
+                  <p>
+                    Select an orange hotspot cluster on the map to view its member detection pins and location details.
+                  </p>
+                </section>
               )}
-              {!selectedRow && hotspotStats.uncertainCount > 0 && (
-                <p>
-                  {hotspotStats.uncertainCount.toLocaleString()} locations could not be assigned to a barangay.
-                </p>
-              )}
-              <p className="map-overview-hotspot-caveat">
-                Nearby groups are possible hotspots only; they do not confirm a violation.
-              </p>
-              {hotspotData?.parameters_used && (
-                <p className="map-overview-hotspot-method">
-                  {hotspotMethodNote(hotspotData.parameters_used, mapView)}
-                </p>
-              )}
-            </section>
+            </>
           )}
 
+          {!showHotspots && (
+            <>
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">
               <h4>A. Official Registry · {Number(panelData?.registry_total || 0).toLocaleString()} businesses</h4>
@@ -1136,6 +1154,8 @@ export default function MapOverview({ token, filters }) {
             )}
             </div>
           </section>
+            </>
+          )}
         </aside>
       </div>
     </div>

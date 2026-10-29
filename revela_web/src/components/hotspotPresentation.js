@@ -11,6 +11,13 @@ export function hotspotClusterPinIds(cluster) {
     : [];
 }
 
+export function hotspotPinMapPath(logID) {
+  const pinId = Number(logID);
+  return Number.isSafeInteger(pinId) && pinId > 0
+    ? `/map?flag=${encodeURIComponent(pinId)}`
+    : null;
+}
+
 export function hotspotClusterDetails(cluster, pinRows = []) {
   const memberIds = new Set(hotspotClusterPinIds(cluster));
   const pinsById = new Map(
@@ -33,11 +40,8 @@ export function hotspotClusterDetails(cluster, pinRows = []) {
       const pin = pinsById.get(logID);
       return {
         logID,
-        name: pin?.detectedName || `Detection pin #${logID}`,
+        name: pin?.detectedName || "Unnamed detection",
         landmark: pin?.resolvedAddress || pin?.nearestLandmark || "",
-        latitude: pin?.latitude == null ? null : Number(pin.latitude),
-        longitude: pin?.longitude == null ? null : Number(pin.longitude),
-        detailsAvailable: Boolean(pin),
       };
     }),
   };
