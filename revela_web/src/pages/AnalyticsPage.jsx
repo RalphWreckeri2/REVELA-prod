@@ -22,7 +22,9 @@ import {
   completeInspectionTimeline,
   groupOperationsStatusBreakdown,
   groupInspectionStatuses,
+  INSPECTION_STATUS_STACKS,
   pivotCategoryCounts,
+  rankedRecommendationRows,
 } from "../components/analyticsPresentation";
 import { formatScanHistoryTimestamp } from "../components/scanHistory";
 import { useAnalyticsData } from "../components/useAnalyticsData";
@@ -40,9 +42,7 @@ import {
 const EMPTY_FILTER_BARANGAYS = Object.freeze([]);
 const ANALYTICS_TABS = [
   { id: "descriptive", label: "Overview", dot: "var(--color-green)" },
-  { id: "diagnostic", label: "Why it happens", dot: "var(--color-yellow)" },
   { id: "prescriptive", label: "Recommendations", dot: "#6366f1" },
-  { id: "operations", label: "Inspector activity", dot: "var(--color-blue, #3b82f6)" },
 ];
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
 const COLOR = {
@@ -72,17 +72,7 @@ const REGISTRY_STATUS_STACKS = [
   { key: "revoked", label: "Revoked", color: "#334155" },
 ];
 
-const INSPECTION_STATUS_STACKS = [
-  { key: "pending", label: "Pending", color: "#f97316" },
-  { key: "awaiting_review", label: "Awaiting review", color: "#3b82f6" },
-  { key: "verified", label: "Verified", color: "#10b981" },
-];
-
-const OPERATIONS_STATUS_STACKS = [
-  { key: "pending", label: "Pending", color: "#f97316" },
-  { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
-  { key: "verified", label: "Verified", color: "#10b981" },
-];
+const OPERATIONS_STATUS_STACKS = INSPECTION_STATUS_STACKS;
 
 const OUTCOME_STACKS = [
   { key: "Green", label: "Green", color: COLOR.green },
@@ -911,6 +901,10 @@ export default function AnalyticsPage() {
       0,
     ),
   }));
+  const recommendationRows = rankedRecommendationRows(
+    presc?.rankings || [],
+    presc?.dispatch_recommendations || [],
+  );
 
 
   const activeFilterCount = countActiveBackendFilters(appliedFilters);
@@ -1883,6 +1877,76 @@ export default function AnalyticsPage() {
                 filters={appliedFilters}
               />
             </Suspense>
+            <section className="saas-card frosted-glass analytics-inspector-operations-card"
+              aria-labelledby="inspector-operations-heading">
+              <div className="analytics-card-heading">
+                <div>
+                  <h3 id="inspector-operations-heading">C. Inspector Operations · All barangays</h3>
+                  <p className="analytics-chart-caption">
+                    Municipality-wide workload; this chart does not change with the selected barangay.
+                  </p>
+                </div>
+                <AnalyticsInfoTip label="About inspector workload">
+                  Pending includes Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review means Submitted. Verified reports are complete. Inspectors with no current work remain visible.
+                </AnalyticsInfoTip>
+              </div>
+              {loading ? <Skeleton h={300} /> : operationsStatusRows.length === 0 ? (
+                <EmptyState h={260} title="No inspector data" message="No active inspectors are available for this view." />
+              ) : (
+                <>
+                  <div className="analytics-operations-legend">
+                    {INSPECTION_STATUS_STACKS.map(status => (
+                      <span key={status.key}>
+                        <i style={{ background: status.color }} />
+                        {status.label}
+                      </span>
+                    ))}
+                  </div>
+                  <ResponsiveChart height={Math.max(260, operationsStatusRows.length * 40 + 80)}>
+                    {({ width }) => (
+                      <BarChart data={operationsStatusRows} layout="vertical"
+                        barSize={24} barCategoryGap="22%"
+                        margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" horizontal={false}
+                          stroke="rgba(226,232,240,0.4)" />
+                        <XAxis type="number" domain={[0, "dataMax"]} allowDecimals={false}
+                          tick={{ fontSize: 10, fill: "var(--color-muted)" }}
+                          axisLine={false} tickLine={false} />
+                        <YAxis type="category" dataKey="fullName"
+                          width={Math.min(210, Math.max(128, width * 0.28))}
+                          interval={0} tick={{ fontSize: 11, fill: "var(--color-muted)" }}
+                          axisLine={false} tickLine={false} />
+                        <Tooltip content={<CustomTooltip />} />
+                        {INSPECTION_STATUS_STACKS.map(status => (
+                          <Bar key={status.key} dataKey={status.key}
+                            name={status.label} stackId="inspector-work"
+                            fill={status.color} isAnimationActive={false} />
+                        ))}
+                      </BarChart>
+                    )}
+                  </ResponsiveChart>
+                </>
+              )}
+              <details className="analytics-profile-disclosure analytics-inspector-detail">
+                <summary>Details: average days and pins flagged yellow</summary>
+                <div className="presc-priority-scroll">
+                  <table className="analytics-operations-table">
+                    <thead>
+                      <tr><th>Name</th><th>Avg days</th><th>Pins flagged yellow</th></tr>
+                    </thead>
+                    <tbody>
+                      {operationsStatusRows.map(row => (
+                        <tr key={row.userID}>
+                          <td>{row.fullName}</td>
+                          <td>{row.avg_resolution_time ? (row.avg_resolution_time / 1440).toFixed(1) : "—"}</td>
+                          <td>{Number(row.yellow_flags_reported || 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
             {mapOverviewExpanded && (
               <>
             <SectionHeader
@@ -2073,11 +2137,93 @@ export default function AnalyticsPage() {
           </section>
         )}
 
+        {data.prescriptive && activeTab === "prescriptive" && (
+          <section className="analytics-recommendation-list" aria-labelledby="recommendations-heading">
+            <div className="analytics-recommendation-heading">
+              <h2 id="recommendations-heading">Where should inspectors go first?</h2>
+              <p>Ranked by the current municipal priority score. Expand a barangay for dispatch details.</p>
+            </div>
+            {loading ? <Skeleton h={320} /> : recommendationRows.length === 0 ? (
+              <EmptyState h={220} title="No ranked barangays" message="There are not enough eligible records to show inspection priorities." />
+            ) : (
+              <div className="analytics-recommendation-rows">
+                {recommendationRows.map(row => {
+                  const dispatch = row.dispatch;
+                  const priority = row.priority_label || row.risk_level || "No priority";
+                  const distance = Number(row.distance_km);
+                  const distanceLabel = row.distance_km !== null
+                    && row.distance_km !== undefined
+                    && Number.isFinite(distance)
+                    ? `${distance.toFixed(1)} km from BPLO`
+                    : "Distance unavailable";
+                  return (
+                    <details key={row.barangayID} className="analytics-recommendation-row">
+                      <summary>
+                        <span className="analytics-recommendation-rank">#{row.rank}</span>
+                        <span className="analytics-recommendation-place">
+                          <strong>{row.barangayName}</strong>
+                          <span className="analytics-recommendation-reason">
+                            Red {Number(row.red_count || 0)} · Yellow {Number(row.yellow_count || 0)} ·{" "}
+                            {Number(row.unregistered_candidate_count || 0)} unregistered candidates · {distanceLabel}
+                          </span>
+                        </span>
+                        <span className="analytics-recommendation-priority"
+                          style={{ color: row.priority_color || "var(--color-muted)" }}>
+                          {priority}
+                        </span>
+                        <span className="analytics-recommendation-assignment">
+                          {dispatch?.allocation_status === "deferred"
+                            ? "Deferred"
+                            : dispatch
+                              ? `${Number(dispatch.inspectors || 0)} inspectors allocated`
+                              : "No inspector allocated"}
+                        </span>
+                      </summary>
+                      <div className="analytics-recommendation-detail">
+                        {dispatch ? (
+                          <>
+                            <p>{dispatch.recommendation}</p>
+                            {dispatch.actionSteps?.length > 0 && (
+                              <ol>
+                                {dispatch.actionSteps.map((step, index) => <li key={`${row.barangayID}-${index}`}>{step}</li>)}
+                              </ol>
+                            )}
+                            {dispatch.scoreBreakdown && (
+                              <div className="analytics-recommendation-score-breakdown">
+                                {[
+                                  ["Risk", dispatch.scoreBreakdown.risk],
+                                  ["Sector", dispatch.scoreBreakdown.sector],
+                                  ["Proximity", dispatch.scoreBreakdown.distance],
+                                ].map(([label, score]) => (
+                                  <span key={label}>
+                                    {label}: {score?.raw ?? "—"} (weight {score?.weight ?? "—"}%)
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p>No dispatch allocation is available for this barangay.</p>
+                        )}
+                      </div>
+                    </details>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* ══════════════════════════════════════════════════════════════════════
-          TIER 2 — DIAGNOSTIC ANALYTICS
+          DIAGNOSTIC EVIDENCE
       ══════════════════════════════════════════════════════════════════════ */}
-        {data.diagnostic && activeTab === "diagnostic" && (
-          <section style={{ marginBottom: 52 }}>
+        {data.diagnostic && activeTab === "prescriptive" && (
+          <details className="analytics-evidence-disclosure">
+            <summary>Evidence: nearby records, scan history, and diagnostic charts</summary>
+            <p className="analytics-evidence-note">
+              Spatial clusters and scan history are supporting evidence only; DBSCAN cluster membership does not enter the OPS score.
+            </p>
+            <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="diagnostic"
               title="Diagnostic Analysis"
@@ -2451,14 +2597,17 @@ export default function AnalyticsPage() {
                 </div>
               </div>
             </div>
-          </section>
+            </section>
+          </details>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 3 — PRESCRIPTIVE ANALYTICS (WLC / OPS)
       ══════════════════════════════════════════════════════════════════════ */}
         {data.prescriptive && activeTab === "prescriptive" && (
-          <section style={{ marginBottom: 32 }}>
+          <details className="analytics-calculation-disclosure">
+            <summary>How this is calculated: scoring, charts, and full ranking table</summary>
+            <section style={{ marginBottom: 32 }}>
             <SectionHeader
               tier="prescriptive"
               title="Prescriptive Analytics — Action Plan"
@@ -2959,7 +3108,8 @@ export default function AnalyticsPage() {
                 <p className="presc-priority-note">Registry flag rate counts unique current Red/Yellow/Black registry businesses, including those without mapped records, against the same registry population; N/A means no denominator. It is not a confirmed-violation rate. Unregistered candidates are Red records with no registry match.</p>
               </div>
             </div>
-          </section>
+            </section>
+          </details>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════

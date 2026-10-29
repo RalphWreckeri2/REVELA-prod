@@ -5,7 +5,9 @@ import {
   completeInspectionTimeline,
   groupOperationsStatusBreakdown,
   groupInspectionStatuses,
+  INSPECTION_STATUS_STACKS,
   pivotCategoryCounts,
+  rankedRecommendationRows,
 } from "./analyticsPresentation.js";
 
 test("groups inspection statuses and excludes barangays with no reports", () => {
@@ -51,6 +53,11 @@ test("Operations status totals use the same groups as Section B", () => {
     verified: sectionB.verified,
     total: sectionB.total,
   });
+  assert.deepEqual(INSPECTION_STATUS_STACKS, [
+    { key: "pending", label: "Pending", color: "#f97316" },
+    { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
+    { key: "verified", label: "Verified", color: "#10b981" },
+  ]);
 });
 
 test("active inspectors remain visible with zero workload", () => {
@@ -69,6 +76,23 @@ test("active inspectors remain visible with zero workload", () => {
   })), [
     { userID: 1, fullName: "Ana", pending: 1, awaiting_review: 2, verified: 3 },
     { userID: 2, fullName: "Bea", pending: 0, awaiting_review: 0, verified: 0 },
+  ]);
+});
+
+test("ranked recommendation rows preserve table order and attach matching dispatch data", () => {
+  const rows = rankedRecommendationRows([
+    { barangayID: 2, rank: 1, barangayName: "A" },
+    { barangayID: 1, rank: 2, barangayName: "B" },
+  ], [
+    { barangayID: "1", inspectors: 1 },
+  ]);
+  assert.deepEqual(rows.map(({ rank, barangayName, dispatch }) => ({
+    rank,
+    barangayName,
+    inspectors: dispatch?.inspectors ?? null,
+  })), [
+    { rank: 1, barangayName: "A", inspectors: null },
+    { rank: 2, barangayName: "B", inspectors: 1 },
   ]);
 });
 

@@ -1,5 +1,11 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export const INSPECTION_STATUS_STACKS = [
+  { key: "pending", label: "Pending", color: "#f97316" },
+  { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
+  { key: "verified", label: "Verified", color: "#10b981" },
+];
+
 function parseDate(value) {
   if (!value) return null;
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -69,6 +75,16 @@ export function activeInspectorWorkload(inspectorStats = [], statusRows = []) {
   }).sort((first, second) => (
     second.total - first.total || String(first.fullName).localeCompare(String(second.fullName))
   ));
+}
+
+export function rankedRecommendationRows(rankings = [], dispatchRecommendations = []) {
+  const dispatchByBarangay = new Map(
+    dispatchRecommendations.map(row => [String(row.barangayID), row]),
+  );
+  return rankings.map(row => ({
+    ...row,
+    dispatch: dispatchByBarangay.get(String(row.barangayID)) || null,
+  }));
 }
 
 export function pivotCategoryCounts(rows = [], labelKey, countKey = "count") {
