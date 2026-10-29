@@ -1262,6 +1262,49 @@ export async function resetWlcConfigRequest(token) {
   }
 }
 
+export async function getSectorRiskPolicyRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + token },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function updateSectorRiskPolicyRequest(payload, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function resetSectorRiskPolicyRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy/reset`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 /**
  * Normalize (token, filters?) vs (filters, token) — same ambiguity as getFlagsRequest(params, token).
  * JWT heuristic: long dotted string (typical access_token shape).

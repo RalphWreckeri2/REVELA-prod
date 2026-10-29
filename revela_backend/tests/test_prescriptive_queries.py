@@ -252,6 +252,36 @@ class PrescriptiveQueryTests(unittest.TestCase):
                 self.assertEqual(status, 400)
                 self.assertIn("error", response.get_json())
 
+    def test_sector_policy_routes_validate_update_and_reset(self):
+        app = Flask(__name__)
+        payload = {
+            "categories": {"Retail": 96},
+            "fallback_score": 45,
+        }
+        updated = {
+            "version": "psic-sector-risk-v1",
+            "categories": {"Retail": 96},
+            "fallback_score": 45,
+        }
+        with app.test_request_context("/api/analytics/sector-policy", method="PUT", json=payload), \
+                patch.object(routes, "update_sector_risk_policy", return_value=updated):
+            response, status = routes.update_sector_policy.__wrapped__()
+        self.assertEqual(status, 200)
+        self.assertEqual(response.get_json()["data"], updated)
+
+        with app.test_request_context(
+            "/api/analytics/sector-policy", method="PUT", json={"categories": {}, "fallback_score": 50}
+        ), patch.object(routes, "update_sector_risk_policy", side_effect=ValueError("Invalid sector policy")):
+            response, status = routes.update_sector_policy.__wrapped__()
+        self.assertEqual(status, 400)
+        self.assertEqual(response.get_json()["error"], "Invalid sector policy")
+
+        with app.test_request_context("/api/analytics/sector-policy/reset", method="POST"), \
+                patch.object(routes, "reset_sector_risk_policy", return_value=updated):
+            response, status = routes.reset_sector_policy.__wrapped__()
+        self.assertEqual(status, 200)
+        self.assertEqual(response.get_json()["data"], updated)
+
 
 if __name__ == "__main__":
     unittest.main()

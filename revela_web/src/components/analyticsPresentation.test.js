@@ -152,19 +152,21 @@ test("recommendation wording uses requested reason and allocation phrases", () =
   assert.equal(recommendationAllocationLabel(null), "Not scheduled yet");
 });
 
-test("recommendation columns align with priority and dispatch values", () => {
+test("recommendation headers and rows share centered, responsive column tracks", () => {
   assert.match(
     analyticsPageStyles,
-    /\.analytics-recommendation-columns > span:nth-child\(3\),\s*\.analytics-recommendation-dispatch-label\s*\{[^}]*justify-self:\s*end;[^}]*text-align:\s*right;/,
+    /\.analytics-recommendation-table\s*\{[^}]*--analytics-recommendation-columns:\s*40px minmax\(0, 1fr\) 150px 220px;/,
   );
-  assert.match(
-    analyticsPageStyles,
-    /\.analytics-recommendation-priority\s*\{[^}]*justify-self:\s*end;/,
+  assert.equal(
+    (analyticsPageStyles.match(/grid-template-columns:\s*var\(--analytics-recommendation-columns\);/g) || []).length,
+    2,
   );
-  assert.match(
-    analyticsPageStyles,
-    /\.analytics-recommendation-assignment\s*\{[^}]*justify-self:\s*end;/,
-  );
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-priority\s*\{[^}]*justify-self:\s*center;[^}]*text-align:\s*center;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-assignment\s*\{[^}]*min-width:\s*200px;[^}]*text-align:\s*center;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-priority-label\s*\{[^}]*justify-content:\s*center;[^}]*text-align:\s*center;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-table \{ overflow-x: auto;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-columns,\s*\.analytics-recommendation-rows\s*\{[^}]*min-width:\s*720px;/);
+  assert.doesNotMatch(analyticsPageStyles, /\.analytics-recommendation-columns\s*\{\s*display:\s*none;/);
 });
 
 test("expanded recommendations show executive metrics without raw score weights", () => {

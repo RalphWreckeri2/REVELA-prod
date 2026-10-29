@@ -232,6 +232,8 @@ class AnalyticsSectionTests(TestCase):
             blueprint.add_url_rule("/location-search", "search", lambda: ({"results": []}, 200), methods=["POST"])
             blueprint.add_url_rule("/run-detection", "scan", lambda: ({"status": "partial"}, 429), methods=["POST"])
             blueprint.add_url_rule("/wlc-config", "config", lambda: ({"ok": True}, 200), methods=["POST"])
+            blueprint.add_url_rule("/sector-policy", "sector_policy", lambda: ({"ok": True}, 200), methods=["PUT"])
+            blueprint.add_url_rule("/sector-policy/reset", "sector_policy_reset", lambda: ({"ok": True}, 200), methods=["POST"])
             self.app.register_blueprint(blueprint, url_prefix=f"/api/{name}")
         routes.init_analytics_cache_invalidation(self.app)
         client = self.app.test_client()
@@ -243,6 +245,8 @@ class AnalyticsSectionTests(TestCase):
             ("/api/registry/write", "POST", True),
             ("/api/flags/run-detection", "POST", True),
             ("/api/analytics/wlc-config", "POST", True),
+            ("/api/analytics/sector-policy", "PUT", True),
+            ("/api/analytics/sector-policy/reset", "POST", True),
         ):
             with self.subTest(path=path, method=method):
                 routes._analytics_cache["fixture"] = {"data": {}}

@@ -2212,19 +2212,20 @@ export default function AnalyticsPage() {
             </div>
             {loading ? <Skeleton h={320} variant="list" /> : (
               <>
-                <div className="analytics-recommendation-columns">
-                  <span aria-hidden="true" />
-                  <span>Barangay</span>
-                  <span className="analytics-recommendation-priority-label">
-                    Priority
-                    <AnalyticsInfoTip label="About priority">
-                      Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
-                    </AnalyticsInfoTip>
-                  </span>
-                  <span className="analytics-recommendation-dispatch-label">Dispatch</span>
-                </div>
-                {activeRecommendations.rows.length > 0 ? (
-                  <div className="analytics-recommendation-rows">
+                <div className="analytics-recommendation-table">
+                  <div className="analytics-recommendation-columns">
+                    <span aria-hidden="true" />
+                    <span>Barangay</span>
+                    <span className="analytics-recommendation-priority-label">
+                      Priority
+                      <AnalyticsInfoTip label="About priority">
+                        Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
+                      </AnalyticsInfoTip>
+                    </span>
+                    <span className="analytics-recommendation-dispatch-label">Dispatch</span>
+                  </div>
+                  {activeRecommendations.rows.length > 0 ? (
+                    <div className="analytics-recommendation-rows">
                 {visibleRecommendations.map(row => {
                   const dispatch = row.dispatch;
                   return (
@@ -2284,10 +2285,11 @@ export default function AnalyticsPage() {
                     </details>
                   );
                 })}
-                  </div>
-                ) : (
-                  <EmptyState h={180} title="No active flags" message="No barangays currently have active flags." />
-                )}
+                    </div>
+                  ) : (
+                    <EmptyState h={180} title="No active flags" message="No barangays currently have active flags." />
+                  )}
+                </div>
                 {activeRecommendations.rows.length > 5 && (
                   <button
                     type="button"

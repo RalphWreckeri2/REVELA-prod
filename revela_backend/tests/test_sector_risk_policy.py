@@ -1,12 +1,16 @@
 """Validation and bounds checks for editable PSIC sector-risk policy."""
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
 from api.analytics.sector_risk import (
+    DEFAULT_SECTOR_RISK_POLICY,
     SECTOR_CATEGORIES,
     load_sector_risk_policy,
+    reset_sector_risk_policy,
+    update_sector_risk_policy,
     validate_sector_risk_policy,
     weighted_sector_score,
 )
@@ -31,6 +35,7 @@ class SectorRiskPolicyTests(unittest.TestCase):
             "Agriculture and mining": 30,
         })
         self.assertEqual(policy["fallback_score"], 50)
+        self.assertEqual(policy, DEFAULT_SECTOR_RISK_POLICY)
         display_defaults_path = Path(__file__).parents[1] / "api" / "analytics" / "display_sector_defaults.json"
         with display_defaults_path.open(encoding="utf-8") as defaults_file:
             display_labels = {entry[1] for entry in json.load(defaults_file).values()}
@@ -40,6 +45,7 @@ class SectorRiskPolicyTests(unittest.TestCase):
         original = load_sector_risk_policy()
         for invalid in (
             {**original, "categories": {**original["categories"], "Retail": 101}},
+            {**original, "categories": {**original["categories"], "Retail": 10 ** 10000}},
             {**original, "categories": {key: value for key, value in original["categories"].items()
                                        if key != "Retail"}},
             {**original, "categories": {**original["categories"], "Other": 40}},
@@ -64,6 +70,35 @@ class SectorRiskPolicyTests(unittest.TestCase):
             with self.subTest(counts=counts):
                 with self.assertRaises(ValueError):
                     weighted_sector_score(counts, policy)
+
+    def test_policy_update_persists_complete_valid_scores_and_reset_restores_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sector-risk.json"
+            changed = {
+                "fallback_score": 42.5,
+                "categories": {**DEFAULT_SECTOR_RISK_POLICY["categories"], "Retail": 96},
+            }
+            updated = update_sector_risk_policy(changed, path=path)
+            self.assertEqual(load_sector_risk_policy(path), updated)
+            self.assertEqual(updated["categories"]["Retail"], 96)
+            self.assertEqual(updated["fallback_score"], 42.5)
+
+            reset = reset_sector_risk_policy(path=path)
+            self.assertEqual(reset, DEFAULT_SECTOR_RISK_POLICY)
+            self.assertEqual(load_sector_risk_policy(path), DEFAULT_SECTOR_RISK_POLICY)
+
+    def test_invalid_update_does_not_replace_existing_policy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sector-risk.json"
+            before = load_sector_risk_policy()
+            path.write_text(json.dumps(before), encoding="utf-8")
+            invalid = {
+                "fallback_score": 50,
+                "categories": {**before["categories"], "Retail": float("inf")},
+            }
+            with self.assertRaises(ValueError):
+                update_sector_risk_policy(invalid, path=path)
+            self.assertEqual(load_sector_risk_policy(path), before)
 
 
 if __name__ == "__main__":

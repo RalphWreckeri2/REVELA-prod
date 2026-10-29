@@ -18,6 +18,12 @@ from google.genai import types
 from app import mysql
 from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
+from api.analytics.sector_risk import (
+    DEFAULT_SECTOR_RISK_POLICY,
+    load_sector_risk_policy,
+    reset_sector_risk_policy,
+    update_sector_risk_policy,
+)
 from api.analytics.scoring import calculate_rankings, select_rankings
 from api.analytics.non_registry import (
     non_registry_monitoring_sql, build_non_registry_monitoring,
@@ -328,7 +334,12 @@ def init_analytics_cache_invalidation(app):
             return response
         blueprint = request.blueprint
         if blueprint == "analytics":
-            changes_data = request.path in ("/api/analytics/wlc-config", "/api/analytics/wlc-config/reset")
+            changes_data = request.path in (
+                "/api/analytics/wlc-config",
+                "/api/analytics/wlc-config/reset",
+                "/api/analytics/sector-policy",
+                "/api/analytics/sector-policy/reset",
+            )
         else:
             changes_data = blueprint in ("registry", "flags", "inspections", "users")
             if request.path in (
@@ -2978,6 +2989,52 @@ def reset_config_endpoint():
     if error:
         return jsonify({"error": error}), 500
     return jsonify({"message": "WLC configuration reset to default successfully.", "data": updated_config}), 200
+
+
+@analytics_bp.route("/sector-policy", methods=["GET"])
+@jwt_required()
+def get_sector_policy():
+    try:
+        return jsonify({
+            "data": load_sector_risk_policy(),
+            "defaults": DEFAULT_SECTOR_RISK_POLICY,
+        }), 200
+    except (OSError, ValueError, TypeError):
+        current_app.logger.exception("Failed to load sector risk policy")
+        return jsonify({"error": "Failed to load sector risk policy."}), 500
+
+
+@analytics_bp.route("/sector-policy", methods=["PUT"])
+@admin_required()
+def update_sector_policy():
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Sector risk policy data is required."}), 400
+    try:
+        updated_policy = update_sector_risk_policy(data)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except OSError:
+        current_app.logger.exception("Failed to persist sector risk policy")
+        return jsonify({"error": "Failed to save sector risk policy."}), 500
+    return jsonify({
+        "message": "Sector risk policy updated successfully.",
+        "data": updated_policy,
+    }), 200
+
+
+@analytics_bp.route("/sector-policy/reset", methods=["POST"])
+@admin_required()
+def reset_sector_policy():
+    try:
+        updated_policy = reset_sector_risk_policy()
+    except OSError:
+        current_app.logger.exception("Failed to reset sector risk policy")
+        return jsonify({"error": "Failed to reset sector risk policy."}), 500
+    return jsonify({
+        "message": "Sector risk policy reset to defaults successfully.",
+        "data": updated_policy,
+    }), 200
 
 
 @analytics_bp.route("/chat", methods=["POST"])
