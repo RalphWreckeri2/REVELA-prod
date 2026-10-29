@@ -132,8 +132,43 @@ def test_incomplete_or_corrupt_volume_export_is_never_downloadable(volume_storag
     record = _publish(settings, storage, "c" * 32, monkeypatch)
     archive = storage.files / record["filename"]
     archive.write_bytes(b"x" * record["object"]["bytes"])
+    assert storage.records() == []
     with pytest.raises(BackupNotFound):
         storage.download(record["id"])
+
+
+def test_volume_retention_receives_committed_record_when_cleanup_is_enabled(volume_storage, monkeypatch):
+    settings, storage = volume_storage
+    monkeypatch.setenv("DB_BACKUP_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_MODE", "cloud")
+    monkeypatch.setenv("DB_BACKUP_CLEANUP_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_SCHEDULE_ENABLED", "0")
+    monkeypatch.setattr(runner, "job_lease", lambda _: nullcontext(object()))
+    monkeypatch.setattr(runner, "source_lease", lambda _: nullcontext(object()))
+
+    def export(_settings, _config, work, _connection):
+        archive = work / "dump.sql.gz"
+        archive.write_bytes(gzip.compress(b"synthetic SQL backup"))
+        return archive, {
+            "source_server_uuid": "synthetic-source",
+            "recovery_point": status.stamp(),
+            "database": "fixture",
+            "mysql_version": "9.7.4",
+            "tables": ["fixture"],
+            "triggers": [],
+            "routines": [],
+            "events": [],
+            "sql_sha256": hashlib.sha256(b"synthetic SQL backup").hexdigest(),
+        }
+
+    monkeypatch.setattr(runner, "export", export)
+    record = runner.perform(settings, {}, storage, deliver=lambda *_: {})
+
+    assert "object" in record
+    assert record["object"]["sha256"] == hashlib.sha256(
+        (storage.files / record["filename"]).read_bytes()
+    ).hexdigest()
+    assert status.load(settings.state)["retention_warning"] is None
 
 
 def test_volume_preflight_requires_mount_and_capacity(volume_storage, monkeypatch):

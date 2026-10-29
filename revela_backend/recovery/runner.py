@@ -128,7 +128,7 @@ def _perform_locked(settings, config, storage, scheduled=False, scheduled_for=No
                                   "monthly_archive": bool(scheduled and status.is_monthly_archive(scheduled_for)),
                                   "requested_by": actor, "created_at": created_at}
                         stage = "upload_and_readback"
-                        storage.publish(archive, record, work)
+                        record = storage.publish(archive, record, work)
                 return record
             record = retry(capture_and_upload)
             state.update(last_success=record, phase="running", retention_warning=None)

@@ -188,7 +188,7 @@ class VolumeDatabaseStorage:
         if (not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != record["object"]["bytes"]
                 or path.is_symlink()):
             return False
-        return True
+        return self._file_digest(path) == record["object"]["sha256"]
 
     def records(self, available_only=True):
         result = []
