@@ -60,8 +60,147 @@ panel. Both worktrees remain uncommitted.
 - Automatic execution is still disabled and not ready. The workflow is local
   only and undeployed; `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0`,
   `DB_BACKUP_ENABLED=0`, and `DB_BACKUP_SCHEDULE_ENABLED=0`. Readiness must not
-  be marked true until the workflow and both private secrets are installed,
+  be marked true until the workflow and its private secrets are installed,
   the runtime has been verified, and the isolated restore/cost gates pass.
+
+## Deployment, export, restore, and recurring-operation gates
+
+These are separate gates; a restore server is not a prerequisite for starting
+the application:
+
+- **Deploy/start with backups disabled:** keep
+  `DB_BACKUP_ENABLED=0`, `DB_BACKUP_SCHEDULE_ENABLED=0`,
+  `DB_BACKUP_CLEANUP_ENABLED=0`, and
+  `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0`. An incomplete backup-only
+  configuration reports as not ready but does not prevent the API from
+  starting. No backup account, backup CA, alert/heartbeat URL, external
+  trigger secret, or restore instance is needed for this disabled deployment.
+- **Read-only TLS preflight:** requires the dedicated DB credentials and a CA
+  that validates the server certificate for the exact `BACKUP_DB_HOST`. It
+  does not need a volume, alert endpoint, restore server, or enabled backup
+  switch.
+- **One-time manual export:** additionally requires the production volume and
+  approved free-space reserve, the matching MySQL client, the private backup
+  credentials/CA, and an HTTPS `BACKUP_ALERT_WEBHOOK`. It does not require
+  `BACKUP_HEARTBEAT_URL`, a scheduler/trigger token, or an already-running
+  restore server. A completed export is not accepted as a recovery test until
+  it has also been restored and checked in isolation.
+- **Isolated restore acceptance:** requires a completed export and matching
+  receipt, plus a fresh, empty MySQL 9.7 test server bound only to loopback on
+  a non-3306 port, with events off and a distinct server UUID. It is an
+  operator-run one-time test, not a PC backup service or schedule.
+- **Recurring operation:** additionally requires the external trigger and
+  matching private token, an HTTPS success-heartbeat endpoint, current
+  restore evidence, and separate retention/cost approvals. Do not remove
+  heartbeat or failure-alert safeguards to make this gate pass.
+
+The first non-secret runtime setting is now concrete in
+`recovery/backup.env.example`: `DB_BACKUP_VOLUME_DIR` uses the recorded
+Railway mount `/app/instance/inspection_evidence`, and the account name is
+`revela_backup`. The positive free-space floor remains deliberately unset
+until the live mount's free space and dump/scratch-space needs are confirmed.
+The historical 85.7 MB used of 5,000 MB is not a current capacity guarantee.
+
+### Dedicated account and verified CA setup
+
+The intended production **private** endpoint was checked on 2026-10-29 through
+a Railway SSH tunnel, using the API runtime's effective `DB_HOST` for TLS SNI.
+The live endpoint negotiated TLS 1.3 and presented certificate SHA-256
+`6729841233f18fcf5ce2ba70a74614ead3ff97eaac49dc4440311cae51a7863c`,
+subject `CN=MySQL_Server_9.4.0_Auto_Generated_Server_Certificate`, issuer
+`CN=MySQL_Server_9.4.0_Auto_Generated_CA_Certificate`, and **no DNS SAN**.
+The certificate therefore does not match the intended private hostname.
+This probe sent no DB credentials and did not verify the trust chain; the
+hostname mismatch alone is sufficient to block strict identity verification.
+This is now direct evidence from the private endpoint, not an inference from
+the public proxy. Do not copy this certificate into the app or weaken client
+verification.
+
+The concrete required change is to configure MySQL with a server leaf
+certificate whose DNS SAN exactly covers the private hostname in `DB_HOST`,
+issued by a trusted CA; provide that CA, leaf certificate, and matching private
+key through protected service configuration/mounts, then point the API CA file
+at that CA. This requires a MySQL service configuration change and restart.
+Expect a brief database connection interruption/reconnect while it restarts;
+clients pinning the current certificate/CA may also need their trust updated.
+Do not turn on server-wide `require_secure_transport` as part of this backup
+change. No certificate, key, database setting, or MySQL service was changed.
+After the replacement certificate is live, create the separate
+`revela_backup` account with `REQUIRE SSL`, then prove the chain and hostname
+with the read-only TLS preflight before any export.
+
+After the verified endpoint exists, create a separate `revela_backup` MySQL
+account restricted to the API's verified source host/private network and
+require TLS (`REQUIRE SSL`). Set its password privately in the database
+provider's protected account-creation flow; do not put it in this repository,
+a command-line argument, logs, or chat. Grant only the rights needed for this
+database-only dump and its inventory:
+
+```sql
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT
+ON `REPLACE_WITH_APPLICATION_SCHEMA`.*
+TO 'revela_backup'@'REPLACE_WITH_VERIFIED_API_SOURCE_HOST';
+GRANT SHOW_ROUTINE ON *.*
+TO 'revela_backup'@'REPLACE_WITH_VERIFIED_API_SOURCE_HOST';
+```
+
+Replace the schema and host identifiers before applying the grants. Do not
+grant write, schema-creation, or administrative privileges. `SHOW_ROUTINE` is
+needed for the configured routine inventory/dump; the data/object grants are
+schema-scoped. Keep `REQUIRE SSL` on the account as well as client-side
+certificate and hostname verification.
+
+Privately inject these runtime values after the account and CA are provisioned:
+
+```text
+BACKUP_DB_HOST=<verified private MySQL hostname>
+BACKUP_DB_PORT=3306
+BACKUP_DB_NAME=<application schema>
+BACKUP_DB_USER=revela_backup
+BACKUP_DB_PASSWORD=<set directly in the runtime secret UI>
+BACKUP_DB_SSL_CA_FILE=/run/secrets/mysql-ca.pem
+DB_BACKUP_VOLUME_DIR=/app/instance/inspection_evidence
+DB_BACKUP_VOLUME_REQUIRE_MOUNT=1
+DB_BACKUP_MIN_FREE_BYTES=<positive reserve approved from live capacity>
+BACKUP_ALERT_WEBHOOK=<existing HTTPS failure-alert endpoint>
+```
+
+The CA PEM is not a password, but its source and integrity must be trusted;
+mount the CA file at the configured path and ensure the API process can read
+it. Do not enable execution to test connectivity: run
+`python -m recovery.cli tls-preflight` in the deployed API runtime with all
+execution switches still `0`. Require verified certificate and hostname,
+server version `9.7.4`, and a negotiated TLS cipher.
+
+`BACKUP_ALERT_WEBHOOK` is currently required by runtime validation for a
+manual export as well as a scheduled export. The existing admin inbox and
+durable job status are additional safeguards, not a replacement for that
+required HTTPS destination. Reuse an existing no-cost endpoint if available;
+otherwise manual execution remains blocked until an endpoint is selected.
+`BACKUP_HEARTBEAT_URL` is only required for recurring scheduling and is not
+needed for this one-time manual export/restore test. No new paid alert service
+is part of this setup.
+
+### Isolated Windows restore instance
+
+The existing `MySQL80` Windows service must remain untouched. The compatible
+test target is a separate Oracle MySQL Community Server **9.7.4** Windows ZIP
+distribution, extracted into a dedicated directory and run manually (not
+installed as or registered with a Windows service). The official ZIP URL is
+`https://cdn.mysql.com/Downloads/MySQL-9.7/mysql-9.7.4-winx64.zip`; its
+official response reported **344,052,123 bytes** (about 328 MiB) on
+2026-10-29. Extracted program size and eventual restore size are additional.
+Use a fresh dedicated data directory, `127.0.0.1`, a non-3306 port such as
+`33307`, and `event_scheduler=OFF`; do not add this server globally to PATH.
+Pass its `bin\mysql.exe` explicitly to `restore-test`.
+
+The workstation check found approximately **733 GiB free on C:**, and the
+existing `MySQL80` service was running. The production export has not been
+run, so its compressed archive and uncompressed SQL sizes are unknown; exact
+restore-space needs cannot yet be calculated. The ZIP alone fits comfortably,
+but do not start a restore until the archive size is known and there is room
+for the ZIP, extracted server, compressed archive, expanded SQL, and database
+data directory. No download or local MySQL change has been made.
 
 ## Status and history contract
 
@@ -112,15 +251,13 @@ cleanup switch until the following are resolved:
    Public returned HTTP 429 (`toomanyrequests: Data limit exceeded`); no image
    was deployed, published, or uploaded as an artifact.
 
-   A read-only fetch of the production MySQL image's `/var/lib/mysql/ca.pem`
-   and `server-cert.pem` showed that the CA is self-issued and the server
-   certificate has no DNS subject alternative name and does not match the
-   Railway private database hostname. This is not a completed TLS connection
-   test, but strict certificate/hostname verification cannot pass with those
-   stock certificates. Do not weaken client verification. A valid CA and
-   server certificate covering the actual database hostname are required;
-   providing them to MySQL would require a separately approved MySQL service
-   configuration/restart, or a Railway-provided verified TLS endpoint.
+   The direct private-endpoint TLS probe is documented above. It confirmed the
+   currently presented auto-generated certificate has no DNS SAN, so strict
+   identity verification cannot pass. A trusted CA and server leaf certificate
+   covering the actual `DB_HOST` are required. Installing them would require a
+   separately approved MySQL service configuration/restart, unless Railway
+   provides a different private endpoint whose certificate independently
+   passes verification.
 
    Build after review with the verified versions:
 
