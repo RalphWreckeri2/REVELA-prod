@@ -4,12 +4,13 @@ import os
 import stat
 import sys
 import threading
-from datetime import datetime, timezone
+from contextlib import nullcontext
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from recovery import status
+from recovery import runner, status
 from recovery.db_export import restore_export
 from recovery.db_storage import BackupNotFound, DatabaseStorage, FEATURE
 from recovery.locking import LockBusy, lock
@@ -74,6 +75,47 @@ def test_volume_publish_receipt_download_integrity_and_private_permissions(volum
     if os.name != "nt":
         assert stat.S_IMODE(storage.root.stat().st_mode) == 0o700
         assert stat.S_IMODE((storage.records_dir / f"{record['id']}.json").stat().st_mode) == 0o600
+
+
+def test_manual_export_filename_uses_receipt_timestamp_after_dump(volume_storage, monkeypatch):
+    settings, storage = volume_storage
+    before_export = datetime(2026, 10, 26, 4, 30, tzinfo=timezone.utc)
+    after_export = before_export + timedelta(seconds=2)
+    monkeypatch.setattr(status, "now", lambda: before_export)
+    monkeypatch.setenv("DB_BACKUP_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_MODE", "cloud")
+    monkeypatch.setenv("DB_BACKUP_SCHEDULE_ENABLED", "0")
+    monkeypatch.setenv("DB_BACKUP_CLEANUP_ENABLED", "0")
+    monkeypatch.setattr(runner, "job_lease", lambda _: nullcontext(object()))
+    monkeypatch.setattr(runner, "source_lease", lambda _: nullcontext(object()))
+
+    def export(_settings, _config, work, _connection):
+        monkeypatch.setattr(status, "now", lambda: after_export)
+        archive = work / "dump.sql.gz"
+        archive.write_bytes(gzip.compress(b"synthetic SQL backup"))
+        return archive, {
+            "source_server_uuid": "synthetic-source",
+            "recovery_point": before_export.isoformat(),
+            "database": "fixture",
+            "mysql_version": "9.7.4",
+            "tables": ["fixture"],
+            "triggers": [],
+            "routines": [],
+            "events": [],
+            "sql_sha256": hashlib.sha256(b"synthetic SQL backup").hexdigest(),
+        }
+
+    monkeypatch.setattr(runner, "export", export)
+    record = runner.perform(settings, {}, storage, deliver=lambda *_: {})
+    created = datetime.fromisoformat(record["created_at"])
+    expected_filename = (
+        f"revela-db_{created.astimezone(status.MANILA):%Y%m%d_%H%M%S}_PHT_{record['id']}.sql.gz"
+    )
+    assert record["filename"] == expected_filename
+    saved = storage.records()
+    assert len(saved) == 1
+    assert saved[0]["id"] == record["id"]
+    assert saved[0]["filename"] == expected_filename
 
 
 def test_incomplete_or_corrupt_volume_export_is_never_downloadable(volume_storage, monkeypatch):

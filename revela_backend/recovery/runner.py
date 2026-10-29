@@ -108,7 +108,6 @@ def _perform_locked(settings, config, storage, scheduled=False, scheduled_for=No
         try:
             storage.preflight()
             state.update(storage_verified_at=status.stamp(), storage_identity=settings.identity)
-            filename = f"revela-db_{status.now().astimezone(status.MANILA):%Y%m%d_%H%M%S}_PHT_{identifier}.sql.gz"
             def capture_and_upload():
                 nonlocal stage
                 # A fresh connection/workspace on each bounded attempt also
@@ -118,11 +117,16 @@ def _perform_locked(settings, config, storage, scheduled=False, scheduled_for=No
                         work = Path(temporary)
                         stage = "transactional_sql_export"
                         archive, metadata = export(settings, config, work, connection)
+                        created_at = status.stamp()
+                        filename = (
+                            f"revela-db_{datetime.fromisoformat(created_at).astimezone(status.MANILA):%Y%m%d_%H%M%S}"
+                            f"_PHT_{identifier}.sql.gz"
+                        )
                         record = {**metadata, "feature": FEATURE, "id": identifier, "filename": filename,
                                   "environment": settings.environment, "storage_identity": settings.identity,
                                   "scheduled": scheduled, "scheduled_for": scheduled_for if scheduled else None,
                                   "monthly_archive": bool(scheduled and status.is_monthly_archive(scheduled_for)),
-                                  "requested_by": actor, "created_at": status.stamp()}
+                                  "requested_by": actor, "created_at": created_at}
                         stage = "upload_and_readback"
                         storage.publish(archive, record, work)
                 return record
