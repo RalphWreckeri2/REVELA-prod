@@ -712,6 +712,9 @@ def get_barangay_overview():
     cursor = mysql.connection.cursor()
     try:
         filters = parse_analytics_filters(request.args)
+        filters["display_sector"] = (
+            str(request.args.get("display_sector") or "").strip() or None
+        )
         filters["barangay_ids"] = None
         filters["registration_type_supported"] = True
         registry_where, registry_params = registry_sql("o", filters)
@@ -732,7 +735,7 @@ def get_barangay_overview():
                     "business_size": [],
                     "business_type": [],
                     "registration_type": [],
-                    "line_of_business": [],
+                    "display_sector": [],
                 },
                 "pins": {
                     "registered_on_map": 0,
@@ -780,7 +783,6 @@ def get_barangay_overview():
             ("business_size", "businessSize", None),
             ("business_type", "businessType", None),
             ("registration_type", "registrationType", None),
-            ("line_of_business", "lineOfBusiness", 5),
         )
         overall_registry_dimensions = {}
         for response_key, column, limit in dimension_columns:
@@ -806,6 +808,76 @@ def get_barangay_overview():
                 barangay["registry"][response_key] = _barangay_overview_dimension(
                     rows_by_barangay.get(barangay_id, []), limit=limit
                 )
+
+        cursor.execute(
+            """SELECT display_sector_key,
+                      MIN(display_sector_label) AS display_sector_label,
+                      MIN(sort_order) AS sort_order
+               FROM display_sector
+               WHERE is_active = 1 AND display_sector_key IS NOT NULL
+                 AND display_sector_label IS NOT NULL
+               GROUP BY display_sector_key
+               ORDER BY MIN(sort_order), MIN(display_sector_label)"""
+        )
+        display_sector_options = [
+            {
+                "value": row["display_sector_key"],
+                "label": row["display_sector_label"],
+            }
+            for row in cursor.fetchall()
+        ]
+        cursor.execute(
+            f"""
+            SELECT o.barangayID,
+                   COALESCE(rsm.display_sector_key, 'unmapped') AS category,
+                   COALESCE(rsm.display_sector_label, 'Needs classification') AS label,
+                   COUNT(*) AS count
+            FROM official_registry o
+            LEFT JOIN registry_sector_map rsm
+              ON rsm.normalized_line_of_business =
+                 LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                   COLLATE utf8mb4_unicode_ci
+             AND rsm.match_status IN ('matched', 'combo')
+            WHERE 1=1 {registry_where}
+            GROUP BY o.barangayID, category, label
+            """,
+            registry_params,
+        )
+        sector_rows = cursor.fetchall()
+        sectors_by_barangay = {}
+        overall_sector_counts = {}
+        sector_labels = {}
+        for row in sector_rows:
+            key = row["category"]
+            count = int(row["count"] or 0)
+            sector_labels[key] = row["label"]
+            overall_sector_counts[key] = overall_sector_counts.get(key, 0) + count
+            sectors_by_barangay.setdefault(row["barangayID"], {})[key] = (
+                sectors_by_barangay.get(row["barangayID"], {}).get(key, 0) + count
+            )
+
+        def sector_breakdown(counts):
+            ordered = sorted(
+                counts.items(),
+                key=lambda item: (-item[1], sector_labels[item[0]].casefold()),
+            )
+            return [
+                {
+                    "value": key,
+                    "label": sector_labels[key],
+                    "short_label": sector_labels[key],
+                    "count": count,
+                }
+                for key, count in ordered
+            ]
+
+        overall_registry_dimensions["display_sector"] = sector_breakdown(
+            overall_sector_counts
+        )
+        for barangay_id, barangay in barangays.items():
+            barangay["registry"]["display_sector"] = sector_breakdown(
+                sectors_by_barangay.get(barangay_id, {})
+            )
 
         cursor.execute(
             f"""
@@ -974,7 +1046,11 @@ def get_barangay_overview():
         overall["inspections_unassigned"] = overall_inspection_counts["total"] - sum(
             row["inspections"]["total"] for row in rows
         )
-        return jsonify({"barangays": rows, "overall": overall}), 200
+        return jsonify({
+            "barangays": rows,
+            "overall": overall,
+            "display_sectors": display_sector_options,
+        }), 200
     except Exception:
         current_app.logger.exception("Failed to load barangay overview")
         return jsonify({"error": "Failed to load barangay overview"}), 500

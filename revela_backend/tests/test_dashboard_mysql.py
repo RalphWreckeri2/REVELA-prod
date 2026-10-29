@@ -40,9 +40,53 @@ class DashboardMySQLTests(unittest.TestCase):
                 """CREATE TABLE official_registry (
                     businessID VARCHAR(50) PRIMARY KEY, barangayID INT NOT NULL,
                     businessName VARCHAR(255), businessAddress VARCHAR(255), businessSize VARCHAR(50),
+                    businessType VARCHAR(50), registrationType VARCHAR(50),
+                    lineOfBusiness VARCHAR(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
                     latitude DECIMAL(10,8), longitude DECIMAL(11,8), placeID VARCHAR(255),
                     confirmedLogID INT NULL, applicationStatus VARCHAR(30), lastRenewalDate DATETIME,
                     matchStatus VARCHAR(30), coordSource VARCHAR(30), matchScore DECIMAL(4,3)
+                ) ENGINE=InnoDB""",
+                """CREATE TABLE display_sector (
+                    normalized_major_type VARCHAR(255) PRIMARY KEY,
+                    display_sector_key VARCHAR(64), display_sector_label VARCHAR(100),
+                    sort_order SMALLINT NOT NULL DEFAULT 0, is_active TINYINT(1) NOT NULL DEFAULT 1
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                """CREATE TABLE registry_sector_map (
+                    normalized_line_of_business VARCHAR(500) PRIMARY KEY,
+                    raw_line_of_business VARCHAR(500),
+                    source_version VARCHAR(80),
+                    display_sector_key VARCHAR(64), display_sector_label VARCHAR(100),
+                    match_status ENUM('matched','combo','ambiguous','unmatched') NOT NULL,
+                    primary_psic_line_id BIGINT NULL,
+                    candidate_count SMALLINT UNSIGNED NOT NULL DEFAULT 0
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                """CREATE TABLE registry_sector_map_secondary (
+                    normalized_line_of_business VARCHAR(500) NOT NULL,
+                    psic_line_id BIGINT NOT NULL,
+                    PRIMARY KEY (normalized_line_of_business, psic_line_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                """CREATE TABLE registry_sector_review_queue (
+                    normalized_line_of_business VARCHAR(500) PRIMARY KEY,
+                    raw_line_of_business VARCHAR(500) NOT NULL,
+                    review_status ENUM('ambiguous','unmatched') NOT NULL,
+                    candidate_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                    first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    reviewed_at DATETIME NULL,
+                    reviewed_by VARCHAR(255) NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                """CREATE TABLE psic_active_version (
+                    singleton_id TINYINT PRIMARY KEY,
+                    source_version VARCHAR(80) NOT NULL
+                ) ENGINE=InnoDB""",
+                """CREATE TABLE psic_lines (
+                    psic_line_id BIGINT PRIMARY KEY,
+                    source_version VARCHAR(80) NOT NULL,
+                    source_row_number INT NOT NULL,
+                    normalized_line_of_business VARCHAR(500) NOT NULL,
+                    normalized_major_type VARCHAR(255) NOT NULL,
+                    major_type_clean VARCHAR(255) NOT NULL,
+                    line_of_business VARCHAR(500) NOT NULL
                 ) ENGINE=InnoDB""",
                 """CREATE TABLE geospatial_logs (
                     logID INT PRIMARY KEY, businessID VARCHAR(50) NULL, barangayID INT NOT NULL,
@@ -80,8 +124,11 @@ class DashboardMySQLTests(unittest.TestCase):
         self.db.rollback()
         with self.db.cursor() as cur:
             for table in ("inspection_lifecycle_events", "inspection_reports", "geospatial_logs",
-                          "official_registry", "barangays", "users"):
+                          "registry_sector_map_secondary", "registry_sector_review_queue",
+                          "registry_sector_map", "psic_active_version", "psic_lines",
+                          "display_sector", "official_registry", "barangays", "users"):
                 cur.execute(f"DELETE FROM {table}")
+            reset_ladder_column_cache()
             cur.execute("INSERT INTO barangays VALUES (1,'Barangay One'),(2,'Barangay Two')")
             cur.execute("INSERT INTO users VALUES (9,'Fixture Inspector','Inspector')")
             cur.execute("SELECT UTC_TIMESTAMP(0) AS now")
@@ -260,3 +307,344 @@ class DashboardMySQLTests(unittest.TestCase):
                     self.assertIsNone(error, error)
                     self.assertEqual(result["total"], 1 if origin == "manual" else 0)
                     self.assertEqual([row["logID"] for row in result["data"]], [15] if origin == "manual" else [])
+
+    def test_barangay_overview_sector_filter_on_mysql_8_full_group_by(self):
+        from flask import Flask
+
+        from api.analytics import routes
+        from api.analytics.filters import registry_sql
+
+        with self.db.cursor() as cur:
+            cur.execute(
+                "SET SESSION sql_mode='STRICT_TRANS_TABLES,ONLY_FULL_GROUP_BY'"
+            )
+            cur.execute("SELECT VERSION() AS version, @@SESSION.sql_mode AS mode")
+            details = cur.fetchone()
+            self.assertTrue(details["version"].startswith("8."), details)
+            self.assertIn("ONLY_FULL_GROUP_BY", details["mode"])
+            cur.executemany(
+                "INSERT INTO barangays (barangayID, barangayName) VALUES (%s, %s)",
+                [(bid, f"Barangay {bid}") for bid in range(3, 17)],
+            )
+            cur.executemany(
+                """INSERT INTO display_sector
+                       (normalized_major_type, display_sector_key,
+                        display_sector_label, sort_order, is_active)
+                   VALUES (%s, %s, %s, %s, 1)""",
+                [
+                    ("retail_trade", "retail", "Retail outlets", 2),
+                    ("retail_other", "retail", "Retail", 1),
+                    ("food_service", "food_drink", "Food and drink", 3),
+                ],
+            )
+            cur.executemany(
+                """INSERT INTO official_registry
+                       (businessID, barangayID, businessName, businessSize,
+                        businessType, registrationType, lineOfBusiness)
+                   VALUES (%s, 1, %s, 'MICRO', 'SOLE', 'NEW', %s)""",
+                [
+                    ("SECTOR-RETAIL", "Retail test", "Retail activity"),
+                    ("SECTOR-FOOD", "Food test", "Food activity"),
+                ],
+            )
+            cur.executemany(
+                """INSERT INTO registry_sector_map
+                       (normalized_line_of_business, display_sector_key,
+                        display_sector_label, match_status)
+                   VALUES (%s, %s, %s, 'matched')""",
+                [
+                    ("retailactivity", "retail", "Retail"),
+                    ("foodactivity", "food_drink", "Food and drink"),
+                ],
+            )
+            cur.execute(
+                """INSERT INTO geospatial_logs
+                       (logID, barangayID, detectedName, detectedDate, flagColor,
+                        latitude, longitude, source)
+                   VALUES (901, 1, 'Sector-independent pin', %s, 'Green',
+                           13.9667, 121.1167, 'manual')""",
+                (self.as_of,),
+            )
+            cur.execute(
+                """INSERT INTO inspection_reports
+                       (reportID, userID, targetID, targetType,
+                        verificationStatus, inspectionResult, irTimestamp)
+                   VALUES (902, 9, 901, 'geospatial_log',
+                           'Verified', 'Green', %s)""",
+                (self.as_of,),
+            )
+        self.db.commit()
+
+        filters = {"display_sector": "retail"}
+        registry_where, registry_params = registry_sql("o", filters)
+        with self.db.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) AS total FROM official_registry o WHERE 1=1"
+                + registry_where,
+                registry_params,
+            )
+            self.assertEqual(cur.fetchone()["total"], 1)
+
+        app = Flask(__name__)
+        original_mysql = routes.mysql
+        routes.mysql = SimpleNamespace(connection=self.db)
+        reset_ladder_column_cache()
+
+        def overview(query):
+            with app.test_request_context(
+                f"/api/analytics/barangay-overview?{query}"
+            ):
+                response, status = routes.get_barangay_overview.__wrapped__()
+            self.assertEqual(status, 200)
+            return response.get_json()
+
+        try:
+            all_data = overview("")
+            retail_data = overview("display_sector=retail")
+        finally:
+            routes.mysql = original_mysql
+            reset_ladder_column_cache()
+
+        self.assertEqual(all_data["overall"]["registry_total"], 2)
+        self.assertEqual(retail_data["overall"]["registry_total"], 1)
+        self.assertEqual(
+            retail_data["overall"]["pins"],
+            all_data["overall"]["pins"],
+        )
+        self.assertEqual(
+            retail_data["overall"]["inspections"],
+            all_data["overall"]["inspections"],
+        )
+        self.assertEqual(
+            all_data["display_sectors"],
+            [
+                {"value": "retail", "label": "Retail"},
+                {"value": "food_drink", "label": "Food and drink"},
+            ],
+        )
+
+    def test_psic_loader_dry_run_reads_mysql_without_psic_migration_tables(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from openpyxl import Workbook
+
+        from scripts.load_psic_sector_master import load_master, _print_result
+
+        with self.db.cursor() as cur:
+            cur.executemany(
+                """INSERT INTO official_registry
+                       (businessID, barangayID, businessName, lineOfBusiness)
+                   VALUES (%s, 1, %s, %s)""",
+                [
+                    ("DRY-1", "Retail 1", "Retail activity"),
+                    ("DRY-2", "Retail 2", "Retail activity"),
+                    ("DRY-3", "Food", "Food activity"),
+                    ("DRY-4", "Combo", "Retail activity, Food activity"),
+                    ("DRY-5", "Unknown", "Unlisted activity"),
+                ],
+            )
+            for table in (
+                "registry_sector_map_secondary",
+                "registry_sector_review_queue",
+                "registry_sector_map",
+                "psic_active_version",
+                "psic_lines",
+                "display_sector",
+            ):
+                cur.execute(f"DROP TABLE {table}")
+        self.db.commit()
+
+        try:
+            with TemporaryDirectory() as temp_dir:
+                workbook_path = Path(temp_dir) / "psic.xlsx"
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.append(
+                    ["No.", "Major Type", "Division", "Group", "Class",
+                     "Line of Business", "Total"]
+                )
+                sheet.append([1, "RETAIL TRADE", "G", "G1", "G1.1", "Retail activity", 0])
+                sheet.append([2, "FOOD SERVICE ACTIVITIES", "I", "I1", "I1.1", "Food activity", 0])
+                workbook.save(workbook_path)
+                workbook.close()
+
+                result = load_master(
+                    workbook_path,
+                    dry_run=True,
+                    connection=self.db,
+                )
+                output = StringIO()
+                with redirect_stdout(output):
+                    _print_result(result, dry_run=True)
+
+            self.assertEqual(result["registry_rows"], 5)
+            self.assertEqual(result["registry_values"], 4)
+            self.assertEqual(
+                result["outcomes"],
+                {"matched": 2, "combo": 1, "unmatched": 1},
+            )
+            self.assertEqual(
+                result["display_sector_rows"],
+                {
+                    "Retail": 3,
+                    "Food and drink": 1,
+                    "Needs classification": 1,
+                },
+            )
+            self.assertEqual(
+                result["combo_values"][0]["sectors"],
+                ["Retail", "Food and drink"],
+            )
+            self.assertIn("DRY RUN — no database writes performed", output.getvalue())
+            self.assertIn("matched: 2", output.getvalue())
+            self.assertIn("combo: 1", output.getvalue())
+            self.assertIn("unmatched: 1", output.getvalue())
+            self.assertIn("Retail: 3", output.getvalue())
+            self.assertIn(
+                "Retail activity, Food activity (rows=1; primary=Retail): Retail, Food and drink",
+                output.getvalue(),
+            )
+            self.assertIn("TOTAL: 5", output.getvalue())
+            with self.db.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS total FROM official_registry")
+                self.assertEqual(cur.fetchone()["total"], 5)
+                cur.execute("SHOW TABLES LIKE 'psic_lines'")
+                self.assertIsNone(cur.fetchone())
+                cur.execute("SHOW TABLES LIKE 'display_sector'")
+                self.assertIsNone(cur.fetchone())
+        finally:
+            with self.db.cursor() as cur:
+                for statement in (
+                    """CREATE TABLE display_sector (
+                        normalized_major_type VARCHAR(255) PRIMARY KEY,
+                        display_sector_key VARCHAR(64), display_sector_label VARCHAR(100),
+                        sort_order SMALLINT NOT NULL DEFAULT 0,
+                        is_active TINYINT(1) NOT NULL DEFAULT 1
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                    """CREATE TABLE registry_sector_map (
+                        normalized_line_of_business VARCHAR(500) PRIMARY KEY,
+                        raw_line_of_business VARCHAR(500), source_version VARCHAR(80),
+                        display_sector_key VARCHAR(64), display_sector_label VARCHAR(100),
+                        match_status ENUM('matched','combo','ambiguous','unmatched') NOT NULL,
+                        primary_psic_line_id BIGINT NULL,
+                        candidate_count SMALLINT UNSIGNED NOT NULL DEFAULT 0
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                    """CREATE TABLE registry_sector_map_secondary (
+                        normalized_line_of_business VARCHAR(500) NOT NULL,
+                        psic_line_id BIGINT NOT NULL,
+                        PRIMARY KEY (normalized_line_of_business, psic_line_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                    """CREATE TABLE registry_sector_review_queue (
+                        normalized_line_of_business VARCHAR(500) PRIMARY KEY,
+                        raw_line_of_business VARCHAR(500) NOT NULL,
+                        review_status ENUM('ambiguous','unmatched') NOT NULL,
+                        candidate_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                        first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        reviewed_at DATETIME NULL, reviewed_by VARCHAR(255) NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""",
+                    """CREATE TABLE psic_active_version (
+                        singleton_id TINYINT PRIMARY KEY,
+                        source_version VARCHAR(80) NOT NULL
+                    ) ENGINE=InnoDB""",
+                    """CREATE TABLE psic_lines (
+                        psic_line_id BIGINT PRIMARY KEY,
+                        source_version VARCHAR(80) NOT NULL,
+                        source_row_number INT NOT NULL,
+                        normalized_line_of_business VARCHAR(500) NOT NULL,
+                        normalized_major_type VARCHAR(255) NOT NULL,
+                        major_type_clean VARCHAR(255) NOT NULL,
+                        line_of_business VARCHAR(500) NOT NULL
+                    ) ENGINE=InnoDB""",
+                ):
+                    cur.execute(statement)
+            self.db.commit()
+
+    def test_sector_sync_resolves_same_sector_duplicates_and_preserves_review_history(self):
+        from pathlib import Path
+
+        from api.analytics.sector_mapping import (
+            normalize_sector_text,
+            sync_registry_sector_values,
+        )
+
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "migrations"
+            / "20261029_02_sector_review_queue_resolved.sql"
+        )
+        with self.db.cursor() as cur:
+            cur.execute(migration.read_text(encoding="utf-8"))
+            cur.execute(
+                """INSERT INTO psic_active_version (singleton_id, source_version)
+                   VALUES (1, 'fixture-version')"""
+            )
+            cur.executemany(
+                """INSERT INTO display_sector
+                       (normalized_major_type, display_sector_key,
+                        display_sector_label, sort_order, is_active)
+                   VALUES (%s, %s, %s, 1, 1)""",
+                [
+                    (normalize_sector_text("MANUFACTURING"), "manufacturing", "Manufacturing"),
+                    (normalize_sector_text("RETAIL TRADE"), "retail", "Retail"),
+                    (normalize_sector_text("FOOD SERVICE ACTIVITIES"), "food_drink", "Food and drink"),
+                ],
+            )
+            cur.executemany(
+                """INSERT INTO psic_lines
+                       (psic_line_id, source_version, source_row_number,
+                        normalized_line_of_business, normalized_major_type,
+                        major_type_clean, line_of_business)
+                   VALUES (%s, 'fixture-version', %s, %s, %s, %s, %s)""",
+                [
+                    (1, 10, "duplicateactivity", normalize_sector_text("MANUFACTURING"),
+                     "MANUFACTURING", "Duplicate activity"),
+                    (2, 20, "duplicateactivity", normalize_sector_text("MANUFACTURING"),
+                     "MANUFACTURING", "Duplicate-activity"),
+                    (3, 30, "crosssectorduplicate", normalize_sector_text("RETAIL TRADE"),
+                     "RETAIL TRADE", "Cross-sector duplicate"),
+                    (4, 40, "crosssectorduplicate", normalize_sector_text("FOOD SERVICE ACTIVITIES"),
+                     "FOOD SERVICE ACTIVITIES", "Cross-sector-duplicate"),
+                ],
+            )
+            cur.execute(
+                """INSERT INTO registry_sector_review_queue
+                       (normalized_line_of_business, raw_line_of_business,
+                        review_status, candidate_count, reviewed_at, reviewed_by)
+                   VALUES ('duplicateactivity', 'Duplicate activity',
+                           'ambiguous', 2, '2026-10-28 12:00:00', 'fixture-reviewer')"""
+            )
+            outcomes = sync_registry_sector_values(
+                cur,
+                ["Duplicate activity", "Cross-sector duplicate"],
+            )
+        self.db.commit()
+
+        self.assertEqual(outcomes, {"matched": 1, "ambiguous": 1})
+        with self.db.cursor() as cur:
+            cur.execute(
+                """SELECT review_status, reviewed_at, reviewed_by
+                   FROM registry_sector_review_queue
+                   WHERE normalized_line_of_business = 'duplicateactivity'"""
+            )
+            history = cur.fetchone()
+            self.assertEqual(history["review_status"], "resolved")
+            self.assertEqual(str(history["reviewed_at"]), "2026-10-28 12:00:00")
+            self.assertEqual(history["reviewed_by"], "fixture-reviewer")
+            cur.execute(
+                """SELECT match_status, primary_psic_line_id, candidate_count
+                   FROM registry_sector_map
+                   WHERE normalized_line_of_business = 'duplicateactivity'"""
+            )
+            resolved = cur.fetchone()
+            self.assertEqual(resolved["match_status"], "matched")
+            self.assertEqual(resolved["primary_psic_line_id"], 1)
+            self.assertEqual(resolved["candidate_count"], 2)
+            cur.execute(
+                """SELECT match_status FROM registry_sector_map
+                   WHERE normalized_line_of_business = 'crosssectorduplicate'"""
+            )
+            self.assertEqual(cur.fetchone()["match_status"], "ambiguous")

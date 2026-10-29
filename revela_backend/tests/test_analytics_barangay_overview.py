@@ -39,9 +39,27 @@ class BarangayOverviewCursor:
                 for key, value in BARANGAY_NAMES.items()
             ]
         elif "SELECT COUNT(*) AS total FROM official_registry" in sql:
-            self.rows = [{"total": 602}]
+            self.rows = [{"total": 170 if "display_sector_key = %s" in sql else 602}]
         elif "SELECT o.barangayID, COUNT(*) AS total" in sql:
-            self.rows = [{"barangayID": 1, "total": 602}]
+            self.rows = [{
+                "barangayID": 1,
+                "total": 170 if "display_sector_key = %s" in sql else 602,
+            }]
+        elif "FROM display_sector" in sql and "GROUP BY display_sector_key" in sql:
+            self.rows = [
+                {"display_sector_key": "retail", "display_sector_label": "Retail"},
+                {"display_sector_key": "food_drink", "display_sector_label": "Food and drink"},
+            ]
+        elif "LEFT JOIN registry_sector_map" in sql:
+            count = 170 if "display_sector_key = %s" in sql else 602
+            category = "retail" if "display_sector_key = %s" in sql else "unmapped"
+            label = "Retail" if category == "retail" else "Needs classification"
+            self.rows = [{
+                "barangayID": 1,
+                "category": category,
+                "label": label,
+                "count": count,
+            }]
         elif "AS registered_on_map" in sql:
             self.rows = [{
                 "barangayID": 1,
@@ -70,11 +88,6 @@ class BarangayOverviewCursor:
             self.rows = [{"barangayID": 1, "category": "SOLE PROPRIETORSHIP", "count": 602}]
         elif "o.registrationType" in sql:
             self.rows = [{"barangayID": 1, "category": "NEW", "count": 602}]
-        elif "o.lineOfBusiness" in sql:
-            self.rows = [
-                {"barangayID": 1, "category": f"SECTOR {index}", "count": 10 - index}
-                for index in range(1, 8)
-            ]
         else:
             raise AssertionError(f"Unexpected read query: {sql}")
 
@@ -183,15 +196,32 @@ class BarangayOverviewTests(unittest.TestCase):
         self.assertIn("ir.verificationStatus = 'Submitted'", inspection_sql)
         self.assertIn("ir.verificationStatus = 'Verified'", inspection_sql)
 
-    def test_line_of_business_keeps_top_five_and_combines_the_rest(self):
-        data, _, _ = self.run_endpoint("")
-        rows = data["barangays"][0]["registry"]["line_of_business"]
+    def test_sector_filter_changes_registry_only(self):
+        data, status, cursor = self.run_endpoint("display_sector=retail")
 
-        self.assertEqual(len(rows), 6)
-        self.assertEqual(rows[-1]["label"], "Others")
-        self.assertEqual(rows[-1]["count"], 7)
-        self.assertTrue(all("short_label" in row for row in rows))
-        self.assertTrue(all(len(row["short_label"]) <= 32 for row in rows))
+        self.assertEqual(status, 200)
+        self.assertEqual(data["overall"]["registry_total"], 170)
+        self.assertEqual(data["overall"]["registry"]["display_sector"], [{
+            "value": "retail",
+            "label": "Retail",
+            "short_label": "Retail",
+            "count": 170,
+        }])
+        self.assertEqual(data["overall"]["pins"]["total"], 495)
+        self.assertEqual(data["overall"]["inspections"]["total"], 9)
+        self.assertEqual(data["display_sectors"][0]["value"], "retail")
+
+        registry_queries = [
+            sql for sql, _ in cursor.sql_calls if "FROM official_registry" in sql
+        ]
+        self.assertTrue(registry_queries)
+        self.assertTrue(all("registry_sector_map" in sql for sql in registry_queries))
+        pin_sql = next(sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql)
+        inspection_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS waiting_for_review" in sql
+        )
+        self.assertNotIn("registry_sector_map", pin_sql)
+        self.assertNotIn("registry_sector_map", inspection_sql)
 
 
 if __name__ == "__main__":

@@ -91,6 +91,19 @@ def registry_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
         parts.append(f"{alias}.lineOfBusiness = %s")
         params.append(F["line_of_business"])
 
+    if F.get("display_sector"):
+        normalized_lob = (
+            f"LOWER(REGEXP_REPLACE(COALESCE({alias}.lineOfBusiness, ''), "
+            "'[^A-Za-z0-9]', '')) COLLATE utf8mb4_unicode_ci"
+        )
+        parts.append(
+            "EXISTS (SELECT 1 FROM registry_sector_map rsm "
+            f"WHERE rsm.normalized_line_of_business = {normalized_lob} "
+            "AND rsm.match_status IN ('matched', 'combo') "
+            "AND rsm.display_sector_key = %s)"
+        )
+        params.append(F["display_sector"])
+
     if F.get("business_type"):
         parts.append(f"{alias}.businessType = %s")
         params.append(F["business_type"])
