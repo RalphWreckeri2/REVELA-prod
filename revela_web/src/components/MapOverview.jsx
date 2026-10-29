@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { Circle, Data, GoogleMap, Marker } from "@react-google-maps/api";
 import AnalyticsInfoTip from "./AnalyticsInfoTip";
 import {
+  getFlagsRequest,
   getAnalyticsHotspotsRequest,
   getBarangayOverviewRequest,
 } from "../services/api";
@@ -34,6 +35,9 @@ import {
 import {
   hotspotOverlayRadius,
   hotspotMethodNote,
+  fetchHotspotClusterPins,
+  hotspotClusterDetails,
+  hotspotViewTransition,
   hotspotRequestParams,
   hotspotScanNote,
   hotspotSummary,
@@ -166,6 +170,15 @@ export default function MapOverview({ token, filters }) {
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
   const [showHotspots, setShowHotspots] = useState(false);
+  const [selectedClusterId, setSelectedClusterId] = useState(null);
+  const [selectedClusterRequestKey, setSelectedClusterRequestKey] = useState("");
+  const [clusterDetailRetry, setClusterDetailRetry] = useState(0);
+  const [clusterPinsState, setClusterPinsState] = useState({
+    key: "",
+    pins: [],
+    loading: false,
+    error: "",
+  });
   const [hotspotState, setHotspotState] = useState({
     requestKey: "",
     data: null,
@@ -282,9 +295,73 @@ export default function MapOverview({ token, filters }) {
     hotspotData,
     selectedBarangayId,
   );
+  const selectedCluster = showHotspots && selectedClusterRequestKey === hotspotRequestKey
+    ? hotspotData?.clusters?.find(
+      (cluster) => Number(cluster.cluster_id) === Number(selectedClusterId),
+    ) || null
+    : null;
+  const selectedClusterKey = selectedCluster
+    ? `${hotspotRequestKey}:${selectedCluster.cluster_id}:${JSON.stringify(selectedCluster.log_ids || [])}`
+    : "";
+  const clusterPinsRequestKey = selectedClusterKey
+    ? `${selectedClusterKey}:${clusterDetailRetry}`
+    : "";
+  const clusterPinsAreCurrent = clusterPinsState.key === clusterPinsRequestKey;
+  const clusterDetail = selectedCluster
+    ? hotspotClusterDetails(
+      selectedCluster,
+      clusterPinsAreCurrent ? clusterPinsState.pins : [],
+    )
+    : null;
   const scanNote = hotspotScanNote(
     hotspotData?.last_detection_run,
   );
+
+  useEffect(() => {
+    if (!selectedCluster || !token) return undefined;
+    const controller = new AbortController();
+    fetchHotspotClusterPins(
+      getFlagsRequest,
+      token,
+      selectedCluster,
+      controller.signal,
+    )
+      .then((pins) => {
+        if (!controller.signal.aborted) {
+          setClusterPinsState({
+            key: clusterPinsRequestKey,
+            pins,
+            loading: false,
+            error: "",
+          });
+        }
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted && requestError.name !== "AbortError") {
+          setClusterPinsState({
+            key: clusterPinsRequestKey,
+            pins: [],
+            loading: false,
+            error: requestError.message || "Cluster pin details could not be loaded.",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [clusterPinsRequestKey, selectedCluster, token]);
+
+  const clearSelectedCluster = useCallback(() => {
+    setSelectedClusterId(null);
+    setSelectedClusterRequestKey("");
+  }, []);
+
+  const toggleHotspots = useCallback(() => {
+    const next = !showHotspots;
+    const transition = hotspotViewTransition(next);
+    setShowHotspots(transition.showHotspots);
+    if (transition.mapView) setMapView(transition.mapView);
+    setSelectedClusterId(null);
+    setSelectedClusterRequestKey("");
+  }, [showHotspots]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -712,23 +789,25 @@ export default function MapOverview({ token, filters }) {
       <div className="map-overview-layout">
         <section className="map-overview-map-card" aria-label="Barangay map">
           <div className="map-overview-map-heading map-overview-map-toolbar">
-            <div className="map-overview-segmented" role="group" aria-label="Map color">
-              <button type="button" className={mapView === "registered" ? "active" : ""}
-                aria-pressed={mapView === "registered"} onClick={() => setMapView("registered")}>
-                Registered
-              </button>
-              <button type="button" className={mapView === "inspections" ? "active" : ""}
-                aria-pressed={mapView === "inspections"} onClick={() => setMapView("inspections")}>
-                Inspections
-              </button>
-            </div>
+            {!showHotspots && (
+              <div className="map-overview-segmented" role="group" aria-label="Map color">
+                <button type="button" className={mapView === "registered" ? "active" : ""}
+                  aria-pressed={mapView === "registered"} onClick={() => setMapView("registered")}>
+                  Registered
+                </button>
+                <button type="button" className={mapView === "inspections" ? "active" : ""}
+                  aria-pressed={mapView === "inspections"} onClick={() => setMapView("inspections")}>
+                  Inspections
+                </button>
+              </div>
+            )}
             <div className="map-overview-hotspot-controls">
               <button
                 type="button"
                 className={`map-overview-hotspot-toggle${showHotspots ? " active" : ""}`}
                 role="switch"
                 aria-checked={showHotspots}
-                onClick={() => setShowHotspots((visible) => !visible)}
+                onClick={toggleHotspots}
               >
                 Show hotspots
               </button>
@@ -751,6 +830,7 @@ export default function MapOverview({ token, filters }) {
                 zoom={13}
                 onLoad={handleMapLoad}
                 onUnmount={handleMapUnmount}
+                onClick={clearSelectedCluster}
                 options={{
                    mapId: REVELA_MAP_ID,
                    colorScheme: isDark ? "DARK" : "LIGHT",
@@ -776,8 +856,13 @@ export default function MapOverview({ token, filters }) {
                     <Circle
                       center={cluster.centroid}
                       radius={hotspotOverlayRadius(cluster.radius_m)}
+                      onClick={(event) => {
+                        event.domEvent?.stopPropagation();
+                        setSelectedClusterId(Number(cluster.cluster_id));
+                        setSelectedClusterRequestKey(hotspotRequestKey);
+                      }}
                       options={{
-                        clickable: false,
+                        clickable: true,
                         fillColor: "#f97316",
                         fillOpacity: 0.18,
                         strokeColor: "#c2410c",
@@ -788,9 +873,14 @@ export default function MapOverview({ token, filters }) {
                     />
                     <Marker
                       position={cluster.centroid}
-                      title={`${cluster.size} nearby flagged locations`}
+                      title={`Select hotspot cluster ${cluster.cluster_id} (${cluster.size} pins)`}
+                      onClick={(event) => {
+                        event.domEvent?.stopPropagation();
+                        setSelectedClusterId(Number(cluster.cluster_id));
+                        setSelectedClusterRequestKey(hotspotRequestKey);
+                      }}
                       options={{
-                        clickable: false,
+                        clickable: true,
                         optimized: true,
                         zIndex: 1100,
                         icon: {
@@ -881,38 +971,84 @@ export default function MapOverview({ token, filters }) {
                 onClick={fitAllBarangays}>Show all barangays</button>
             )}
           </div>
-          <section className="map-overview-hotspot-summary" aria-live="polite">
-            <div className="map-overview-card-heading">
-              <h4>Possible nearby groups</h4>
-              <AnalyticsInfoTip label="About hotspot locations">
-                Group locations are assigned by map position, which can differ slightly from the barangay recorded on each pin.
-              </AnalyticsInfoTip>
-            </div>
-            {hotspotLoading ? (
-              <p>Loading possible groups…</p>
-            ) : hotspotError ? (
-              <p role="alert">{hotspotError}</p>
-            ) : hotspotStats.clusterCount === 0 ? (
-              <p>No nearby groups for this period.</p>
-            ) : (
-              <p>
-                Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} eligible effective-Red detection pins)
+          {selectedCluster && clusterDetail ? (
+            <section className="map-overview-hotspot-summary map-overview-cluster-detail" aria-live="polite">
+              <div className="map-overview-card-heading">
+                <div>
+                  <h4>Hotspot cluster #{clusterDetail.clusterId}</h4>
+                  <p>{clusterDetail.location} · {clusterDetail.pinCount} detected pins</p>
+                </div>
+                <button type="button" className="map-overview-cluster-clear"
+                  aria-label="Clear selected hotspot cluster"
+                  onClick={clearSelectedCluster}>Clear</button>
+              </div>
+              <p className="map-overview-cluster-centroid">
+                Cluster center: {Number(clusterDetail.centroid?.lat).toFixed(6)}, {Number(clusterDetail.centroid?.lng).toFixed(6)}
               </p>
-            )}
-            {!selectedRow && hotspotStats.uncertainCount > 0 && (
-              <p>
-                {hotspotStats.uncertainCount.toLocaleString()} locations could not be assigned to a barangay.
+              <div className="map-overview-cluster-pin-list" aria-label="Pins in selected hotspot cluster">
+                {selectedCluster && token && (!clusterPinsAreCurrent || clusterPinsState.loading) ? (
+                  <p role="status">Loading detected pin details…</p>
+                ) : clusterPinsAreCurrent && clusterPinsState.error ? (
+                  <div>
+                    <p role="alert">{clusterPinsState.error}</p>
+                    <button type="button" onClick={() => setClusterDetailRetry((value) => value + 1)}>
+                      Retry details
+                    </button>
+                  </div>
+                ) : clusterDetail.pins.map((pin) => (
+                  <article className="map-overview-cluster-pin" key={pin.logID}>
+                    <strong>{pin.name}</strong>
+                    <span>Pin #{pin.logID}</span>
+                    {pin.landmark && <span>{pin.landmark}</span>}
+                    {pin.latitude != null && pin.longitude != null && (
+                      <span>{pin.latitude.toFixed(6)}, {pin.longitude.toFixed(6)}</span>
+                    )}
+                    {!pin.detailsAvailable && (
+                      <span className="map-overview-cluster-pin-unavailable">
+                        Individual pin details were not returned.
+                      </span>
+                    )}
+                  </article>
+                ))}
+              </div>
+              <p className="map-overview-hotspot-caveat">
+                Nearby groups are possible hotspots only; they do not confirm a violation. Click the map or Clear to return to the hotspot summary.
               </p>
-            )}
-            <p className="map-overview-hotspot-caveat">
-              Nearby groups are possible hotspots only; they do not confirm a violation.
-            </p>
-            {hotspotData?.parameters_used && (
-              <p className="map-overview-hotspot-method">
-                {hotspotMethodNote(hotspotData.parameters_used, mapView)}
+            </section>
+          ) : (
+            <section className="map-overview-hotspot-summary" aria-live="polite">
+              <div className="map-overview-card-heading">
+                <h4>Possible nearby groups</h4>
+                <AnalyticsInfoTip label="About hotspot locations">
+                  Group locations are assigned by map position, which can differ slightly from the barangay recorded on each pin.
+                </AnalyticsInfoTip>
+              </div>
+              {hotspotLoading ? (
+                <p>Loading possible groups…</p>
+              ) : hotspotError ? (
+                <p role="alert">{hotspotError}</p>
+              ) : hotspotStats.clusterCount === 0 ? (
+                <p>No nearby groups for this period.</p>
+              ) : (
+                <p>
+                  Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} eligible effective-Red detection pins)
+                </p>
+              )}
+              {!selectedRow && hotspotStats.uncertainCount > 0 && (
+                <p>
+                  {hotspotStats.uncertainCount.toLocaleString()} locations could not be assigned to a barangay.
+                </p>
+              )}
+              <p className="map-overview-hotspot-caveat">
+                Nearby groups are possible hotspots only; they do not confirm a violation.
               </p>
-            )}
-          </section>
+              {hotspotData?.parameters_used && (
+                <p className="map-overview-hotspot-method">
+                  {hotspotMethodNote(hotspotData.parameters_used, mapView)}
+                </p>
+              )}
+            </section>
+          )}
 
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">

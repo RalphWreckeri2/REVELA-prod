@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   analyticsDetectionScanSummary,
+  fetchHotspotClusterPins,
   hotspotOverlayRadius,
+  hotspotClusterDetails,
   hotspotMethodNote,
   hotspotRequestParams,
   hotspotScanNote,
   hotspotSummary,
+  hotspotViewTransition,
 } from "./hotspotPresentation.js";
 
 const mapOverviewSource = readFileSync(
@@ -107,6 +110,90 @@ test("hotspot method note separates eligible detection clusters from map fill me
   "DBSCAN groups eligible effective-Red detection pins (Haversine eps 50 m; MinPts 3). Orange circles show hotspot groups; polygon fills show registered-business counts, not OPS tiers.");
   assert.match(mapOverviewSource, /hotspotMethodNote\(hotspotData\.parameters_used, mapView\)/);
   assert.match(mapOverviewSource, /eligible effective-Red detection pins/);
+});
+
+test("enabling hotspots overrides map mode and hides registered/inspection controls", () => {
+  assert.deepEqual(hotspotViewTransition(true), {
+    showHotspots: true,
+    mapView: "registered",
+  });
+  assert.deepEqual(hotspotViewTransition(false), {
+    showHotspots: false,
+    mapView: null,
+  });
+  assert.match(mapOverviewSource, /!showHotspots && \([\s\S]*?aria-label="Map color"/);
+  assert.match(mapOverviewSource, /const transition = hotspotViewTransition\(next\)/);
+});
+
+test("selected hotspot details itemize pins from existing flag pages", async () => {
+  const cluster = {
+    cluster_id: 7,
+    centroid: { lat: 13.95, lng: 121.11 },
+    size: 2,
+    log_ids: [101, 102],
+    per_barangay: [{ barangay_name: "Barangay One", count: 2 }],
+  };
+  const pages = [];
+  const getFlagsPage = async (params) => {
+    pages.push(params);
+    if (params.page === 1) {
+      return {
+        data: [{
+          logID: 101,
+          detectedName: "Corner Store",
+          nearestLandmark: "Near the plaza",
+          latitude: "13.951",
+          longitude: "121.112",
+        }],
+        pages: 2,
+      };
+    }
+    return {
+      data: [{
+        logID: 102,
+        detectedName: "Market Stall",
+        resolvedAddress: "Main road",
+        latitude: 13.952,
+        longitude: 121.113,
+      }, {
+        logID: 999,
+        detectedName: "Unrelated pin",
+      }],
+      pages: 2,
+    };
+  };
+  const pins = await fetchHotspotClusterPins(getFlagsPage, "token", cluster);
+  assert.equal(pages.length, 2);
+  assert.ok(pages.every((params) => (
+    params.color === "Red"
+    && params.origin === "detection"
+    && params.registryLink === "unlinked"
+  )));
+  const details = hotspotClusterDetails(cluster, pins);
+  assert.equal(details.clusterId, 7);
+  assert.equal(details.location, "Barangay One");
+  assert.equal(details.pinCount, 2);
+  assert.deepEqual(details.pins, [
+    {
+      logID: 101,
+      name: "Corner Store",
+      landmark: "Near the plaza",
+      latitude: 13.951,
+      longitude: 121.112,
+      detailsAvailable: true,
+    },
+    {
+      logID: 102,
+      name: "Market Stall",
+      landmark: "Main road",
+      latitude: 13.952,
+      longitude: 121.113,
+      detailsAvailable: true,
+    },
+  ]);
+  assert.match(mapOverviewSource, /aria-label="Clear selected hotspot cluster"/);
+  assert.match(mapOverviewSource, /onClick=\{clearSelectedCluster\}/);
+  assert.match(mapOverviewSource, /setSelectedClusterId\(Number\(cluster\.cluster_id\)\)/);
 });
 
 test("analytics scan summary includes the latest date, status, and stop reason", () => {

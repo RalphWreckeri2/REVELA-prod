@@ -1,3 +1,72 @@
+export function hotspotViewTransition(enabled) {
+  return {
+    showHotspots: enabled,
+    mapView: enabled ? "registered" : null,
+  };
+}
+
+export function hotspotClusterPinIds(cluster) {
+  return Array.isArray(cluster?.log_ids)
+    ? cluster.log_ids.map(Number).filter(Number.isFinite)
+    : [];
+}
+
+export function hotspotClusterDetails(cluster, pinRows = []) {
+  const memberIds = new Set(hotspotClusterPinIds(cluster));
+  const pinsById = new Map(
+    pinRows
+      .filter((pin) => pin?.logID != null && memberIds.has(Number(pin.logID)))
+      .map((pin) => [Number(pin.logID), pin]),
+  );
+  const barangays = (cluster?.per_barangay || [])
+    .map((row) => row.barangay_name)
+    .filter(Boolean);
+
+  return {
+    clusterId: cluster?.cluster_id,
+    location: barangays.length
+      ? [...new Set(barangays)].join(", ")
+      : `Near ${Number(cluster?.centroid?.lat).toFixed(5)}, ${Number(cluster?.centroid?.lng).toFixed(5)}`,
+    pinCount: Number(cluster?.size) || memberIds.size,
+    centroid: cluster?.centroid || null,
+    pins: [...memberIds].map((logID) => {
+      const pin = pinsById.get(logID);
+      return {
+        logID,
+        name: pin?.detectedName || `Detection pin #${logID}`,
+        landmark: pin?.resolvedAddress || pin?.nearestLandmark || "",
+        latitude: pin?.latitude == null ? null : Number(pin.latitude),
+        longitude: pin?.longitude == null ? null : Number(pin.longitude),
+        detailsAvailable: Boolean(pin),
+      };
+    }),
+  };
+}
+
+export async function fetchHotspotClusterPins(getFlagsPage, token, cluster, signal) {
+  const memberIds = new Set(hotspotClusterPinIds(cluster));
+  if (!memberIds.size) return [];
+
+  const rows = [];
+  let page = 1;
+  let pages;
+  do {
+    const result = await getFlagsPage({
+      page,
+      limit: 1000,
+      color: "Red",
+      origin: "detection",
+      registryLink: "unlinked",
+      signal,
+    }, token);
+    rows.push(...(Array.isArray(result) ? result : (result?.data || [])));
+    pages = result?.pages ?? 1;
+    page += 1;
+  } while (page <= pages);
+
+  return rows.filter((row) => memberIds.has(Number(row.logID)));
+}
+
 export function hotspotRequestParams(datePreset) {
   return { date_preset: datePreset || "all" };
 }

@@ -359,6 +359,71 @@
   font-size: 11px !important;
 }
 
+.map-overview-cluster-detail {
+  min-width: 0;
+}
+
+.map-overview-cluster-detail .map-overview-card-heading {
+  align-items: flex-start;
+}
+
+.map-overview-cluster-detail h4 {
+  color: var(--color-ink);
+}
+
+.map-overview-cluster-detail .map-overview-card-heading p,
+.map-overview-cluster-centroid {
+  margin: 3px 0 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.map-overview .map-overview-cluster-clear {
+  min-height: 34px;
+  padding: 5px 10px;
+  flex: 0 0 auto;
+}
+
+.map-overview-cluster-pin-list {
+  display: grid;
+  max-height: 260px;
+  gap: 7px;
+  overflow: auto;
+  padding: 2px 2px 2px 0;
+}
+
+.map-overview-cluster-pin {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 9px;
+  background: var(--color-input-bg, #f8fafc);
+  overflow-wrap: anywhere;
+}
+
+.map-overview-cluster-pin strong {
+  color: var(--color-ink);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.map-overview-cluster-pin span {
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.map-overview-cluster-pin .map-overview-cluster-pin-unavailable {
+  font-style: italic;
+}
+
+.map-overview-cluster-detail .map-overview-hotspot-caveat {
+  margin-top: 2px;
+}
+
 .map-overview-segmented button.active,
 .map-overview-choice-row button.active {
   border-color: #2563eb;
