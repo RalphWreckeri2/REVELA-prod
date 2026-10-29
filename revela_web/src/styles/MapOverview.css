@@ -336,7 +336,9 @@
 }
 
 .map-overview-hotspot-summary .map-overview-card-heading {
-  justify-content: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 7px;
 }
 

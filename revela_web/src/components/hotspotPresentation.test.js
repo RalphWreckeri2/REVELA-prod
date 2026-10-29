@@ -166,6 +166,17 @@ test("hotspot panel shows only its summary and selected-cluster content", () => 
   );
 });
 
+test("hotspot summary header keeps its info button aligned at the far right", () => {
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-hotspot-summary \.map-overview-card-heading\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*space-between;/,
+  );
+  assert.match(
+    mapOverviewSource,
+    /<h4>Possible nearby groups<\/h4>\s*<AnalyticsInfoTip label="About hotspot locations">/,
+  );
+});
+
 test("selected hotspot details itemize pins from existing flag pages", async () => {
   const cluster = {
     cluster_id: 7,
