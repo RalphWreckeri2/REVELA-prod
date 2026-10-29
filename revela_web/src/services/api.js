@@ -1317,6 +1317,7 @@ function analyticsFiltersToSearchParams(filters = {}) {
   set("barangay_id", filters.barangay_id);
   set("application_status", filters.application_status);
   set("line_of_business", filters.line_of_business);
+  set("display_sector", filters.display_sector);
   set("business_type", filters.business_type);
   set("business_size", filters.business_size);
   set("registration_type", filters.registration_type);

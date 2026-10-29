@@ -36,6 +36,7 @@ const REGISTRY_DIMENSIONS = [
   { key: "business_size", label: "By size" },
   { key: "business_type", label: "By type" },
   { key: "registration_type", label: "By registration type" },
+  { key: "display_sector", label: "By sector" },
 ];
 const STATUS_COLORS = {
   registered_on_map: "#2563eb",
@@ -167,6 +168,7 @@ export default function MapOverview({ token, filters }) {
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
   const [selectedBarangayId, setSelectedBarangayId] = useState(null);
+  const [selectedSectorKey, setSelectedSectorKey] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
   const [hoveredBarangayId, setHoveredBarangayId] = useState(null);
   const [activeDimension, setActiveDimension] = useState("business_size");
@@ -192,11 +194,16 @@ export default function MapOverview({ token, filters }) {
   const fitBarangayBoundsRef = useRef(null);
   const updateLabelVisibilityRef = useRef(null);
   const { isLoaded, loadError } = useGoogleMapsScript();
+  const overviewFilters = useMemo(
+    () => ({ ...filters, display_sector: selectedSectorKey }),
+    [filters, selectedSectorKey],
+  );
   const { overview, loading, error, retry } = useBarangayOverview(
     token,
-    filters,
+    overviewFilters,
     datePreset,
   );
+  const displaySectorOptions = overview?.display_sectors || [];
 
   const barangayRows = overview?.barangays || EMPTY_BARANGAY_ROWS;
   const rowsById = useMemo(() => new Map(
@@ -581,6 +588,25 @@ export default function MapOverview({ token, filters }) {
               ))}
             </select>
           </label>
+          <label className="map-overview-select-label map-overview-select-label--filter">
+            <span>Sector</span>
+            <select
+              aria-label="Filter registered businesses by sector"
+              value={selectedSectorKey}
+              onChange={(event) => {
+                setSelectedSectorKey(event.target.value);
+                setActiveDimension("display_sector");
+              }}
+            >
+              <option value="">All sectors</option>
+              {displaySectorOptions.map((sector) => (
+                <option key={sector.value} value={sector.value}>{sector.label}</option>
+              ))}
+            </select>
+            <small className="map-overview-sector-scope">
+              Filters registered businesses only.
+            </small>
+          </label>
           <label className="map-overview-date-label" title="Choose the date range">
             <span>Date range</span>
             <select aria-label="Date range" title="Choose the date range"
@@ -731,7 +757,9 @@ export default function MapOverview({ token, filters }) {
               ))}
             </div>
             <CountsBar rows={coloredDimensionRows}
-              emptyMessage="No registered businesses in this view yet." />
+              emptyMessage={selectedSectorKey
+                ? "No registered businesses match this sector."
+                : "No registered businesses in this view yet."} />
           </section>
 
           <section className="map-overview-detail-card">
