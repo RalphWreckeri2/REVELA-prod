@@ -718,7 +718,7 @@ export default function MapOverview({ token, filters }) {
             </div>
           </div>
           <p className="map-overview-map-hint">
-            Zoom in or use the list below to pick small barangays.
+            Zoom in or use the Barangay filter above to pick small barangays.
           </p>
         </section>
 

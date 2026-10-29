@@ -178,8 +178,27 @@ const BUSINESS_SIZE_COLORS = Object.freeze({
   large: "#f59e0b",
 });
 
+export const DISPLAY_SECTOR_COLORS = Object.freeze({
+  retail: "#8b5cf6",
+  wholesale_vehicles: "#be123c",
+  food_drink: "#a16207",
+  real_estate: "#0891b2",
+  manufacturing: "#7f1d1d",
+  agriculture_mining: "#6b21a8",
+  construction_utilities: "#c026d3",
+  transport_storage: "#0f766e",
+  finance_professional: "#a21caf",
+  information_communication: "#854d0e",
+  hospitality_arts_recreation: "#e11d48",
+  education_health_other_services: "#475569",
+  unmapped: "#6b7280",
+});
+
 export function registryCategoryColor(dimension, value) {
   const normalizedValue = String(value ?? "Unknown").trim().toLowerCase();
+  if (dimension === "display_sector" && DISPLAY_SECTOR_COLORS[normalizedValue]) {
+    return DISPLAY_SECTOR_COLORS[normalizedValue];
+  }
   if (dimension === "business_size" && BUSINESS_SIZE_COLORS[normalizedValue]) {
     return BUSINESS_SIZE_COLORS[normalizedValue];
   }

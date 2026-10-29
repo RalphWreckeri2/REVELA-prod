@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildBarangayOverviewFilters,
+  DISPLAY_SECTOR_COLORS,
   getBarangayTopTotals,
   getMapPinBuckets,
   getNotInRegistryPinTotal,
@@ -147,6 +148,45 @@ test("registry category colors stay fixed across scopes and row order", () => {
   assert.notEqual(
     registryCategoryColor("business_type", "Corporation"),
     registryCategoryColor("business_type", "Sole Proprietorship"),
+  );
+});
+
+test("display sectors use twelve distinct fixed colors and a separate unmapped gray", () => {
+  const sectorKeys = [
+    "retail",
+    "wholesale_vehicles",
+    "food_drink",
+    "real_estate",
+    "manufacturing",
+    "agriculture_mining",
+    "construction_utilities",
+    "transport_storage",
+    "finance_professional",
+    "information_communication",
+    "hospitality_arts_recreation",
+    "education_health_other_services",
+  ];
+  const sectorColors = sectorKeys.map((key) => (
+    registryCategoryColor("display_sector", key)
+  ));
+
+  assert.equal(sectorColors.length, 12);
+  assert.equal(new Set(sectorColors).size, 12);
+  assert.deepEqual(
+    sectorColors,
+    sectorKeys.map((key) => DISPLAY_SECTOR_COLORS[key]),
+  );
+  assert.equal(
+    registryCategoryColor("display_sector", "unmapped"),
+    DISPLAY_SECTOR_COLORS.unmapped,
+  );
+  assert.ok(!sectorColors.includes(DISPLAY_SECTOR_COLORS.unmapped));
+  assert.ok(!sectorColors.includes("#f97316"));
+  assert.ok(!sectorColors.includes("#3b82f6"));
+  assert.ok(!sectorColors.includes("#10b981"));
+  assert.equal(
+    registryCategoryColor("display_sector", "retail"),
+    registryCategoryColor("display_sector", "retail"),
   );
 });
 
