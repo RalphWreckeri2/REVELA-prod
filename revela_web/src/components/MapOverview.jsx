@@ -11,6 +11,12 @@ import {
   normalizeGeoJsonWinding,
 } from "./barangayMapMapping";
 import {
+  BARANGAY_MAP_INTERACTION_EVENTS,
+  fitMapToGeoJsonFeatures,
+  MIN_BARANGAY_MAP_ZOOM,
+  shouldFitBarangayMap,
+} from "./barangayMapFit";
+import {
   buildBarangayOverviewFilters,
   getBarangayTopTotals,
   getMapPinBuckets,
@@ -23,9 +29,7 @@ import {
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
-const MAP_MIN_ZOOM = 12;
 const MAP_MAX_ZOOM = 20;
-const MAP_BOUNDS_PADDING_RATIO = 0.5;
 const MAX_SELECTED_BARANGAY_ZOOM = 16;
 const CHOROPLETH_COLORS = {
   registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
@@ -60,29 +64,6 @@ function shortBarangay(name = "") {
 
 function totalOf(rows = []) {
   return rows.reduce((total, row) => total + Number(row.count || 0), 0);
-}
-
-function getMunicipalityRestriction(features) {
-  const bounds = new window.google.maps.LatLngBounds();
-  features.forEach((feature) => {
-    feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
-  });
-  if (bounds.isEmpty()) return null;
-
-  const southWest = bounds.getSouthWest();
-  const northEast = bounds.getNorthEast();
-  const latitudePadding = (northEast.lat() - southWest.lat()) * MAP_BOUNDS_PADDING_RATIO;
-  const longitudePadding = (northEast.lng() - southWest.lng()) * MAP_BOUNDS_PADDING_RATIO;
-  return new window.google.maps.LatLngBounds(
-    new window.google.maps.LatLng(
-      southWest.lat() - latitudePadding,
-      southWest.lng() - longitudePadding,
-    ),
-    new window.google.maps.LatLng(
-      northEast.lat() + latitudePadding,
-      northEast.lng() + longitudePadding,
-    ),
-  ).toJSON();
 }
 
 function CountsBar({ rows, emptyMessage }) {
@@ -180,15 +161,19 @@ export default function MapOverview({ token, filters }) {
   const hoverInfoWindowRef = useRef(null);
   const styleFeatureRef = useRef(null);
   const mapRef = useRef(null);
-  const municipalityRestrictionRef = useRef(null);
   const boundaryFeaturesRef = useRef([]);
   const sourceGeoJsonFeaturesRef = useRef([]);
   const labelMarkersRef = useRef([]);
   const mapIdleRef = useRef(false);
   const mapIdleListenerRef = useRef(null);
   const resizeObserverRef = useRef(null);
+  const mapInteractionListenersRef = useRef([]);
   const fitFrameRef = useRef(null);
   const pendingSelectionFitRef = useRef(false);
+  const userMapInteractedRef = useRef(false);
+  const programmaticMapChangeRef = useRef(false);
+  const initialFitCompletedRef = useRef(false);
+  const containerSizeObservedRef = useRef(false);
   const lastFitSignatureRef = useRef("");
   const lastMapSizeRef = useRef("");
   const fitBarangayBoundsRef = useRef(null);
@@ -273,46 +258,52 @@ export default function MapOverview({ token, filters }) {
     dataLayerRef.current?.setStyle((feature) => styleFeature(feature));
   }, [styleFeature]);
 
-  const fitBarangayBounds = useCallback(() => {
+  const fitBarangayBounds = useCallback((force = false, selectionOverride) => {
     const map = mapRef.current;
     const container = map?.getDiv();
     if (!mapIdleRef.current || !map || !container?.clientWidth || !container?.clientHeight
-      || !boundaryFeaturesRef.current.length) return;
+      || !containerSizeObservedRef.current || !sourceGeoJsonFeaturesRef.current.length) return;
+    if (!shouldFitBarangayMap({
+      force,
+      userInteracted: userMapInteractedRef.current,
+    })) return;
     const size = `${container.clientWidth}x${container.clientHeight}`;
-    const selectedId = selectedBarangayId == null ? null : Number(selectedBarangayId);
+    const activeSelection = selectionOverride === undefined
+      ? selectedBarangayId
+      : selectionOverride;
+    const selectedId = activeSelection == null ? null : Number(activeSelection);
     const signature = `${selectedId ?? "all"}:${size}`;
-    if (signature === lastFitSignatureRef.current) return;
-    const bounds = new window.google.maps.LatLngBounds();
-    const features = selectedId == null
-      ? boundaryFeaturesRef.current
-      : boundaryFeaturesRef.current.filter((feature) => (
-        getBarangayIdForGeoJsonName(feature.getProperty("ADM4_EN")) === selectedId
+    if (!force && signature === lastFitSignatureRef.current) return;
+    const geoJsonFeatures = selectedId == null
+      ? sourceGeoJsonFeaturesRef.current
+      : sourceGeoJsonFeaturesRef.current.filter((feature) => (
+        getBarangayIdForGeoJsonName(feature.properties?.ADM4_EN) === selectedId
       ));
-    features.forEach((feature) => {
-      feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
-    });
-    if (!bounds.isEmpty()) {
-      lastFitSignatureRef.current = signature;
-      const isSelectionFit = selectedId != null;
-      const padding = isSelectionFit ? 60 : 24;
-      if (isSelectionFit) pendingSelectionFitRef.current = true;
-      map.fitBounds(bounds, {
-        top: padding,
-        right: padding,
-        bottom: padding,
-        left: padding,
-      });
+    if (!geoJsonFeatures.length) return;
+    const isSelectionFit = selectedId != null;
+    lastFitSignatureRef.current = signature;
+    const padding = isSelectionFit ? 60 : 24;
+    if (isSelectionFit) pendingSelectionFitRef.current = true;
+    programmaticMapChangeRef.current = true;
+    const fittedBounds = fitMapToGeoJsonFeatures(map, geoJsonFeatures, padding);
+    if (!fittedBounds) {
+      programmaticMapChangeRef.current = false;
+      lastFitSignatureRef.current = "";
+      return;
+    }
+    if (!initialFitCompletedRef.current) {
+      initialFitCompletedRef.current = true;
     }
   }, [selectedBarangayId]);
 
-  const scheduleBarangayFit = useCallback(() => {
+  const scheduleBarangayFit = useCallback((force = false, selectionOverride) => {
     if (fitFrameRef.current != null) {
       window.cancelAnimationFrame(fitFrameRef.current);
     }
     fitFrameRef.current = window.requestAnimationFrame(() => {
       fitFrameRef.current = window.requestAnimationFrame(() => {
         fitFrameRef.current = null;
-        fitBarangayBoundsRef.current?.();
+        fitBarangayBoundsRef.current?.(force, selectionOverride);
       });
     });
   }, []);
@@ -373,21 +364,17 @@ export default function MapOverview({ token, filters }) {
   }, [updateBarangayLabelVisibility]);
 
   useEffect(() => {
-    scheduleBarangayFit();
+    scheduleBarangayFit(true);
   }, [scheduleBarangayFit, selectedBarangayId]);
+
+  const markUserMapInteraction = useCallback(() => {
+    if (initialFitCompletedRef.current && !programmaticMapChangeRef.current) {
+      userMapInteractedRef.current = true;
+    }
+  }, []);
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
-    if (municipalityRestrictionRef.current) {
-      map.setOptions({
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom: MAP_MAX_ZOOM,
-        restriction: {
-          latLngBounds: municipalityRestrictionRef.current,
-          strictBounds: true,
-        },
-      });
-    }
     hoverInfoWindowRef.current = new window.google.maps.InfoWindow();
     if (boundaryFeaturesRef.current.length) {
       addBarangayLabels(
@@ -398,28 +385,36 @@ export default function MapOverview({ token, filters }) {
     }
     mapIdleListenerRef.current = map.addListener("idle", () => {
       mapIdleRef.current = true;
+      programmaticMapChangeRef.current = false;
       if (pendingSelectionFitRef.current) {
         pendingSelectionFitRef.current = false;
         if (map.getZoom() > MAX_SELECTED_BARANGAY_ZOOM) {
+          programmaticMapChangeRef.current = true;
           map.setZoom(MAX_SELECTED_BARANGAY_ZOOM);
         }
       }
       scheduleBarangayFit();
       updateLabelVisibilityRef.current?.();
     });
+    mapInteractionListenersRef.current = BARANGAY_MAP_INTERACTION_EVENTS.map(
+      (eventName) => map.addListener(eventName, markUserMapInteraction),
+    );
     if (typeof ResizeObserver !== "undefined") {
       resizeObserverRef.current = new ResizeObserver(() => {
         const container = map.getDiv();
         const size = `${container.clientWidth}x${container.clientHeight}`;
+        containerSizeObservedRef.current = true;
         if (size === lastMapSizeRef.current) return;
         lastMapSizeRef.current = size;
         lastFitSignatureRef.current = "";
         scheduleBarangayFit();
       });
       resizeObserverRef.current.observe(map.getDiv());
+    } else {
+      containerSizeObservedRef.current = true;
     }
     scheduleBarangayFit();
-  }, [addBarangayLabels, scheduleBarangayFit]);
+  }, [addBarangayLabels, markUserMapInteraction, scheduleBarangayFit]);
 
   const handleDataLayerLoad = useCallback((dataLayer) => {
     dataLayerRef.current = dataLayer;
@@ -435,17 +430,6 @@ export default function MapOverview({ token, filters }) {
         const features = dataLayer.addGeoJson(normalizedGeoJson);
         if (features.length !== 16) throw new Error("Expected all barangay boundaries.");
         boundaryFeaturesRef.current = features;
-        municipalityRestrictionRef.current = getMunicipalityRestriction(features);
-        if (municipalityRestrictionRef.current) {
-          mapRef.current?.setOptions({
-            minZoom: MAP_MIN_ZOOM,
-            maxZoom: MAP_MAX_ZOOM,
-            restriction: {
-              latLngBounds: municipalityRestrictionRef.current,
-              strictBounds: true,
-            },
-          });
-        }
         sourceGeoJsonFeaturesRef.current = normalizedGeoJson.features;
         dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
         addBarangayLabels(features, normalizedGeoJson.features);
@@ -459,9 +443,9 @@ export default function MapOverview({ token, filters }) {
     labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     boundaryFeaturesRef.current = [];
-    municipalityRestrictionRef.current = null;
     sourceGeoJsonFeaturesRef.current = [];
     lastFitSignatureRef.current = "";
+    initialFitCompletedRef.current = false;
     dataLayerRef.current = null;
   }, []);
 
@@ -470,6 +454,8 @@ export default function MapOverview({ token, filters }) {
     hoverInfoWindowRef.current = null;
     mapIdleListenerRef.current?.remove();
     mapIdleListenerRef.current = null;
+    mapInteractionListenersRef.current.forEach((listener) => listener.remove());
+    mapInteractionListenersRef.current = [];
     resizeObserverRef.current?.disconnect();
     resizeObserverRef.current = null;
     if (fitFrameRef.current != null) {
@@ -477,6 +463,10 @@ export default function MapOverview({ token, filters }) {
       fitFrameRef.current = null;
     }
     mapIdleRef.current = false;
+    containerSizeObservedRef.current = false;
+    initialFitCompletedRef.current = false;
+    userMapInteractedRef.current = false;
+    programmaticMapChangeRef.current = false;
     lastFitSignatureRef.current = "";
     lastMapSizeRef.current = "";
     pendingSelectionFitRef.current = false;
@@ -519,7 +509,19 @@ export default function MapOverview({ token, filters }) {
   }, []);
 
   const selectFromList = (event) => {
-    setSelectedBarangayId(event.target.value ? Number(event.target.value) : null);
+    const selectedId = event.target.value ? Number(event.target.value) : null;
+    if (selectedId == null) {
+      userMapInteractedRef.current = false;
+      lastFitSignatureRef.current = "";
+    }
+    setSelectedBarangayId(selectedId);
+  };
+
+  const fitAllBarangays = () => {
+    userMapInteractedRef.current = false;
+    lastFitSignatureRef.current = "";
+    setSelectedBarangayId(null);
+    scheduleBarangayFit(true, null);
   };
 
   const pinRows = useMemo(() => {
@@ -576,49 +578,65 @@ export default function MapOverview({ token, filters }) {
         </div>
       </div>
 
-      <div className="map-overview-controls" role="group" aria-label="Analytics filters">
-        <span className="map-overview-filter-by">Filter by</span>
-        <div className="map-overview-control-group">
-          <label className="map-overview-select-label map-overview-select-label--filter">
-            <span>Barangay</span>
-            <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
-              <option value="">All barangays</option>
-              {barangayRows.map((row) => (
-                <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
-              ))}
-            </select>
-          </label>
-          <label className="map-overview-select-label map-overview-select-label--filter">
-            <span>Sector</span>
-            <select
-              aria-label="Filter registered businesses by sector"
-              value={selectedSectorKey}
-              onChange={(event) => {
-                setSelectedSectorKey(event.target.value);
-                setActiveDimension("display_sector");
-              }}
-            >
-              <option value="">All sectors</option>
-              {displaySectorOptions.map((sector) => (
-                <option key={sector.value} value={sector.value}>{sector.label}</option>
-              ))}
-            </select>
-            <small className="map-overview-sector-scope">
-              Filters registered businesses only.
-            </small>
-          </label>
-          <label className="map-overview-date-label" title="Choose the date range">
-            <span>Date range</span>
-            <select aria-label="Date range" title="Choose the date range"
-              value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
-              <option value="all">All time</option>
-              <option value="year">This year</option>
-              <option value="30days">Last 30 days</option>
-              <option value="7days">Last 7 days</option>
-            </select>
-          </label>
+      <section
+        className="map-overview-filter-card"
+        aria-labelledby="map-overview-filters-title"
+      >
+        <div className="map-overview-filter-heading">
+          <div className="map-overview-filter-heading-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 5h16l-6.5 7.5v5l-3 1.5v-6.5L4 5z" />
+            </svg>
+          </div>
+          <div>
+            <h3 id="map-overview-filters-title">Filters</h3>
+            <p>Choose what you would like to see on the map and in the details.</p>
+          </div>
         </div>
-      </div>
+        <div className="map-overview-controls" role="group" aria-label="Overview filters">
+          <div className="map-overview-control-group">
+            <label className="map-overview-select-label map-overview-select-label--filter">
+              <span>Barangay</span>
+              <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
+                <option value="">All barangays</option>
+                {barangayRows.map((row) => (
+                  <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
+                ))}
+              </select>
+            </label>
+            <label className="map-overview-select-label map-overview-select-label--filter">
+              <span>Sector</span>
+              <select
+                aria-label="Filter registered businesses by sector"
+                value={selectedSectorKey}
+                onChange={(event) => {
+                  setSelectedSectorKey(event.target.value);
+                  setActiveDimension("display_sector");
+                }}
+              >
+                <option value="">All sectors</option>
+                {displaySectorOptions.map((sector) => (
+                  <option key={sector.value} value={sector.value}>{sector.label}</option>
+                ))}
+              </select>
+              <small className="map-overview-sector-scope">
+                Filters registered businesses only.
+              </small>
+            </label>
+            <label className="map-overview-date-label" title="Choose the date range">
+              <span>Date range</span>
+              <select aria-label="Date range" title="Choose the date range"
+                value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
+                <option value="all">All time</option>
+                <option value="year">This year</option>
+                <option value="30days">Last 30 days</option>
+                <option value="7days">Last 7 days</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
 
       {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
       {error && <p className="map-overview-error-inline" role="alert">Some barangay details could not be updated.</p>}
@@ -654,12 +672,13 @@ export default function MapOverview({ token, filters }) {
                 onUnmount={handleMapUnmount}
                 options={{
                   mapId: REVELA_MAP_ID,
+                  isFractionalZoomEnabled: true,
                   clickableIcons: false,
                   mapTypeControl: false,
                   streetViewControl: false,
                   fullscreenControl: true,
                   zoomControl: true,
-                  minZoom: MAP_MIN_ZOOM,
+                  minZoom: MIN_BARANGAY_MAP_ZOOM,
                   maxZoom: MAP_MAX_ZOOM,
                 }}
               >
@@ -672,6 +691,14 @@ export default function MapOverview({ token, filters }) {
                 />
               </GoogleMap>
             )}
+            <button
+              type="button"
+              className="map-overview-fit-all"
+              aria-label="Fit all 16 barangays in the map"
+              onClick={fitAllBarangays}
+            >
+              Fit all barangays
+            </button>
             {boundaryError && (
               <p className="map-overview-map-error" role="alert">
                 Barangay boundaries could not be displayed.
@@ -728,14 +755,14 @@ export default function MapOverview({ token, filters }) {
               <span className="map-overview-selection-chip">
                 {shortBarangay(selectedRow.barangayName)}
                 <button type="button" aria-label="Show all barangays"
-                  onClick={() => setSelectedBarangayId(null)}>×</button>
+                  onClick={fitAllBarangays}>×</button>
               </span>
             ) : (
               <h3>All barangays</h3>
             )}
             {selectedRow && (
               <button className="map-overview-reset" type="button"
-                onClick={() => setSelectedBarangayId(null)}>Show all barangays</button>
+                onClick={fitAllBarangays}>Show all barangays</button>
             )}
           </div>
 
