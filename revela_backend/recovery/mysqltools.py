@@ -1,7 +1,9 @@
 import os
 import re
+import stat
 import subprocess
 from contextlib import contextmanager
+from pathlib import Path
 
 import mysql.connector
 
@@ -11,11 +13,7 @@ from recovery.audit import database_config
 def strict_tls_preflight():
     """Verify a remote MySQL TLS connection without acquiring locks or reading rows."""
     config = source_config()
-    if (config["host"] in ("localhost", "127.0.0.1", "::1")
-            or not config.get("ssl_ca")
-            or config.get("ssl_verify_cert") is not True
-            or config.get("ssl_verify_identity") is not True):
-        raise ValueError("strict_tls_configuration_required")
+    _require_remote_tls(config)
     connection = mysql.connector.connect(**config)
     try:
         cursor = connection.cursor()
@@ -44,9 +42,32 @@ def source_config():
     if config["host"] not in ("localhost", "127.0.0.1", "::1"):
         if not os.getenv("BACKUP_DB_USER") or not os.getenv("BACKUP_DB_PASSWORD"):
             raise ValueError("A dedicated least-privilege backup database identity is required")
-        ca = os.environ["BACKUP_DB_SSL_CA_FILE"]
-        config.update(ssl_ca=ca, ssl_verify_cert=True, ssl_verify_identity=True)
+        config.update(
+            ssl_ca=os.getenv("BACKUP_DB_SSL_CA_FILE", ""),
+            ssl_cert=os.getenv("BACKUP_DB_SSL_CERT_FILE", ""),
+            ssl_key=os.getenv("BACKUP_DB_SSL_KEY_FILE", ""),
+            ssl_verify_cert=True,
+            ssl_verify_identity=True,
+        )
+        _require_remote_tls(config)
     return config
+
+
+def _require_remote_tls(config):
+    if (config.get("host") in ("localhost", "127.0.0.1", "::1")
+            or not config.get("ssl_ca")
+            or not config.get("ssl_cert")
+            or not config.get("ssl_key")
+            or config.get("ssl_verify_cert") is not True
+            or config.get("ssl_verify_identity") is not True):
+        raise ValueError("strict_tls_configuration_required")
+    ca_path = Path(config["ssl_ca"])
+    cert_path = Path(config["ssl_cert"])
+    key_path = Path(config["ssl_key"])
+    if not ca_path.is_file() or not cert_path.is_file() or not key_path.is_file():
+        raise ValueError("backup_tls_material_unavailable")
+    if os.name != "nt" and stat.S_IMODE(key_path.stat().st_mode) & 0o077:
+        raise ValueError("backup_client_key_permissions_invalid")
 
 
 @contextmanager
@@ -57,8 +78,15 @@ def client_options(directory, config):
         return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
     entries = {"host": config["host"], "port": config["port"],
                "user": config["user"], "password": config["password"]}
-    if config.get("ssl_ca"):
-        entries.update({"ssl-ca": config["ssl_ca"], "ssl-mode": "VERIFY_IDENTITY"})
+    remote = config.get("host") not in ("localhost", "127.0.0.1", "::1")
+    if remote:
+        _require_remote_tls(config)
+        entries.update({
+            "ssl-ca": config["ssl_ca"],
+            "ssl-cert": config["ssl_cert"],
+            "ssl-key": config["ssl_key"],
+            "ssl-mode": "VERIFY_IDENTITY",
+        })
     else:
         entries["ssl-mode"] = "PREFERRED"
     try:
@@ -94,14 +122,24 @@ def client_environment(directory):
 
 def run_dump(executable, config, destination, server_version, timeout=600):
     check_dump_client(executable, server_version)
-    with client_options(destination.parent, config) as defaults, destination.open("xb") as output:
-        result = subprocess.run([
-            executable, defaults, "--single-transaction", "--quick", "--skip-lock-tables",
-            "--routines", "--events", "--triggers", "--hex-blob", "--no-tablespaces",
-            "--set-gtid-purged=OFF", "--column-statistics=0", "--default-character-set=utf8mb4",
-            config["database"],
-        ], stdout=output, stderr=subprocess.PIPE, timeout=timeout, env=client_environment(destination.parent))
-        output.flush()
-        os.fsync(output.fileno())
-    if result.returncode or not destination.stat().st_size:
-        raise RuntimeError("database_dump_failed")
+    created = False
+    try:
+        with client_options(destination.parent, config) as defaults:
+            descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            created = True
+            with os.fdopen(descriptor, "wb") as output:
+                result = subprocess.run([
+                    executable, defaults, "--single-transaction", "--quick", "--skip-lock-tables",
+                    "--routines", "--events", "--triggers", "--hex-blob", "--no-tablespaces",
+                    "--set-gtid-purged=OFF", "--column-statistics=0", "--default-character-set=utf8mb4",
+                    config["database"],
+                ], stdout=output, stderr=subprocess.PIPE, timeout=timeout,
+                    env=client_environment(destination.parent))
+                output.flush()
+                os.fsync(output.fileno())
+        if result.returncode or not destination.stat().st_size:
+            raise RuntimeError("database_dump_failed")
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise

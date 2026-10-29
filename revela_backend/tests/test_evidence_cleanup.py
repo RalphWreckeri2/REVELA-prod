@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -125,6 +126,36 @@ class EvidenceCleanupTests(unittest.TestCase):
         self.assertEqual(self.store.rows[1]["photoPath"], "archived://first.jpg")
         self.assertIn("FOR UPDATE", self.store.queries[0][0])
         self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_tls_subdirectory_is_excluded_from_stats_download_and_cleanup(self):
+        from api.inspections import service
+
+        tls_directory = self.directory / "tls"
+        tls_directory.mkdir()
+        private_key_marker = b"synthetic-private-key-material"
+        private_key = tls_directory / "server-key.pem"
+        private_key.write_bytes(private_key_marker)
+
+        with patch.object(service, "mysql", SimpleNamespace(connection=self.store)):
+            stats, error = service.get_evidence_storage_stats(str(self.directory))
+            self.assertIsNone(error)
+            self.assertEqual(stats["totalFilesOnDisk"], 1)
+            self.assertEqual(stats["totalDiskBytes"], self.first.stat().st_size)
+
+            archive, error = service.generate_evidence_archive_zip(
+                str(self.directory), "all_verified")
+        self.assertIsNone(error)
+        archive_path, _, _ = archive
+        self.addCleanup(lambda: os.path.exists(archive_path) and os.remove(archive_path))
+        with zipfile.ZipFile(archive_path) as bundle:
+            self.assertFalse(any(name.endswith(".pem") for name in bundle.namelist()))
+            self.assertFalse(any(private_key_marker in bundle.read(name) for name in bundle.namelist()))
+
+        result, error = self.run_cleanup()
+        self.assertIsNone(error)
+        self.assertEqual(result["deletedFiles"], 1)
+        self.assertTrue(private_key.is_file())
+        self.assertEqual(private_key.read_bytes(), private_key_marker)
 
     def test_invalid_filter_does_not_touch_database_or_files(self):
         result, error = self.run_cleanup("invalid")

@@ -50,6 +50,11 @@ def admin_alert(event):
 
 def failure_delivery(settings, event):
     result = {"admin_inbox": admin_alert(event)}
+    if not settings.alert_url:
+        result["external_alert"] = "not_configured; admin inbox is the only notification channel"
+        if not result["admin_inbox"]:
+            log.error("Database backup failure alert unavailable: no HTTPS endpoint and admin inbox delivery failed")
+        return result
     try:
         signal(settings.alert_url, {"event": "database_backup_alert", **event})
         result["external_alert"] = "accepted_by_endpoint"

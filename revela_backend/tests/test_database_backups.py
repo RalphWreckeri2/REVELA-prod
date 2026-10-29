@@ -3,6 +3,7 @@ import hashlib
 import io
 import json
 import sys
+import subprocess
 import types
 import threading
 import time
@@ -14,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from flask import Flask
 
-from recovery import runner, status, db_storage, db_export
+from recovery import runner, status, db_storage, db_export, mysqltools
 from recovery.db_storage import DatabaseStorage, FEATURE
 from recovery.settings import DatabaseSettings
 from recovery.storage import retry
@@ -166,6 +167,144 @@ def test_storage_preflight_refuses_unsuitable_storage(setup, monkeypatch, condit
 def test_failure_diagnostics_expose_configuration_reason_without_secret_messages():
     assert runner._error_details(ValueError("private_bucket_required"))["reason"] == "private_bucket_required"
     assert "sensitive-password" not in json.dumps(runner._error_details(OSError("sensitive-password")))
+
+
+def test_remote_mysql_client_refuses_unverified_tls(tmp_path):
+    config = {
+        "host": "mysql.example.invalid",
+        "port": 3306,
+        "user": "backup",
+        "password": "synthetic-only",
+        "database": "fixture",
+        "ssl_ca": str(tmp_path / "ca.pem"),
+        "ssl_verify_cert": True,
+        "ssl_verify_identity": False,
+    }
+
+    with pytest.raises(ValueError, match="strict_tls_configuration_required"):
+        with mysqltools.client_options(tmp_path, config):
+            pytest.fail("unverified remote TLS must not produce client options")
+
+    assert not (tmp_path / ".mysql-client.cnf").exists()
+
+
+def test_remote_mysql_client_uses_identity_verification(tmp_path):
+    ca = tmp_path / "ca.pem"
+    cert = tmp_path / "client-cert.pem"
+    key = tmp_path / "client-key.pem"
+    ca.write_text("synthetic public CA", encoding="utf-8")
+    cert.write_text("synthetic client certificate", encoding="utf-8")
+    key.write_text("synthetic client key", encoding="utf-8")
+    key.chmod(0o600)
+    config = {
+        "host": "mysql.example.invalid",
+        "port": 3306,
+        "user": "backup",
+        "password": "synthetic-only",
+        "database": "fixture",
+        "ssl_ca": str(ca),
+        "ssl_cert": str(cert),
+        "ssl_key": str(key),
+        "ssl_verify_cert": True,
+        "ssl_verify_identity": True,
+    }
+
+    with mysqltools.client_options(tmp_path, config) as defaults:
+        options = (tmp_path / ".mysql-client.cnf").read_text(encoding="utf-8")
+        assert defaults.startswith("--defaults-file=")
+        assert 'ssl-mode="VERIFY_IDENTITY"' in options
+        assert f'ssl-ca="{str(ca).replace(chr(92), chr(92) * 2)}"' in options
+        assert f'ssl-cert="{str(cert).replace(chr(92), chr(92) * 2)}"' in options
+        assert f'ssl-key="{str(key).replace(chr(92), chr(92) * 2)}"' in options
+    assert not (tmp_path / ".mysql-client.cnf").exists()
+
+
+def test_failed_mysql_dump_removes_partial_plaintext(tmp_path, monkeypatch):
+    destination = tmp_path / "database.sql"
+    monkeypatch.setattr(mysqltools, "check_dump_client", lambda *_: None)
+
+    def partial_timeout(*_args, **kwargs):
+        kwargs["stdout"].write(b"partial SQL")
+        raise subprocess.TimeoutExpired("mysqldump", 1)
+
+    monkeypatch.setattr(mysqltools.subprocess, "run", partial_timeout)
+    config = {
+        "host": "127.0.0.1",
+        "port": 3306,
+        "user": "backup",
+        "password": "synthetic-only",
+        "database": "fixture",
+    }
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        mysqltools.run_dump("mysqldump", config, destination, "8.0.46")
+
+    assert not destination.exists()
+    assert not (tmp_path / ".mysql-client.cnf").exists()
+
+
+def test_export_aborts_when_database_inventory_changes_during_dump(setup, tmp_path, monkeypatch):
+    cfg, _ = setup
+    before = {
+        "mysql_version": "9.7.4",
+        "source_server_uuid": "source-uuid",
+        "tables": ["inspection_reports"],
+        "triggers": [],
+        "routines": [],
+        "events": [],
+    }
+    after = {**before, "tables": ["inspection_reports", "new_table"]}
+    inventories = iter((before, after))
+    monkeypatch.setattr(db_export, "inventory", lambda _: next(inventories))
+    monkeypatch.setattr(
+        db_export, "run_dump",
+        lambda _executable, _config, destination, _version: destination.write_bytes(b"synthetic SQL"),
+    )
+    connection = MagicMock()
+
+    with pytest.raises(ValueError, match="database_inventory_changed_during_export"):
+        db_export.export(cfg, {"database": "fixture"}, tmp_path, connection)
+
+    connection.commit.assert_called_once_with()
+    assert not (tmp_path / "database.sql.gz").exists()
+
+
+def test_existing_admin_inbox_can_report_failure_without_external_webhook(setup, monkeypatch):
+    from recovery import alerts
+    _ = setup
+    settings = SimpleNamespace(alert_url="")
+    monkeypatch.delenv("BACKUP_ALERT_WEBHOOK")
+    monkeypatch.setattr(alerts, "admin_alert", lambda _: True)
+    monkeypatch.setattr(alerts, "signal", lambda *_: pytest.fail("No webhook should be called"))
+
+    result = alerts.failure_delivery(settings, {"code": "database_dump_failed"})
+
+    assert result == {
+        "admin_inbox": True,
+        "external_alert": "not_configured; admin inbox is the only notification channel",
+    }
+
+
+def test_missing_admin_inbox_is_explicit_when_no_external_webhook(setup, monkeypatch, caplog):
+    from recovery import alerts
+    _ = setup
+    settings = SimpleNamespace(alert_url="")
+    monkeypatch.delenv("BACKUP_ALERT_WEBHOOK")
+    monkeypatch.setattr(alerts, "admin_alert", lambda _: False)
+
+    result = alerts.failure_delivery(settings, {"code": "database_dump_failed"})
+
+    assert result["admin_inbox"] is False
+    assert result["external_alert"].startswith("not_configured;")
+    assert "no HTTPS endpoint and admin inbox delivery failed" in caplog.text
+
+
+def test_external_webhook_is_optional_but_still_validated(setup, monkeypatch):
+    from recovery.settings import configuration_issues
+    monkeypatch.delenv("BACKUP_ALERT_WEBHOOK")
+    assert not any("BACKUP_ALERT_WEBHOOK" in issue for issue in configuration_issues())
+    monkeypatch.setenv("BACKUP_ALERT_WEBHOOK", "http://insecure.invalid")
+    assert "BACKUP_ALERT_WEBHOOK must use HTTPS" in configuration_issues()
 
 
 def fake_export(cfg, _config, work, _connection):
@@ -357,10 +496,17 @@ def test_scheduled_cli_runs_only_for_worker_during_slot_grace(setup, monkeypatch
     run.assert_not_called()
 
 
-def test_strict_tls_preflight_is_read_only_and_requires_identity_verification(monkeypatch):
+def test_strict_tls_preflight_is_read_only_and_requires_identity_verification(monkeypatch, tmp_path):
     from recovery import mysqltools
 
     calls = []
+    ca = tmp_path / "ca.pem"
+    cert = tmp_path / "client-cert.pem"
+    key = tmp_path / "client-key.pem"
+    ca.write_text("synthetic CA", encoding="utf-8")
+    cert.write_text("synthetic client certificate", encoding="utf-8")
+    key.write_text("synthetic client key", encoding="utf-8")
+    key.chmod(0o600)
 
     class Cursor:
         def execute(self, query):
@@ -381,7 +527,9 @@ def test_strict_tls_preflight_is_read_only_and_requires_identity_verification(mo
 
     config = {
         "host": "mysql.internal",
-        "ssl_ca": "synthetic-ca.pem",
+        "ssl_ca": str(ca),
+        "ssl_cert": str(cert),
+        "ssl_key": str(key),
         "ssl_verify_cert": True,
         "ssl_verify_identity": True,
     }
@@ -393,6 +541,8 @@ def test_strict_tls_preflight_is_read_only_and_requires_identity_verification(mo
 
     assert calls[0]["ssl_verify_cert"] is True
     assert calls[0]["ssl_verify_identity"] is True
+    assert calls[0]["ssl_cert"] == str(cert)
+    assert calls[0]["ssl_key"] == str(key)
     assert calls[1:] == [
         "SELECT VERSION()",
         "SHOW SESSION STATUS LIKE 'Ssl_cipher'",
@@ -410,6 +560,8 @@ def test_strict_tls_preflight_is_read_only_and_requires_identity_verification(mo
 @pytest.mark.parametrize("changes", [
     {"host": "127.0.0.1"},
     {"ssl_ca": ""},
+    {"ssl_cert": ""},
+    {"ssl_key": ""},
     {"ssl_verify_cert": False},
     {"ssl_verify_identity": False},
 ])
@@ -419,6 +571,8 @@ def test_strict_tls_preflight_refuses_unverified_connections(monkeypatch, change
     config = {
         "host": "mysql.internal",
         "ssl_ca": "synthetic-ca.pem",
+        "ssl_cert": "synthetic-client-cert.pem",
+        "ssl_key": "synthetic-client-key.pem",
         "ssl_verify_cert": True,
         "ssl_verify_identity": True,
     }
@@ -432,6 +586,29 @@ def test_strict_tls_preflight_refuses_unverified_connections(monkeypatch, change
         mysqltools.strict_tls_preflight()
 
     assert connected == []
+
+
+def test_remote_tls_rejects_group_or_world_readable_client_key(tmp_path):
+    ca = tmp_path / "ca.pem"
+    cert = tmp_path / "client-cert.pem"
+    key = tmp_path / "client-key.pem"
+    for path in (ca, cert, key):
+        path.write_text("synthetic TLS material", encoding="utf-8")
+    key.chmod(0o644)
+    config = {
+        "host": "mysql.internal",
+        "ssl_ca": str(ca),
+        "ssl_cert": str(cert),
+        "ssl_key": str(key),
+        "ssl_verify_cert": True,
+        "ssl_verify_identity": True,
+    }
+
+    if mysqltools.os.name == "nt":
+        pytest.skip("POSIX mode bits are enforced by the deployed Linux runtime")
+
+    with pytest.raises(ValueError, match="backup_client_key_permissions_invalid"):
+        mysqltools._require_remote_tls(config)
 
 
 def test_tls_preflight_cli_does_not_print_exception_text(monkeypatch, capsys):

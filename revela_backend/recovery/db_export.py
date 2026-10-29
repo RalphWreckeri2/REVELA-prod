@@ -93,14 +93,25 @@ def export(settings, config, work, connection):
     metadata = inventory(connection)
     # Conservative lower bound: the dump's actual transaction begins later.
     metadata["recovery_point"] = status.stamp()
+    connection.commit()
     sql = work / "database.sql"
     run_dump(settings.mysqldump, config, sql, metadata["mysql_version"])
+    if inventory(connection) != {
+            key: metadata[key] for key in
+            ("mysql_version", "source_server_uuid", "tables", "triggers", "routines", "events")}:
+        raise ValueError("database_inventory_changed_during_export")
     compressed = work / "database.sql.gz"
-    with sql.open("rb") as source, compressed.open("xb") as output:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as gz:
-            shutil.copyfileobj(source, gz, length=1024 * 1024)
-        output.flush()
-        os.fsync(output.fileno())
+    descriptor = os.open(compressed, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            with sql.open("rb") as source:
+                with gzip.GzipFile(filename="", mode="wb", fileobj=output, mtime=0) as gz:
+                    shutil.copyfileobj(source, gz, length=1024 * 1024)
+            output.flush()
+            os.fsync(output.fileno())
+    except Exception:
+        compressed.unlink(missing_ok=True)
+        raise
     # Verify both decompression/CRC and exact SQL bytes, not merely gzip presence.
     digest = hashlib.sha256()
     with gzip.open(compressed, "rb") as verified:

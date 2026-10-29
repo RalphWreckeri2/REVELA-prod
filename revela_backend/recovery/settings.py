@@ -52,7 +52,6 @@ def database_state_directory():
 def configuration_issues():
     backend = os.getenv("DB_BACKUP_STORAGE", "s3").strip().lower()
     required = ("BACKUP_ENVIRONMENT",
-                "BACKUP_ALERT_WEBHOOK",
                 "BACKUP_DB_HOST", "BACKUP_DB_PORT", "BACKUP_DB_NAME",
                 "BACKUP_DB_USER", "BACKUP_DB_PASSWORD", "DB_BACKUP_ROLE")
     if schedule_enabled():
@@ -96,9 +95,22 @@ def configuration_issues():
             issues.append("Missing BACKUP_DB_SSL_CA_FILE for remote database TLS verification")
         elif not Path(ca).is_file():
             issues.append("BACKUP_DB_SSL_CA_FILE must identify an installed CA file")
+        for name in ("BACKUP_DB_SSL_CERT_FILE", "BACKUP_DB_SSL_KEY_FILE"):
+            value = os.getenv(name, "").strip()
+            if not value:
+                issues.append(f"Missing {name} for remote database client authentication")
+            elif not Path(value).is_file():
+                issues.append(f"{name} must identify an installed client TLS file")
+        key_path = os.getenv("BACKUP_DB_SSL_KEY_FILE", "").strip()
+        if key_path and Path(key_path).is_file() and os.name != "nt":
+            import stat
+            if stat.S_IMODE(Path(key_path).stat().st_mode) & 0o077:
+                issues.append("BACKUP_DB_SSL_KEY_FILE must not be accessible by group or other users")
     if backend == "s3" and os.getenv("BACKUP_WORK_DIR") and not Path(os.environ["BACKUP_WORK_DIR"]).is_dir():
         issues.append("BACKUP_WORK_DIR must be an existing private workspace")
-    https_endpoints = ["BACKUP_ALERT_WEBHOOK"]
+    https_endpoints = []
+    if os.getenv("BACKUP_ALERT_WEBHOOK", "").strip():
+        https_endpoints.append("BACKUP_ALERT_WEBHOOK")
     if schedule_enabled():
         https_endpoints.append("BACKUP_HEARTBEAT_URL")
     for name in https_endpoints:
@@ -167,7 +179,7 @@ class DatabaseSettings:
             account=os.getenv("BACKUP_AWS_ACCOUNT_ID", ""),
             kms_key=os.getenv("BACKUP_KMS_KEY_ARN", ""),
             mysqldump=os.getenv("MYSQLDUMP_BIN", "mysqldump"),
-            alert_url=os.environ["BACKUP_ALERT_WEBHOOK"],
+            alert_url=os.getenv("BACKUP_ALERT_WEBHOOK", ""),
             heartbeat_url=os.getenv("BACKUP_HEARTBEAT_URL", ""),
             storage_backend=backend,
             volume_directory=volume,

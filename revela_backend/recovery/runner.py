@@ -48,7 +48,8 @@ def _error_details(exc):
         "matching_oracle_mysql_client_required", "database_requires_innodb_tables",
         "uploaded_export_verification_failed", "uploaded_export_checksum_mismatch",
         "export_exceeds_five_gib_upload_limit", "database_dump_failed",
-        "gzip_verification_failed", "invalid_backup_receipt", "backup_file_metadata_mismatch",
+        "gzip_verification_failed", "database_inventory_changed_during_export",
+        "invalid_backup_receipt", "backup_file_metadata_mismatch",
         "shared_status_noncurrent_lifecycle_required", "backup_data_lifecycle_expiration_not_allowed",
     }
     result = {"error_type": type(exc).__name__}
