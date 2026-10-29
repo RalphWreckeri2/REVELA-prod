@@ -10,6 +10,7 @@ import {
   quantileClass,
   quantileRangeLabels,
   registryCategoryColor,
+  registryCategoryColorsForRows,
   sortRegistryBreakdownRows,
   visibleRegistryDimensions,
 } from "./barangayOverviewPresentation.js";
@@ -149,6 +150,22 @@ test("registry category colors stay fixed across scopes and row order", () => {
     registryCategoryColor("business_type", "Corporation"),
     registryCategoryColor("business_type", "Sole Proprietorship"),
   );
+});
+
+test("registration and business-type breakdowns have distinct, stable segment and legend colors", () => {
+  const registration = ["Renewal", "New"];
+  const types = ["Sole Proprietorship", "Cooperative", "Corporation", "Partnership", "One Person Corporation"];
+  for (const [dimension, names] of [["registration_type", registration], ["business_type", types]]) {
+    const colors = registryCategoryColorsForRows(dimension, names.map(value => ({ value, count: 1 })));
+    assert.equal(colors.size, names.length);
+    assert.equal(new Set(colors.values()).size, names.length);
+    names.forEach(name => assert.equal(colors.get(name), registryCategoryColor(dimension, name)));
+    assert.deepEqual(colors, registryCategoryColorsForRows(dimension, [...names].reverse().map(value => ({ value }))));
+  }
+  const extras = registryCategoryColorsForRows("business_type", [
+    ...types, "Unspecified", "Other", "Other legal form", "Community association",
+  ].map(value => ({ value })));
+  assert.equal(new Set(extras.values()).size, extras.size, "unknown categories must not reuse a visible color");
 });
 
 test("display sectors use twelve distinct fixed colors and a separate unmapped gray", () => {

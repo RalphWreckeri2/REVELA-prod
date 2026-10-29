@@ -23,6 +23,7 @@
 .analytics-page {
   --analytics-grid-color: rgba(226, 232, 240, 0.4);
   --analytics-chart-hover: rgba(255, 255, 255, 0.05);
+  --analytics-operations-hover: rgba(204, 204, 204, 0.3);
   --analytics-indigo: #6366f1;
   --analytics-risk-medium: #b45309;
   --analytics-risk-low: #166534;
@@ -31,6 +32,7 @@
 html.theme-dark .analytics-page {
   --analytics-grid-color: rgba(203, 213, 225, 0.2);
   --analytics-chart-hover: rgba(255, 255, 255, 0.07);
+  --analytics-operations-hover: rgba(255, 255, 255, 0.07);
   --analytics-indigo: #a5b4fc;
   --analytics-risk-medium: #fcd34d;
   --analytics-risk-low: #86efac;
@@ -574,6 +576,11 @@ html.theme-dark .analytics-page .recharts-legend-item-text { color: var(--color-
   font-weight: 800;
 }
 .analytics-inspector-operations-card .analytics-chart-caption { margin: 5px 0 0; }
+html.theme-dark .analytics-inspector-operations-card .responsive-chart,
+html.theme-dark .analytics-inspector-operations-card .recharts-wrapper,
+html.theme-dark .analytics-inspector-operations-card .recharts-surface {
+  background: transparent;
+}
 .analytics-operations-legend {
   display: flex;
   flex-wrap: wrap;

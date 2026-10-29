@@ -1938,7 +1938,7 @@ export default function AnalyticsPage() {
                           width={Math.min(210, Math.max(128, width * 0.28))}
                           interval={0} tick={{ fontSize: 11, fill: "var(--color-muted)" }}
                           axisLine={false} tickLine={false} />
-                        <Tooltip content={<CustomTooltip />} />
+                         <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--analytics-operations-hover)" }} />
                         {INSPECTION_STATUS_STACKS.map(status => (
                           <Bar key={status.key} dataKey={status.key}
                             name={status.label} stackId="inspector-work"
@@ -3223,7 +3223,7 @@ export default function AnalyticsPage() {
                                   interval={0}
                                   tick={{ fontSize: 11, fill: "var(--color-muted)" }}
                                   axisLine={false} tickLine={false} />
-                                <Tooltip content={<CustomTooltip />} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--analytics-operations-hover)" }} />
                                 {OPERATIONS_STATUS_STACKS.map(status => (
                                   <Bar key={status.key} dataKey={status.key}
                                     name={status.label} stackId="inspector-work"

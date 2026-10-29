@@ -130,6 +130,48 @@ try {
     await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...position });
     await waitFor("document.querySelector('.analytics-inspector-operations-card .analytics-chart-tooltip')");
     assert.equal(await evaluate(`getComputedStyle(document.querySelector('.analytics-inspector-operations-card .analytics-chart-tooltip')).color`), "rgb(255, 255, 255)");
+    const plot = await evaluate(`(() => { const chart = document.querySelector('.analytics-inspector-operations-card');
+      const cursor = chart.querySelector('.recharts-tooltip-cursor');
+      return { background: getComputedStyle(chart.querySelector('.recharts-surface')).backgroundColor,
+        cursorFill: cursor && getComputedStyle(cursor).fill }; })()`);
+    assert.equal(plot.background, "rgba(0, 0, 0, 0)", `${theme}: inspector plot stays transparent`);
+    assert.equal(plot.cursorFill, theme === "dark" ? "rgba(255, 255, 255, 0.07)" : "rgba(204, 204, 204, 0.3)");
+    await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 5 });
+    for (const [dimension, expected] of [
+      ["By registration type", ["Renewal", "New"]],
+      ["By type", ["Sole Proprietorship", "Corporation", "Partnership", "Cooperative", "One Person Corporation"]],
+    ]) {
+      await evaluate(`[...document.querySelectorAll('.map-overview-choice-row button')].find(button => button.textContent === ${JSON.stringify(dimension)}).click()`);
+      const breakdown = await evaluate(`(() => {
+        const registry = document.querySelector('.map-overview-panel .map-overview-detail-card');
+        const segments = [...registry.querySelectorAll('.map-overview-stacked-bar > span')];
+        const rows = [...registry.querySelectorAll('.map-overview-count-list li')];
+        return { segments: segments.map(span => getComputedStyle(span).backgroundColor),
+          rows: rows.map(row => ({ name: row.querySelector('.map-overview-count-label').textContent,
+            color: getComputedStyle(row.querySelector('.map-overview-count-swatch')).backgroundColor })) };
+      })()`);
+      assert.deepEqual(breakdown.rows.map(row => row.name).sort(), [...expected].sort());
+      assert.deepEqual(breakdown.segments, breakdown.rows.map(row => row.color), `${theme}: segments match legend`);
+      assert.equal(new Set(breakdown.segments).size, expected.length, `${theme}: categories have distinct colors`);
+    }
+    if (theme === "dark") {
+      const popup = await evaluate(`(() => {
+        const element = document.createElement('div');
+        element.innerHTML = '<div class="gm-style-iw-t"><div class="gm-style-iw-tc"></div><div class="gm-style-iw-c"><div class="gm-style-iw-chr"><button class="gm-ui-hover-effect">×</button></div><div class="gm-style-iw-d"><div class="map-overview-hover-tooltip">Barangay I</div></div></div></div>';
+        document.querySelector('.map-overview').append(element);
+        const background = selector => getComputedStyle(element.querySelector(selector)).backgroundColor;
+        return { outer: background('.gm-style-iw-c'), header: background('.gm-style-iw-chr'),
+          content: background('.gm-style-iw-d'), tooltip: background('.map-overview-hover-tooltip'),
+          tail: getComputedStyle(element.querySelector('.gm-style-iw-tc'), '::after').backgroundColor,
+          border: getComputedStyle(element.querySelector('.gm-style-iw-c')).borderTopColor,
+          close: background('.gm-ui-hover-effect') };
+      })()`);
+      for (const key of ["outer", "header", "content", "tooltip", "tail"]) {
+        assert.equal(popup[key], "rgb(13, 13, 13)", `${key} of the popup is dark`);
+      }
+      assert.notEqual(popup.border, "rgb(255, 255, 255)");
+      assert.equal(popup.close, "rgba(0, 0, 0, 0)");
+    }
     await evaluate(`document.querySelector('.analytics-filter-smoke-trigger').click()`);
     await waitFor("document.querySelector('.analytics-filter-modal select')");
     const modal = await evaluate(`(() => { const panel = document.querySelector('.analytics-filter-modal');

@@ -28,6 +28,7 @@ import {
   quantileClass,
   quantileRangeLabels,
   registryCategoryColor,
+  registryCategoryColorsForRows,
   sortRegistryBreakdownRows,
 } from "./barangayOverviewPresentation";
 import {
@@ -260,12 +261,13 @@ export default function MapOverview({ token, filters }) {
   const dimensionRows = selectedDimension
     ? panelData?.registry?.[selectedDimension.key] || []
     : [];
+  const dimensionColors = registryCategoryColorsForRows(activeDimension, dimensionRows);
   const coloredDimensionRows = sortRegistryBreakdownRows(
     activeDimension,
     dimensionRows,
   ).map((row) => ({
     ...row,
-    color: registryCategoryColor(activeDimension, row.value),
+    color: dimensionColors.get(String(row.value ?? "Unknown")),
   }));
   const topTotals = getBarangayTopTotals(panelData);
   const mapRowsById = rowsById;

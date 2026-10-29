@@ -76,13 +76,22 @@ const sections = {
   prescriptive: { rankings: [], dispatch_recommendations: [], wlc_config: {} },
   operations: { inspector_stats: [{ userID: 1, fullName: "Inspector A" }, { userID: 2, fullName: "Inspector B" }], inspector_status_counts: [{ userID: 1, pending: 3, awaiting_review: 1, verified: 4 }, { userID: 2, pending: 2, awaiting_review: 2, verified: 5 }], status_breakdown: [{ status: "Assigned", count: 28 }, { status: "Submitted", count: 32 }, { status: "Verified", count: 64 }], inspection_timeline: [{ date: "2026-09-01", count: 12 }, { date: "2026-09-08", count: 24 }, { date: "2026-09-15", count: 19 }, { date: "2026-09-22", count: 32 }] },
 };
+const registryBreakdown = {
+  business_type: [
+    { value: "Sole Proprietorship", count: 600 }, { value: "Corporation", count: 160 },
+    { value: "Partnership", count: 80 }, { value: "Cooperative", count: 60 },
+    { value: "One Person Corporation", count: 20 },
+  ],
+  registration_type: [{ value: "Renewal", count: 720 }, { value: "New", count: 200 }],
+};
+for (const rows of Object.values(registryBreakdown)) rows.forEach(row => { row.label = row.value; });
 const barangayOverview = {
   barangays: barangays.map((barangayName, i) => ({
     barangayID: i + 1, barangayName, registry_total: 20 + i * 5,
     inspections: { total: 4 + i, pending: 2, waiting_for_review: 1, verified: 1 },
-    pins: { total: 5, detected_not_in_registry: 2 },
+    pins: { total: 5, detected_not_in_registry: 2 }, registry: registryBreakdown,
   })),
-  overall: { registry_total: 920, inspections: { total: 180, pending: 42, waiting_for_review: 12, verified: 126 }, pins: { total: 90, detected_not_in_registry: 22 } },
+  overall: { registry_total: 920, inspections: { total: 180, pending: 42, waiting_for_review: 12, verified: 126 }, pins: { total: 90, detected_not_in_registry: 22 }, registry: registryBreakdown },
 };
 const held = [];
 window.__releaseLayout = () => held.splice(0).forEach(resolve => resolve());
