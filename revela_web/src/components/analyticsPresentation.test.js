@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   activeInspectorWorkload,
+  activeFlagRecommendations,
   completeInspectionTimeline,
   groupOperationsStatusBreakdown,
   groupInspectionStatuses,
   INSPECTION_STATUS_STACKS,
   pivotCategoryCounts,
+  recommendationAllocationLabel,
+  recommendationReason,
   rankedRecommendationRows,
 } from "./analyticsPresentation.js";
 
@@ -94,6 +97,31 @@ test("ranked recommendation rows preserve table order and attach matching dispat
     { rank: 1, barangayName: "A", inspectors: null },
     { rank: 2, barangayName: "B", inspectors: 1 },
   ]);
+});
+
+test("active recommendation list excludes no-flag barangays and counts them", () => {
+  const result = activeFlagRecommendations([
+    { barangayName: "A", flagged_count: 2 },
+    { barangayName: "B", flagged_count: 0 },
+    { barangayName: "C", flagged_count: 1 },
+  ]);
+  assert.deepEqual(result, {
+    rows: [
+      { barangayName: "A", flagged_count: 2 },
+      { barangayName: "C", flagged_count: 1 },
+    ],
+    noActiveFlagsCount: 1,
+  });
+});
+
+test("recommendation wording uses requested reason and allocation phrases", () => {
+  assert.equal(recommendationReason({
+    red_count: 42, unregistered_candidate_count: 42, yellow_count: 0, distance_km: 0.9,
+  }), "Red 42 (42 not in registry) · Yellow 0 · 0.9 km from BPLO");
+  assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 1 }), "1 inspector allocated");
+  assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 2 }), "2 inspectors allocated");
+  assert.equal(recommendationAllocationLabel({ allocation_status: "deferred", inspectors: 0 }), "Waiting for a free inspector");
+  assert.equal(recommendationAllocationLabel(null), "Not scheduled yet");
 });
 
 test("pivots grouped counts by barangay", () => {

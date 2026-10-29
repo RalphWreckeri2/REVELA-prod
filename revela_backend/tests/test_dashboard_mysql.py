@@ -111,7 +111,18 @@ class DashboardMySQLTests(unittest.TestCase):
                     assignedToUserID INT, inspectionResult VARCHAR(30), remarks VARCHAR(255),
                     flagColorAtEvent VARCHAR(30)
                 ) ENGINE=InnoDB""",
+                """CREATE TABLE detection_runs (
+                    runID INT PRIMARY KEY, startedAt DATETIME NOT NULL,
+                    status VARCHAR(32) NOT NULL
+                ) ENGINE=InnoDB""",
                 "CREATE TABLE users (userID INT PRIMARY KEY, fullName VARCHAR(80), userRole VARCHAR(30)) ENGINE=InnoDB",
+                """CREATE TABLE revela_app_settings (
+                    settingKey VARCHAR(96) PRIMARY KEY,
+                    settingValue TEXT NOT NULL,
+                    updatedBy INT NULL,
+                    updatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                        ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB""",
             ):
                 cur.execute(statement)
         cls.db.commit()
@@ -124,9 +135,11 @@ class DashboardMySQLTests(unittest.TestCase):
         self.db.rollback()
         with self.db.cursor() as cur:
             for table in ("inspection_lifecycle_events", "inspection_reports", "geospatial_logs",
+                          "detection_runs",
                           "registry_sector_map_secondary", "registry_sector_review_queue",
                           "registry_sector_map", "psic_active_version", "psic_lines",
-                          "display_sector", "official_registry", "barangays", "users"):
+                          "display_sector", "official_registry", "barangays", "users",
+                          "revela_app_settings"):
                 cur.execute(f"DELETE FROM {table}")
             reset_ladder_column_cache()
             cur.execute("INSERT INTO barangays VALUES (1,'Barangay One'),(2,'Barangay Two')")
@@ -142,6 +155,77 @@ class DashboardMySQLTests(unittest.TestCase):
         self.inspection_patch.start()
         self.addCleanup(self.flag_patch.stop)
         self.addCleanup(self.inspection_patch.stop)
+
+    def test_hotspots_endpoint_sql_runs_under_only_full_group_by_and_accounts_for_red_population(self):
+        from flask import Flask
+        from api.analytics import routes as analytics_routes
+        from api.analytics.hotspots import invalidate_hotspots_cache
+
+        with self.db.cursor() as cur:
+            cur.execute(
+                "SET SESSION sql_mode=CONCAT(@@SESSION.sql_mode, ',ONLY_FULL_GROUP_BY')"
+            )
+            cur.execute("SELECT @@SESSION.sql_mode AS mode")
+            self.assertIn("ONLY_FULL_GROUP_BY", cur.fetchone()["mode"])
+            cur.execute("""INSERT INTO official_registry
+                (businessID,barangayID,businessName,applicationStatus)
+                VALUES ('HOTSPOT-LINKED',1,'Linked Registry Business','Expired')""")
+            cur.execute("""INSERT INTO geospatial_logs
+                (logID,businessID,barangayID,detectedName,detectedDate,flagColor,
+                 latitude,longitude,source)
+                VALUES
+                (101,NULL,1,'Eligible detection',UTC_TIMESTAMP(),'Red',13.9667,121.1167,'detection'),
+                (102,NULL,1,'Not detection',UTC_TIMESTAMP(),'Red',13.9668,121.1168,'manual'),
+                (103,'HOTSPOT-LINKED',1,'Registry linked',UTC_TIMESTAMP(),'Red',13.9669,121.1169,'detection'),
+                (104,NULL,1,'Missing coordinates',UTC_TIMESTAMP(),'Red',NULL,NULL,'detection')""")
+            cur.execute(
+                "INSERT INTO detection_runs (runID,startedAt,status) "
+                "VALUES (1,UTC_TIMESTAMP(),'partial')"
+            )
+        self.db.commit()
+
+        app = Flask(__name__)
+        settings_mysql = SimpleNamespace(connection=self.db)
+        with patch.object(analytics_routes, "mysql", settings_mysql):
+            with app.test_request_context("/api/analytics/hotspots?date_preset=7days"):
+                invalidate_hotspots_cache()
+                response, status = analytics_routes.get_analytics_hotspots.__wrapped__()
+            payload = response.get_json()
+
+            invalidate_hotspots_cache()
+            with app.test_request_context(
+                "/api/analytics/hotspots?date_preset=7days"
+                "&display_sector=retail&barangay_id=999"
+            ):
+                filtered_response, filtered_status = (
+                    analytics_routes.get_analytics_hotspots.__wrapped__()
+                )
+            filtered_payload = filtered_response.get_json()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(filtered_status, 200)
+        self.assertEqual(payload["parameters_used"], {
+            "eps_m": 50,
+            "min_samples": 3,
+            "metric": "haversine",
+        })
+        self.assertEqual(payload["population"]["considered_red_pins"], 4)
+        self.assertEqual(
+            payload["population"]["considered_red_pins"],
+            payload["population"]["eligible_points"]
+            + sum(payload["population"]["excluded"].values()),
+        )
+        self.assertEqual(payload["population"]["eligible_points"], 1)
+        self.assertEqual(payload["population"]["excluded"], {
+            "not_detection": 1,
+            "registry_linked": 1,
+            "business_id_present": 0,
+            "missing_coordinates": 1,
+        })
+        self.assertEqual(payload["last_detection_run"]["status"], "partial")
+        self.assertEqual(filtered_payload["population"], payload["population"])
+        self.assertEqual(filtered_payload["clusters"], payload["clusters"])
+        self.assertEqual(filtered_payload["totals"], payload["totals"])
 
     def seed(self, log_id, status=None, *, report_id=None, barangay=1, source="detection",
              business_id=None, deadline=None, start=None, received=None, minutes=None, ir_timestamp=None):

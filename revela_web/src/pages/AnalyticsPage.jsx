@@ -19,11 +19,14 @@ import AnalyticsInfoTip from "../components/AnalyticsInfoTip";
 import ResponsiveChart from "../components/ResponsiveChart";
 import {
   activeInspectorWorkload,
+  activeFlagRecommendations,
   completeInspectionTimeline,
   groupOperationsStatusBreakdown,
   groupInspectionStatuses,
   INSPECTION_STATUS_STACKS,
   pivotCategoryCounts,
+  recommendationAllocationLabel,
+  recommendationReason,
   rankedRecommendationRows,
 } from "../components/analyticsPresentation";
 import { formatScanHistoryTimestamp } from "../components/scanHistory";
@@ -44,6 +47,7 @@ const ANALYTICS_TABS = [
   { id: "descriptive", label: "Overview", dot: "var(--color-green)" },
   { id: "prescriptive", label: "Recommendations", dot: "#6366f1" },
 ];
+const ADMIN_PRESCRIPTIVE_DETAILS_ENABLED = false;
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
 const COLOR = {
   green: "#10b981", // elegant emerald
@@ -663,6 +667,8 @@ export default function AnalyticsPage() {
   const [wlcConfigReady, setWlcConfigReady] = useState(() => Boolean(wlcSnapshot));
   const wlcValidationError = wlcPolicyError(wlcConfig);
   const [expandedDispatch, setExpandedDispatch] = useState({});
+  const [showAllRecommendations, setShowAllRecommendations] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [filterOptions, setFilterOptions] = useSessionDataset("analytics:options", "filters", null,
     `analytics:${JSON.stringify(effectiveFilters)}`);
   const filterMeta = filterOptions?.meta ?? null;
@@ -905,6 +911,10 @@ export default function AnalyticsPage() {
     presc?.rankings || [],
     presc?.dispatch_recommendations || [],
   );
+  const activeRecommendations = activeFlagRecommendations(recommendationRows);
+  const visibleRecommendations = showAllRecommendations
+    ? activeRecommendations.rows
+    : activeRecommendations.rows.slice(0, 5);
 
 
   const activeFilterCount = countActiveBackendFilters(appliedFilters);
@@ -1069,7 +1079,7 @@ export default function AnalyticsPage() {
   }, [data]);
 
   return (
-    <DashboardLayout className={`analytics-page${activeTab === "prescriptive" ? " analytics-page--prescriptive" : ""}`} bottomBar={(
+    <DashboardLayout className="analytics-page" bottomBar={(
       <div className="analytics-tools">
         {showFloatingNav && !snapshotIsExpired && (
           <nav className="analytics-quick-nav" aria-label="Analytics quick navigation">
@@ -1384,6 +1394,7 @@ export default function AnalyticsPage() {
         }
       `}</style>
 
+      <div className="analytics-page-shell">
       {/* PAGE WRAPPER */}
       <div style={{ width: "100%", minWidth: 0 }}>
 
@@ -2141,21 +2152,27 @@ export default function AnalyticsPage() {
           <section className="analytics-recommendation-list" aria-labelledby="recommendations-heading">
             <div className="analytics-recommendation-heading">
               <h2 id="recommendations-heading">Where should inspectors go first?</h2>
-              <p>Ranked by the current municipal priority score. Expand a barangay for dispatch details.</p>
+              <p>
+                {Number(prescWorkforce?.available_inspectors ?? 0)} inspector{Number(prescWorkforce?.available_inspectors ?? 0) === 1 ? "" : "s"} available. Dispatch recommendations cover up to 3 barangays; others wait for a free inspector.
+              </p>
             </div>
-            {loading ? <Skeleton h={320} /> : recommendationRows.length === 0 ? (
-              <EmptyState h={220} title="No ranked barangays" message="There are not enough eligible records to show inspection priorities." />
-            ) : (
-              <div className="analytics-recommendation-rows">
-                {recommendationRows.map(row => {
+            {loading ? <Skeleton h={320} /> : (
+              <>
+                <div className="analytics-recommendation-columns">
+                  <span aria-hidden="true" />
+                  <span>Barangay</span>
+                  <span className="analytics-recommendation-priority-label">
+                    Priority
+                    <AnalyticsInfoTip label="About priority">
+                      Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
+                    </AnalyticsInfoTip>
+                  </span>
+                  <span>Dispatch</span>
+                </div>
+                {activeRecommendations.rows.length > 0 ? (
+                  <div className="analytics-recommendation-rows">
+                {visibleRecommendations.map(row => {
                   const dispatch = row.dispatch;
-                  const priority = row.priority_label || row.risk_level || "No priority";
-                  const distance = Number(row.distance_km);
-                  const distanceLabel = row.distance_km !== null
-                    && row.distance_km !== undefined
-                    && Number.isFinite(distance)
-                    ? `${distance.toFixed(1)} km from BPLO`
-                    : "Distance unavailable";
                   return (
                     <details key={row.barangayID} className="analytics-recommendation-row">
                       <summary>
@@ -2163,20 +2180,16 @@ export default function AnalyticsPage() {
                         <span className="analytics-recommendation-place">
                           <strong>{row.barangayName}</strong>
                           <span className="analytics-recommendation-reason">
-                            Red {Number(row.red_count || 0)} · Yellow {Number(row.yellow_count || 0)} ·{" "}
-                            {Number(row.unregistered_candidate_count || 0)} unregistered candidates · {distanceLabel}
+                            {recommendationReason(row)}
                           </span>
                         </span>
                         <span className="analytics-recommendation-priority"
-                          style={{ color: row.priority_color || "var(--color-muted)" }}>
-                          {priority}
+                          style={{ color: row.priority_color || "var(--color-muted)" }}
+                          aria-label={`Priority: ${row.priority_label || row.risk_level || "No priority"}`}>
+                          {row.priority_label || row.risk_level || "No priority"}
                         </span>
                         <span className="analytics-recommendation-assignment">
-                          {dispatch?.allocation_status === "deferred"
-                            ? "Deferred"
-                            : dispatch
-                              ? `${Number(dispatch.inspectors || 0)} inspectors allocated`
-                              : "No inspector allocated"}
+                          {recommendationAllocationLabel(dispatch)}
                         </span>
                       </summary>
                       <div className="analytics-recommendation-detail">
@@ -2209,7 +2222,23 @@ export default function AnalyticsPage() {
                     </details>
                   );
                 })}
-              </div>
+                  </div>
+                ) : (
+                  <EmptyState h={180} title="No active flags" message="No barangays currently have active flags." />
+                )}
+                {activeRecommendations.rows.length > 5 && (
+                  <button
+                    type="button"
+                    className="analytics-recommendation-toggle"
+                    onClick={() => setShowAllRecommendations(value => !value)}
+                  >
+                    {showAllRecommendations ? "Show top 5" : `Show all ${activeRecommendations.rows.length}`}
+                  </button>
+                )}
+                <p className="analytics-no-active-flags">
+                  {activeRecommendations.noActiveFlagsCount} {activeRecommendations.noActiveFlagsCount === 1 ? "barangay has" : "barangays have"} no active flags.
+                </p>
+              </>
             )}
           </section>
         )}
@@ -2218,11 +2247,14 @@ export default function AnalyticsPage() {
           DIAGNOSTIC EVIDENCE
       ══════════════════════════════════════════════════════════════════════ */}
         {data.diagnostic && activeTab === "prescriptive" && (
-          <details className="analytics-evidence-disclosure">
+          <details className="analytics-evidence-disclosure"
+            onToggle={event => setEvidenceOpen(event.currentTarget.open)}>
             <summary>Evidence: nearby records, scan history, and diagnostic charts</summary>
-            <p className="analytics-evidence-note">
-              Spatial clusters and scan history are supporting evidence only; DBSCAN cluster membership does not enter the OPS score.
-            </p>
+            {evidenceOpen && (
+              <>
+                <p className="analytics-evidence-note">
+                  Spatial clusters and scan history are supporting evidence only; DBSCAN cluster membership does not enter the OPS score.
+                </p>
             <section style={{ marginBottom: 52 }}>
             <SectionHeader
               tier="diagnostic"
@@ -2598,13 +2630,15 @@ export default function AnalyticsPage() {
               </div>
             </div>
             </section>
+              </>
+            )}
           </details>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 3 — PRESCRIPTIVE ANALYTICS (WLC / OPS)
       ══════════════════════════════════════════════════════════════════════ */}
-        {data.prescriptive && activeTab === "prescriptive" && (
+        {ADMIN_PRESCRIPTIVE_DETAILS_ENABLED && data.prescriptive && activeTab === "prescriptive" && (
           <details className="analytics-calculation-disclosure">
             <summary>How this is calculated: scoring, charts, and full ranking table</summary>
             <section style={{ marginBottom: 32 }}>
@@ -3299,6 +3333,7 @@ export default function AnalyticsPage() {
           </button>
         </p>
       </footer>
+      </div>
     </DashboardLayout>
   );
 }

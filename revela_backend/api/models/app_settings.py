@@ -19,6 +19,15 @@ from app import mysql
 _settings_table_ready = False
 _settings_table_lock = threading.Lock()
 
+
+def _invalidate_hotspot_settings(keys):
+    if not any(isinstance(key, str) and key.startswith("hotspots.") for key in keys):
+        return
+    from api.analytics.hotspots import invalidate_hotspots_cache
+
+    invalidate_hotspots_cache()
+
+
 TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS revela_app_settings (
     settingKey   VARCHAR(96)  NOT NULL PRIMARY KEY,
@@ -113,6 +122,7 @@ def save_many(entries, user_id=None):
         return 0, f"Could not persist settings: {exc}"
     finally:
         cur.close()
+    _invalidate_hotspot_settings(entries)
     return len(entries), None
 
 
@@ -139,4 +149,5 @@ def delete_many(keys):
         return 0, f"Could not clear settings: {exc}"
     finally:
         cur.close()
+    _invalidate_hotspot_settings(keys)
     return removed, None

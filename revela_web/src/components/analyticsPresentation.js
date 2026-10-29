@@ -87,6 +87,36 @@ export function rankedRecommendationRows(rankings = [], dispatchRecommendations 
   }));
 }
 
+export function activeFlagRecommendations(rows = []) {
+  const activeRows = rows.filter(row => Number(row.flagged_count || 0) > 0);
+  return {
+    rows: activeRows,
+    noActiveFlagsCount: rows.length - activeRows.length,
+  };
+}
+
+export function recommendationReason(row) {
+  const red = Number(row.red_count || 0);
+  const unregistered = Number(row.unregistered_candidate_count || 0);
+  const yellow = Number(row.yellow_count || 0);
+  const distance = Number(row.distance_km);
+  const distanceLabel = row.distance_km !== null
+    && row.distance_km !== undefined
+    && Number.isFinite(distance)
+    ? `${distance.toFixed(1)} km from BPLO`
+    : "Distance unavailable";
+  return `Red ${red} (${unregistered} not in registry) · Yellow ${yellow} · ${distanceLabel}`;
+}
+
+export function recommendationAllocationLabel(dispatch) {
+  if (dispatch?.allocation_status === "deferred") return "Waiting for a free inspector";
+  const inspectorCount = Number(dispatch?.inspectors || 0);
+  if (dispatch && inspectorCount > 0) {
+    return `${inspectorCount} inspector${inspectorCount === 1 ? "" : "s"} allocated`;
+  }
+  return "Not scheduled yet";
+}
+
 export function pivotCategoryCounts(rows = [], labelKey, countKey = "count") {
   const byCategory = new Map();
   for (const row of rows) {

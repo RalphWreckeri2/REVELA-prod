@@ -25,7 +25,20 @@ from api.analytics.non_registry import (
     registry_linked_monitoring_sql, build_registry_linked_monitoring,
 )
 from api.flags.compliance import origin_source_sql, current_confirmation_rows, confirmation_summary
+from api.flags.compliance import registry_link_sql
 from api.models.detection_runs import get_recent_detection_runs
+from api.analytics.hotspots import (
+    build_hotspot_population_sql,
+    cache_hotspots,
+    cluster_hotspot_rows,
+    count_hotspot_dispositions,
+    get_cached_hotspots,
+    hotspot_date_window,
+    invalidate_hotspots_cache,
+    load_barangay_polygons,
+    read_hotspot_settings,
+    resolve_hotspot_parameters,
+)
 from api.analytics.filters import (
     parse_analytics_filters,
     registry_sql,
@@ -299,6 +312,7 @@ def invalidate_analytics_cache():
         _analytics_cache_generation += 1
         # Reserve active flights until their queries finish, but do not publish
         # or satisfy fresh reads from a result computed before invalidation.
+    invalidate_hotspots_cache()
 
 
 def init_analytics_cache_invalidation(app):
@@ -670,6 +684,94 @@ def get_all_analytics():
     except Exception:
         current_app.logger.exception("Failed to load analytics")
         return jsonify({"error": "Failed to load analytics"}), 500
+
+
+@analytics_bp.route("/hotspots", methods=["GET"])
+@jwt_required()
+def get_analytics_hotspots():
+    """Return date-scoped DBSCAN groups of detected pins not linked to registry."""
+    date_preset = (request.args.get("date_preset") or "all").strip().lower()
+    try:
+        start, end = hotspot_date_window(date_preset)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    cursor = mysql.connection.cursor()
+    try:
+        settings = read_hotspot_settings(cursor)
+        parameters, fallbacks = resolve_hotspot_parameters(settings)
+        date_key = (
+            start.isoformat() if start else None,
+            end.isoformat() if end else None,
+        )
+        cache_key = (
+            date_preset, date_key, parameters["eps_m"],
+            parameters["min_samples"], tuple(sorted(fallbacks.items())),
+        )
+        cached = get_cached_hotspots(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
+        ladder = ladder_columns_available(cursor)
+        effective_flag = _effective_flag_color_sql("g", ladder=ladder)
+        population_sql, population_params = build_hotspot_population_sql(
+            effective_flag,
+            registry_link_sql("g"),
+            start,
+            end,
+        )
+        cursor.execute(population_sql, population_params)
+        population_rows = list(cursor.fetchall() or [])
+
+        cursor.execute(
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID"
+        )
+        barangay_rows = list(cursor.fetchall() or [])
+        cursor.execute(
+            "SELECT startedAt, status FROM detection_runs "
+            "ORDER BY startedAt DESC, runID DESC LIMIT 1"
+        )
+        latest_run = cursor.fetchone()
+    except Exception:
+        current_app.logger.exception("Failed to load analytics hotspots")
+        return jsonify({"error": "Failed to load analytics hotspots"}), 500
+    finally:
+        cursor.close()
+
+    try:
+        clusters, totals = cluster_hotspot_rows(
+            population_rows,
+            parameters,
+            load_barangay_polygons(barangay_rows),
+        )
+        latest_run_date = latest_run["startedAt"] if latest_run else None
+        if hasattr(latest_run_date, "strftime"):
+            latest_run_date = latest_run_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        date_window = {
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+        }
+        response = {
+            "date_preset": date_preset,
+            "date_window": date_window,
+            "parameters_used": parameters,
+            "parameter_fallbacks": fallbacks,
+            "population": count_hotspot_dispositions(population_rows),
+            "clusters": clusters,
+            "totals": {
+                **totals,
+                "cluster_count": len(clusters),
+            },
+            "last_detection_run": ({
+                "date": latest_run_date,
+                "status": latest_run["status"],
+            } if latest_run else None),
+        }
+    except Exception:
+        current_app.logger.exception("Failed to aggregate analytics hotspots")
+        return jsonify({"error": "Failed to aggregate analytics hotspots"}), 500
+    cache_hotspots(cache_key, response)
+    return jsonify(response), 200
 
 
 def _barangay_overview_label(value, max_length=32):

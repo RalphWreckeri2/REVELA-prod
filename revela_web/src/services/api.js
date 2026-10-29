@@ -1382,6 +1382,26 @@ export async function getBarangayOverviewRequest(token, filters = {}, { signal }
   }
 }
 
+export async function getAnalyticsHotspotsRequest(token, datePreset = "all", { signal } = {}) {
+  try {
+    if (!token) {
+      throw new Error("Missing authentication token.");
+    }
+    const query = new URLSearchParams({
+      date_preset: datePreset || "all",
+    });
+    const res = await fetch(`${BASE_URL}/analytics/hotspots?${query}`, {
+      method: "GET",
+      headers: authHeaders(token),
+      signal,
+      cache: "no-store",
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 export async function getDemographicReportsRequest(token, { signal } = {}) {
   try {
     if (!token) {

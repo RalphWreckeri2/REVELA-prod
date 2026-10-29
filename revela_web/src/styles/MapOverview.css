@@ -278,6 +278,81 @@
   min-height: 44px;
 }
 
+.map-overview-hotspot-controls {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 360px;
+  align-items: center;
+  gap: 10px;
+}
+
+.map-overview-hotspot-toggle {
+  min-width: 140px;
+  min-height: 44px;
+  flex: 0 0 auto;
+}
+
+.map-overview-hotspot-toggle[aria-checked="true"] {
+  border-color: #c2410c;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.map-overview-hotspot-scan-note {
+  min-width: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.map-overview-hotspot-badge {
+  display: inline-flex;
+  min-width: 25px;
+  min-height: 25px;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 6px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: #c2410c;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.35);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.map-overview-hotspot-summary {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--color-ink);
+}
+
+.map-overview-hotspot-summary .map-overview-card-heading {
+  justify-content: flex-start;
+  gap: 7px;
+}
+
+.map-overview-hotspot-summary h4,
+.map-overview-hotspot-summary p {
+  margin: 0;
+}
+
+.map-overview-hotspot-summary p {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.map-overview-hotspot-caveat {
+  color: var(--color-muted);
+}
+
 .map-overview-segmented button.active,
 .map-overview-choice-row button.active {
   border-color: #2563eb;
@@ -686,6 +761,11 @@
   }
 
   .map-overview-map-toolbar { align-items: stretch; }
+  .map-overview-hotspot-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .map-overview-hotspot-toggle { width: 100%; }
 
   .map-overview-canvas,
   .map-overview-map-message,

@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Data, GoogleMap } from "@react-google-maps/api";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Circle, Data, GoogleMap, Marker } from "@react-google-maps/api";
 import AnalyticsInfoTip from "./AnalyticsInfoTip";
-import { getBarangayOverviewRequest } from "../services/api";
+import {
+  getAnalyticsHotspotsRequest,
+  getBarangayOverviewRequest,
+} from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import {
@@ -26,6 +29,12 @@ import {
   registryCategoryColor,
   sortRegistryBreakdownRows,
 } from "./barangayOverviewPresentation";
+import {
+  hotspotOverlayRadius,
+  hotspotRequestParams,
+  hotspotScanNote,
+  hotspotSummary,
+} from "./hotspotPresentation";
 import "../styles/MapOverview.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
@@ -148,6 +157,12 @@ function useBarangayOverview(token, filters, datePreset) {
 export default function MapOverview({ token, filters }) {
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
+  const [showHotspots, setShowHotspots] = useState(false);
+  const [hotspotState, setHotspotState] = useState({
+    requestKey: "",
+    data: null,
+    error: "",
+  });
   const [selectedBarangayId, setSelectedBarangayId] = useState(null);
   const [selectedSectorKey, setSelectedSectorKey] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
@@ -188,6 +203,33 @@ export default function MapOverview({ token, filters }) {
     overviewFilters,
     datePreset,
   );
+  const hotspotRequest = useMemo(
+    () => hotspotRequestParams(datePreset),
+    [datePreset],
+  );
+  const hotspotRequestKey = `${token ? "authenticated" : "anonymous"}:${hotspotRequest.date_preset}`;
+  useEffect(() => {
+    if (!token) return undefined;
+    const controller = new AbortController();
+    getAnalyticsHotspotsRequest(token, hotspotRequest.date_preset, {
+      signal: controller.signal,
+    })
+      .then((data) => {
+        if (!controller.signal.aborted) {
+          setHotspotState({ requestKey: hotspotRequestKey, data, error: "" });
+        }
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted && requestError.name !== "AbortError") {
+          setHotspotState({
+            requestKey: hotspotRequestKey,
+            data: null,
+            error: requestError.message || "Hotspot data could not be loaded.",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [hotspotRequest.date_preset, hotspotRequestKey, token]);
   const displaySectorOptions = overview?.display_sectors || [];
 
   const barangayRows = overview?.barangays || EMPTY_BARANGAY_ROWS;
@@ -221,6 +263,19 @@ export default function MapOverview({ token, filters }) {
   }));
   const topTotals = getBarangayTopTotals(panelData);
   const mapRowsById = rowsById;
+  const hotspotIsCurrent = hotspotState.requestKey === hotspotRequestKey;
+  const hotspotData = hotspotIsCurrent ? hotspotState.data : null;
+  const hotspotLoading = Boolean(token && !hotspotIsCurrent);
+  const hotspotError = token
+    ? hotspotIsCurrent ? hotspotState.error : ""
+    : "Hotspot data requires an authenticated session.";
+  const hotspotStats = hotspotSummary(
+    hotspotData,
+    selectedBarangayId,
+  );
+  const scanNote = hotspotScanNote(
+    hotspotData?.last_detection_run,
+  );
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -653,9 +708,22 @@ export default function MapOverview({ token, filters }) {
                 aria-pressed={mapView === "inspections"} onClick={() => setMapView("inspections")}>
                 Inspections
               </button>
-              <button type="button" disabled aria-label="Hotspots coming soon">
-                Hotspots · Coming soon
+            </div>
+            <div className="map-overview-hotspot-controls">
+              <button
+                type="button"
+                className={`map-overview-hotspot-toggle${showHotspots ? " active" : ""}`}
+                role="switch"
+                aria-checked={showHotspots}
+                onClick={() => setShowHotspots((visible) => !visible)}
+              >
+                Show hotspots
               </button>
+              <div className="map-overview-hotspot-scan-note" role="status">
+                {scanNote.text}
+                {scanNote.coverageIncomplete
+                  && <span> Coverage incomplete: counts may be undercounted.</span>}
+              </div>
             </div>
           </div>
           <div className="map-overview-map-stage">
@@ -689,6 +757,40 @@ export default function MapOverview({ token, filters }) {
                   onMouseOver={setHoveredFeature}
                   onMouseOut={clearHoveredFeature}
                 />
+                {showHotspots && hotspotData?.clusters?.map((cluster) => (
+                  <Fragment key={cluster.cluster_id}>
+                    <Circle
+                      center={cluster.centroid}
+                      radius={hotspotOverlayRadius(cluster.radius_m)}
+                      options={{
+                        clickable: false,
+                        fillColor: "#f97316",
+                        fillOpacity: 0.18,
+                        strokeColor: "#c2410c",
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        zIndex: 200,
+                      }}
+                    />
+                    <Marker
+                      position={cluster.centroid}
+                      title={`${cluster.size} nearby flagged locations`}
+                      options={{
+                        clickable: false,
+                        optimized: true,
+                        zIndex: 1100,
+                        icon: {
+                          path: window.google.maps.SymbolPath.CIRCLE,
+                          scale: 0,
+                        },
+                        label: {
+                          text: String(cluster.size),
+                          className: "map-overview-hotspot-badge",
+                        },
+                      }}
+                    />
+                  </Fragment>
+                ))}
               </GoogleMap>
             )}
             <button
@@ -765,6 +867,33 @@ export default function MapOverview({ token, filters }) {
                 onClick={fitAllBarangays}>Show all barangays</button>
             )}
           </div>
+          <section className="map-overview-hotspot-summary" aria-live="polite">
+            <div className="map-overview-card-heading">
+              <h4>Possible nearby groups</h4>
+              <AnalyticsInfoTip label="About hotspot locations">
+                Group locations are assigned by map position, which can differ slightly from the barangay recorded on each pin.
+              </AnalyticsInfoTip>
+            </div>
+            {hotspotLoading ? (
+              <p>Loading possible groups…</p>
+            ) : hotspotError ? (
+              <p role="alert">{hotspotError}</p>
+            ) : hotspotStats.clusterCount === 0 ? (
+              <p>No nearby groups for this period.</p>
+            ) : (
+              <p>
+                Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} flagged locations)
+              </p>
+            )}
+            {!selectedRow && hotspotStats.uncertainCount > 0 && (
+              <p>
+                {hotspotStats.uncertainCount.toLocaleString()} locations could not be assigned to a barangay.
+              </p>
+            )}
+            <p className="map-overview-hotspot-caveat">
+              Nearby groups are possible hotspots only; they do not confirm a violation.
+            </p>
+          </section>
 
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">
