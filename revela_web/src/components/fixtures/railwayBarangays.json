@@ -1,0 +1,22 @@
+{
+  "source": "Read-only export of Railway barangays table",
+  "exportedAt": "2026-10-29",
+  "rows": [
+    { "barangayID": 1, "barangayName": "Barangay I" },
+    { "barangayID": 2, "barangayName": "Barangay II" },
+    { "barangayID": 3, "barangayName": "Barangay II-A" },
+    { "barangayID": 4, "barangayName": "Barangay III" },
+    { "barangayID": 5, "barangayName": "Barangay IV" },
+    { "barangayID": 6, "barangayName": "Barangay Bayorbor" },
+    { "barangayID": 7, "barangayName": "Barangay Bubuyan" },
+    { "barangayID": 8, "barangayName": "Barangay Calingatan" },
+    { "barangayID": 9, "barangayName": "Barangay Loob" },
+    { "barangayID": 10, "barangayName": "Barangay Lumanglipa" },
+    { "barangayID": 11, "barangayName": "Barangay Kinalaglagan" },
+    { "barangayID": 12, "barangayName": "Barangay Manggahan" },
+    { "barangayID": 13, "barangayName": "Barangay Nangkaan" },
+    { "barangayID": 14, "barangayName": "Barangay San Sebastian" },
+    { "barangayID": 15, "barangayName": "Barangay Santol" },
+    { "barangayID": 16, "barangayName": "Barangay Upa" }
+  ]
+}

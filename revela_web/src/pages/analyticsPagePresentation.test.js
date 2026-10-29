@@ -4,11 +4,18 @@ import test from "node:test";
 
 const pageSource = readFileSync(new URL("./AnalyticsPage.jsx", import.meta.url), "utf8");
 const stylesheet = readFileSync(new URL("../styles/AnalyticsPage.css", import.meta.url), "utf8");
+const mapStylesheet = readFileSync(new URL("../styles/MapOverview.css", import.meta.url), "utf8");
 
 test("Overview and Recommendations share one centered width and title wrapper", () => {
   assert.match(pageSource, /<div className="analytics-page-shell">[\s\S]*?analytics-page-heading[\s\S]*?analytics-recommendation-list/);
-  assert.match(stylesheet, /\.analytics-page-shell\s*\{\s*width:\s*min\(100%,\s*1440px\);\s*min-width:\s*0;\s*margin-inline:\s*auto;/);
+  assert.match(stylesheet, /\.analytics-page-shell\s*\{\s*width:\s*min\(100%,\s*1280px\);\s*min-width:\s*0;\s*margin-inline:\s*auto;/);
   assert.doesNotMatch(stylesheet, /\.analytics-page--prescriptive\s+\.saas-content/);
+});
+
+test("Overview KPI cards share the content width and use balanced sizing", () => {
+  assert.match(mapStylesheet, /\.map-overview-topbar\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(mapStylesheet, /\.map-overview-total\s*\{[^}]*box-sizing:\s*border-box;[^}]*min-height:\s*88px;[^}]*padding:\s*14px 16px;/);
+  assert.match(mapStylesheet, /\.map-overview-total strong\s*\{[^}]*font-size:\s*clamp\(24px,\s*2\.2vw,\s*32px\)/);
 });
 
 test("ranked row owns its single expandable dispatch detail surface", () => {

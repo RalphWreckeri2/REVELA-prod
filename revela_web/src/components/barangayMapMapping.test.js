@@ -10,6 +10,25 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+const GEOJSON_TO_LIVE_BARANGAY_NAME = {
+  "District I (Pob.)": "Barangay I",
+  "District II (Pob.)": "Barangay II",
+  "Barangay II-A (Pob.)": "Barangay II-A",
+  "District III (Pob.)": "Barangay III",
+  "District IV (Pob.)": "Barangay IV",
+  Bayorbor: "Barangay Bayorbor",
+  Bubuyan: "Barangay Bubuyan",
+  Calingatan: "Barangay Calingatan",
+  Loob: "Barangay Loob",
+  "Lumang Lipa": "Barangay Lumanglipa",
+  Kinalaglagan: "Barangay Kinalaglagan",
+  Manggahan: "Barangay Manggahan",
+  Nangkaan: "Barangay Nangkaan",
+  "San Sebastian": "Barangay San Sebastian",
+  Santol: "Barangay Santol",
+  Upa: "Barangay Upa",
+};
+
 test("GeoJSON barangay names map to all 16 numeric barangay IDs", () => {
   assert.deepEqual(ADM4_EN_TO_BARANGAY_ID, {
     "District I (Pob.)": 1,
@@ -20,9 +39,9 @@ test("GeoJSON barangay names map to all 16 numeric barangay IDs", () => {
     Bayorbor: 6,
     Bubuyan: 7,
     Calingatan: 8,
-    Kinalaglagan: 9,
+    Loob: 9,
     "Lumang Lipa": 10,
-    Loob: 11,
+    Kinalaglagan: 11,
     Manggahan: 12,
     Nangkaan: 13,
     "San Sebastian": 14,
@@ -32,8 +51,41 @@ test("GeoJSON barangay names map to all 16 numeric barangay IDs", () => {
   assert.equal(getBarangayIdForGeoJsonName("District I (Pob.)"), 1);
   assert.equal(getBarangayIdForGeoJsonName("District II (Pob.)"), 2);
   assert.equal(getBarangayIdForGeoJsonName("Barangay II-A (Pob.)"), 3);
+  assert.equal(getBarangayIdForGeoJsonName("Loob"), 9);
   assert.equal(getBarangayIdForGeoJsonName("Lumang Lipa"), 10);
+  assert.equal(getBarangayIdForGeoJsonName("Kinalaglagan"), 11);
   assert.equal(getBarangayIdForGeoJsonName("Unmapped barangay"), null);
+});
+
+test("every ADM4_EN mapping matches the exported live Railway barangay table", async () => {
+  const fixturePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures/railwayBarangays.json",
+  );
+  const { rows } = JSON.parse(await readFile(fixturePath, "utf8"));
+  const liveByName = new Map(rows.map((row) => [row.barangayName, row]));
+  const geoJsonPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../public/data/mataasnakahoy.json",
+  );
+  const geoJson = JSON.parse(await readFile(geoJsonPath, "utf8"));
+  const featureNames = geoJson.features.map((feature) => feature.properties.ADM4_EN);
+
+  assert.equal(rows.length, 16);
+  assert.equal(new Set(rows.map((row) => row.barangayID)).size, 16);
+  assert.equal(featureNames.length, 16);
+
+  for (const geoJsonName of featureNames) {
+    const liveName = GEOJSON_TO_LIVE_BARANGAY_NAME[geoJsonName];
+    assert.ok(liveName, `Missing live-name mapping for ${geoJsonName}`);
+    const liveRow = liveByName.get(liveName);
+    assert.ok(liveRow, `Missing Railway fixture row for ${liveName}`);
+    assert.equal(
+      getBarangayIdForGeoJsonName(geoJsonName),
+      liveRow.barangayID,
+      `${geoJsonName} should map to ${liveName} (ID ${liveRow.barangayID})`,
+    );
+  }
 });
 
 test("canonical GeoJSON features map one-to-one and exterior rings are normalized", async () => {
