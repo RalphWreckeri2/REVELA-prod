@@ -7,6 +7,7 @@ import {
 } from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import { useTheme } from "../context/themeContext";
 import {
   getBarangayIdForGeoJsonName,
   getGeoJsonCentroid,
@@ -43,6 +44,10 @@ const MAX_SELECTED_BARANGAY_ZOOM = 16;
 const CHOROPLETH_COLORS = {
   registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
   inspections: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
+};
+const DARK_CHOROPLETH_COLORS = {
+  registered: ["#174036", "#1c6952", "#258c65", "#39ae7b", "#6dd6a1"],
+  inspections: ["#172d4b", "#1d4772", "#286395", "#377fb7", "#68a8da"],
 };
 const EMPTY_BARANGAY_ROWS = Object.freeze([]);
 const REGISTRY_DIMENSIONS = [
@@ -155,6 +160,7 @@ function useBarangayOverview(token, filters, datePreset) {
 }
 
 export default function MapOverview({ token, filters }) {
+  const { isDark } = useTheme();
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
   const [showHotspots, setShowHotspots] = useState(false);
@@ -299,14 +305,14 @@ export default function MapOverview({ token, filters }) {
     const colorIndex = quantileClass(count, mapBreaks);
     return {
       fillColor: colorIndex < 0
-        ? "#cbd5e1"
-        : CHOROPLETH_COLORS[mapView][colorIndex],
+        ? isDark ? "#334155" : "#cbd5e1"
+        : (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][colorIndex],
       fillOpacity: 1,
-      strokeColor: isSelected ? "#0f172a" : isHovered ? "#f97316" : "#ffffff",
+      strokeColor: isSelected ? (isDark ? "#fbbf24" : "#0f172a") : isHovered ? "#f97316" : isDark ? "#94a3b8" : "#ffffff",
       strokeWeight: isSelected ? 4 : isHovered ? 2 : 1,
       zIndex: isSelected ? 100 : isHovered ? 10 : 0,
     };
-  }, [hoveredBarangayId, mapBreaks, mapRowsById, mapView, selectedBarangayId]);
+  }, [hoveredBarangayId, isDark, mapBreaks, mapRowsById, mapView, selectedBarangayId]);
 
   useEffect(() => {
     styleFeatureRef.current = styleFeature;
@@ -390,11 +396,12 @@ export default function MapOverview({ token, filters }) {
         label: {
           text: getShortBarangayLabel(feature.getProperty("ADM4_EN")),
           className: "map-overview-feature-label",
+          color: isDark ? "#f8fafc" : "#0f172a",
         },
       });
       labelMarkersRef.current.push({ marker, barangayId: id });
     });
-  }, []);
+  }, [isDark]);
 
   const updateBarangayLabelVisibility = useCallback(() => {
     const zoom = mapRef.current?.getZoom() || 0;
@@ -402,9 +409,12 @@ export default function MapOverview({ token, filters }) {
       const visible = zoom >= 14
         || barangayId === Number(selectedBarangayId)
         || barangayId === Number(hoveredBarangayId);
+      const label = marker.getLabel();
+      const labelColor = isDark ? "#f8fafc" : "#0f172a";
+      if (label && label.color !== labelColor) marker.setLabel({ ...label, color: labelColor });
       marker.setVisible(visible);
     });
-  }, [hoveredBarangayId, selectedBarangayId]);
+  }, [hoveredBarangayId, selectedBarangayId, isDark]);
 
   useEffect(() => {
     fitBarangayBoundsRef.current = fitBarangayBounds;
@@ -739,7 +749,8 @@ export default function MapOverview({ token, filters }) {
                 onLoad={handleMapLoad}
                 onUnmount={handleMapUnmount}
                 options={{
-                  mapId: REVELA_MAP_ID,
+                   mapId: REVELA_MAP_ID,
+                   colorScheme: isDark ? "DARK" : "LIGHT",
                   isFractionalZoomEnabled: true,
                   clickableIcons: false,
                   mapTypeControl: false,
@@ -834,7 +845,7 @@ export default function MapOverview({ token, filters }) {
                   <div className="map-overview-legend-ranges">
                     {mapRangeLabels.map((label, index) => (
                       <span key={label}>
-                        <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
+                         <i style={{ background: (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][index] }} />
                         {label}
                       </span>
                     ))}

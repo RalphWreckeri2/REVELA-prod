@@ -73,7 +73,7 @@ const REGISTRY_STATUS_STACKS = [
   { key: "pending", label: "Pending", color: "#f59e0b" },
   { key: "expired", label: "Expired", color: "#f43f5e" },
   { key: "closed", label: "Closed", color: "#7c3aed" },
-  { key: "revoked", label: "Revoked", color: "#334155" },
+  { key: "revoked", label: "Revoked", color: "var(--analytics-revoked)" },
 ];
 
 const OPERATIONS_STATUS_STACKS = INSPECTION_STATUS_STACKS;
@@ -128,8 +128,8 @@ const shortBarangay = (name = "") =>
 
 const riskBadgeStyle = (level) => ({
   High: { background: COLOR.redLight, color: COLOR.red, border: `1px solid ${COLOR.red}` },
-  Medium: { background: COLOR.yellowLight, color: "#b45309", border: "1px solid #f59e0b" },
-  Low: { background: COLOR.greenLight, color: "#166534", border: `1px solid ${COLOR.green}` },
+  Medium: { background: COLOR.yellowLight, color: "var(--analytics-risk-medium)", border: "1px solid #f59e0b" },
+  Low: { background: COLOR.greenLight, color: "var(--analytics-risk-low)", border: `1px solid ${COLOR.green}` },
 }[level] || {});
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -153,12 +153,12 @@ const CustomTooltip = ({ active, payload, label }) => {
 const SectionHeader = ({ tier, title, subtitle }) => {
   const tierColors = {
     descriptive: { bg: COLOR.greenLight, color: COLOR.green, label: "Descriptive" },
-    diagnostic: { bg: COLOR.yellowLight, color: "#b45309", label: "Diagnostic" },
-    prescriptive: { bg: "rgba(99,102,241,0.1)", color: "#6366f1", label: "Prescriptive" },
+    diagnostic: { bg: COLOR.yellowLight, color: "var(--analytics-risk-medium)", label: "Diagnostic" },
+    prescriptive: { bg: "rgba(99,102,241,0.1)", color: "var(--analytics-indigo)", label: "Prescriptive" },
     operations: { bg: COLOR.blueLight, color: COLOR.blue, label: "Operations" },
   }[tier];
   return (
-    <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid rgba(226,232,240,0.6)" }}>
+    <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid var(--color-border-soft)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <span style={{
           padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
@@ -530,7 +530,7 @@ const GlobalAIAssistant = memo(({ globalData }) => {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{
                 width: 40, height: 40, borderRadius: "50%",
-                background: "linear-gradient(135deg, var(--color-surface), #f1f5f9)",
+                background: "linear-gradient(135deg, var(--color-surface), var(--color-card-alt))",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 border: "2px solid var(--color-primary)", overflow: "hidden"
               }}>
@@ -1121,11 +1121,11 @@ export default function AnalyticsPage() {
           box-shadow: none;
         }
 
-        .ops-row:hover { background: "var(--color-modal-bg)" !important; }
+        .ops-row:hover { background: var(--color-hover) !important; }
         .ops-score-bar {
           height: 6px;
           border-radius: 3px;
-          background: rgba(226,232,240,0.6);
+          background: var(--color-border-soft);
           overflow: hidden;
           width: 80px;
         }
@@ -1929,8 +1929,8 @@ export default function AnalyticsPage() {
                       <BarChart data={operationsStatusRows} layout="vertical"
                         barSize={24} barCategoryGap="22%"
                         margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={false}
-                          stroke="rgba(226,232,240,0.4)" />
+                         <CartesianGrid strokeDasharray="3 3" horizontal={false}
+                           stroke="var(--analytics-grid-color)" />
                         <XAxis type="number" domain={[0, "dataMax"]} allowDecimals={false}
                           tick={{ fontSize: 10, fill: "var(--color-muted)" }}
                           axisLine={false} tickLine={false} />
@@ -1979,7 +1979,7 @@ export default function AnalyticsPage() {
 
             {/* SECTION A: Official Registry Demographics */}
             <div style={{ marginBottom: 40 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>
+               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>
                 <h3 style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)", margin: 0 }}>A. Official Registry Demographics</h3>
                 <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(59, 130, 246, 0.1)", color: "var(--color-blue, #3b82f6)", borderRadius: 12 }}>
                   Data Source: BPLO Registry
@@ -2079,7 +2079,7 @@ export default function AnalyticsPage() {
             </div>
             {/* SECTION B: Field Inspections Demographics */}
             <div style={{ marginBottom: 40 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>
+               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>
                 <h3 style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)", margin: 0 }}>B. Field Inspections Demographics</h3>
                 <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(245, 158, 11, 0.1)", color: "var(--color-orange, #f59e0b)", borderRadius: 12 }}>
                   Data Source: Field Inspections
@@ -2275,7 +2275,7 @@ export default function AnalyticsPage() {
 
             {/* D1. NARRATIVES */}
             <div style={{ marginBottom: 40 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D1. Location Patterns</h3>
+               <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>D1. Location Patterns</h3>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
@@ -2332,13 +2332,13 @@ export default function AnalyticsPage() {
                               <div style={{ height: 260, width: "100%", marginTop: 16 }}>
                                 <ResponsiveChart>
                                   <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
+                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--analytics-grid-color)" />
                                     <XAxis type="number" dataKey="lng" name="Longitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Longitude", position: "insideBottom", offset: -12, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
                                     <YAxis type="number" dataKey="lat" name="Latitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Latitude", angle: -90, position: "insideLeft", offset: 10, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
                                     <ZAxis type="category" dataKey="barangay" name="Barangay" />
                                     <Tooltip
                                       cursor={{ strokeDasharray: '3 3' }}
-                                      contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
+                                       contentStyle={{ borderRadius: 8, border: "1px solid var(--color-border)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-modal-bg)", color: "var(--color-ink)", fontSize: 12 }}
                                       content={({ active, payload }) => {
                                         if (!active || !payload?.length) return null;
                                         const d = payload[0]?.payload;
@@ -2533,15 +2533,15 @@ export default function AnalyticsPage() {
                         <div style={{ height: 260, width: "100%", marginTop: 16 }}>
                           <ResponsiveChart>
                             <BarChart data={diag.morans_data.points} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
+                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--analytics-grid-color)" />
                               <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
                               <YAxis tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
                               <Tooltip
-                                cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                                contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
+                                 cursor={{ fill: "var(--analytics-chart-hover)" }}
+                                 contentStyle={{ borderRadius: 8, border: "1px solid var(--color-border)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-modal-bg)", color: "var(--color-ink)", fontSize: 12 }}
                                 formatter={(value) => [`${value} distinct geospatial records`, "Red/Black flagged records"]}
                               />
-                              <ReferenceLine y={diag.morans_data.threshold} stroke="#6366f1" strokeDasharray="3 3" label={{ position: 'top', value: 'Upper-quartile benchmark', fill: "#6366f1", fontSize: 9 }} />
+                               <ReferenceLine y={diag.morans_data.threshold} stroke="var(--analytics-indigo)" strokeDasharray="3 3" label={{ position: 'top', value: 'Upper-quartile benchmark', fill: "var(--analytics-indigo)", fontSize: 9 }} />
                               <Bar dataKey="risk" name="Red/black flagged records" radius={[2, 2, 0, 0]}>
                                 {diag.morans_data.points.map((entry, index) => (
                                   <Cell key={`cell-${index}`} fill={entry.is_high_risk ? "#6366f1" : "#8b5cf6"} opacity={entry.is_high_risk ? 0.9 : 0.4} />
@@ -2568,10 +2568,10 @@ export default function AnalyticsPage() {
                     <div style={{ height: 280, width: "100%" }}>
                       <ResponsiveChart>
                         <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 120, left: 10, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(226,232,240,0.4)" />
+                           <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="var(--analytics-grid-color)" />
                           <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
                           <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--color-ink)", fontWeight: 500 }} width={120} axisLine={false} tickLine={false} tickFormatter={(val) => typeof val === 'string' && val.length > 18 ? val.substring(0, 18) + '…' : val} />
-                          <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)" }} />
+                           <Tooltip cursor={{ fill: "var(--analytics-chart-hover)" }} contentStyle={{ borderRadius: 8, border: "1px solid var(--color-border)", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-modal-bg)", color: "var(--color-ink)" }} />
                           <Bar dataKey="flagged_count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Registry-linked businesses">
                             <LabelList dataKey="label" position="right" fill="var(--color-ink)" fontSize={10} fontWeight={600} />
                           </Bar>
@@ -2591,7 +2591,7 @@ export default function AnalyticsPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
               {/* D2. TREND ANALYSIS */}
               <div>
-                <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D2. Trend Analysis</h3>
+                 <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>D2. Trend Analysis</h3>
                 <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, height: "calc(100% - 46px)" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
@@ -2605,7 +2605,7 @@ export default function AnalyticsPage() {
                     <div style={{ maxHeight: 280, overflowY: "auto" }}>
                       <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
                         <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
-                          <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
+                           <tr style={{ borderBottom: "2px solid var(--color-border)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
                             <th style={{ padding: "9px 8px" }}>Started</th>
                             <th style={{ padding: "9px 8px" }}>Status</th>
                             <th style={{ padding: "9px 8px", textAlign: "right" }}>Places results</th>
@@ -2621,7 +2621,7 @@ export default function AnalyticsPage() {
                               ? `${((newFlags / checked) * 100).toFixed(1)}%`
                               : "—";
                             return (
-                              <tr key={run.run_id} style={{ borderBottom: "1px solid rgba(226,232,240,0.35)" }}>
+                               <tr key={run.run_id} style={{ borderBottom: "1px solid var(--color-border-soft)" }}>
                                 <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{formatScanHistoryTimestamp(run.started_at)}</td>
                                 <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: SCAN_STATUS_COLOR[run.status] || COLOR.orange, whiteSpace: "nowrap" }}>{SCAN_STATUS_LABEL[run.status] || run.status}</td>
                                 <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{checked}</td>
@@ -2894,9 +2894,9 @@ export default function AnalyticsPage() {
                           <div style={{ padding: "0 20px 20px 20px", borderTop: "1px solid rgba(99,102,241,0.08)" }}>
                             {/* Flag Badges */}
                             <div style={{ display: "flex", gap: 8, marginTop: 14, marginBottom: 14, flexWrap: "wrap" }}>
-                              {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Registration / renewal checks</span>}
-                              {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Suspicious</span>}
-                              {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black-flagged records</span>}
+                               {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Registration / renewal checks</span>}
+                               {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Suspicious</span>}
+                               {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black-flagged records</span>}
                             </div>
 
                             {/* Score Breakdown */}
@@ -3045,13 +3045,13 @@ export default function AnalyticsPage() {
                 ) : (
                   <ResponsiveChart height={280}>
                     <RadarChart data={radarData}>
-                      <PolarGrid stroke="rgba(226,232,240,0.6)" />
+                       <PolarGrid stroke="var(--analytics-grid-color)" />
                       <PolarAngleAxis dataKey="barangay" tick={{ fontSize: 10, fill: "var(--color-muted)" }} />
-                      <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 9 }} />
+                       <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--color-muted)" }} axisLine={{ stroke: "var(--analytics-grid-color)" }} />
                       <Radar name="OPS Score" dataKey="OPS" stroke="#6366f1" fill="#6366f1" fillOpacity={0.18} strokeWidth={2} />
                       <Radar name="Relative flag burden" dataKey="Risk" stroke={COLOR.yellow} fill={COLOR.yellow} fillOpacity={0.12} strokeWidth={2} />
                       <Radar name="Proximity" dataKey="Proximity" stroke={COLOR.blue} fill={COLOR.blue} fillOpacity={0.06} strokeWidth={1} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                       <Legend wrapperStyle={{ fontSize: 12, color: "var(--color-ink)" }} />
                       <Tooltip content={<CustomTooltip />} />
                     </RadarChart>
                   </ResponsiveChart>
@@ -3213,8 +3213,8 @@ export default function AnalyticsPage() {
                               <BarChart data={operationsStatusRows} layout="vertical"
                                 barSize={24} barCategoryGap="22%"
                                 margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                                <CartesianGrid strokeDasharray="3 3" horizontal={false}
-                                  stroke="rgba(226,232,240,0.4)" />
+                         <CartesianGrid strokeDasharray="3 3" horizontal={false}
+                           stroke="var(--analytics-grid-color)" />
                                 <XAxis type="number" domain={[0, "dataMax"]}
                                   allowDecimals={false}
                                   tick={{ fontSize: 10, fill: "var(--color-muted)" }}
@@ -3299,7 +3299,7 @@ export default function AnalyticsPage() {
                   <div style={{ height: 320, width: "100%" }}>
                     <ResponsiveChart>
                       <BarChart data={operationsTimelineChartRows} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.6)" />
+                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--analytics-grid-color)" />
                         <XAxis dataKey="date" axisLine={false} tickLine={false}
                           tick={{ fontSize: 10, fill: "var(--color-muted)" }} tickMargin={10} minTickGap={20}
                           angle={-30} textAnchor="end" />

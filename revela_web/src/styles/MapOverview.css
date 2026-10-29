@@ -797,34 +797,86 @@ html.theme-dark .map-overview-detail-card {
   background: transparent;
 }
 
+html.theme-dark .map-overview {
+  color-scheme: dark;
+}
+html.theme-dark .map-overview-filter-card,
 html.theme-dark .map-overview-total,
-html.theme-dark .map-overview-layout {
-  --color-ink: #0f172a;
-  --color-muted: #475569;
-  --color-border: #cbd5e1;
-  --color-border-soft: #e2e8f0;
-  --color-surface: #FBFCFC;
-  background: #FBFCFC;
-}
-
+html.theme-dark .map-overview-layout,
+html.theme-dark .map-overview-hotspot-summary,
 html.theme-dark .map-overview-map-legend {
-  border-color: #cbd5e1;
-  background: #FBFCFC;
-  color: #334155;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+  background: var(--color-modal-bg);
+  border-color: var(--color-border);
+  color: var(--color-ink);
+  box-shadow: none;
 }
-
-html.theme-dark .map-overview-legend-title,
-html.theme-dark .map-overview-legend-empty {
-  color: #0f172a;
+html.theme-dark .map-overview-filter-heading { border-bottom-color: var(--color-border-soft); }
+html.theme-dark .map-overview-filter-heading-icon {
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
 }
-
-html.theme-dark .map-overview-map-legend .map-overview-legend-ranges {
-  color: #334155;
+html.theme-dark .map-overview select,
+html.theme-dark .map-overview button {
+  background: var(--color-input-bg);
+  border-color: var(--color-border);
+  color: var(--color-ink);
 }
-
-html.theme-dark .map-overview-legend-toggle {
-  border-color: #cbd5e1 !important;
-  background: #FBFCFC !important;
-  color: #1e293b !important;
+html.theme-dark .map-overview button:hover:not(:disabled) {
+  background: var(--color-hover);
+  border-color: var(--color-primary);
 }
+html.theme-dark .map-overview :is(select, button):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+html.theme-dark .map-overview .map-overview-segmented button.active,
+html.theme-dark .map-overview .map-overview-choice-row button.active,
+html.theme-dark .map-overview .map-overview-selection-chip {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
+}
+html.theme-dark .map-overview .map-overview-hotspot-toggle[aria-checked="true"] {
+  border-color: #fb923c;
+  background: rgba(249, 115, 22, 0.18);
+  color: #fdba74;
+}
+html.theme-dark .map-overview .map-overview-selection-chip button,
+html.theme-dark .map-overview .map-overview-reset {
+  background: transparent !important;
+  color: #bfdbfe !important;
+}
+html.theme-dark .map-overview .map-overview-map-message {
+  background: var(--color-card-alt);
+  color: var(--color-muted);
+}
+html.theme-dark .map-overview .map-overview-map-error,
+html.theme-dark .map-overview .map-overview-error-inline { color: #fca5a5; }
+html.theme-dark .map-overview .map-overview-anomaly { color: #fcd34d; }
+html.theme-dark .map-overview .map-overview-stacked-bar { background: var(--color-card-alt); }
+html.theme-dark .map-overview .map-overview-feature-label {
+  color: #f8fafc;
+  text-shadow: -1px -1px 2px #0a0a0a, 1px -1px 2px #0a0a0a,
+    -1px 1px 2px #0a0a0a, 1px 1px 2px #0a0a0a;
+}
+html.theme-dark .map-overview .map-overview-legend-toggle {
+  border-color: var(--color-border) !important;
+  background: var(--color-modal-bg) !important;
+  color: var(--color-ink) !important;
+}
+html.theme-dark .map-overview .map-overview-legend-toggle:hover {
+  border-color: var(--color-primary) !important;
+  background: var(--color-card-alt) !important;
+}
+html.theme-dark .map-overview .map-overview-legend-title,
+html.theme-dark .map-overview .map-overview-legend-empty,
+html.theme-dark .map-overview .map-overview-legend-ranges { color: var(--color-ink); }
+html.theme-dark .map-overview .map-overview-legend-ranges i { border-color: var(--color-border); }
+html.theme-dark .map-overview .map-overview-legend-empty i { background: var(--color-card-alt); }
+html.theme-dark .map-overview .gm-style-iw-c,
+html.theme-dark .map-overview .gm-style-iw-tc::after {
+  background: var(--color-modal-bg);
+  color: var(--color-ink);
+}
+html.theme-dark .map-overview .gm-style-iw button.gm-ui-hover-effect { filter: invert(1); }
+html.theme-dark .map-overview .map-overview-hover-tooltip { color: var(--color-ink); }

@@ -20,6 +20,22 @@
   background: #FBFCFC;
   box-shadow: none;
 }
+.analytics-page {
+  --analytics-grid-color: rgba(226, 232, 240, 0.4);
+  --analytics-chart-hover: rgba(255, 255, 255, 0.05);
+  --analytics-indigo: #6366f1;
+  --analytics-risk-medium: #b45309;
+  --analytics-risk-low: #166534;
+  --analytics-revoked: #334155;
+}
+html.theme-dark .analytics-page {
+  --analytics-grid-color: rgba(203, 213, 225, 0.2);
+  --analytics-chart-hover: rgba(255, 255, 255, 0.07);
+  --analytics-indigo: #a5b4fc;
+  --analytics-risk-medium: #fcd34d;
+  --analytics-risk-low: #86efac;
+  --analytics-revoked: #94a3b8;
+}
 
 .analytics-page .saas-content .frosted-glass {
   backdrop-filter: none;
@@ -33,11 +49,9 @@ html.theme-dark .analytics-page .saas-content .kpi-card {
   background: var(--color-modal-bg);
   box-shadow: none;
 }
-html.theme-dark .analytics-page .saas-content .kpi-card {
-  --color-ink: #0f172a;
-  --color-muted: #475569;
-  --color-border: #cbd5e1;
-  background: #FBFCFC;
+.analytics-page .saas-content .analytics-stale-alert.saas-card {
+  border-color: color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-modal-bg));
 }
 
 .analytics-page-heading {
@@ -134,6 +148,8 @@ html.theme-dark .analytics-tab-btn.active {
 }
 .analytics-tab-btn:hover:not(.active) { background: var(--color-hover); color: var(--color-ink); }
 html.theme-dark .analytics-tab-btn:hover:not(.active) { background: rgba(255, 255, 255, 0.05); color: var(--color-ink); }
+html.theme-dark .analytics-page .kpi-icon--gold { color: var(--color-gold); }
+html.theme-dark .analytics-page .kpi-icon--green { color: var(--color-primary); }
 .analytics-tab-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 .analytics-tab-label { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; }
 .analytics-tab-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
@@ -347,6 +363,12 @@ html.theme-dark .analytics-tab-btn:hover:not(.active) { background: rgba(255, 25
   font-size: 12px;
 }
 .analytics-chart-empty strong { color: var(--color-ink); font-size: 14px; }
+html.theme-dark .analytics-page .recharts-default-tooltip {
+  background: var(--color-modal-bg) !important;
+  border: 1px solid var(--color-border) !important;
+  color: var(--color-ink);
+}
+html.theme-dark .analytics-page .recharts-legend-item-text { color: var(--color-ink) !important; }
 .analytics-filter-scope-note {
   margin: 10px 0 14px;
   padding: 8px 10px;
@@ -1216,7 +1238,8 @@ html.theme-dark .presc-flag-count--black { color: #cbd5e1 !important; }
   line-height: 1.25;
   white-space: nowrap;
 }
-html.theme-dark .presc-priority-badge { color: var(--color-ink) !important; }
+/* Priority badges use inline, risk-dependent backgrounds: retain their own
+   contrasting foreground instead of forcing white text onto amber fills. */
 .presc-registry-cell strong { font-size: 12px; }
 .presc-candidates-cell, .presc-flagged-cell { font-weight: 600; }
 .presc-priority-note { margin: 14px 0 0; color: var(--color-muted); font-size: 11px; line-height: 1.55; }
@@ -1736,15 +1759,30 @@ html.theme-dark .presc-priority-badge { color: var(--color-ink) !important; }
 }
 
 html.theme-dark .analytics-filter-modal {
-  background: #0d1117;
-  border-color: rgba(255, 255, 255, 0.15);
+  background: var(--color-modal-bg);
+  border-color: var(--color-border);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75);
 }
 html.theme-dark .analytics-filter-modal-header,
 html.theme-dark .analytics-filter-modal-footer {
-  background: #161b22;
-  border-color: rgba(255, 255, 255, 0.12);
+  background: var(--color-card-alt);
+  border-color: var(--color-border);
 }
+html.theme-dark .analytics-filter-modal { color-scheme: dark; color: var(--color-ink); }
+html.theme-dark .analytics-filter-modal select,
+html.theme-dark .analytics-filter-modal input { color-scheme: dark; }
+html.theme-dark .analytics-filter-modal :is(select, input, button):focus-visible,
+html.theme-dark .analytics-page :is(button, summary):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+html.theme-dark .analytics-filter-modal .filter-accordion-count,
+html.theme-dark .analytics-filter-modal .brgy-multiselect-chip,
+html.theme-dark .analytics-filter-modal .brgy-multiselect-chip button { color: #93c5fd; }
+html.theme-dark .analytics-filter-modal .filter-chip,
+html.theme-dark .analytics-filter-modal .filter-chip button { color: #6ee7b7; }
+html.theme-dark .analytics-filter-modal .filter-accordion-header:hover,
+html.theme-dark .analytics-filter-modal .brgy-multiselect-item:hover { background: var(--color-hover); }
 html.theme-dark .analytics-filter-btn {
   background: #161b22;
   border-color: rgba(255, 255, 255, 0.16);

@@ -16,6 +16,7 @@
     "test:overview:browser": "node scripts/verify-compliance-browser.mjs actionable-smoke",
     "test:actionable:browser": "node scripts/verify-compliance-browser.mjs actionable-smoke",
     "test:analytics-layout:browser": "node scripts/verify-layout-browser.mjs --analytics-fixes-only",
+    "test:analytics-theme:browser": "node scripts/verify-analytics-theme-browser.mjs",
     "test:layouts:browser": "node scripts/verify-layout-browser.mjs",
     "test:public-entry:browser": "npm run build && node scripts/verify-public-entry-browser.mjs",
     "test:settings:browser": "npm run build && node scripts/verify-settings-browser.mjs",
