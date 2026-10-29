@@ -31,6 +31,13 @@ class PrescriptiveQueryTests(unittest.TestCase):
                 ('B4', 'Closed shop', 1, 'Closed', 'P4'),
                 ('B5', 'Pending shop', 2, 'Pending', 'P5'),
                 ('B6', 'Revoked shop', 2, 'Revoked', 'P6');
+            UPDATE official_registry SET lineOfBusiness = 'Make stuff' WHERE businessID = 'B1';
+            INSERT INTO registry_sector_map
+                (normalized_line_of_business, display_sector_key, display_sector_label, match_status)
+            VALUES
+                ('makestuff', 'manufacturing', 'Manufacturing', 'matched'),
+                ('shopretail', 'retail', 'Retail', 'matched');
+            UPDATE official_registry SET lineOfBusiness = 'Shop retail' WHERE businessID = 'B2';
             INSERT INTO enforcement_state (subjectType, subjectID, warningLevel) VALUES ('business', 'B3', 1);
             INSERT INTO geospatial_logs (logID, businessID, barangayID, detectedName, flagColor, latitude, longitude, placeID) VALUES
                 (1, 'B1', 1, 'Expired shop', 'Green', 13.96, 121.11, 'P1'),
@@ -73,6 +80,27 @@ class PrescriptiveQueryTests(unittest.TestCase):
         self.assertEqual(rows[1]["unregistered_candidate_count"], 2, "A placeID match is a registry match even when businessID is null")
         self.assertEqual(rows[2]["registry_active_flag_rate"], 100)
         self.assertIsNone(rows[3]["registry_active_flag_rate"])
+
+    def test_sector_risk_uses_distinct_active_flag_entities_and_neutral_fallback(self):
+        rows = {row["barangayID"]: row for row in self.section()["rankings"]}
+        first = rows[1]
+        self.assertEqual(first["sector_entity_count"], 3)
+        self.assertEqual(first["sector_known_entity_count"], 1)
+        self.assertEqual(first["sector_fallback_entity_count"], 2)
+        self.assertAlmostEqual(first["sector_score"], 190 / 3)
+        self.assertEqual(first["sector_score_source"], "psic_weighted")
+        self.assertEqual(rows[2]["sector_score_source"], "neutral_fallback")
+
+    def test_sector_risk_deduplicates_unregistered_entities_by_place_id(self):
+        self.db.db.execute("""
+            INSERT INTO geospatial_logs
+                (logID, businessID, barangayID, detectedName, flagColor, latitude, longitude, placeID)
+            VALUES (11, NULL, 1, 'Second pin for same unknown place', 'Red', 13.96, 121.11, 'PX')
+        """)
+        self.db.commit()
+        first = next(row for row in self.section()["rankings"] if row["barangayID"] == 1)
+        self.assertEqual(first["sector_entity_count"], 3)
+        self.assertEqual(first["sector_fallback_entity_count"], 2)
 
     def test_dispatch_capacity_deduplicates_registry_and_place_matched_businesses(self):
         before = next(row for row in self.section()["rankings"] if row["barangayID"] == 1)
@@ -212,7 +240,7 @@ class PrescriptiveQueryTests(unittest.TestCase):
             response, status = routes.get_ops_rankings_only.__wrapped__()
         self.assertEqual(status, 200)
         self.assertEqual(response.get_json()["data"], expected)
-        self.assertEqual(response.get_json()["model"]["version"], "wlc-v2")
+        self.assertEqual(response.get_json()["model"]["version"], "wlc-v3")
 
     def test_invalid_policy_payloads_return_400_not_500(self):
         app = Flask(__name__)

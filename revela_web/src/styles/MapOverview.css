@@ -505,15 +505,6 @@
     1px 1px 2px #fff;
 }
 
-.map-overview-hover-tooltip {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 2px 4px;
-  color: #0f172a;
-  font-size: 12px;
-}
-
 .map-overview-map-hint {
   margin: 0;
   color: var(--color-muted);
@@ -973,44 +964,3 @@ html.theme-dark .map-overview .map-overview-legend-empty,
 html.theme-dark .map-overview .map-overview-legend-ranges { color: var(--color-ink); }
 html.theme-dark .map-overview .map-overview-legend-ranges i { border-color: var(--color-border); }
 html.theme-dark .map-overview .map-overview-legend-empty i { background: var(--color-card-alt); }
-/* Google InfoWindow has its own header, scrolling content, and separate tail.
-   Styling only the outer bubble leaves a white strip below the content. */
-html.theme-dark .map-overview .gm-style-iw-t,
-html.theme-dark .map-overview .gm-style-iw-tc { background: transparent !important; }
-html.theme-dark .map-overview .gm-style-iw-c {
-  background: var(--color-modal-bg) !important;
-  border: 1px solid var(--color-border) !important;
-  color: var(--color-ink) !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55) !important;
-}
-html.theme-dark .map-overview .gm-style-iw,
-html.theme-dark .map-overview .gm-style-iw-d,
-html.theme-dark .map-overview .gm-style-iw-ch,
-html.theme-dark .map-overview .gm-style-iw-chr {
-  background: var(--color-modal-bg) !important;
-  color: var(--color-ink) !important;
-}
-html.theme-dark .map-overview .gm-style-iw-d {
-  scrollbar-color: var(--color-border) var(--color-modal-bg);
-}
-html.theme-dark .map-overview .gm-style-iw-d::-webkit-scrollbar-track {
-  background: var(--color-modal-bg);
-}
-html.theme-dark .map-overview .gm-style-iw-tc::after {
-  background: var(--color-modal-bg) !important;
-  box-shadow: 1px 1px 0 var(--color-border);
-}
-html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect {
-  background: transparent !important;
-  border: 0;
-  color: var(--color-ink) !important;
-}
-html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect:hover {
-  background: var(--color-hover) !important;
-}
-html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect img,
-html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect span { filter: invert(1); }
-html.theme-dark .map-overview .map-overview-hover-tooltip {
-  background: var(--color-modal-bg);
-  color: var(--color-ink);
-}

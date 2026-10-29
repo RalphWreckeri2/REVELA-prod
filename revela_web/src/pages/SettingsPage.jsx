@@ -848,7 +848,7 @@ export default function SettingsPage() {
           status={savingPolicy ? { text: "Saving…" } : policyLoading ? { text: "Loading…" } : policyError ? { text: "Policy error", tone: "error" } : policyDirty ? { text: "Unsaved changes", tone: "draft" } : null}>
           <div style={{ marginBottom: 16 }}>
             {policyError && <p className="settings-error" role="alert">{policyError}</p>}
-            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>OPS = W1×Risk + W2×Sector + W3×Proximity. The default 68% Risk / 7% Sector / 25% Proximity follows the interview-derived policy. Missing sector overrides use the existing neutral score of 50; saved weights are applied unchanged, not redistributed.</p>
+            <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>OPS = W1×Risk + W2×Sector + W3×Proximity. The default 68% Risk / 7% Sector / 25% Proximity follows the interview-derived policy. Sector scores use matched PSIC categories; unmatched or unregistered entities use neutral 50, and explicit barangay overrides take precedence. Saved weights are applied unchanged, not redistributed.</p>
           </div>
           <div style={{ display: "grid", gap: 16 }}>
             {/* Linked Sliders */}

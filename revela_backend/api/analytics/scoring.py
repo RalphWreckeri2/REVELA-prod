@@ -8,9 +8,10 @@ not violation probability or a historically calibrated risk estimate.
 import math
 
 from api.analytics.service import validate_wlc_config
+from api.analytics.sector_risk import load_sector_risk_policy, weighted_sector_score
 
 
-MODEL_VERSION = "wlc-v2"
+MODEL_VERSION = "wlc-v3"
 FLAG_WEIGHTS = {"Red": 3, "Yellow": 2, "Black": 4}
 NEUTRAL_SECTOR_SCORE = 50
 
@@ -36,10 +37,7 @@ def haversine_km(lat1, lng1, lat2, lng2):
     return 2 * 6371.0088 * math.asin(math.sqrt(max(0, min(1, a))))
 
 
-def _model_weights(config, rows):
-    sectors = config.get("sectors", {})
-    names = [row["barangayName"] for row in rows]
-    complete = bool(names) and all(name in sectors for name in names)
+def _model_weights(config):
     enabled = config["w2_sector"] > 0
     # Weights are the interview-derived/admin-saved policy, not data-dependent.
     # Incomplete or constant sector scores must NEVER reweight the WLC model.
@@ -48,18 +46,22 @@ def _model_weights(config, rows):
                "w3": config["w3_distance"] / 100}
     if not enabled:
         reason = "Sector weight is zero by explicit configuration; other weights are unchanged."
-    elif complete:
-        reason = "Using configured barangay sector scores with the configured weights unchanged. These are policy inputs, not inferred sector risk."
     else:
-        reason = "Barangays without a sector override use the existing neutral score of 50, not a measured industry-risk score. Configured weights are preserved; no weight is redistributed."
-    return weights, complete, enabled, reason
+        reason = (
+            "Sector scores use active-flag entities' distinct business/place/log identity "
+            "and their matched PSIC display category. Unmatched, unregistered, or "
+            "unclassified entities use neutral 50; explicit barangay overrides take "
+            "precedence. Configured weights are preserved; no weight is redistributed."
+        )
+    return weights, enabled, reason
 
 
 def calculate_rankings(rows, config):
     """Score the FULL municipal cohort, then assign deterministic global ranks."""
     validate_wlc_config(config)
     rows = list(rows)
-    weights, sector_ready, sector_enabled, reason = _model_weights(config, rows)
+    weights, sector_enabled, reason = _model_weights(config)
+    sector_policy = load_sector_risk_policy()
     maximum = max((weighted_burden(row) for row in rows), default=0)
     rankings = []
     for row in rows:
@@ -72,8 +74,18 @@ def calculate_rankings(rows, config):
         dispatchable_businesses = int(row.get("dispatchable_business_count", dispatchable) or 0)
         burden = weighted_burden(row)
         risk = round(100 * burden / maximum, 1) if maximum else 0.0
+        category_counts = row.get("sector_category_counts", {})
+        sector, sector_entity_count, sector_known_count, sector_fallback_count = (
+            weighted_sector_score(category_counts, sector_policy)
+        )
         has_sector_override = row["barangayName"] in config.get("sectors", {})
-        sector = float(config.get("sectors", {}).get(row["barangayName"], NEUTRAL_SECTOR_SCORE))
+        if has_sector_override:
+            sector = float(config["sectors"][row["barangayName"]])
+        sector_source = (
+            "configured" if has_sector_override
+            else "psic_weighted" if sector_known_count
+            else "neutral_fallback"
+        )
         lat, lng = row.get("avg_lat"), row.get("avg_lng")
         try:
             lat, lng = float(lat), float(lng)
@@ -94,7 +106,10 @@ def calculate_rankings(rows, config):
             "barangayID": row["barangayID"], "barangayName": row["barangayName"],
             "ops_score": ops, "risk_score": risk, "weighted_burden": burden,
             "sector_score": sector, "distance_score": distance,
-            "sector_score_source": "configured" if has_sector_override else "neutral_fallback",
+            "sector_score_source": sector_source,
+            "sector_entity_count": sector_entity_count,
+            "sector_known_entity_count": sector_known_count,
+            "sector_fallback_entity_count": sector_fallback_count,
             "proximity_score": proximity,
             "distance_km": round(distance_km, 3) if located else None,
             "location_missing": not located, "inspection_required": dispatchable > 0,
@@ -117,10 +132,19 @@ def calculate_rankings(rows, config):
     model = {
         "version": MODEL_VERSION, "scope": "municipality_current",
         "reference_max_burden": maximum, "flag_weights": dict(FLAG_WEIGHTS),
-        "weights": weights, "sector_scores_ready": sector_ready,
+        "weights": weights,
+        "sector_scores_ready": any(row["sector_score_source"] != "neutral_fallback" for row in rankings),
         "sector_enabled": sector_enabled, "sector_note": reason,
-        "sector_fallback_score": NEUTRAL_SECTOR_SCORE,
+        "sector_fallback_score": sector_policy["fallback_score"],
         "sector_fallback_count": sum(row["sector_score_source"] == "neutral_fallback" for row in rankings),
+        "sector_entity_count": sum(row["sector_entity_count"] for row in rankings),
+        "sector_known_entity_count": sum(row["sector_known_entity_count"] for row in rankings),
+        "sector_fallback_entity_count": sum(row["sector_fallback_entity_count"] for row in rankings),
+        "sector_policy": sector_policy,
+        "sector_count_unit": (
+            "unweighted mean across distinct active-flag entities, identified by business ID, "
+            "then place ID, then geospatial log ID"
+        ),
         "formula": "OPS = W1*Risk + W2*Sector + W3*Proximity",
         "priority_thresholds": {"High": 60, "Medium": 30},
         "location_note": "Straight-line BPLO distance to the mean location of dispatchable Red/Yellow records; missing locations use neutral proximity 50.",

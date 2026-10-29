@@ -145,38 +145,107 @@ const SectionHeader = ({ tier, title, subtitle }) => {
 };
 
 // ── Loading skeleton ──────────────────────────────────────────────────────────
-const Skeleton = ({ h = 200 }) => (
-  <SkeletonBlock className="analytics-skeleton" style={{ height: h }} />
-);
-
-function AnalyticsSkeleton({ tab }) {
+const Skeleton = ({ h = 200, variant = "chart", rows = 8, columns = 8 }) => {
+  const bars = [42, 65, 52, 82, 60, 93, 72, 58];
   return (
-    <section role="status" aria-label={`Loading ${tab} analytics`} aria-busy="true" className="analytics-loading-layout">
-      <span className="analytics-sr-only">Loading analytics…</span>
-      <SkeletonBlock className="analytics-skeleton-title analytics-skeleton" />
-      {tab === "descriptive" && (
-        <div className="analytics-skeleton-kpis">
-          {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className="saas-card analytics-skeleton-kpi" aria-hidden="true">
-              <SkeletonBlock className="analytics-skeleton-icon" />
-              <div><SkeletonBlock className="analytics-skeleton-value" /><SkeletonBlock className="analytics-skeleton-label" /></div>
+    <div
+      className={`analytics-skeleton-frame analytics-skeleton-frame--${variant}`}
+      style={{ height: h }}
+      aria-hidden="true"
+    >
+      {variant === "table" ? (
+        <div
+          className="analytics-skeleton-table"
+          style={{ "--skeleton-table-columns": `1.4fr repeat(${columns - 1}, minmax(0, 1fr))` }}
+        >
+          <div className="analytics-skeleton-table-header">
+            {Array.from({ length: columns }, (_, index) => (
+              <SkeletonBlock key={index} />
+            ))}
+          </div>
+          {Array.from({ length: 6 }, (_, row) => (
+            <div className="analytics-skeleton-table-row" key={row}>
+              {Array.from({ length: columns }, (_, column) => (
+                <SkeletonBlock key={column} />
+              ))}
             </div>
           ))}
         </div>
-      )}
-      <div className="analytics-skeleton-charts">
-        {(tab === "descriptive" ? [520, 520] : [280, 240, 240]).map((h, i) => (
-          <div key={i} className={`saas-card analytics-skeleton-chart${tab === "descriptive" || i === 0 ? " analytics-skeleton-chart--wide" : ""}`} aria-hidden="true">
-            <SkeletonBlock className="analytics-skeleton-label" />
-            <div className="analytics-skeleton-plot" style={{ height: h }}>
-              {[42, 65, 52, 82, 60, 93, 72, 58].map((height, j) => <SkeletonBlock key={j} className="analytics-skeleton-bar" style={{ height: `${height}%` }} />)}
+      ) : variant === "list" ? (
+        <div className="analytics-skeleton-list">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div className="analytics-skeleton-list-row" key={index}>
+              <SkeletonBlock className="analytics-skeleton-list-rank" />
+              <div className="analytics-skeleton-list-copy">
+                <SkeletonBlock />
+                <SkeletonBlock />
+              </div>
+              <SkeletonBlock className="analytics-skeleton-list-badge" />
+              <SkeletonBlock className="analytics-skeleton-list-status" />
+            </div>
+          ))}
+        </div>
+      ) : variant === "stacked" || variant === "operations" ? (
+        <div className={`analytics-skeleton-stacked${variant === "operations" ? " analytics-skeleton-operations" : ""}`}>
+          <div className="analytics-skeleton-stacked-legend">
+            {Array.from({ length: variant === "operations" ? 3 : 4 }, (_, index) => <SkeletonBlock key={index} />)}
+          </div>
+          <div className="analytics-skeleton-stacked-rows">
+            {Array.from({ length: rows }, (_, index) => (
+              <div className="analytics-skeleton-stacked-row-wrap" key={index}>
+                {variant === "operations" && <SkeletonBlock className="analytics-skeleton-operations-label" />}
+                <SkeletonBlock className="analytics-skeleton-stacked-row" style={{ width: `${bars[index % bars.length]}%` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : variant === "radar" ? (
+        <div className="analytics-skeleton-radar">
+          {[0, 1, 2, 3].map(level => <span key={level} />)}
+        </div>
+      ) : variant === "map" ? (
+        <div className="analytics-skeleton-map">
+          <SkeletonBlock className="analytics-skeleton-map-toolbar" />
+          <div className="analytics-skeleton-map-body">
+            <SkeletonBlock className="analytics-skeleton-map-canvas" />
+            <div className="analytics-skeleton-map-panel">
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
             </div>
           </div>
-        ))}
-      </div>
-    </section>
+        </div>
+      ) : (
+        <>
+          <div className="analytics-skeleton-chart-heading">
+            <SkeletonBlock />
+            <SkeletonBlock />
+          </div>
+          <div className="analytics-skeleton-chart-plot">
+            <div className="analytics-skeleton-chart-grid" />
+            <div className="analytics-skeleton-chart-bars">
+              {bars.map((height, index) => (
+                <SkeletonBlock key={index} style={{ height: `${height}%` }} />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
-}
+};
+
+const getStackedChartLayout = (data, statuses) => {
+  const rows = data.filter(row => statuses.some(status => Number(row[status.key] || 0) > 0)).length;
+  return { rows, height: rows > 0 ? Math.max(280, rows * 40 + 70) + 30 : 220 };
+};
+
+const AnalyticsMetricValue = ({ value, loading, variant = "standard" }) => (
+  loading
+    ? <SkeletonBlock className={`analytics-kpi-value-skeleton analytics-kpi-value-skeleton--${variant}`} />
+    : value
+);
 
 // ── Empty State ──────────────────────────────────────────────────────────────
 const EmptyState = ({ title = "No Data", message = "", h = 220, icon }) => (
@@ -1825,7 +1894,11 @@ export default function AnalyticsPage() {
         {currentSection.data && currentSection.updating && (
           <p role="status" className="analytics-updating">Updating analytics… Showing the last available data.</p>
         )}
-        {loading && <AnalyticsSkeleton tab={activeTab} />}
+        {loading && (
+          <span role="status" aria-busy="true" className="analytics-sr-only">
+            Loading {activeTab} analytics…
+          </span>
+        )}
         {!loading && !currentSection.data && !snapshotIsExpired && (
           <div className="saas-card analytics-section-state">
             <h3>{offline ? "Analytics unavailable offline" : "Analytics could not be loaded"}</h3>
@@ -1863,7 +1936,7 @@ export default function AnalyticsPage() {
         )}
         {activeTab === "descriptive" && (
           <section style={{ marginBottom: 52 }}>
-            <Suspense fallback={<Skeleton h={560} />}>
+            <Suspense fallback={<Skeleton h={560} variant="map" />}>
               <MapOverview
                 token={token}
                 filters={appliedFilters}
@@ -1882,7 +1955,7 @@ export default function AnalyticsPage() {
                   Pending includes Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review means Submitted. Verified reports are complete. Inspectors with no current work remain visible.
                 </AnalyticsInfoTip>
               </div>
-              {loading ? <Skeleton h={300} /> : operationsStatusRows.length === 0 ? (
+              {loading ? <Skeleton h={Math.max(260, operationsStatusRows.length * 40 + 80) + 40} variant="operations" rows={operationsStatusRows.length} /> : operationsStatusRows.length === 0 ? (
                 <EmptyState h={260} title="No inspector data" message="No active inspectors are available for this view." />
               ) : (
                 <>
@@ -1967,7 +2040,7 @@ export default function AnalyticsPage() {
                   Select a barangay to see its registry, map-pin, and inspection totals. The date range changes pin and inspection counts, not registry counts.
                 </AnalyticsInfoTip>
                 {mapOverviewExpanded && (
-                  <Suspense fallback={<Skeleton h={360} />}>
+                  <Suspense fallback={<Skeleton h={560} variant="map" />}>
                     <MapOverview
                       token={token}
                       filters={appliedFilters}
@@ -1978,9 +2051,9 @@ export default function AnalyticsPage() {
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
               <div className="analytics-census-grid">
-                <KpiCard iconVariant="plain" value={kpis?.total_businesses ?? "?"} label="Businesses in scope" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="green" value={kpis?.active_count ?? "?"} label="Active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="red" value={Number(kpis?.total_businesses ?? 0) - Number(kpis?.active_count ?? 0)} label="Non-active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="plain" value={<AnalyticsMetricValue loading={loading} variant="compact" value={kpis?.total_businesses ?? "?"} />} label="Businesses in scope" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} variant="compact" value={kpis?.active_count ?? "?"} />} label="Active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={<AnalyticsMetricValue loading={loading} variant="compact" value={Number(kpis?.total_businesses ?? 0) - Number(kpis?.active_count ?? 0)} />} label="Non-active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
               <div className="tier-2-card saas-card frosted-glass analytics-feature-card" style={{ marginTop: 24 }}>
@@ -1994,7 +2067,7 @@ export default function AnalyticsPage() {
                     Uses the selected registry filters and groups businesses by their barangay and recorded business size. Empty sizes are shown as Unknown.
                   </AnalyticsInfoTip>
                 </div>
-                {loading ? <Skeleton h={480} /> : (
+                {loading ? <Skeleton h={getStackedChartLayout(registrySizeChartData, businessSizeStacks).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(registrySizeChartData, businessSizeStacks).rows)} /> : (
                   <StackedBarangayChart data={registrySizeChartData} statuses={businessSizeStacks}
                     emptyMessage="No businesses match the selected filters." />
                 )}
@@ -2033,7 +2106,7 @@ export default function AnalyticsPage() {
                         Uses the selected registry filters. Permit status filters limit the chart to the selected status; map and inspection filters do not affect it.
                       </AnalyticsInfoTip>
                     </div>
-                    {loading ? <Skeleton h={480} /> : (
+                    {loading ? <Skeleton h={getStackedChartLayout(registryChartData, REGISTRY_STATUS_STACKS).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(registryChartData, REGISTRY_STATUS_STACKS).rows)} /> : (
                       <StackedBarangayChart data={registryChartData} statuses={REGISTRY_STATUS_STACKS}
                         emptyMessage="No businesses match the selected filters." />
                     )}
@@ -2061,9 +2134,9 @@ export default function AnalyticsPage() {
                   <h4>Report status</h4>
                 </div>
                 <div className="analytics-field-kpi-grid analytics-field-kpi-grid--activity">
-                  <KpiCard iconVariant="plain" value={linkedReportCount} label="Total reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
-                  <KpiCard iconVariant="gold" value={awaitingCount} label="Awaiting review" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
-                  <KpiCard iconVariant="green" value={verifiedReportCount} label="Verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="plain" value={<AnalyticsMetricValue loading={loading} value={linkedReportCount} />} label="Total reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="gold" value={<AnalyticsMetricValue loading={loading} value={awaitingCount} />} label="Awaiting review" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
+                  <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={verifiedReportCount} />} label="Verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
                 </div>
               </div>
 
@@ -2076,9 +2149,9 @@ export default function AnalyticsPage() {
                     Pending combines Assigned, Reassigned, In Progress, and Unassigned reports. This chart includes reports that can be placed in a barangay.
                   </AnalyticsInfoTip>
                 </div>
-                {loading ? <Skeleton h={480} /> : (
+                {loading ? <Skeleton h={getStackedChartLayout(inspectionChartData, INSPECTION_STATUS_STACKS).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(inspectionChartData, INSPECTION_STATUS_STACKS).rows)} /> : (
                   <StackedBarangayChart data={inspectionChartData} statuses={INSPECTION_STATUS_STACKS}
-                    emptyMessage="No reports match the selected filters." />
+                emptyMessage="No reports match the selected filters." />
                 )}
                 <p className="analytics-chart-caption">
                   {inspectionNoReportBarangays} {inspectionNoReportBarangays === 1 ? "barangay has" : "barangays have"} no reports.
@@ -2094,7 +2167,7 @@ export default function AnalyticsPage() {
                     Shows Green, Yellow, and Red outcomes for verified reports. Other outcome values are not included in the bars.
                   </AnalyticsInfoTip>
                 </div>
-                {loading ? <Skeleton h={480} /> : (
+                {loading ? <Skeleton h={getStackedChartLayout(inspectionOutcomeChartData, OUTCOME_STACKS).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(inspectionOutcomeChartData, OUTCOME_STACKS).rows)} /> : (
                   <StackedBarangayChart data={inspectionOutcomeChartData} statuses={OUTCOME_STACKS}
                     emptyMessage="No verified outcomes match the selected filters." />
                 )}
@@ -2114,9 +2187,9 @@ export default function AnalyticsPage() {
                       </AnalyticsInfoTip>
                     </div>
                     <div className="analytics-field-kpi-grid analytics-field-kpi-grid--compliance">
-                      <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M4 21h16"></path><path d="M6 21V5l6-2 6 2v16"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="m9 15 2 2 4-4"></path></svg>} />
-                      <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M8 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-3"></path><path d="M8 2h8v4H8z"></path><path d="m8 13 2.5 2.5L16 10"></path></svg>} />
-                      <KpiCard iconVariant="green" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="9" cy="8" r="4"></circle><path d="M2 21v-2a7 7 0 0 1 14 0v2"></path><path d="m16 11 2 2 4-4"></path></svg>} />
+                      <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={confirmedCompliance?.office_confirmed ?? 0} />} label="Office-confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M4 21h16"></path><path d="M6 21V5l6-2 6 2v16"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="m9 15 2 2 4-4"></path></svg>} />
+                      <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={confirmedCompliance?.inspection_verified ?? 0} />} label="Inspection-verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M8 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-3"></path><path d="M8 2h8v4H8z"></path><path d="m8 13 2.5 2.5L16 10"></path></svg>} />
+                      <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={confirmedCompliance?.total_confirmed ?? 0} />} label="Total confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="9" cy="8" r="4"></circle><path d="M2 21v-2a7 7 0 0 1 14 0v2"></path><path d="m16 11 2 2 4-4"></path></svg>} />
                     </div>
                   </div>
                   <PinMonitoringPanel nonRegistry={desc?.non_registry_monitoring}
@@ -2137,7 +2210,7 @@ export default function AnalyticsPage() {
                 {Number(prescWorkforce?.available_inspectors ?? 0)} inspector{Number(prescWorkforce?.available_inspectors ?? 0) === 1 ? "" : "s"} available. Dispatch recommendations cover up to 3 barangays; others wait for a free inspector.
               </p>
             </div>
-            {loading ? <Skeleton h={320} /> : (
+            {loading ? <Skeleton h={320} variant="list" /> : (
               <>
                 <div className="analytics-recommendation-columns">
                   <span aria-hidden="true" />
@@ -2586,7 +2659,11 @@ export default function AnalyticsPage() {
                           <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w2_sector}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w2_sector} onChange={e => setWlcConfig({ ...wlcConfig, w2_sector: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
-                        {!presc?.model?.sector_scores_ready && <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>Missing sector overrides use the existing neutral score of 50. The configured sector weight is retained; weights are not redistributed.</p>}
+                        {presc?.model && <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>
+                          Active-flag entities use matched PSIC category scores; unmatched or unregistered entities use neutral 50
+                          {" "}{Number(presc.model.sector_fallback_entity_count || 0).toLocaleString()} of {Number(presc.model.sector_entity_count || 0).toLocaleString()} entities are unclassified and use neutral 50 unless an explicit barangay override is configured.
+                          The configured sector weight is retained; weights are not redistributed.
+                        </p>}
                       </div>
                       <div>
                         <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
@@ -2630,7 +2707,7 @@ export default function AnalyticsPage() {
                   </div>
                 )}
 
-                {loading ? <Skeleton h={280} /> : radarData.length === 0 ? (
+                {loading ? <Skeleton h={280} variant="radar" /> : radarData.length === 0 ? (
                   <EmptyState h={280} title="Insufficient Data" message="Not enough data to compute OPS rankings." />
                 ) : (
                   <ResponsiveChart height={280}>
@@ -2659,7 +2736,7 @@ export default function AnalyticsPage() {
                   </p>
                 </div>
 
-                {loading ? <Skeleton h={380} /> : (
+                {loading ? <Skeleton h={480} variant="table" /> : (
                   <div className="presc-priority-scroll" role="region" aria-label="Inspector deployment priorities" tabIndex={0}>
                     <table className="presc-priority-table">
                       <colgroup>

@@ -64,10 +64,12 @@ test("sector weight is not gated or zeroed by missing sector data", () => {
   assert.equal(wlcPolicyError(next), "");
 });
 
-test("analytics and policy settings disclose the neutral sector fallback", () => {
-  assert.match(analyticsPageSource, /Missing sector overrides use the existing neutral score of 50/);
+test("analytics and policy settings disclose PSIC sector mapping and neutral fallback", () => {
+  assert.match(analyticsPageSource, /matched PSIC category scores; unmatched or unregistered entities use neutral 50/);
+  assert.match(analyticsPageSource, /sector_fallback_entity_count/);
   assert.match(analyticsPageSource, /configured sector weight is retained; weights are not redistributed/i);
-  assert.match(settingsPageSource, /Missing sector overrides use the existing neutral score of 50/);
+  assert.match(settingsPageSource, /Sector scores use matched PSIC categories; unmatched or unregistered entities use neutral 50/);
+  assert.match(settingsPageSource, /explicit barangay overrides take precedence/i);
   assert.match(settingsPageSource, /saved weights are applied unchanged, not redistributed/i);
 });
 

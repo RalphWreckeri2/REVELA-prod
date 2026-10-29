@@ -23,6 +23,24 @@ const analyticsPageStyles = readFileSync(
   "utf8",
 );
 
+test("Analytics loading skeletons preserve local content geometry", () => {
+  assert.match(analyticsPageSource, /role="status" aria-busy="true" className="analytics-sr-only"/);
+  assert.match(analyticsPageSource, /analytics-skeleton-frame--\$\{variant\}/);
+  assert.match(analyticsPageSource, /analytics-kpi-value-skeleton/);
+  assert.equal((analyticsPageSource.match(/variant="stacked"/g) || []).length, 4);
+  assert.equal((analyticsPageSource.match(/getStackedChartLayout\(/g) || []).length, 8);
+  assert.match(analyticsPageSource, /const getStackedChartLayout = \(data, statuses\)/);
+  assert.doesNotMatch(analyticsPageSource, /chartHeight=\{480\}/);
+  assert.match(analyticsPageSource, /variant="operations" rows=\{operationsStatusRows\.length\}/);
+  assert.match(analyticsPageSource, /variant="radar"/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame\s*\{[^}]*width:\s*100%/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame--stacked\s*\{/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame--table\s*\{/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame--map\s*\{/);
+  assert.match(analyticsPageStyles, /\.analytics-kpi-value-skeleton--compact\s*\{/);
+  assert.doesNotMatch(analyticsPageSource, /AnalyticsSkeleton/);
+});
+
 test("groups inspection statuses and excludes barangays with no reports", () => {
   const rows = groupInspectionStatuses([
     { barangayName: "A", assigned: 1, reassigned: 2, in_progress: 3, unassigned: 4, submitted: 5, verified: 6 },

@@ -1,0 +1,18 @@
+{
+  "version": "psic-sector-risk-v1",
+  "fallback_score": 50,
+  "categories": {
+    "Manufacturing": 90,
+    "Construction and utilities": 85,
+    "Wholesale and vehicles": 80,
+    "Retail": 80,
+    "Food and drink": 75,
+    "Hospitality, arts and recreation": 75,
+    "Transport and storage": 70,
+    "Real estate": 60,
+    "Finance and professional": 50,
+    "Information and communication": 50,
+    "Education, health and other services": 40,
+    "Agriculture and mining": 30
+  }
+}

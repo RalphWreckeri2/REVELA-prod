@@ -16,6 +16,7 @@ import {
   getShortBarangayLabel,
   normalizeGeoJsonWinding,
 } from "./barangayMapMapping";
+import { createBarangayMapPopup } from "./barangayMapPopup";
 import {
   BARANGAY_MAP_INTERACTION_EVENTS,
   fitMapToGeoJsonFeatures,
@@ -45,6 +46,7 @@ import {
   hotspotSummary,
 } from "./hotspotPresentation";
 import "../styles/MapOverview.css";
+import "../styles/barangayMapPopup.css";
 
 const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
 const MAP_MIN_ZOOM = 12;
@@ -634,17 +636,11 @@ export default function MapOverview({ token, filters }) {
     const count = Number(mapView === "registered"
       ? row?.registry_total || 0
       : row?.inspections?.total || 0);
-    const content = document.createElement("div");
-    content.className = "map-overview-hover-tooltip";
-    const name = document.createElement("strong");
-    name.textContent = row?.barangayName
-      || event.feature?.getProperty("ADM4_EN")
-      || "Barangay";
-    const metric = document.createElement("span");
-    metric.textContent = `${count.toLocaleString()} ${
-      mapView === "registered" ? "registered businesses" : "inspection reports"
-    }`;
-    content.append(name, metric);
+    const content = createBarangayMapPopup({
+      name: row?.barangayName || event.feature?.getProperty("ADM4_EN"),
+      count,
+      countLabel: mapView === "registered" ? "registered businesses" : "inspection reports",
+    });
     hoverInfoWindowRef.current?.setContent(content);
     if (event.latLng) {
       hoverInfoWindowRef.current?.setPosition(event.latLng);

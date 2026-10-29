@@ -72,6 +72,29 @@ class PrescriptiveScoringTests(unittest.TestCase):
         self.assertEqual(by_id[2]["ops_score"], 39.1)  # 23.12 + 3.5 + 12.5
         self.assertEqual(by_id[1]["sector_score_source"], "neutral_fallback")
 
+    def test_mapped_sector_mix_is_entity_weighted_and_unclassified_entities_use_50(self):
+        rows, model = calculate_rankings([
+            row(1, red=1, sector_category_counts={"Manufacturing": 2, "Retail": 1, None: 1}),
+        ], self.config)
+        ranked = rows[0]
+        self.assertEqual(ranked["sector_entity_count"], 4)
+        self.assertEqual(ranked["sector_known_entity_count"], 3)
+        self.assertEqual(ranked["sector_fallback_entity_count"], 1)
+        self.assertEqual(ranked["sector_score"], 77.5)
+        self.assertEqual(ranked["sector_score_source"], "psic_weighted")
+        self.assertEqual(ranked["ops_score"], 98.4)
+        self.assertEqual(model["sector_policy"]["fallback_score"], 50)
+        self.assertEqual(model["sector_entity_count"], 4)
+        self.assertEqual(model["sector_fallback_entity_count"], 1)
+
+    def test_explicit_barangay_sector_override_precedes_mapped_category_average(self):
+        self.config["sectors"] = {"Barangay 1": 12}
+        rankings, _ = calculate_rankings([
+            row(1, red=1, sector_category_counts={"Manufacturing": 2}),
+        ], self.config)
+        self.assertEqual(rankings[0]["sector_score"], 12)
+        self.assertEqual(rankings[0]["sector_score_source"], "configured")
+
     def test_custom_saved_weights_are_also_applied_without_redistribution(self):
         self.config.update(w1_risk=30, w2_sector=40, w3_distance=30)
         rankings, model = calculate_rankings([row(1, red=1)], self.config)

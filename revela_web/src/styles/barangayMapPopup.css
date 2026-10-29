@@ -1,0 +1,94 @@
+.map-page .gm-style-iw-t,
+.map-overview .gm-style-iw-t,
+.map-page .gm-style-iw-tc,
+.map-overview .gm-style-iw-tc {
+  background: transparent !important;
+}
+
+.map-page .gm-style-iw-c,
+.map-overview .gm-style-iw-c,
+.map-page .gm-style-iw,
+.map-overview .gm-style-iw,
+.map-page .gm-style-iw-d,
+.map-overview .gm-style-iw-d,
+.map-page .gm-style-iw-ch,
+.map-overview .gm-style-iw-ch,
+.map-page .gm-style-iw-chr,
+.map-overview .gm-style-iw-chr {
+  background: var(--color-modal-bg) !important;
+  color: var(--color-ink) !important;
+}
+
+.map-page .gm-style-iw-c,
+.map-overview .gm-style-iw-c {
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2) !important;
+}
+
+.map-page .gm-style-iw-tc::after,
+.map-overview .gm-style-iw-tc::after {
+  background: var(--color-modal-bg) !important;
+  box-shadow: 1px 1px 0 var(--color-border);
+}
+
+.map-page .gm-style-iw-d,
+.map-overview .gm-style-iw-d {
+  overflow: auto !important;
+  scrollbar-color: var(--color-border) var(--color-modal-bg);
+}
+
+.map-page .gm-style-iw-c button.gm-ui-hover-effect,
+.map-overview .gm-style-iw-c button.gm-ui-hover-effect {
+  top: 4px !important;
+  right: 4px !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  opacity: 1 !important;
+}
+
+.map-page .gm-style-iw-c button.gm-ui-hover-effect:hover,
+.map-overview .gm-style-iw-c button.gm-ui-hover-effect:hover {
+  background: var(--color-hover) !important;
+}
+
+.map-page .gm-style-iw-c button.gm-ui-hover-effect img,
+.map-overview .gm-style-iw-c button.gm-ui-hover-effect img,
+.map-page .gm-style-iw-c button.gm-ui-hover-effect span,
+.map-overview .gm-style-iw-c button.gm-ui-hover-effect span {
+  filter: none;
+}
+
+html.theme-dark .map-page .gm-style-iw-c button.gm-ui-hover-effect img,
+html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect img,
+html.theme-dark .map-page .gm-style-iw-c button.gm-ui-hover-effect span,
+html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect span {
+  filter: invert(1);
+}
+
+.revela-map-popup {
+  display: flex;
+  max-width: 280px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 32px 2px 4px;
+  color: var(--color-ink);
+  font: 12px/1.45 Inter, system-ui, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+.revela-map-popup__title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.revela-map-popup__metric {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.revela-map-popup__detail {
+  color: var(--color-muted);
+  font-size: 11px;
+}

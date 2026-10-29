@@ -18,6 +18,10 @@ class RegistryDB:
         self.db.create_function("CONCAT", -1, lambda *values: (
             None if any(value is None for value in values)
             else "".join(str(value) for value in values)))
+        self.db.create_function(
+            "REGEXP_REPLACE", 3,
+            lambda value, pattern, replacement: re.sub(pattern, replacement, value or ""),
+        )
         self.connection = self
         self.calls = []
         self.db.executescript("""
@@ -39,6 +43,10 @@ class RegistryDB:
                 blackDispatchUnlocked INTEGER DEFAULT 0, blackUnlockedAt TEXT,
                 blackUnlockedBy INTEGER, blackUnlockReason TEXT,
                 confirmedLogID INTEGER UNIQUE);
+            CREATE TABLE registry_sector_map (
+                normalized_line_of_business TEXT PRIMARY KEY,
+                display_sector_key TEXT, display_sector_label TEXT,
+                match_status TEXT NOT NULL);
             CREATE TABLE geospatial_logs (
                 logID INTEGER PRIMARY KEY AUTOINCREMENT, businessID TEXT, barangayID INTEGER,
                 detectedName TEXT, flagColor TEXT, noticeLevel INTEGER DEFAULT 0,
@@ -181,6 +189,7 @@ class RegistryCursor:
                 sql = f"UPDATE geospatial_logs AS g SET {assignments} FROM official_registry AS r WHERE {join}"
             sql = sql.replace(" FOR UPDATE", "").replace("%s", "?").replace("UTC_TIMESTAMP(6)", "CURRENT_TIMESTAMP").replace(
                 "NOW()", "CURRENT_TIMESTAMP").replace("CURDATE()", "CURRENT_DATE")
+            sql = re.sub(r"\s+COLLATE utf8mb4_unicode_ci", "", sql)
         self.cursor.execute(sql, params)
         return self
 

@@ -1400,6 +1400,40 @@ def _prescriptive_registry_sql(ladder):
     """
 
 
+def _prescriptive_sector_sql(effective_flag_color):
+    """Count active-flag entities by their canonical PSIC display category."""
+    return f"""
+        SELECT c.barangayID,
+               rsm.display_sector_label AS sector_category,
+               COUNT(DISTINCT COALESCE(
+                   CASE WHEN c.registry_business_id IS NOT NULL
+                       THEN CONCAT('business:', CAST(c.registry_business_id AS CHAR)) END,
+                   CASE WHEN c.businessID IS NOT NULL
+                       THEN CONCAT('business:', CAST(c.businessID AS CHAR)) END,
+                   CASE WHEN c.placeID IS NOT NULL
+                       THEN CONCAT('place:', CAST(c.placeID AS CHAR)) END,
+                   CONCAT('log:', CAST(c.logID AS CHAR))
+               )) AS entity_count
+        FROM (
+            SELECT g.logID, g.barangayID,
+                   {effective_flag_color} AS eff_color,
+                   {_registry_column_sql('g', 'businessID')} AS registry_business_id,
+                   g.businessID, g.placeID
+            FROM geospatial_logs g
+            WHERE {_PIN_ACTIONABLE_SQL}
+        ) c
+        LEFT JOIN official_registry r
+          ON r.businessID = COALESCE(c.registry_business_id, c.businessID)
+        LEFT JOIN registry_sector_map rsm
+          ON rsm.normalized_line_of_business =
+             LOWER(REGEXP_REPLACE(COALESCE(r.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+               COLLATE utf8mb4_unicode_ci
+         AND rsm.match_status IN ('matched', 'combo')
+        WHERE c.eff_color IN ('Red', 'Yellow', 'Black')
+        GROUP BY c.barangayID, rsm.display_sector_label
+    """
+
+
 def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
     """One municipal input/scoring path for Analytics and Map dispatch."""
     builder = _barangay_rankings_sql_split if _rankings_split_enabled() else _barangay_rankings_sql
@@ -1412,8 +1446,14 @@ def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
     rows = list(cur.fetchall())
     _execute(cur, "prescriptive.registry_active_flags", _prescriptive_registry_sql(ladder))
     registry = {row["barangayID"]: row for row in cur.fetchall()}
+    _execute(cur, "prescriptive.sector_risk", _prescriptive_sector_sql(effective_flag_color))
+    sector_categories = {}
+    for sector_row in cur.fetchall():
+        categories = sector_categories.setdefault(sector_row["barangayID"], {})
+        categories[sector_row["sector_category"]] = int(sector_row["entity_count"] or 0)
     for row in rows:
         row.update(registry.get(row["barangayID"], {}))
+        row["sector_category_counts"] = sector_categories.get(row["barangayID"], {})
     return calculate_rankings(rows, config)
 
 

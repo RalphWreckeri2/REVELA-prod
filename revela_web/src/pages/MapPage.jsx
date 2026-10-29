@@ -13,6 +13,7 @@ import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markercluste
 import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock, SkeletonList } from "../components/LoadingSkeleton";
 import "../styles/MapPage.css";
+import "../styles/barangayMapPopup.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import BusinessIDReview from "../components/BusinessIDReview";
 import { confirmBusinessID } from "../components/businessIDReviewFlow";
@@ -30,6 +31,7 @@ import {
 import { activeInspectorsForDispatch, canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { hotspotCircleSummary, opsRiskTooltipLines } from "../components/mapRiskPresentation";
+import { createBarangayMapPopup } from "../components/barangayMapPopup";
 import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
@@ -1161,6 +1163,7 @@ function MapCanvas({
   barangays,
   selectedBarangayId,
   barangayRiskLevels,
+  opsRankings,
   selectedFlagId,
   onMarkerClick,
   onMapClick,
@@ -1576,26 +1579,23 @@ function MapCanvas({
     if (id == null) return;
     setHoveredBarangayId(id);
     const label = barangays.find(b => Number(b.barangayID) === id)?.barangayName || name;
-    const content = document.createElement("div");
-    const title = document.createElement("strong");
-    title.textContent = label;
-    content.append(title);
-    if (layers.diagnostics) {
-      const ranking = Object.values(barangayRiskLevels || {}).find(
+    const ranking = opsRankings.find((entry) => Number(entry?.barangayID) === id)
+      || Object.values(barangayRiskLevels || {}).find(
         (entry) => Number(entry?.barangayID) === id,
       );
-      opsRiskTooltipLines(ranking).forEach((line) => {
-        const detail = document.createElement("div");
-        detail.textContent = line;
-        content.append(detail);
-      });
-    }
+    const details = layers.diagnostics ? opsRiskTooltipLines(ranking) : [];
+    const content = createBarangayMapPopup({
+      name: label,
+      count: ranking?.total_registered,
+      countLabel: "registered businesses",
+      details,
+    });
     hoverInfoWindowRef.current?.setContent(content);
     if (event.latLng) {
       hoverInfoWindowRef.current?.setPosition(event.latLng);
       hoverInfoWindowRef.current?.open({ map: internalMapRef.current });
     }
-  }, [barangays, barangayRiskLevels, isPickingLocation, layers.diagnostics]);
+  }, [barangays, barangayRiskLevels, isPickingLocation, layers.diagnostics, opsRankings]);
 
   const handleBoundaryMouseOut = useCallback(() => {
     setHoveredBarangayId(null);
@@ -3080,6 +3080,7 @@ export default function MapPage() {
             risk_level: r.risk_level,
             ops_score: r.ops_score,
             risk_score: r.risk_score,
+            total_registered: r.total_registered,
           };
         });
         setBarangayRiskLevels(riskMap);
@@ -5027,6 +5028,7 @@ export default function MapPage() {
               barangays={barangays}
               selectedBarangayId={filterBarangay}
               barangayRiskLevels={barangayRiskLevels}
+              opsRankings={opsRankings}
               selectedFlagId={selectedFlag}
               onMarkerClick={handleMarkerClick}
               onMapClick={handleMapClick}
