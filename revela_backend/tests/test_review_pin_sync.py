@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from api.registry.places_resolver import _update_pin
+from api.registry.places_resolver import _update_pin, decide_review
 
 
 class ReviewPinSyncTests(unittest.TestCase):
@@ -43,6 +43,55 @@ class ReviewPinSyncTests(unittest.TestCase):
         self.assertIn(
             "SELECT confirmedLogID",
             cursor.execute.call_args.args[0],
+        )
+
+    @patch("api.registry.reverify._ensure_history_table")
+    @patch("api.registry.places_resolver._is_within_municipal_bounds", return_value=True)
+    @patch("api.registry.places_resolver._update_pin")
+    @patch("api.registry.places_resolver.mysql")
+    def test_approval_syncs_pin_even_when_registry_coordinates_match_proposal(
+        self, mock_mysql, update_pin, _in_boundary, _ensure_history_table
+    ):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [
+            {
+                "businessID": "BIZ-SAME-PIN",
+                "barangayID": 1,
+                "businessName": "Shop",
+                "businessAddress": "Current address",
+                "latitude": 13.963445,
+                "longitude": 121.115545,
+                "placeID": "old-place",
+                "placeIDKind": "poi",
+                "matchScore": 0.6,
+                "coordSource": "places",
+                "matchStatus": "review",
+                "resolveKey": None,
+            },
+            None,
+            {"reverifyHistoryID": 42},
+            {
+                "reviewHistoryID": 43,
+                "newLat": 13.963445,
+                "newLng": 121.115545,
+                "placeID": "new-place",
+                "score": 0.7,
+            },
+        ]
+        cursor.rowcount = 1
+        mock_mysql.connection.cursor.return_value = cursor
+
+        ok, error = decide_review("BIZ-SAME-PIN", approve=True)
+
+        self.assertTrue(ok, error)
+        self.assertIsNone(error)
+        update_pin.assert_called_once_with(
+            cursor, 1, "Shop", 13.963445, 121.115545,
+            13.963445, 121.115545,
+            business_id="BIZ-SAME-PIN",
+            force_linked=True,
+            place_id="old-place",
+            new_place_id="new-place",
         )
 
 

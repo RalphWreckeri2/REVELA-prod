@@ -160,7 +160,7 @@ test("API failure does not run the success callback", async () => {
   assert.equal(successes, 0);
 });
 
-test("same-pin proposals cannot be approved as moves and show the no-move state", () => {
+test("same-pin proposals can be approved to synchronize the map pin", () => {
   const candidate = pendingCandidate("BIZ-SAME", {
     locationReapproval: false,
     originalLatitude: 13.947664,
@@ -170,6 +170,11 @@ test("same-pin proposals cannot be approved as moves and show the no-move state"
   });
   assert.equal(pinMoveDistanceMeters(candidate), 0);
   assert.equal(isSamePinCandidate(candidate), true);
+  assert.match(
+    mapPageSource,
+    /Proposed coordinates match the current record\. Approval will sync the map pin to this location\./,
+  );
+  assert.match(mapPageSource, /samePin \? "Approve & sync pin" : "Approve pin move"/);
 });
 
 test("approval confirmation includes the move distance, coordinates, business, and score", () => {
@@ -190,13 +195,15 @@ test("approval confirmation includes the move distance, coordinates, business, a
   assert.match(confirmation, /Match score: 0\.55/);
 });
 
-test("review queue clears stale cards, keeps Retry, and guards same-pin approval", () => {
+test("review queue clears stale cards, keeps Retry, and allows same-pin approval", () => {
   assert.match(mapPageSource, /setReviewQueue\(null\);[\s\S]*getRegistryReviewQueueRequest/);
   assert.match(mapPageSource, /catch \(err\) \{[\s\S]*setReviewQueue\(null\);[\s\S]*Request ID:/);
   assert.match(mapPageSource, /Could not load pin suggestions\. Please try again\./);
   assert.match(mapPageSource, /onClick=\{\(\) => loadRegistryReviewQueue\(reviewQueuePage\)\}[\s\S]*Retry/);
-  assert.match(mapPageSource, /disabled=\{[^}]*samePin[^}]*\}/);
-  assert.match(mapPageSource, /Proposed location is the same as the current pin/);
+  assert.doesNotMatch(
+    mapPageSource,
+    /disabled=\{[^}]*samePin[^}]*\}/,
+  );
   assert.match(mapPageSource, /Distance to move:/);
   assert.match(mapPageSource, /Low match score\. Check the Google place before approving\./);
   assert.match(mapPageSource, /Barangay \{String\(candidate\.barangayName/);

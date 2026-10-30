@@ -4079,13 +4079,6 @@ export default function MapPage() {
 
   const handleReviewQueueDecision = async (candidate, action) => {
     const isApprove = action === "approve";
-    if (
-      isApprove
-      && !candidate.locationReapproval
-      && isSamePinCandidate(candidate)
-    ) {
-      return;
-    }
     const locationChoice = selectedLocationChoice(
       reviewLocationChoices, candidate,
     );
@@ -5979,7 +5972,7 @@ export default function MapPage() {
                           color: "var(--color-muted)",
                           fontSize: 12,
                         }}>
-                          Proposed location is the same as the current pin
+                          Proposed coordinates match the current record. Approval will sync the map pin to this location.
                         </p>
                       )}
                       {candidate.candidateOutsideMunicipality && (
@@ -6005,13 +5998,13 @@ export default function MapPage() {
                           type="button"
                           className="primary-btn"
                           onClick={() => handleReviewQueueDecision(candidate, "approve")}
-                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || samePin || candidate.candidateOutsideMunicipality || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || candidate.candidateOutsideMunicipality || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
                         >
                           {reviewQueueActionId === candidate.businessID ? "Saving…" : candidate.locationReapproval
                             ? selectedLocationChoice(reviewLocationChoices, candidate) === PREVIOUS_LOCATION
                               ? "Confirm previous location"
                               : "Use imported location"
-                            : "Approve pin move"}
+                            : samePin ? "Approve & sync pin" : "Approve pin move"}
                         </button>
                       </div>
                     </article>
