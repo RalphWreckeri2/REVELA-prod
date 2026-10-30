@@ -910,6 +910,7 @@ export default function ExportReportsPage() {
         RegistryActiveFlagRate: registryFlagRateLabel(r.registry_active_flag_rate),
         UnregisteredCandidates: r.unregistered_candidate_count,
         ModelVersion: model.version,
+        SectorPolicyVersion: model.sector_policy?.version ?? "N/A",
         RiskWeightPercent: typeof model.weights?.w1 === "number" ? model.weights.w1 * 100 : "N/A",
         SectorWeightPercent: typeof model.weights?.w2 === "number" ? model.weights.w2 * 100 : "N/A",
         ProximityWeightPercent: typeof model.weights?.w3 === "number" ? model.weights.w3 * 100 : "N/A",
@@ -3046,7 +3047,7 @@ export default function ExportReportsPage() {
                 </table>
 
                 <p style={{ fontSize: 10, color: "#475569" }}>OPS = W1×Risk + W2×Sector + W3×Proximity; current municipal relative inspection priority, not violation probability. Registry rates use unique registry businesses and are not confirmed-violation rates; N/A means no denominator. Available inspectors: {printReport.data.workforce?.available_inspectors ?? "unavailable"}; one inspector maximum per eligible business. Recommended: {printReport.data.workforce?.allocated_inspectors ?? "unavailable"}; unallocated: {printReport.data.workforce?.unallocated_inspectors ?? "unavailable"}. Deferred plans do not authorize deployment.</p>
-                {printReport.data.model?.weights && <p style={{ fontSize: 10, color: "#475569" }}>Effective weights: {(printReport.data.model.weights.w1 * 100).toFixed(1)}% Risk / {(printReport.data.model.weights.w2 * 100).toFixed(1)}% Sector / {(printReport.data.model.weights.w3 * 100).toFixed(1)}% Proximity. Computed: {printReport.data.computedAt || "unavailable"}. {printReport.data.model.eligibility_note}</p>}
+                {printReport.data.model?.weights && <p style={{ fontSize: 10, color: "#475569" }}>Model version: {printReport.data.model.version || "unavailable"}; Sector policy version: {printReport.data.model.sector_policy?.version ?? "unavailable"}. Effective weights: {(printReport.data.model.weights.w1 * 100).toFixed(1)}% Risk / {(printReport.data.model.weights.w2 * 100).toFixed(1)}% Sector / {(printReport.data.model.weights.w3 * 100).toFixed(1)}% Proximity. Computed: {printReport.data.computedAt || "unavailable"}. {printReport.data.model.eligibility_note}</p>}
 
                 {printReport.data.recommendations?.length > 0 && (
                   <div className="page-break-avoid">

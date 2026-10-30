@@ -46,6 +46,7 @@ class SectorRiskPolicyTests(unittest.TestCase):
         for invalid in (
             {**original, "categories": {**original["categories"], "Retail": 101}},
             {**original, "categories": {**original["categories"], "Retail": 10 ** 10000}},
+            {**original, "categories": {**original["categories"], "Retail": 10.5}},
             {**original, "categories": {key: value for key, value in original["categories"].items()
                                        if key != "Retail"}},
             {**original, "categories": {**original["categories"], "Other": 40}},
@@ -75,17 +76,32 @@ class SectorRiskPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sector-risk.json"
             changed = {
-                "fallback_score": 42.5,
+                "fallback_score": 50,
                 "categories": {**DEFAULT_SECTOR_RISK_POLICY["categories"], "Retail": 96},
             }
             updated = update_sector_risk_policy(changed, path=path)
             self.assertEqual(load_sector_risk_policy(path), updated)
             self.assertEqual(updated["categories"]["Retail"], 96)
-            self.assertEqual(updated["fallback_score"], 42.5)
+            self.assertEqual(updated["fallback_score"], 50)
 
             reset = reset_sector_risk_policy(path=path)
             self.assertEqual(reset, DEFAULT_SECTOR_RISK_POLICY)
             self.assertEqual(load_sector_risk_policy(path), DEFAULT_SECTOR_RISK_POLICY)
+
+    def test_editable_category_payload_rejects_unknown_fields_and_non_integer_values(self):
+        from api.analytics.sector_risk import validate_sector_risk_categories
+
+        valid = {"categories": dict(DEFAULT_SECTOR_RISK_POLICY["categories"])}
+        self.assertEqual(validate_sector_risk_categories(valid), valid["categories"])
+        for invalid in (
+            {**valid, "fallback_score": 49},
+            {"categories": {**valid["categories"], "Unknown sector": 20}},
+            {"categories": {**valid["categories"], "Retail": 10.5}},
+            {"categories": {**valid["categories"], "Retail": True}},
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    validate_sector_risk_categories(invalid)
 
     def test_invalid_update_does_not_replace_existing_policy(self):
         with tempfile.TemporaryDirectory() as directory:

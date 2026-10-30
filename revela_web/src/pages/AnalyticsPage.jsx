@@ -2267,6 +2267,10 @@ export default function AnalyticsPage() {
                                     : "Unavailable"}
                                 </dd>
                               </div>
+                              <div>
+                                <dt>Sector policy version</dt>
+                                <dd>{prescModel?.sector_policy?.version ?? "Unavailable"}</dd>
+                              </div>
                             </dl>
                             <p>{dispatch.recommendation}</p>
                             <h4>Action steps</h4>

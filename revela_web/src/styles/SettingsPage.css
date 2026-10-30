@@ -60,6 +60,18 @@
   font-size: 12px;
   line-height: 1.5;
 }
+.settings-sector-policy-coverage-notice,
+.settings-sector-policy-no-change {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card-alt);
+  color: var(--color-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-sector-policy-no-change { margin-top: 10px; }
 .settings-sector-policy-draft {
   flex: 0 0 auto;
   padding: 4px 8px;
@@ -87,6 +99,13 @@
   font-size: 13px;
   font-weight: 600;
 }
+.settings-sector-policy-row label small {
+  display: block;
+  margin-top: 3px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 500;
+}
 .settings-sector-policy-row input[type="range"] {
   width: 100%;
   min-width: 0;
@@ -109,12 +128,81 @@
   margin-top: 6px;
   border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
 }
+.settings-sector-policy-row--fallback output {
+  grid-column: 2 / -1;
+  justify-self: end;
+  min-width: 32px;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 750;
+  text-align: right;
+}
 .settings-sector-policy-actions {
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 16px;
+}
+.settings-sector-policy-preview,
+.settings-sector-policy-audit {
+  min-width: 0;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border-soft);
+}
+.settings-sector-policy-preview h4,
+.settings-sector-policy-audit h4 {
+  margin: 0 0 6px;
+  color: var(--color-ink);
+  font-size: 14px;
+}
+.settings-sector-policy-preview > p {
+  margin: 0 0 10px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-sector-policy-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 8px;
+}
+.settings-sector-policy-table-wrap table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--color-ink);
+  font-size: 12px;
+}
+.settings-sector-policy-table-wrap th,
+.settings-sector-policy-table-wrap td {
+  min-width: 84px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+.settings-sector-policy-table-wrap th {
+  background: var(--color-card-alt);
+  font-weight: 700;
+}
+.settings-sector-policy-table-wrap tbody tr:last-child > * { border-bottom: 0; }
+.settings-sector-policy-audit-values summary {
+  min-width: 110px;
+  cursor: pointer;
+  font-weight: 650;
+}
+.settings-sector-policy-audit-values ul {
+  max-height: 220px;
+  min-width: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px 8px 8px 24px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 7px;
+  background: var(--color-surface);
+  line-height: 1.6;
 }
 .settings-sector-policy-note { margin-top: 12px; }
 .settings-cutoff-card, .settings-manual-card { appearance: none; min-width: 0; font: inherit; color: var(--color-ink); text-align: left; }

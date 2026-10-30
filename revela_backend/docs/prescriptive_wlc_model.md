@@ -1,4 +1,4 @@
-# Prescriptive inspection priority — WLC v2
+# Prescriptive inspection priority — WLC v3
 
 The purpose is to decide **which barangay should be inspected first**, using one
 Weighted Linear Combination (WLC) model. Analytics, Overview, Map dispatch and
@@ -30,6 +30,12 @@ dispatch exports use the same scoring implementation in `api/analytics/scoring.p
   it is not a measured industry-risk score. Input coverage and fallback use are
   disclosed separately from the configured weights. Only explicit admin edits
   change saved weights; Use Default/Reset restores 68/7/25.
+- PSIC display-sector scores are editable integer policy inputs in Settings.
+  Their persisted numeric policy version increments on each save or reset, and
+  the audit history records the actor, timestamp, complete old values, complete
+  new values, and resulting version. The unclassified fallback remains fixed at
+  50. Policy scores are administrative priorities, not empirically measured
+  industry risk.
 
 Scores and ranks always use the full current municipal cohort. Barangay filters
 only hide rows after scoring and allocation; they never renormalize or renumber

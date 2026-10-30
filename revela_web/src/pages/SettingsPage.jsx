@@ -7,7 +7,10 @@ import {
   normalizeSectorRiskPolicy,
   SECTOR_RISK_CATEGORIES,
   SECTOR_RISK_DEFAULTS,
+  normalizeSectorRiskPreview,
   sectorRiskPolicySignature,
+  getSectorRiskPolicyCoverage,
+  sectorRiskPolicyPreviewHasChanges,
 } from "../components/sectorRiskPolicy";
 import { AuthContext } from "../context/authContext";
 import { changePasswordRequest, setup2faRequest, verify2faSetupRequest } from "../services/authService";
@@ -17,6 +20,9 @@ import {
   getWlcConfigRequest,
   updateWlcConfigRequest,
   getSectorRiskPolicyRequest,
+  getSectorRiskPolicyAuditRequest,
+  getOpsRankingsRequest,
+  previewSectorRiskPolicyRequest,
   updateSectorRiskPolicyRequest,
   resetSectorRiskPolicyRequest,
   updateMePreferencesRequest,
@@ -64,6 +70,23 @@ const policySignature = (config) => JSON.stringify([
   config.w1_risk, config.w2_sector, config.w3_distance, config.bplo_lat, config.bplo_lng,
 ]);
 const policySummary = (config) => `Weights ${config.w1_risk}/${config.w2_sector}/${config.w3_distance} · Base ${config.bplo_lat ?? "—"}, ${config.bplo_lng ?? "—"}`;
+
+function PolicyAuditValues({ values }) {
+  if (!values || typeof values !== "object" || !values.categories) {
+    return <span>Unavailable</span>;
+  }
+  return (
+    <details className="settings-sector-policy-audit-values">
+      <summary>View category scores</summary>
+      <ul>
+        {SECTOR_RISK_CATEGORIES.map(category => (
+          <li key={category}>{category}: {values.categories[category] ?? "—"}</li>
+        ))}
+        <li>Unclassified fallback: {values.fallback_score ?? "—"}</li>
+      </ul>
+    </details>
+  );
+}
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const EyeIcon = () => (
@@ -394,6 +417,10 @@ export default function SettingsPage() {
   const [defaultSectorRiskPolicy, setDefaultSectorRiskPolicy] = useState(() => normalizeSectorRiskPolicy(SECTOR_RISK_DEFAULTS));
   const [sectorRiskPolicyLoading, setSectorRiskPolicyLoading] = useState(true);
   const [sectorRiskPolicyError, setSectorRiskPolicyError] = useState("");
+  const [sectorRiskPolicyPreview, setSectorRiskPolicyPreview] = useState(null);
+  const [sectorRiskPolicyPreviewLoading, setSectorRiskPolicyPreviewLoading] = useState(false);
+  const [sectorRiskPolicyAudit, setSectorRiskPolicyAudit] = useState([]);
+  const [sectorRiskCoverage, setSectorRiskCoverage] = useState(null);
 
   const [showMapModal, setShowMapModal] = useState(false);
   const [showPasswordModal, setShowPasswordModal] = useState(false);
@@ -480,7 +507,13 @@ export default function SettingsPage() {
     setSectorRiskPolicyLoading(!savedSectorRiskPolicy);
     setSectorRiskPolicyError("");
     try {
-      const response = await getSectorRiskPolicyRequest(token);
+      const [response, auditResponse] = await Promise.all([
+        getSectorRiskPolicyRequest(token),
+        getSectorRiskPolicyAuditRequest(token),
+      ]);
+      if (!Array.isArray(auditResponse?.data)) {
+        throw new Error("Policy audit history response is invalid.");
+      }
       const saved = normalizeSectorRiskPolicy(response?.data);
       const defaults = normalizeSectorRiskPolicy(response?.defaults);
       setSectorRiskPolicy(current => (
@@ -490,6 +523,14 @@ export default function SettingsPage() {
       ));
       setSavedSectorRiskPolicy(saved);
       setDefaultSectorRiskPolicy(defaults);
+      setSectorRiskPolicyAudit(auditResponse.data);
+      try {
+        const rankingsResponse = await getOpsRankingsRequest(token);
+        setSectorRiskCoverage(getSectorRiskPolicyCoverage(rankingsResponse?.data));
+      } catch (error) {
+        setSectorRiskCoverage(null);
+        console.error("Failed to load sector coverage:", error);
+      }
       return true;
     } catch (error) {
       setSectorRiskPolicyError(error.message || "Could not load sector risk policy.");
@@ -683,15 +724,30 @@ export default function SettingsPage() {
       return;
     }
 
+    const confirmation = await Swal.fire({
+      icon: "warning",
+      title: "Save sector risk policy?",
+      text: `This will save policy version ${(savedSectorRiskPolicy?.version || 0) + 1} and recalculate operational priorities.`,
+      showCancelButton: true,
+      confirmButtonText: "Save Policy",
+      cancelButtonText: "Review Changes",
+      confirmButtonColor: "#2563eb",
+    });
+    if (!confirmation.isConfirmed) return;
+
     setSavingSectorRiskPolicy(true);
     try {
-      const response = await updateSectorRiskPolicyRequest(payload, token);
+      const response = await updateSectorRiskPolicyRequest({
+        categories: payload.categories,
+      }, token);
       const saved = normalizeSectorRiskPolicy(response?.data);
       setSectorRiskPolicy(saved);
       setSavedSectorRiskPolicy(saved);
+      setSectorRiskPolicyPreview(null);
       window.dispatchEvent(new CustomEvent("revela:policy-update", {
         detail: { localMutation: true, sectorPolicy: saved },
       }));
+      await loadSectorRiskPolicy();
       await Swal.fire({
         icon: "success",
         title: "Sector risk policy saved",
@@ -704,6 +760,31 @@ export default function SettingsPage() {
       await Swal.fire("Error", error.message || "Could not save sector risk policy.", "error");
     } finally {
       setSavingSectorRiskPolicy(false);
+    }
+  };
+
+  const handlePreviewSectorRiskPolicy = async () => {
+    setSectorRiskPolicyError("");
+    setSectorRiskPolicyPreview(null);
+    let draft;
+    try {
+      draft = normalizeSectorRiskPolicy(sectorRiskPolicy);
+    } catch (error) {
+      setSectorRiskPolicyError(error.message);
+      return;
+    }
+
+    setSectorRiskPolicyPreviewLoading(true);
+    try {
+      const response = await previewSectorRiskPolicyRequest({
+        categories: draft.categories,
+      }, token);
+      setSectorRiskPolicyPreview(normalizeSectorRiskPreview(response));
+    } catch (error) {
+      setSectorRiskPolicyError(error.message || "Could not preview sector risk policy.");
+      console.error("Failed to preview sector risk policy:", error);
+    } finally {
+      setSectorRiskPolicyPreviewLoading(false);
     }
   };
 
@@ -727,9 +808,11 @@ export default function SettingsPage() {
       setSectorRiskPolicy(reset);
       setSavedSectorRiskPolicy(reset);
       setDefaultSectorRiskPolicy(reset);
+      setSectorRiskPolicyPreview(null);
       window.dispatchEvent(new CustomEvent("revela:policy-update", {
         detail: { localMutation: true, sectorPolicy: reset },
       }));
+      await loadSectorRiskPolicy();
       await Swal.fire({
         icon: "success",
         title: "Sector risk scores restored",
@@ -1042,11 +1125,17 @@ export default function SettingsPage() {
               <div className="settings-sector-policy-heading">
                 <div>
                   <h3 id="sector-risk-policy-title">Sector Risk Weights</h3>
-                  <p>Set the 0–100 risk score for each standardized PSIC display category. These policy scores contribute through the configured Sector weight in OPS.</p>
+                  <p>Set an integer score from 0 to 100 for each standardized PSIC display category. These policy scores contribute through the configured Sector weight in OPS.</p>
+                  {savedSectorRiskPolicy && <p>Current policy version: {savedSectorRiskPolicy.version}</p>}
                 </div>
                 {sectorRiskPolicyDirty && <span className="settings-sector-policy-draft">Unsaved changes</span>}
               </div>
               {sectorRiskPolicyError && <p className="settings-error" role="alert">{sectorRiskPolicyError}</p>}
+              {sectorRiskCoverage?.total > 0 && sectorRiskCoverage.withSector === 0 && (
+                <p className="settings-sector-policy-coverage-notice" role="status">
+                  0 of {sectorRiskCoverage.total} flagged entities currently have a sector. Changing these scores will not change rankings until flagged businesses are linked to the registry.
+                </p>
+              )}
               {sectorRiskPolicyLoading ? (
                 <p className="settings-sector-policy-state" role="status">Loading the saved sector risk policy…</p>
               ) : (
@@ -1056,18 +1145,24 @@ export default function SettingsPage() {
                     const value = sectorRiskPolicy.categories[category];
                     return (
                       <div className="settings-sector-policy-row" key={category}>
-                        <label htmlFor={inputId}>{category}</label>
+                        <label htmlFor={inputId}>
+                          {category}
+                          <small>Default: {defaultSectorRiskPolicy.categories[category]}</small>
+                        </label>
                         <input
                           aria-label={`${category} risk score`}
                           type="range"
                           min="0"
                           max="100"
-                          step="0.1"
+                          step="1"
                           value={Number(value) || 0}
-                          onChange={event => setSectorRiskPolicy(current => ({
-                            ...current,
-                            categories: { ...current.categories, [category]: event.target.value },
-                          }))}
+                          onChange={event => {
+                            setSectorRiskPolicyPreview(null);
+                            setSectorRiskPolicy(current => ({
+                              ...current,
+                              categories: { ...current.categories, [category]: event.target.value },
+                            }));
+                          }}
                           disabled={savingSectorRiskPolicy}
                         />
                         <input
@@ -1076,46 +1171,23 @@ export default function SettingsPage() {
                           type="number"
                           min="0"
                           max="100"
-                          step="any"
+                          step="1"
                           value={value}
-                          onChange={event => setSectorRiskPolicy(current => ({
-                            ...current,
-                            categories: { ...current.categories, [category]: event.target.value },
-                          }))}
+                          onChange={event => {
+                            setSectorRiskPolicyPreview(null);
+                            setSectorRiskPolicy(current => ({
+                              ...current,
+                              categories: { ...current.categories, [category]: event.target.value },
+                            }));
+                          }}
                           disabled={savingSectorRiskPolicy}
                         />
                       </div>
                     );
                   })}
                   <div className="settings-sector-policy-row settings-sector-policy-row--fallback">
-                    <label htmlFor="sector-risk-fallback">Fallback / Unregistered baseline</label>
-                    <input
-                      aria-label="Fallback risk score slider"
-                      type="range"
-                      min="0"
-                      max="100"
-                      step="0.1"
-                      value={Number(sectorRiskPolicy.fallback_score) || 0}
-                      onChange={event => setSectorRiskPolicy(current => ({
-                        ...current,
-                        fallback_score: event.target.value,
-                      }))}
-                      disabled={savingSectorRiskPolicy}
-                    />
-                    <input
-                      id="sector-risk-fallback"
-                      aria-label="Fallback risk score value"
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="any"
-                      value={sectorRiskPolicy.fallback_score}
-                      onChange={event => setSectorRiskPolicy(current => ({
-                        ...current,
-                        fallback_score: event.target.value,
-                      }))}
-                      disabled={savingSectorRiskPolicy}
-                    />
+                    <label htmlFor="sector-risk-fallback">Unclassified / unregistered fallback</label>
+                    <output id="sector-risk-fallback" aria-label="Unclassified fallback score">50</output>
                   </div>
                 </div>
               )}
@@ -1123,6 +1195,14 @@ export default function SettingsPage() {
                 <p className="settings-error" role="alert">{sectorRiskPolicyValidationError}</p>
               )}
               <div className="settings-sector-policy-actions">
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={handlePreviewSectorRiskPolicy}
+                  disabled={savingSectorRiskPolicy || sectorRiskPolicyPreviewLoading || Boolean(sectorRiskPolicyValidationError)}
+                >
+                  {sectorRiskPolicyPreviewLoading ? "Previewing…" : "Preview rank changes"}
+                </button>
                 <button
                   type="button"
                   className="ghost-btn"
@@ -1140,8 +1220,77 @@ export default function SettingsPage() {
                   {savingSectorRiskPolicy ? "Saving…" : "Save Sector Risk Policy"}
                 </button>
               </div>
+              {sectorRiskPolicyPreview && (
+                <div className="settings-sector-policy-preview" role="region" aria-label="Sector policy rank preview">
+                  <h4>
+                    Preview: policy version {sectorRiskPolicyPreview.current_version} to {sectorRiskPolicyPreview.proposed_version}
+                  </h4>
+                  <p>
+                    {sectorRiskPolicyPreview.model_version} scoring; no changes have been saved.
+                    The table includes barangays in the top eight before or after this draft.
+                  </p>
+                  {!sectorRiskPolicyPreviewHasChanges(sectorRiskPolicyPreview) && (
+                    <p className="settings-sector-policy-no-change" role="status">No change in ranks</p>
+                  )}
+                  <div className="settings-sector-policy-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Barangay</th>
+                          <th>Old OPS</th>
+                          <th>Old rank</th>
+                          <th>New OPS</th>
+                          <th>New rank</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sectorRiskPolicyPreview.rows.map(row => (
+                          <tr key={row.barangayID}>
+                            <th scope="row">{row.barangayName}</th>
+                            <td>{row.old_ops.toFixed(1)}</td>
+                            <td>{row.old_rank}</td>
+                            <td>{row.new_ops.toFixed(1)}</td>
+                            <td>{row.new_rank}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              <div className="settings-sector-policy-audit">
+                <h4>Policy audit history</h4>
+                {sectorRiskPolicyAudit.length ? (
+                  <div className="settings-sector-policy-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Version</th>
+                          <th>Who</th>
+                          <th>When</th>
+                          <th>Old values</th>
+                          <th>New values</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sectorRiskPolicyAudit.map(entry => (
+                          <tr key={`${entry.version}-${entry.actor_user_id}`}>
+                            <td>{entry.version}</td>
+                            <td>{entry.actor_name || `User ${entry.actor_user_id}`}</td>
+                            <td>{entry.created_at ? new Date(entry.created_at).toLocaleString() : "Unavailable"}</td>
+                            <td><PolicyAuditValues values={entry.old_values} /></td>
+                            <td><PolicyAuditValues values={entry.new_values} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="settings-sector-policy-state">No policy changes have been recorded.</p>
+                )}
+              </div>
               <p className="settings-sector-policy-note">
-                Default baseline: {defaultSectorRiskPolicy.fallback_score}. Updated scores invalidate Analytics and recommendations so OPS can recalculate with the current policy.
+                Unclassified entities always use the read-only fallback of 50. Updated scores invalidate Analytics and recommendations so OPS can recalculate with the current policy.
               </p>
             </section>
 

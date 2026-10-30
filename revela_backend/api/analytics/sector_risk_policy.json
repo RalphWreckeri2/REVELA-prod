@@ -1,5 +1,5 @@
 {
-  "version": "psic-sector-risk-v1",
+  "version": 1,
   "fallback_score": 50,
   "categories": {
     "Manufacturing": 90,

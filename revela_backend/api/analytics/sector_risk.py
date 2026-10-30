@@ -1,7 +1,6 @@
 """Editable policy scores for the active PSIC display-sector categories."""
 
 import json
-import math
 import os
 from pathlib import Path
 import tempfile
@@ -25,7 +24,7 @@ SECTOR_CATEGORIES = (
     "Agriculture and mining",
 )
 DEFAULT_SECTOR_RISK_POLICY = {
-    "version": "psic-sector-risk-v1",
+    "version": 1,
     "fallback_score": 50,
     "categories": {
         "Manufacturing": 90,
@@ -47,16 +46,120 @@ DEFAULT_SECTOR_RISK_POLICY = {
 def validate_sector_risk_policy(policy):
     if not isinstance(policy, dict):
         raise ValueError("Sector risk policy must be a JSON object.")
-    if not isinstance(policy.get("version"), str) or not policy["version"].strip():
-        raise ValueError("Sector risk policy requires a non-empty version.")
+    version = policy.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+        raise ValueError("Sector risk policy version must be a positive integer.")
     categories = policy.get("categories")
     if not isinstance(categories, dict) or set(categories) != set(SECTOR_CATEGORIES):
         raise ValueError("Sector risk policy must define exactly the 12 active PSIC display categories.")
     for label, score in {**categories, "fallback_score": policy.get("fallback_score")}.items():
-        if (isinstance(score, bool) or not isinstance(score, (int, float))
-                or not 0 <= score <= 100 or not math.isfinite(score)):
-            raise ValueError(f"Sector risk score for {label} must be a finite number between 0 and 100.")
+        if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+            raise ValueError(f"Sector risk score for {label} must be an integer between 0 and 100.")
+    if policy["fallback_score"] != DEFAULT_SECTOR_RISK_POLICY["fallback_score"]:
+        raise ValueError("The unclassified fallback score is fixed at 50.")
     return policy
+
+
+def validate_sector_risk_categories(payload):
+    """Validate the editable category map without accepting fallback or version edits."""
+    if not isinstance(payload, dict) or set(payload) != {"categories"}:
+        raise ValueError("Sector policy updates must contain categories only.")
+    categories = payload["categories"]
+    if not isinstance(categories, dict) or set(categories) != set(SECTOR_CATEGORIES):
+        raise ValueError("Sector policy must contain exactly the 12 known PSIC display categories.")
+    for label, score in categories.items():
+        if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 100:
+            raise ValueError(f"Sector risk score for {label} must be an integer between 0 and 100.")
+    return dict(categories)
+
+
+def load_persisted_sector_risk_policy(cursor):
+    cursor.execute(
+        """SELECT version, fallback_score, categories
+           FROM sector_risk_policy
+           WHERE policy_id = 1"""
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise RuntimeError("The sector risk policy has not been initialized.")
+    categories = row["categories"]
+    if isinstance(categories, str):
+        categories = json.loads(categories)
+    return validate_sector_risk_policy({
+        "version": int(row["version"]),
+        "fallback_score": int(row["fallback_score"]),
+        "categories": categories,
+    })
+
+
+def save_persisted_sector_risk_policy(cursor, categories, actor_user_id):
+    """Save a new policy revision and its audit row in the caller's transaction."""
+    categories = validate_sector_risk_categories({"categories": categories})
+    cursor.execute(
+        """SELECT version, fallback_score, categories
+           FROM sector_risk_policy
+           WHERE policy_id = 1
+           FOR UPDATE"""
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise RuntimeError("The sector risk policy has not been initialized.")
+    old_categories = row["categories"]
+    if isinstance(old_categories, str):
+        old_categories = json.loads(old_categories)
+    old_policy = validate_sector_risk_policy({
+        "version": int(row["version"]),
+        "fallback_score": int(row["fallback_score"]),
+        "categories": old_categories,
+    })
+    new_policy = validate_sector_risk_policy({
+        "version": old_policy["version"] + 1,
+        "fallback_score": DEFAULT_SECTOR_RISK_POLICY["fallback_score"],
+        "categories": categories,
+    })
+    cursor.execute(
+        """INSERT INTO sector_risk_policy_audit
+           (version, actor_user_id, old_values, new_values)
+           VALUES (%s, %s, %s, %s)""",
+        (
+            new_policy["version"],
+            actor_user_id,
+            json.dumps(old_policy, separators=(",", ":")),
+            json.dumps(new_policy, separators=(",", ":")),
+        ),
+    )
+    cursor.execute(
+        """UPDATE sector_risk_policy
+           SET version = %s, fallback_score = %s, categories = %s, updated_by = %s
+           WHERE policy_id = 1""",
+        (
+            new_policy["version"],
+            new_policy["fallback_score"],
+            json.dumps(new_policy["categories"], separators=(",", ":")),
+            actor_user_id,
+        ),
+    )
+    return new_policy
+
+
+def load_sector_risk_policy_audit(cursor, limit=50):
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError("Audit limit must be an integer between 1 and 100.")
+    cursor.execute(
+        """SELECT a.version, a.actor_user_id, u.fullName AS actor_name,
+                  a.created_at, a.old_values, a.new_values
+           FROM sector_risk_policy_audit a
+           LEFT JOIN users u ON u.userID = a.actor_user_id
+           ORDER BY a.version DESC, a.audit_id DESC
+           LIMIT %s""",
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    for row in rows:
+        for key in ("old_values", "new_values"):
+            if isinstance(row[key], str):
+                row[key] = json.loads(row[key])
+    return rows
 
 
 def load_sector_risk_policy(path=SECTOR_RISK_POLICY_PATH):
@@ -81,7 +184,7 @@ def update_sector_risk_policy(policy, path=SECTOR_RISK_POLICY_PATH):
         raise ValueError("Sector risk policy must contain categories and fallback_score only.")
     updated = {
         "version": DEFAULT_SECTOR_RISK_POLICY["version"],
-        "fallback_score": policy["fallback_score"],
+        "fallback_score": DEFAULT_SECTOR_RISK_POLICY["fallback_score"],
         "categories": policy["categories"],
     }
     validate_sector_risk_policy(updated)

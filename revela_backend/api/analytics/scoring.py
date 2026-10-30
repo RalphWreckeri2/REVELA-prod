@@ -8,7 +8,11 @@ not violation probability or a historically calibrated risk estimate.
 import math
 
 from api.analytics.service import validate_wlc_config
-from api.analytics.sector_risk import load_sector_risk_policy, weighted_sector_score
+from api.analytics.sector_risk import (
+    load_sector_risk_policy,
+    validate_sector_risk_policy,
+    weighted_sector_score,
+)
 
 
 MODEL_VERSION = "wlc-v3"
@@ -56,12 +60,14 @@ def _model_weights(config):
     return weights, enabled, reason
 
 
-def calculate_rankings(rows, config):
+def calculate_rankings(rows, config, sector_policy=None):
     """Score the FULL municipal cohort, then assign deterministic global ranks."""
     validate_wlc_config(config)
     rows = list(rows)
     weights, sector_enabled, reason = _model_weights(config)
-    sector_policy = load_sector_risk_policy()
+    sector_policy = validate_sector_risk_policy(
+        sector_policy if sector_policy is not None else load_sector_risk_policy()
+    )
     maximum = max((weighted_burden(row) for row in rows), default=0)
     rankings = []
     for row in rows:

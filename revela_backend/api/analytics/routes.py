@@ -20,11 +20,12 @@ from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
 from api.analytics.sector_risk import (
     DEFAULT_SECTOR_RISK_POLICY,
-    load_sector_risk_policy,
-    reset_sector_risk_policy,
-    update_sector_risk_policy,
+    load_persisted_sector_risk_policy,
+    load_sector_risk_policy_audit,
+    save_persisted_sector_risk_policy,
+    validate_sector_risk_categories,
 )
-from api.analytics.scoring import calculate_rankings, select_rankings
+from api.analytics.scoring import MODEL_VERSION, calculate_rankings, select_rankings
 from api.analytics.non_registry import (
     non_registry_monitoring_sql, build_non_registry_monitoring,
     registry_linked_monitoring_sql, build_registry_linked_monitoring,
@@ -62,6 +63,15 @@ from api.analytics.filters import (
 _CACHED_GEMINI_MODEL = "gemini-3.6-flash"
 _LAST_MODEL_DISCOVERY_TIME = 0
 _DISCOVERY_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+SECTOR_RISK_ASSISTANT_GUIDANCE = (
+    "Matched PSIC categories use their sector-policy score; flagged entities "
+    "without a matched sector use the unclassified fallback of 50; explicit "
+    "barangay overrides take precedence. State current sector coverage using "
+    "the WLC model's known and total sector entity counts when available. "
+    "Sector policy scores are administrative priorities, not measured industry "
+    "risk. Do not redistribute the default 68% Risk / 7% Sector / 25% "
+    "Proximity weights when sector inputs are missing or constant."
+)
 
 
 def _get_candidate_gemini_models(client, force_refresh=False):
@@ -1445,7 +1455,7 @@ def _prescriptive_sector_sql(effective_flag_color):
     """
 
 
-def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
+def _load_prescriptive_rows(cur, effective_flag_color, ladder):
     """One municipal input/scoring path for Analytics and Map dispatch."""
     builder = _barangay_rankings_sql_split if _rankings_split_enabled() else _barangay_rankings_sql
     # All dashboard filters deliberately stay OUT of the operational model.
@@ -1465,7 +1475,13 @@ def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
     for row in rows:
         row.update(registry.get(row["barangayID"], {}))
         row["sector_category_counts"] = sector_categories.get(row["barangayID"], {})
-    return calculate_rankings(rows, config)
+    return rows
+
+
+def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
+    rows = _load_prescriptive_rows(cur, effective_flag_color, ladder)
+    sector_policy = load_persisted_sector_risk_policy(cur)
+    return calculate_rankings(rows, config, sector_policy)
 
 
 _PRESCRIPTIVE_WORKFORCE_SQL = """
@@ -2994,14 +3010,18 @@ def reset_config_endpoint():
 @analytics_bp.route("/sector-policy", methods=["GET"])
 @jwt_required()
 def get_sector_policy():
+    cur = mysql.connection.cursor()
     try:
+        policy = load_persisted_sector_risk_policy(cur)
         return jsonify({
-            "data": load_sector_risk_policy(),
+            "data": policy,
             "defaults": DEFAULT_SECTOR_RISK_POLICY,
         }), 200
-    except (OSError, ValueError, TypeError):
+    except Exception:
         current_app.logger.exception("Failed to load sector risk policy")
         return jsonify({"error": "Failed to load sector risk policy."}), 500
+    finally:
+        cur.close()
 
 
 @analytics_bp.route("/sector-policy", methods=["PUT"])
@@ -3011,12 +3031,22 @@ def update_sector_policy():
     if data is None:
         return jsonify({"error": "Sector risk policy data is required."}), 400
     try:
-        updated_policy = update_sector_risk_policy(data)
+        categories = validate_sector_risk_categories(data)
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
-    except OSError:
+    cur = mysql.connection.cursor()
+    try:
+        mysql.connection.begin()
+        updated_policy = save_persisted_sector_risk_policy(
+            cur, categories, int(get_jwt_identity())
+        )
+        mysql.connection.commit()
+    except Exception:
+        mysql.connection.rollback()
         current_app.logger.exception("Failed to persist sector risk policy")
         return jsonify({"error": "Failed to save sector risk policy."}), 500
+    finally:
+        cur.close()
     return jsonify({
         "message": "Sector risk policy updated successfully.",
         "data": updated_policy,
@@ -3026,15 +3056,106 @@ def update_sector_policy():
 @analytics_bp.route("/sector-policy/reset", methods=["POST"])
 @admin_required()
 def reset_sector_policy():
+    cur = mysql.connection.cursor()
     try:
-        updated_policy = reset_sector_risk_policy()
-    except OSError:
+        mysql.connection.begin()
+        updated_policy = save_persisted_sector_risk_policy(
+            cur,
+            DEFAULT_SECTOR_RISK_POLICY["categories"],
+            int(get_jwt_identity()),
+        )
+        mysql.connection.commit()
+    except Exception:
+        mysql.connection.rollback()
         current_app.logger.exception("Failed to reset sector risk policy")
         return jsonify({"error": "Failed to reset sector risk policy."}), 500
+    finally:
+        cur.close()
     return jsonify({
         "message": "Sector risk policy reset to defaults successfully.",
         "data": updated_policy,
     }), 200
+
+
+@analytics_bp.route("/sector-policy/audit", methods=["GET"])
+@admin_required()
+def get_sector_policy_audit():
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    cur = mysql.connection.cursor()
+    try:
+        rows = load_sector_risk_policy_audit(cur, limit)
+        return jsonify({"data": rows}), 200
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception:
+        current_app.logger.exception("Failed to load sector risk policy audit history")
+        return jsonify({"error": "Failed to load sector risk policy audit history."}), 500
+    finally:
+        cur.close()
+
+
+@analytics_bp.route("/sector-policy/preview", methods=["POST"])
+@admin_required()
+def preview_sector_policy():
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Sector policy preview data is required."}), 400
+    try:
+        categories = validate_sector_risk_categories(data)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    cur = mysql.connection.cursor()
+    try:
+        ladder = ladder_columns_available(cur)
+        effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
+        current_policy = load_persisted_sector_risk_policy(cur)
+        candidate_policy = {
+            "version": current_policy["version"] + 1,
+            "fallback_score": DEFAULT_SECTOR_RISK_POLICY["fallback_score"],
+            "categories": categories,
+        }
+        rows = _load_prescriptive_rows(cur, effective_flag_color, ladder)
+        current_rankings = calculate_rankings(
+            rows, get_wlc_config(), current_policy
+        )
+        candidate_rankings = calculate_rankings(
+            rows, get_wlc_config(), candidate_policy
+        )
+        old_by_id = {row["barangayID"]: row for row in current_rankings}
+        new_by_id = {row["barangayID"]: row for row in candidate_rankings}
+        selected_ids = {
+            row["barangayID"] for row in current_rankings[:8]
+        } | {
+            row["barangayID"] for row in candidate_rankings[:8]
+        }
+        preview_rows = []
+        for barangay_id in selected_ids:
+            old = old_by_id[barangay_id]
+            new = new_by_id[barangay_id]
+            preview_rows.append({
+                "barangayID": barangay_id,
+                "barangayName": new["barangayName"],
+                "old_ops": old["ops_score"],
+                "old_rank": old["rank"],
+                "new_ops": new["ops_score"],
+                "new_rank": new["rank"],
+            })
+        preview_rows.sort(key=lambda row: (row["new_rank"], row["old_rank"]))
+        return jsonify({
+            "current_version": current_policy["version"],
+            "proposed_version": candidate_policy["version"],
+            "model_version": MODEL_VERSION,
+            "rows": preview_rows,
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to preview sector risk policy")
+        return jsonify({"error": "Failed to preview sector risk policy."}), 500
+    finally:
+        cur.close()
 
 
 @analytics_bp.route("/chat", methods=["POST"])
@@ -3302,7 +3423,7 @@ def analytics_chat():
             "that ranks barangays by inspection priority. Higher score = higher priority for dispatching inspectors.\n"
             "- **WLC Weights**: The OPS score is computed from three weighted sub-scores:\n"
             "  - Risk Score (w1): 100*(3*Red + 2*Yellow + 4*Black)/largest municipal weighted flag burden; zero if no flags exist\n"
-            "  - Sector Score (w2): Configured barangay policy score, with the existing neutral fallback of 50 when an override is missing. The default 68% Risk / 7% Sector / 25% Proximity weights come from stakeholder interviews and must not be redistributed because sector inputs are missing or constant. Do not describe a neutral fallback as measured industry risk\n"
+            f"  - Sector Score (w2): {SECTOR_RISK_ASSISTANT_GUIDANCE}\n"
             "  - Proximity Score (w3): 100 minus normalized straight-line BPLO distance, using active-flag locations; missing locations use neutral proximity 50\n"
             "  - OPS = w1*Risk + w2*Sector + w3*Proximity using effective weights. It is a relative priority score, NOT violation probability. Barangay display filters preserve municipal ranks; other dashboard filters do not change operational scores\n"
             "- **Registry active-flag rate**: Unique current Red/Yellow/Black registry businesses / all registry businesses; null means N/A. Not a confirmed non-compliance rate. Unregistered candidates are a separate count\n"

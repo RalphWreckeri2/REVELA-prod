@@ -605,6 +605,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
         <span className="top-nav-separator" aria-hidden="true" />
 
         <div className="top-nav-account" role="group" aria-label="Account and notifications">
+        <div className="top-nav-notifications">
         <div className="notification-wrapper" style={{ position: "relative" }}>
           <button
             ref={notificationButtonRef}
@@ -765,6 +766,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
               </div>
             </div>
           )}
+        </div>
         </div>
 
         <button

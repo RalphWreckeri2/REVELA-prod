@@ -4,7 +4,8 @@ import sys
 import unittest
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+import json
 
 from flask import Flask
 
@@ -12,13 +13,38 @@ sys.path.insert(0, os.path.dirname(__file__))
 from registry_sqlite import RegistryDB
 from api.analytics import routes
 from api.analytics.service import DEFAULT_CONFIG
+from api.analytics.sector_risk import DEFAULT_SECTOR_RISK_POLICY
 from api.registry.colors import _effective_flag_color_sql
 
 
 class PrescriptiveQueryTests(unittest.TestCase):
+    def test_assistant_sector_guidance_describes_policy_fallback_and_coverage(self):
+        guidance = routes.SECTOR_RISK_ASSISTANT_GUIDANCE
+        self.assertIn("Matched PSIC categories use their sector-policy score", guidance)
+        self.assertIn("without a matched sector use the unclassified fallback of 50", guidance)
+        self.assertIn("explicit barangay overrides take precedence", guidance)
+        self.assertIn("known and total sector entity counts when available", guidance)
+        self.assertIn("not measured industry risk", guidance)
+        self.assertNotIn("neutral fallback of 50 when an override is missing", guidance)
+
     def setUp(self):
         self.db = RegistryDB()
         self.addCleanup(self.db.close)
+        self.db.db.execute("""
+            CREATE TABLE sector_risk_policy (
+                policy_id INTEGER PRIMARY KEY,
+                version INTEGER NOT NULL,
+                fallback_score INTEGER NOT NULL,
+                categories TEXT NOT NULL,
+                updated_by INTEGER NULL
+            )
+        """)
+        self.db.db.execute(
+            """INSERT INTO sector_risk_policy
+               (policy_id, version, fallback_score, categories)
+               VALUES (1, 1, 50, ?)""",
+            (json.dumps(DEFAULT_SECTOR_RISK_POLICY["categories"]),),
+        )
         self.config = deepcopy(DEFAULT_CONFIG)
         self.color = _effective_flag_color_sql("g", ladder=True)
         self.db.db.executescript("""
@@ -255,32 +281,43 @@ class PrescriptiveQueryTests(unittest.TestCase):
     def test_sector_policy_routes_validate_update_and_reset(self):
         app = Flask(__name__)
         payload = {
-            "categories": {"Retail": 96},
-            "fallback_score": 45,
+            "categories": {
+                **DEFAULT_SECTOR_RISK_POLICY["categories"],
+                "Retail": 96,
+            },
         }
         updated = {
-            "version": "psic-sector-risk-v1",
-            "categories": {"Retail": 96},
-            "fallback_score": 45,
+            "version": 2,
+            "categories": payload["categories"],
+            "fallback_score": 50,
         }
+        connection = MagicMock()
+        connection.cursor.return_value = MagicMock()
         with app.test_request_context("/api/analytics/sector-policy", method="PUT", json=payload), \
-                patch.object(routes, "update_sector_risk_policy", return_value=updated):
+                patch.object(routes, "mysql", SimpleNamespace(connection=connection)), \
+                patch.object(routes, "get_jwt_identity", return_value=10), \
+                patch.object(routes, "save_persisted_sector_risk_policy", return_value=updated):
             response, status = routes.update_sector_policy.__wrapped__()
         self.assertEqual(status, 200)
         self.assertEqual(response.get_json()["data"], updated)
+        connection.commit.assert_called_once()
 
         with app.test_request_context(
-            "/api/analytics/sector-policy", method="PUT", json={"categories": {}, "fallback_score": 50}
-        ), patch.object(routes, "update_sector_risk_policy", side_effect=ValueError("Invalid sector policy")):
+            "/api/analytics/sector-policy", method="PUT", json={"categories": {}}
+        ):
             response, status = routes.update_sector_policy.__wrapped__()
         self.assertEqual(status, 400)
-        self.assertEqual(response.get_json()["error"], "Invalid sector policy")
+        self.assertIn("12 known", response.get_json()["error"])
 
+        connection.reset_mock()
         with app.test_request_context("/api/analytics/sector-policy/reset", method="POST"), \
-                patch.object(routes, "reset_sector_risk_policy", return_value=updated):
+                patch.object(routes, "mysql", SimpleNamespace(connection=connection)), \
+                patch.object(routes, "get_jwt_identity", return_value=10), \
+                patch.object(routes, "save_persisted_sector_risk_policy", return_value=updated):
             response, status = routes.reset_sector_policy.__wrapped__()
         self.assertEqual(status, 200)
         self.assertEqual(response.get_json()["data"], updated)
+        connection.commit.assert_called_once()
 
 
 if __name__ == "__main__":

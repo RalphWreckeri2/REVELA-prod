@@ -1012,6 +1012,8 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+.top-nav-notifications {
   padding: 5px 7px;
   border: 1px solid var(--color-border);
   border-radius: 12px;
@@ -1170,7 +1172,8 @@ html.theme-dark .app-sync-now:not(.app-sync-now--error) {
 @media (max-width: 640px) {
   .top-navbar { padding: 0 10px 0 60px; }
   .top-nav-right { gap: 8px; }
-  .top-nav-account { gap: 3px; padding: 4px; }
+  .top-nav-account { gap: 3px; }
+  .top-nav-notifications { padding: 4px; }
   .app-refresh-controls { gap: 4px; }
   .app-sync-now { width: 42px; padding: 0; gap: 0; }
   .app-sync-now svg { width: 17px; height: 17px; }
@@ -1200,12 +1203,11 @@ html.theme-dark .app-sync-now:not(.app-sync-now--error) {
 .nav-profile {
   display: flex;
   align-items: center;
-  gap: 10px;
   cursor: pointer;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 999px;
   background: #000;
-  padding: 0 4px;
+  padding: 2px 12px;
   color: inherit;
   font: inherit;
 }
@@ -1378,7 +1380,7 @@ html.theme-dark .top-navbar {
   background: var(--color-modal-bg);
   box-shadow: none;
 }
-html.theme-dark .top-nav-account {
+html.theme-dark .top-nav-notifications {
   border-color: var(--color-border);
   background: rgba(15, 23, 42, 0.65);
 }

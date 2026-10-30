@@ -94,6 +94,9 @@ def main():
                     if args.test and any(name.startswith("tests.test_dashboard_mysql") for name in args.test):
                         from tests import test_dashboard_mysql as dashboard
                         dashboard.connect_to_disposable_mysql = isolated_connect
+                    if args.test and any(name.startswith("tests.test_sector_risk_policy_mysql") for name in args.test):
+                        from tests import test_sector_risk_policy_mysql as sector_policy
+                        sector_policy.connect_to_disposable_mysql = isolated_connect
                     if args.baseline:
                         from api.analytics import routes as analytics
                         for module, path in (

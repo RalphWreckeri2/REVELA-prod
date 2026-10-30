@@ -1274,10 +1274,38 @@ export async function getSectorRiskPolicyRequest(token) {
   }
 }
 
+export async function getSectorRiskPolicyAuditRequest(token, limit = 50) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy/audit?limit=${encodeURIComponent(limit)}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + token },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 export async function updateSectorRiskPolicyRequest(payload, token) {
   try {
     const res = await fetch(`${BASE_URL}/analytics/sector-policy`, {
       method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function previewSectorRiskPolicyRequest(payload, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy/preview`, {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: "Bearer " + token,
