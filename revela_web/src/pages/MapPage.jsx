@@ -37,6 +37,7 @@ import {
   parseHotspotGroupParams,
 } from "../components/hotspotPresentation";
 import { createBarangayMapPopup } from "../components/barangayMapPopup";
+import { aggregateMapLocationMetrics, hasMapCoordinates } from "../components/mapLocationMetrics";
 import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
@@ -827,13 +828,12 @@ function normalizeFlag(flag) {
   const color = canonicalFlagColor(flag.flagColor);
   const rawLat = flag.latitude != null ? Number(flag.latitude) : null;
   const rawLng = flag.longitude != null ? Number(flag.longitude) : null;
-  const hasExactCoords = rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
-
-  const centroid = !hasExactCoords ? getBarangayCentroid(flag.barangayName || flag.barangay) : null;
-  const lat = hasExactCoords ? rawLat : (centroid?.lat ?? DEFAULT_MAP_CENTER.lat);
-  const lng = hasExactCoords ? rawLng : (centroid?.lng ?? DEFAULT_MAP_CENTER.lng);
-
-  const coords = `${Number(lat).toFixed(6)}°N, ${Number(lng).toFixed(6)}°E`;
+  const hasExactCoords = hasMapCoordinates({ latitude: rawLat, longitude: rawLng });
+  const lat = hasExactCoords ? rawLat : null;
+  const lng = hasExactCoords ? rawLng : null;
+  const coords = hasExactCoords
+    ? `${lat.toFixed(6)}°N, ${lng.toFixed(6)}°E`
+    : "Coordinates unavailable";
 
   const hasActiveInspection = (flag.verificationStatus != null && flag.verificationStatus !== 'Verified') ||
     flag.hasActiveInspection === true;
@@ -1155,6 +1155,7 @@ function MapCanvas({
   barangays,
   selectedBarangayId,
   barangayRiskLevels,
+  mapMetricsByBarangay,
   opsRankings,
   selectedFlagId,
   hotspotGroupActive,
@@ -1618,11 +1619,29 @@ function MapCanvas({
       || Object.values(barangayRiskLevels || {}).find(
         (entry) => Number(entry?.barangayID) === id,
       );
-    const details = layers.diagnostics ? opsRiskTooltipLines(ranking) : [];
+    const metrics = mapMetricsByBarangay?.[id];
+    const details = [
+      "Map rows use canonical barangay IDs (Registry ID for matched locations).",
+      `Map-eligible locations (current filters): ${(metrics?.matchingLocations ?? 0).toLocaleString()}`,
+      `Registered businesses with map coordinates (current filters): ${(metrics?.registeredBusinessesWithCoordinates ?? 0).toLocaleString()}`,
+      `Active registered businesses with coordinates (current filters): ${(metrics?.activeBusinessesWithCoordinates ?? 0).toLocaleString()}`,
+      `1st/2nd Warning / Notice: ${(metrics?.colors?.Orange ?? 0).toLocaleString()}`,
+      `Detected Unregistered: ${(metrics?.colors?.Red ?? 0).toLocaleString()}`,
+      `Suspected Unregistered: ${(metrics?.colors?.Yellow ?? 0).toLocaleString()}`,
+      `Closed / Abandoned: ${(metrics?.colors?.Purple ?? 0).toLocaleString()}`,
+      `Critical Violations: ${(metrics?.colors?.Black ?? 0).toLocaleString()}`,
+      metrics?.withoutCoordinates
+        ? `${metrics.withoutCoordinates.toLocaleString()} matching records excluded because coordinates are missing`
+        : "",
+      metrics?.outsideBoundaryLocations
+        ? `${metrics.outsideBoundaryLocations.toLocaleString()} locations fall outside every barangay polygon`
+        : "",
+      ...(layers.diagnostics ? opsRiskTooltipLines(ranking) : []),
+    ];
     const content = createBarangayMapPopup({
       name: label,
       count: ranking?.total_registered,
-      countLabel: "registered businesses",
+      countLabel: "registered businesses (all registry records)",
       details,
     });
     hoverInfoWindowRef.current?.setContent(content);
@@ -1630,7 +1649,7 @@ function MapCanvas({
       hoverInfoWindowRef.current?.setPosition(event.latLng);
       hoverInfoWindowRef.current?.open({ map: internalMapRef.current });
     }
-  }, [barangays, barangayRiskLevels, isPickingLocation, layers.diagnostics, opsRankings]);
+  }, [barangays, barangayRiskLevels, isPickingLocation, layers.diagnostics, mapMetricsByBarangay, opsRankings]);
 
   const handleBoundaryMouseOut = useCallback(() => {
     setHoveredBarangayId(null);
@@ -4508,13 +4527,21 @@ export default function MapPage() {
   }, [adjustingFlagId, isPickingYellowLocation, barangays, layers.barangay, layers.diagnostics]);
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const mapFilteredFlags = flags.filter(flag => matchesMapFilters(flag, {
+  const mapFilteredFlags = useMemo(() => flags.filter(flag => matchesMapFilters(flag, {
     status: filterColor, source: filterSource, registryLink: filterRegistryLink,
     search, barangayID: filterBarangay,
-  }));
-  const visibleFlags = hotspotGroup.active
+  })), [filterColor, filterRegistryLink, filterSource, filterBarangay, flags, search]);
+  const scopedFilteredFlags = useMemo(() => hotspotGroup.active
     ? mapFilteredFlags.filter((flag) => matchesHotspotGroup(flag, hotspotGroup))
-    : mapFilteredFlags;
+    : mapFilteredFlags, [hotspotGroup, mapFilteredFlags]);
+  const filteredMapMetrics = useMemo(
+    () => aggregateMapLocationMetrics(scopedFilteredFlags, boundaryFeatures),
+    [boundaryFeatures, scopedFilteredFlags],
+  );
+  const visibleFlags = useMemo(
+    () => scopedFilteredFlags.filter(hasMapCoordinates),
+    [scopedFilteredFlags],
+  );
   const hotspotGroupMemberIds = useMemo(
     () => new Set(visibleFlags.map((flag) => Number(flag.id))),
     [visibleFlags],
@@ -4533,8 +4560,7 @@ export default function MapPage() {
       label: barangay.barangayName,
     })),
   ];
-  const filteredCounts = Object.fromEntries(["Green", "Orange", "Red", "Yellow", "Purple", "Black"]
-    .map(color => [color, visibleFlags.filter(flag => flag.color === color).length]));
+  const filteredCounts = filteredMapMetrics.colors;
   const clearViewFilters = () => {
     setFilterBarangay("all"); setFilterColor("all");
     setSearch(""); setLocationsPage(1);
@@ -5099,6 +5125,7 @@ export default function MapPage() {
               barangays={barangays}
               selectedBarangayId={filterBarangay}
               barangayRiskLevels={barangayRiskLevels}
+              mapMetricsByBarangay={filteredMapMetrics.byBarangay}
               opsRankings={opsRankings}
               selectedFlagId={selectedFlag}
               onMarkerClick={handleMarkerClick}
@@ -5181,7 +5208,7 @@ export default function MapPage() {
           <div className="map-stats-strip" style={styles.statsStrip}>
             {[
               { label: "Matching Locations", value: visibleFlags.length, color: "var(--color-ink)" },
-              { label: "Active Businesses", value: filteredCounts.Green, color: isDark ? "#4ade80" : "#22c55e" },
+              { label: "Active Businesses", value: filteredMapMetrics.activeBusinesses, color: isDark ? "#4ade80" : "#22c55e" },
               { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100" },
               { label: "Detected Unregistered", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444" },
               { label: "Suspected Unregistered", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b" },
@@ -5202,6 +5229,20 @@ export default function MapPage() {
               </div>
             ))}
           </div>
+          {(filteredMapMetrics.withoutCoordinates > 0 ||
+            filteredMapMetrics.unassignedLocations > 0 ||
+            filteredMapMetrics.outsideBoundaryLocations > 0) && (
+            <p role="note" style={{ margin: "8px 0 0", color: "var(--color-muted)", fontSize: 11 }}>
+              {filteredMapMetrics.withoutCoordinates > 0 &&
+                `${filteredMapMetrics.withoutCoordinates.toLocaleString()} matching records without coordinates are excluded from map locations and flag counts.`}
+              {filteredMapMetrics.withoutCoordinates > 0 && (filteredMapMetrics.unassignedLocations > 0 || filteredMapMetrics.outsideBoundaryLocations > 0) ? " " : ""}
+              {filteredMapMetrics.unassignedLocations > 0 &&
+                `${filteredMapMetrics.unassignedLocations.toLocaleString()} locations could not be assigned to a barangay.`}
+              {filteredMapMetrics.unassignedLocations > 0 && filteredMapMetrics.outsideBoundaryLocations > 0 ? " " : ""}
+              {filteredMapMetrics.outsideBoundaryLocations > 0 &&
+                `${filteredMapMetrics.outsideBoundaryLocations.toLocaleString()} locations fall outside all barangay boundaries.`}
+            </p>
+          )}
         </div>
 
         {/* Right: side panel */}

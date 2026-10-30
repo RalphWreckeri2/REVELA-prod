@@ -23,9 +23,19 @@ test("shared barangay popup formats registry and map-view metrics accurately", (
   assert.equal(formatBarangayMapPopupCount(3, "inspection reports"), "3 inspection reports");
 });
 
-test("both maps use the shared popup and preserve their respective count sources", () => {
+test("map popup separates all registry records from metrics under the current map filters", () => {
+  const normalizeFlagSource = mapPageSource.match(/function normalizeFlag\(flag\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(normalizeFlagSource, /hasMapCoordinates/);
+  assert.match(normalizeFlagSource, /const lat = hasExactCoords \? rawLat : null/);
+  assert.match(normalizeFlagSource, /Coordinates unavailable/);
+  assert.doesNotMatch(normalizeFlagSource, /getBarangayCentroid|DEFAULT_MAP_CENTER/);
   assert.match(mapPageSource, /createBarangayMapPopup\(\{[\s\S]*?count:\s*ranking\?\.total_registered/);
-  assert.match(mapPageSource, /countLabel:\s*"registered businesses"/);
+  assert.match(mapPageSource, /countLabel:\s*"registered businesses \(all registry records\)"/);
+  assert.match(mapPageSource, /Map-eligible locations \(current filters\)/);
+  assert.match(mapPageSource, /const scopedFilteredFlags = useMemo\(\(\) => hotspotGroup\.active/);
+  assert.match(mapPageSource, /aggregateMapLocationMetrics\(scopedFilteredFlags,\s*boundaryFeatures\)/);
+  assert.match(mapPageSource, /const visibleFlags = useMemo\(\s*\(\) => scopedFilteredFlags\.filter\(hasMapCoordinates\)/);
+  assert.match(mapPageSource, /mapMetricsByBarangay=\{filteredMapMetrics\.byBarangay\}/);
   assert.match(analyticsMapSource, /createBarangayMapPopup\(\{/);
   assert.match(analyticsMapSource, /row\?\.registry_total/);
   assert.match(analyticsMapSource, /row\?\.inspections\?\.total/);

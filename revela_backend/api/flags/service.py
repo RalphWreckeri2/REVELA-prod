@@ -3107,6 +3107,22 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
         registry_flag_color = _registry_row_flag_color_sql("r", ladder=ladder)
         unlock = "0"
+        registry_match_lateral = """
+            LEFT JOIN LATERAL (
+                SELECT businessID, barangayID, businessSize, businessAddress, latitude,
+                       longitude, applicationStatus, matchStatus, coordSource, matchScore
+                FROM official_registry
+                WHERE (businessID IS NOT NULL AND g.businessID IS NOT NULL
+                       AND businessID = g.businessID)
+                   OR (g.placeID IS NOT NULL AND placeID = g.placeID
+                       AND (g.businessID IS NULL OR businessID = g.businessID))
+                   OR (g.businessID IS NULL AND barangayID = g.barangayID
+                       AND businessName = g.detectedName)
+                ORDER BY (g.businessID IS NOT NULL AND businessID = g.businessID) DESC,
+                         (g.placeID IS NOT NULL AND placeID = g.placeID) DESC
+                LIMIT 1
+            ) r ON TRUE
+        """
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
         # Filters that apply to the geospatial_logs branch
@@ -3169,7 +3185,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             reg_params.append(color)
 
         if barangay_id:
-            geo_conditions.append("g.barangayID = %s")
+            geo_conditions.append("COALESCE(r.barangayID, g.barangayID) = %s")
             geo_params.append(barangay_id)
             reg_conditions.append("r.barangayID = %s")
             reg_params.append(barangay_id)
@@ -3186,6 +3202,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             SELECT COUNT(*) AS total FROM (
                 SELECT g.logID
                 FROM geospatial_logs g
+                {registry_match_lateral}
                 {geo_where}
 
                 UNION ALL
@@ -3224,6 +3241,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     b.barangayID,
                     b.barangayName,
                     r.businessSize,
+                    (r.businessID IS NOT NULL) AS registryMatched,
                     COALESCE(g.nearestLandmark, r.businessAddress) AS resolvedAddress,
                     {_flag_source_sql("g", _OLD_MAP_FLAG_SOURCE, cursor)}
                         AS flagSource,
@@ -3242,19 +3260,9 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     r.coordSource,
                     r.matchScore
                 FROM geospatial_logs g
-                LEFT JOIN barangays b ON g.barangayID = b.barangayID
-                LEFT JOIN LATERAL (
-                    SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus,
-                           matchStatus, coordSource, matchScore
-                    FROM official_registry
-                    WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
-                       OR (g.placeID IS NOT NULL AND placeID = g.placeID
-                           AND (g.businessID IS NULL OR businessID = g.businessID))
-                       OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
-                    ORDER BY (g.businessID IS NOT NULL AND businessID = g.businessID) DESC,
-                             (g.placeID IS NOT NULL AND placeID = g.placeID) DESC
-                    LIMIT 1
-                ) r ON TRUE
+                {registry_match_lateral}
+                LEFT JOIN barangays b
+                  ON COALESCE(r.barangayID, g.barangayID) = b.barangayID
                 {geo_where}
 
                 UNION ALL
@@ -3277,6 +3285,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     b.barangayID               AS barangayID,
                     b.barangayName             AS barangayName,
                     r.businessSize             AS businessSize,
+                    1                          AS registryMatched,
                     r.businessAddress          AS resolvedAddress,
                     '{SOURCE_REGISTRY}'        AS flagSource,
                     '{SOURCE_REGISTRY}'        AS originSource,
