@@ -44,4 +44,4 @@ VALUES (
         'Agriculture and mining', 30
     )
 )
-ON DUPLICATE KEY UPDATE policy_id = VALUES(policy_id);
+ON DUPLICATE KEY UPDATE policy_id = 1;

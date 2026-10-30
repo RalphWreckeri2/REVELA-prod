@@ -1206,12 +1206,12 @@ html.theme-dark .app-sync-now:not(.app-sync-now--error) {
   cursor: pointer;
   border: 1px solid transparent;
   border-radius: 999px;
-  background: #000;
+  background: transparent;
   padding: 2px 12px;
   color: inherit;
   font: inherit;
 }
-.nav-profile:hover { background: #000; }
+.nav-profile:hover { background: var(--color-surface); }
 
 .nav-profile:focus-visible {
   outline: 2px solid rgba(86, 171, 47, 0.45);
@@ -1383,6 +1383,10 @@ html.theme-dark .top-navbar {
 html.theme-dark .top-nav-notifications {
   border-color: var(--color-border);
   background: rgba(15, 23, 42, 0.65);
+}
+html.theme-dark .nav-profile,
+html.theme-dark .nav-profile:hover {
+  background: #000;
 }
 
 .profile-modal-backdrop {
