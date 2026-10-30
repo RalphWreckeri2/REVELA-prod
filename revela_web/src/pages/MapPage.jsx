@@ -531,16 +531,6 @@ function canonicalFlagColor(raw) {
   return FLAG_COLORS[cap] ? cap : "Red";
 }
 
-function hotspotRingMarkerDataUri(color) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="52" viewBox="0 0 48 52">
-    <circle cx="24" cy="18" r="18" fill="none" stroke="#ffffff" stroke-width="5"/>
-    <circle cx="24" cy="18" r="15" fill="none" stroke="#111827" stroke-width="2.5"/>
-    <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" transform="translate(12 6)" fill="${color}" stroke="#ffffff" stroke-width="1.2"/>
-    <circle cx="24" cy="17" r="4.5" fill="#ffffff" opacity="0.95"/>
-  </svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-}
-
 // ── Point-in-polygon helpers (ray-casting) ────────────────────────────────────
 // GeoJSON coords are [lng, lat]; we receive (lat, lng) from Google Maps.
 function pointInRing(lat, lng, ring) {
@@ -1713,7 +1703,6 @@ function MapCanvas({
 
     let innerHtml = `
       <svg viewBox="0 0 24 32" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible; pointer-events: none;" draggable="false">
-        ${isHotspotGroupMember ? '<circle cx="12" cy="11" r="18" fill="none" stroke="#ffffff" stroke-width="5"/><circle cx="12" cy="11" r="15" fill="none" stroke="#111827" stroke-width="2.5"/>' : ""}
         <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="${color}" stroke="#ffffff" stroke-width="${isAdjusting ? 2.5 : 1.2}" />
         <circle cx="12" cy="11" r="4.5" fill="white" opacity="0.95"/>
       </svg>
@@ -1851,19 +1840,13 @@ function MapCanvas({
           draggable: isAdjusting,
           title: flag.name,
           zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
-          icon: isHotspotGroupMember ? {
-            url: hotspotRingMarkerDataUri(color),
-            scaledSize: new window.google.maps.Size(48, 52),
-            anchor: new window.google.maps.Point(24, 38),
-          } : {
-            path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
-            fillColor: color,
-            fillOpacity: 1,
-            strokeColor: flag.matchStatus === "review" ? "#facc15" : "#ffffff",
-            strokeWeight: flag.matchStatus === "review" ? 4 : (isAdjusting ? 2.5 : 1.5),
-            scale: (isSelected || isAdjusting) ? 1.4 : 1.0,
-            anchor: new window.google.maps.Point(12, 32),
-          }
+          path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+          fillColor: color,
+          fillOpacity: 1,
+          strokeColor: flag.matchStatus === "review" ? "#facc15" : "#ffffff",
+          strokeWeight: flag.matchStatus === "review" ? 4 : (isAdjusting ? 2.5 : 1.5),
+          scale: (isSelected || isAdjusting) ? 1.4 : 1.0,
+          anchor: new window.google.maps.Point(12, 32),
         });
 
         marker._revelaFlagColor = flag.color;

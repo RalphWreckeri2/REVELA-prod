@@ -338,15 +338,16 @@ test("hotspot group member list scrolls without shrinking rows into its button f
   assert.match(mapOverviewStyles, /max-height:\s*min\(50dvh,\s*420px\)/);
 });
 
-test("Maps & Flags pins have no backing shadow while hotspot member rings remain", () => {
+test("Maps & Flags hotspot members use the normal pin without an outer ring", () => {
   const markerBuilder = mapPageSource.slice(
     mapPageSource.indexOf("const buildMarkerContent"),
     mapPageSource.indexOf("el.innerHTML = innerHtml"),
   );
   assert.doesNotMatch(markerBuilder, /drop-shadow/);
-  assert.match(markerBuilder, /isHotspotGroupMember \? '<circle/);
-  assert.match(mapPageSource, /stroke="#111827" stroke-width="2\.5"/);
-  assert.match(mapPageSource, /stroke="#ffffff" stroke-width="5"/);
+  assert.match(markerBuilder, /<circle cx="12" cy="11" r="4\.5" fill="white"/);
+  assert.doesNotMatch(mapPageSource, /hotspotRingMarkerDataUri|stroke="#111827" stroke-width="2\.5"|stroke="#ffffff" stroke-width="5"/);
+  assert.match(markerBuilder, /flag\.matchStatus === "review"/);
+  assert.match(markerBuilder, /isHotspotGroupMember/);
 });
 
 test("hotspot mode uses subtle green municipal fill and mode-specific clear borders", () => {
@@ -410,8 +411,7 @@ test("group deep links cap IDs, use centroid and radius for large groups, and pr
   assert.match(mapPageSource, /const needsFit = !initialMunicipalFitRef\.current && !hotspotGroupActive/);
   assert.match(mapPageSource, /Showing \{visibleFlags\.length\.toLocaleString\(\)\} locations from a hotspot group/);
   assert.match(mapPageSource, /hotspotGroupMemberIds\.has\(Number\(flag\.id\)\)/);
-  assert.match(mapPageSource, /stroke="#111827" stroke-width="2\.5"/);
-  assert.match(mapPageSource, /stroke="#ffffff" stroke-width="5"/);
+  assert.doesNotMatch(mapPageSource, /hotspotRingMarkerDataUri|stroke="#111827" stroke-width="2\.5"|stroke="#ffffff" stroke-width="5"/);
 });
 
 test("size tiers, polygon labels, and shared Red flag color drive hotspot presentation", () => {
