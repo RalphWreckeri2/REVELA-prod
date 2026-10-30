@@ -37,7 +37,11 @@ import {
   parseHotspotGroupParams,
 } from "../components/hotspotPresentation";
 import { createBarangayMapPopup } from "../components/barangayMapPopup";
-import { aggregateMapLocationMetrics, hasMapCoordinates } from "../components/mapLocationMetrics";
+import {
+  aggregateMapLocationMetrics,
+  createCentroidPreviewFlags,
+  hasMapCoordinates,
+} from "../components/mapLocationMetrics";
 import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
@@ -54,6 +58,7 @@ import {
   BARANGAY_CENTROIDS,
   DEFAULT_MAP_CENTER,
   getBarangayCentroid,
+  getKnownBarangayCentroid,
 } from "../utils/barangayCentroids";
 import {
   API_ORIGIN,
@@ -1698,6 +1703,7 @@ function MapCanvas({
     selected,
     isAdjusting = false,
     isHotspotGroupMember = false,
+    isCentroidPreview = false,
   ) => {
     const fc = getFlagColor(flag.color);
     const color = selected && !isHotspotGroupMember ? "#2563eb" : fc.marker;
@@ -1746,10 +1752,18 @@ function MapCanvas({
       `;
     }
 
+    if (isCentroidPreview) {
+      innerHtml += `
+        <div style="position: absolute; top: -5px; right: -7px; min-width: 16px; height: 16px; padding: 0 2px; box-sizing: border-box; border: 1px solid #334155; border-radius: 9px; background: #ffffff; color: #334155; display: flex; align-items: center; justify-content: center; font: 800 10px/1 system-ui, sans-serif; z-index: 12; pointer-events: none;">~</div>
+      `;
+    }
+
     el.innerHTML = innerHtml;
-    el.title = flag.matchStatus === "review"
-      ? `${flag.name} — Pin suggestion needs review`
-      : flag.name;
+    el.title = isCentroidPreview
+      ? `${flag.name} — Approximate barangay centroid; adjust to the actual location`
+      : flag.matchStatus === "review"
+        ? `${flag.name} — Pin suggestion needs review`
+        : flag.name;
     return el;
   }, []);
 
@@ -1772,9 +1786,11 @@ function MapCanvas({
 
     if (!layers.flags) return;
 
-    const visibleFlags = flags.filter(
-      f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
-    );
+    const visibleFlags = flags.filter((flag) => {
+      if (flag.isCentroidPreview && flag.mapPreviewPosition) return true;
+      return flag.latitude != null && flag.longitude != null &&
+        Number.isFinite(Number(flag.latitude)) && Number.isFinite(Number(flag.longitude));
+    });
 
     const coordCounts = {};
     const markers = [];
@@ -1786,8 +1802,8 @@ function MapCanvas({
     visibleFlags.forEach(flag => {
       const isAdjusting = String(flag.id) === String(adjustingFlagId);
       const isHotspotGroupMember = hotspotGroupMemberIds.has(Number(flag.id));
-      let lat = Number(flag.latitude);
-      let lng = Number(flag.longitude);
+      let lat = Number(flag.mapPreviewPosition?.lat ?? flag.latitude);
+      let lng = Number(flag.mapPreviewPosition?.lng ?? flag.longitude);
 
       if (isAdjusting && adjustingLatLng) {
         lat = adjustingLatLng.lat;
@@ -1813,9 +1829,13 @@ function MapCanvas({
         try {
           marker = new window.google.maps.marker.AdvancedMarkerElement({
             position: { lat, lng },
-            content: buildMarkerContent(flag, isSelected, isAdjusting, isHotspotGroupMember),
+            content: buildMarkerContent(
+              flag, isSelected, isAdjusting, isHotspotGroupMember, flag.isCentroidPreview,
+            ),
             gmpDraggable: isAdjusting,
-            title: flag.name,
+            title: flag.isCentroidPreview
+              ? `${flag.name} — Approximate barangay centroid`
+              : flag.name,
             zIndex: isAdjusting ? 999999 : (isHotspotGroupMember ? 5000 : isSelected ? 9999 : 100),
           });
 
@@ -1843,8 +1863,9 @@ function MapCanvas({
               marker.addEventListener("gmp-dragend", handleDragEnd);
             }
           } else {
-            marker.addListener("gmp-click", () => onMarkerClick(flag.id));
-            markers.push(marker);
+            marker.addListener("gmp-click", () => onMarkerClick(flag.id, flag));
+            if (flag.isCentroidPreview) marker.map = activeMap;
+            else markers.push(marker);
           }
         } catch {
           marker = null;
@@ -1857,7 +1878,9 @@ function MapCanvas({
         marker = new window.google.maps.Marker({
           position: { lat, lng },
           draggable: isAdjusting,
-          title: flag.name,
+          title: flag.isCentroidPreview
+            ? `${flag.name} — Approximate barangay centroid`
+            : flag.name,
           zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
           path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
           fillColor: color,
@@ -1881,8 +1904,9 @@ function MapCanvas({
             }
           });
         } else {
-          marker.addListener("click", () => onMarkerClick(flag.id));
-          markers.push(marker);
+          marker.addListener("click", () => onMarkerClick(flag.id, flag));
+          if (flag.isCentroidPreview) marker.setMap(activeMap);
+          else markers.push(marker);
         }
       }
 
@@ -2965,6 +2989,7 @@ export default function MapPage() {
   }, [token]);
 
   const [layers, setLayers] = useState({ base: true, flags: true, barangay: false, diagnostics: false });
+  const [showCentroidOnlyPins, setShowCentroidOnlyPins] = useState(false);
   const [selectedFlag, setSelectedFlag] = useState(null);   // logID of selected flag
   const [modalFlag, setModalFlag] = useState(null);   // flag object shown in detail modal
   const [complianceFlag, setComplianceFlag] = useState(null);
@@ -4222,11 +4247,15 @@ export default function MapPage() {
   // â”€â”€ Drag & Drop Adjust Location â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleStartAdjustLocation = (flag) => {
     handleCloseDetailModal();
-    const lat = Number(flag.latitude);
-    const lng = Number(flag.longitude);
+    const initialPosition = flag.mapPreviewPosition || {
+      lat: Number(flag.latitude),
+      lng: Number(flag.longitude),
+    };
+    const lat = Number(initialPosition.lat);
+    const lng = Number(initialPosition.lng);
     setAdjustingFlagId(flag.id);
     setAdjustingLatLng({ lat, lng });
-    if (mapRef.current && !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+    if (mapRef.current && Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) {
       mapRef.current.panTo({ lat, lng });
       mapRef.current.setZoom(18);
     }
@@ -4377,7 +4406,7 @@ export default function MapPage() {
   };
 
   // â”€â”€ Marker click â†’ pan map + open detail modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleMarkerClick = useCallback((id) => {
+  const handleMarkerClick = useCallback((id, clickedMapFlag = null) => {
     const flag = flags.find(f => f.id === id);
     if (!flag) return;
     rememberMapCamera();
@@ -4387,11 +4416,16 @@ export default function MapPage() {
     }
 
     setSelectedFlag(id);
-    setModalFlag(flag);
+    const selectedMapFlag = clickedMapFlag || flag;
+    setModalFlag(selectedMapFlag);
 
     // Pan map to marker
-    if (mapRef.current && flag.latitude && flag.longitude) {
-      mapRef.current.panTo({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
+    const position = selectedMapFlag.mapPreviewPosition || {
+      lat: Number(flag.latitude),
+      lng: Number(flag.longitude),
+    };
+    if (mapRef.current && Number.isFinite(position.lat) && Number.isFinite(position.lng)) {
+      mapRef.current.panTo(position);
       mapRef.current.setZoom(18);
     }
   }, [flags, location.search, location.pathname, navigate, rememberMapCamera]);
@@ -4541,6 +4575,21 @@ export default function MapPage() {
   const visibleFlags = useMemo(
     () => scopedFilteredFlags.filter(hasMapCoordinates),
     [scopedFilteredFlags],
+  );
+  const centroidPreviewFlags = useMemo(
+    () => createCentroidPreviewFlags(
+      scopedFilteredFlags,
+      barangays,
+      getKnownBarangayCentroid,
+      DEFAULT_MAP_CENTER,
+    ),
+    [barangays, scopedFilteredFlags],
+  );
+  const mapDisplayFlags = useMemo(
+    () => showCentroidOnlyPins
+      ? [...visibleFlags, ...centroidPreviewFlags]
+      : visibleFlags,
+    [centroidPreviewFlags, showCentroidOnlyPins, visibleFlags],
   );
   const hotspotGroupMemberIds = useMemo(
     () => new Set(visibleFlags.map((flag) => Number(flag.id))),
@@ -5070,6 +5119,28 @@ export default function MapPage() {
                   </button>
                 );
               })}
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="map-centroid-preview-toggle"
+                  aria-pressed={showCentroidOnlyPins}
+                  aria-label={`${showCentroidOnlyPins ? "Hide" : "Show"} ${centroidPreviewFlags.length} approximate centroid pins`}
+                  title="Show unlocated businesses at their barangay centroid temporarily. These positions are approximate and are not saved until you adjust and save each pin."
+                  onClick={() => setShowCentroidOnlyPins((visible) => !visible)}
+                  style={{
+                    ...styles.layerToggle,
+                    minHeight: 40,
+                    background: showCentroidOnlyPins ? "var(--color-primary)" : "var(--color-input-bg)",
+                    color: showCentroidOnlyPins ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-ink)",
+                    borderColor: showCentroidOnlyPins ? "var(--color-primary)" : "var(--color-border)",
+                    fontWeight: showCentroidOnlyPins ? 700 : 600,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {showCentroidOnlyPins ? "Hide" : "Show"} centroid pins ({centroidPreviewFlags.length})
+                </button>
+              )}
             </div>
             <div className="map-layer-search" style={styles.layerSearch}>
               <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
@@ -5117,7 +5188,7 @@ export default function MapPage() {
               municipalBounds={municipalBounds}
               mapRef={mapRef}
               layers={layers}
-              flags={visibleFlags}
+              flags={mapDisplayFlags}
               hotspotGroupActive={hotspotGroup.active}
               hotspotGroupKey={hotspotGroupKey}
               hotspotGroupMemberIds={hotspotGroupMemberIds}
@@ -5339,7 +5410,7 @@ export default function MapPage() {
       {/* Flag detail modal â€” opens on marker or side panel click */}
       <AnimatePresence isVisible={!!modalFlag}>
         <FlagDetailModal
-          flag={flags.find(flag => flag.id === modalFlag?.id) ?? modalFlag}
+          flag={mapDisplayFlags.find(flag => flag.id === modalFlag?.id) ?? modalFlag}
           onClose={handleCloseDetailModal}
           onEscalate={handleEscalate}
           onAdjustLocation={handleStartAdjustLocation}

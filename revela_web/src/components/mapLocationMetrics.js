@@ -10,6 +10,22 @@ export function hasMapCoordinates(flag) {
     longitude >= -180 && longitude <= 180;
 }
 
+export function createCentroidPreviewFlags(flags, barangays, resolveCentroid, fallbackPosition) {
+  return flags.flatMap((flag) => {
+    if (hasMapCoordinates(flag)) return [];
+
+    const barangayID = Number(flag.barangayID);
+    if (!Number.isInteger(barangayID) || barangayID <= 0) return [];
+    const barangay = barangays.find((item) => Number(item.barangayID) === barangayID);
+    const barangayName = barangay?.barangayName || flag.barangayName || flag.barangay;
+    if (!barangayName) return [];
+
+    const position = resolveCentroid(barangayName);
+    if (!position || position === fallbackPosition) return [];
+    return [{ ...flag, isCentroidPreview: true, mapPreviewPosition: position }];
+  });
+}
+
 function createScope() {
   return {
     matchingLocations: 0,

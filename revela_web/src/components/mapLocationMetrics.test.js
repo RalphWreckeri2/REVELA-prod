@@ -1,7 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { aggregateMapLocationMetrics, hasMapCoordinates } from "./mapLocationMetrics.js";
+import {
+  aggregateMapLocationMetrics,
+  createCentroidPreviewFlags,
+  hasMapCoordinates,
+} from "./mapLocationMetrics.js";
 import { matchesMapFilters } from "./businessCompliance.js";
+import {
+  DEFAULT_MAP_CENTER,
+  getKnownBarangayCentroid,
+} from "../utils/barangayCentroids.js";
+
+test("exact centroid lookup resolves all barangay labels without partial-name matches", () => {
+  const names = [
+    "District I (Pob.)", "District II (Pob.)", "Barangay II-A (Pob.)",
+    "District III (Pob.)", "District IV (Pob.)", "Bayorbor", "Bubuyan",
+    "Calingatan", "Loob", "Lumang Lipa", "Kinalaglagan", "Manggahan",
+    "Nangkaan", "San Sebastian", "Santol", "Upa",
+  ];
+  assert.equal(names.every((name) => getKnownBarangayCentroid(name) !== null), true);
+  assert.deepEqual(getKnownBarangayCentroid("Barangay I"), getKnownBarangayCentroid("District I (Pob.)"));
+  assert.equal(getKnownBarangayCentroid("Unknown Barangay"), null);
+});
 
 test("map metrics count only actual coordinates and deduplicate registered businesses", () => {
   const metrics = aggregateMapLocationMetrics([
@@ -85,4 +105,27 @@ test("valid map coordinates outside every municipal polygon are counted separate
   assert.equal(metrics.outsideBoundaryLocations, 1);
   assert.equal(metrics.byBarangay[1].outsideBoundaryLocations, 0);
   assert.equal(metrics.byBarangay[2].outsideBoundaryLocations, 1);
+});
+
+test("centroid-only preview pins are opt-in data and keep their saved coordinates missing", () => {
+  const rows = [
+    { id: 1, barangayID: 1, barangayName: "Barangay I", latitude: null, longitude: null },
+    { id: 2, barangayID: 10, barangayName: "Barangay Lumanglipa", latitude: null, longitude: null },
+    { id: 3, barangayID: null, latitude: null, longitude: null },
+    { id: 4, barangayID: 1, latitude: 13.95, longitude: 121.11 },
+    { id: 5, barangayID: 11, barangayName: "Unknown Barangay", latitude: null, longitude: null },
+  ];
+  const preview = createCentroidPreviewFlags(
+    rows,
+    [{ barangayID: 1, barangayName: "Barangay I" }],
+    getKnownBarangayCentroid,
+    DEFAULT_MAP_CENTER,
+  );
+
+  assert.deepEqual(preview.map((flag) => flag.id), [1, 2]);
+  assert.deepEqual(preview[0].mapPreviewPosition, getKnownBarangayCentroid("Barangay I"));
+  assert.equal(preview[0].latitude, null);
+  assert.equal(hasMapCoordinates(preview[0]), false);
+  assert.deepEqual(getKnownBarangayCentroid("Barangay Lumanglipa"), { lat: 13.974504, lng: 121.087937 });
+  assert.equal(aggregateMapLocationMetrics([...rows, ...preview]).matchingLocations, 1);
 });

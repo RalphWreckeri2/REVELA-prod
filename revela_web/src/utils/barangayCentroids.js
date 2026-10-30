@@ -21,6 +21,7 @@ export const BARANGAY_CENTROIDS = {
   kinalaglagan: { lat: 14.005574, lng: 121.094954 },
   loob: { lat: 13.980785, lng: 121.114404 },
   "lumang lipa": { lat: 13.974504, lng: 121.087937 },
+  lumanglipa: { lat: 13.974504, lng: 121.087937 },
   manggahan: { lat: 13.967686, lng: 121.08886 },
   nangkaan: { lat: 13.990223, lng: 121.089892 },
   "san sebastian": { lat: 13.984496, lng: 121.103597 },
@@ -28,6 +29,26 @@ export const BARANGAY_CENTROIDS = {
   santol: { lat: 13.972238, lng: 121.10485 },
   upa: { lat: 13.968345, lng: 121.111783 },
 };
+
+const EXACT_CENTROID_ALIASES = {
+  i: "district i",
+  ii: "district ii",
+  iii: "district iii",
+  iv: "district iv",
+  "ii-a": "barangay ii-a",
+  "ii-a (pob.)": "barangay ii-a (pob.)",
+  lumanglipa: "lumanglipa",
+};
+
+export function getKnownBarangayCentroid(barangayName) {
+  if (!barangayName) return null;
+  const raw = String(barangayName)
+    .toLowerCase()
+    .replace(/^(barangay|brgy\.?)\s+/, "")
+    .trim();
+  const key = EXACT_CENTROID_ALIASES[raw] || raw;
+  return BARANGAY_CENTROIDS[key] || null;
+}
 
 export function getBarangayCentroid(barangayName) {
   if (!barangayName) return DEFAULT_MAP_CENTER;
