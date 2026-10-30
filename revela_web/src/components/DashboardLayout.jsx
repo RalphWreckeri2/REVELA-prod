@@ -774,12 +774,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           aria-label={`Open profile for ${user.name}`}
           title="View profile"
         >
-          <div className="nav-avatar">{user.initials}</div>
-          <div className="nav-user-info">
-            <span className="user-name">{user.name}</span>
-            <span className="nav-account-caption">Account</span>
-          </div>
-          <span className="nav-profile-chevron" aria-hidden="true">⌄</span>
+          <div className="nav-avatar">B</div>
         </button>
         </div>
       </div>
