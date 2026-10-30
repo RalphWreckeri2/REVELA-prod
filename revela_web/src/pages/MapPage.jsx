@@ -5269,7 +5269,6 @@ export default function MapPage() {
                   onClick={() => setShowCentroidOnlyPins((visible) => !visible)}
                   style={{
                     ...styles.layerToggle,
-                    minHeight: 44,
                     background: showCentroidOnlyPins ? "var(--color-primary)" : "var(--color-input-bg)",
                     color: showCentroidOnlyPins ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-ink)",
                     borderColor: showCentroidOnlyPins ? "var(--color-primary)" : "var(--color-border)",
