@@ -881,9 +881,11 @@ def get_barangay_overview():
                     WHERE lob_map.normalized_line_of_business =
                           {registry_line_expression}
                       AND lob_map.match_status IN ('matched', 'combo')
-                      AND primary_line.normalized_line_of_business
-                          COLLATE utf8mb4_unicode_ci =
-                          %s COLLATE utf8mb4_unicode_ci
+                      AND CONVERT(
+                              primary_line.normalized_line_of_business
+                              USING utf8mb4
+                          ) COLLATE utf8mb4_unicode_ci =
+                          CONVERT(%s USING utf8mb4) COLLATE utf8mb4_unicode_ci
                 )
             """
             line_of_business_params.append(line_of_business_key)
