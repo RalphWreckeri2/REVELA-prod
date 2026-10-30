@@ -573,9 +573,10 @@
   padding-right: 2px;
 }
 .map-location-card {
-  display: flex;
-  gap: 9px;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr);
+  gap: 0 9px;
+  align-items: start;
   padding: 10px;
   width: 100%;
   min-width: 0;
@@ -586,7 +587,12 @@
   color: var(--color-ink);
   cursor: pointer;
 }
-.map-location-card > span:last-child {
+.map-location-card > span:not(.map-location-color) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.map-location-card > .map-location-review-note {
+  grid-column: 2;
   min-width: 0;
   overflow-wrap: anywhere;
 }

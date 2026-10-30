@@ -786,17 +786,51 @@ def record_coord_meta(cursor, business_id, meta):
 
 
 # ------------------------------ pins (geospatial_logs) -----------------------
-def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, business_id=None):
-    """Update the map pin only if it is still a copy of the registry coordinate being replaced."""
+def _update_pin(
+    cursor,
+    barangay_id,
+    name,
+    old_lat,
+    old_lng,
+    new_lat,
+    new_lng,
+    business_id=None,
+    force_linked=False,
+    place_id=None,
+    new_place_id=None,
+):
+    """Sync registry coordinates without moving a confirmed pin automatically."""
     if old_lat is None or old_lng is None:
         return
+    confirmed_log_id = None
     from api.registry.inspection_link import confirmed_pin_column_available
     if business_id and confirmed_pin_column_available(cursor):
         cursor.execute("SELECT confirmedLogID FROM official_registry WHERE businessID = %s FOR UPDATE", (business_id,))
         confirmed = cursor.fetchone()
-        if confirmed and confirmed.get("confirmedLogID") is not None:
+        confirmed_log_id = _g(confirmed, "confirmedLogID", 0)
+        if confirmed_log_id is not None and not force_linked:
             return
     if business_id:
+        if force_linked:
+            if confirmed_log_id is not None:
+                cursor.execute(
+                    """UPDATE geospatial_logs
+                       SET latitude=%s, longitude=%s, placeID=%s
+                       WHERE logID=%s AND businessID=%s""",
+                    (new_lat, new_lng, new_place_id, confirmed_log_id,
+                     business_id),
+                )
+                return
+            cursor.execute(
+                """UPDATE geospatial_logs SET latitude=%s, longitude=%s, placeID=%s
+                   WHERE businessID = %s
+                     AND (placeID <=> %s OR placeID IS NULL OR %s IS NULL)
+                     AND ABS(latitude-%s) < 0.000001
+                     AND ABS(longitude-%s) < 0.000001""",
+                (new_lat, new_lng, new_place_id, business_id, place_id, place_id,
+                 float(old_lat), float(old_lng)),
+            )
+            return
         cursor.execute(
             """UPDATE geospatial_logs SET latitude=%s, longitude=%s
                WHERE businessID = %s
@@ -1304,6 +1338,19 @@ def decide_review(
                 if cur.rowcount == 0:
                     mysql.connection.rollback()
                     return False, "Business address changed while confirming the location"
+                _update_pin(
+                    cur,
+                    _g(r, "barangayID", 1),
+                    _g(r, "businessName", 2),
+                    _g(r, "latitude", 4),
+                    _g(r, "longitude", 5),
+                    _g(r, "latitude", 4),
+                    _g(r, "longitude", 5),
+                    business_id=business_id,
+                    force_linked=True,
+                    place_id=_g(r, "placeID", 6),
+                    new_place_id=_g(r, "placeID", 6),
+                )
                 from api.registry.reverify import record_location_history
                 record_location_history(
                     cur, business_id, "location_kept",
@@ -1411,6 +1458,9 @@ def decide_review(
                     cur, _g(r, "barangayID", 1), _g(r, "businessName", 2),
                     old_lat, old_lng, candidate_lat, candidate_lng,
                     business_id=business_id,
+                    force_linked=True,
+                    place_id=_g(r, "placeID", 6),
+                    new_place_id=candidate_place_id,
                 )
             cur.execute(
                 """UPDATE registry_pin_history
@@ -1515,6 +1565,9 @@ def decide_review(
                     proposal_lat,
                     proposal_lng,
                     business_id=business_id,
+                    force_linked=True,
+                    place_id=_g(r, "placeID", 6),
+                    new_place_id=proposal_place_id,
                 )
                 cur.execute(
                     """UPDATE registry_pin_history
