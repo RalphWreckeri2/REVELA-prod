@@ -84,7 +84,6 @@ function PersonalizedGreeting({ user }) {
     <h1 className="hero-greeting" id="overview-greeting">
       {greeting},{" "}
       <span className="hero-greeting-name">{firstName}</span>{" "}
-      <span className="hero-wave" role="img" aria-label="waving hand">👋</span>
     </h1>
   );
 }
@@ -224,6 +223,7 @@ function NeedsAttention({ data, state }) {
       <ActionCard label="Open 15+ days" value={data?.age_groups?.["15+"]} empty="Unavailable" to={workloadPath("age_15+")}
         note={data?.age_groups?.["15+"] === 0 ? "None pending 15+ days" : "Waiting 15 days or more"} state={state} tone={data?.age_groups?.["15+"] > 0 ? "warning" : "neutral"} />
     </div>
+    <InspectionSnapshot data={data} state={state} />
   </section>;
 }
 
@@ -241,7 +241,7 @@ function InspectionSnapshot({ data, state }) {
   ].filter(Boolean) : [];
   const updatedAt = formatOverviewUpdatedAt(data?.as_of);
   const period = formatOverviewPeriod(data?.period_from, data?.period_to);
-  return <section className="overview-surface overview-workload" aria-labelledby="overview-workload-title">
+  return <div className="overview-workload" aria-labelledby="overview-workload-title">
     <div className="overview-section-heading"><h2 id="overview-workload-title">Inspection Snapshot</h2></div>
     <div className="overview-action-grid workload-grid">
       <ActionCard label="Open assignments" value={data?.open} to={workloadPath("open")} note="Currently in dispatch" state={state} />
@@ -268,7 +268,7 @@ function InspectionSnapshot({ data, state }) {
     {data && <details className="overview-explanation overview-methodology"><summary>How these numbers are calculated</summary>
       <p>{updatedAt ?? "Update time unavailable"}. The average covers the last 30 days{period ? ` (${period})` : ""} and uses {formatOverviewNumber(data.resolution_sample_size)} completed {data.resolution_sample_size === 1 ? "report" : "reports"}. Waiting time counts whole days from the latest dispatch or reassignment, not from completion. Due dates use Philippine local time; older records may not show their original timezone.</p>
     </details>}
-  </section>;
+  </div>;
 }
 
 function BarangayPrioritiesWidget({ opsRankings, state }) {
@@ -961,7 +961,6 @@ export default function HomePage() {
         {/* Left Column (Main Content) */}
         <div className="overview-main-column">
           <NeedsAttention data={workload} state={requestStates.workload} />
-          <InspectionSnapshot data={workload} state={requestStates.workload} />
           <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
 
           {/* Map */}
