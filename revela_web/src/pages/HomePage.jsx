@@ -5,7 +5,7 @@
  * Google Map preview with the existing flag population and marker behavior
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
@@ -17,16 +17,27 @@ import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getRegistryRequest, getInspectionWorkloadRequest, markNotificationsReadRequest } from "../services/api";
-import { getBarangayCentroid } from "../utils/barangayCentroids";
+import {
+  DEFAULT_MAP_CENTER,
+  getApproximateBarangayDisplayPoint,
+} from "../utils/barangayCentroids";
+import {
+  APPROXIMATE_LOCATION_LABEL,
+  createApproximateMarkerContent,
+  createApproximateMarkerIcon,
+} from "../components/approximateMapMarker";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import {
+  createCentroidPreviewFlags,
+  hasMapCoordinates,
+} from "../components/mapLocationMetrics";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import { dateQuery, deadlinePresentation, formatOverviewNumber, formatOverviewPeriod, formatOverviewUpdatedAt, manilaGreeting, weatherPresentation } from "./overviewPresentation";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 import "../styles/OverviewDashboard.css";
 
-const DEFAULT_CENTER = { lat: 13.9667, lng: 121.1167 };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 const OVERVIEW_ANALYTICS_SECTIONS = ["summary", "prescriptive"];
 
@@ -132,7 +143,13 @@ function HeroBanner({ user }) {
   const [weatherState, setWeatherState] = useState("loading");
   useEffect(() => {
     let cancelled = false;
-    fetch("https://api.open-meteo.com/v1/forecast?latitude=13.9667&longitude=121.1167&current=temperature_2m,weather_code")
+    const weatherUrl = new URL("https://api.open-meteo.com/v1/forecast");
+    weatherUrl.search = new URLSearchParams({
+      latitude: String(DEFAULT_MAP_CENTER.lat),
+      longitude: String(DEFAULT_MAP_CENTER.lng),
+      current: "temperature_2m,weather_code",
+    });
+    fetch(weatherUrl)
       .then(res => {
         if (!res.ok) throw new Error("Weather unavailable");
         return res.json();
@@ -319,10 +336,14 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
 // ── Mini Map Widget ───────────────────────────────────────────────────────────
 function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError }) {
   const [mapInstance, setMapInstance] = useState(null);
+  const [showApproximateLocations, setShowApproximateLocations] = useState(false);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
 
-  const buildMarkerEl = (color) => {
+  const buildMarkerEl = useCallback((color, approximate = false) => {
+    if (approximate) {
+      return createApproximateMarkerContent();
+    }
     const el = document.createElement("div");
     el.style.cssText = `width:22px;height:22px;cursor:pointer;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.3))`;
     el.innerHTML = `<svg viewBox="0 0 24 32" width="22" height="22" xmlns="http://www.w3.org/2000/svg">
@@ -330,7 +351,33 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
       <circle cx="12" cy="12" r="5" fill="white" opacity="0.9"/>
     </svg>`;
     return el;
-  };
+  }, []);
+  const approximateFlags = useMemo(
+    () => createCentroidPreviewFlags(
+      flags,
+      getApproximateBarangayDisplayPoint,
+    ),
+    [flags],
+  );
+  const exactFlags = useMemo(
+    () => flags.filter(hasMapCoordinates).slice(0, 100),
+    [flags],
+  );
+  const displayedFlags = useMemo(
+    () => showApproximateLocations
+      ? [...exactFlags, ...approximateFlags.slice(0, 100)]
+      : exactFlags,
+    [approximateFlags, exactFlags, showApproximateLocations],
+  );
+  const noExactLocationCount = flags.filter((flag) => !hasMapCoordinates(flag)).length;
+  const nonGreenPreviewCount = exactFlags.filter(
+    (flag) => parseColor(flag) !== "Green",
+  ).length;
+  const unassignedCount = flags.filter((flag) => {
+    if (hasMapCoordinates(flag)) return false;
+    const id = Number(flag.barangayID);
+    return !Number.isInteger(id) || id <= 0;
+  }).length;
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
@@ -351,18 +398,12 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
 
     const canUseAdvanced = Boolean(window.google?.maps?.marker?.AdvancedMarkerElement);
 
-    flags
-      .slice(0, 100) // cap for performance
-      .forEach(f => {
+    displayedFlags.forEach(f => {
         const fc = getFlagColor(parseColor(f));
-        const rawLat = f.latitude != null ? Number(f.latitude) : null;
-        const rawLng = f.longitude != null ? Number(f.longitude) : null;
-        const hasCoords = rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
-        const centroid = !hasCoords ? getBarangayCentroid(f.barangayName || f.barangay) : null;
-        const position = {
-          lat: hasCoords ? rawLat : (centroid?.lat ?? DEFAULT_CENTER.lat),
-          lng: hasCoords ? rawLng : (centroid?.lng ?? DEFAULT_CENTER.lng),
-        };
+        const position = f.isCentroidPreview
+          ? f.mapPreviewPosition
+          : { lat: Number(f.latitude), lng: Number(f.longitude) };
+        if (!position || !Number.isFinite(position.lat) || !Number.isFinite(position.lng)) return;
         let marker = null;
 
         if (canUseAdvanced) {
@@ -370,7 +411,10 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
             marker = new window.google.maps.marker.AdvancedMarkerElement({
               position,
               map: activeMap,
-              content: buildMarkerEl(fc.marker),
+              content: buildMarkerEl(fc.marker, f.isCentroidPreview),
+              title: f.isCentroidPreview
+                ? APPROXIMATE_LOCATION_LABEL
+                : f.detectedName || f.name || "Business location",
             });
           } catch {
             marker = null;
@@ -381,15 +425,20 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
           marker = new window.google.maps.Marker({
             position,
             map: activeMap,
-            icon: {
-              path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
-              fillColor: fc.marker,
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 1,
-              scale: 0.8,
-              anchor: new window.google.maps.Point(12, 32),
-            }
+            title: f.isCentroidPreview
+              ? APPROXIMATE_LOCATION_LABEL
+              : f.detectedName || f.name || "Business location",
+            icon: f.isCentroidPreview
+              ? createApproximateMarkerIcon(window.google.maps)
+              : {
+                path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+                fillColor: fc.marker,
+                fillOpacity: 1,
+                strokeColor: "#ffffff",
+                strokeWeight: 1,
+                scale: 0.8,
+                anchor: new window.google.maps.Point(12, 32),
+              }
           });
         }
 
@@ -403,20 +452,45 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
       });
       markerRefs.current = [];
     };
-  }, [isLoaded, mapInstance, flags]);
-
-  const nonGreenPreviewCount = flags.slice(0, 100).filter(f => parseColor(f) !== "Green").length;
+  }, [buildMarkerEl, displayedFlags, isLoaded, mapInstance]);
 
   return (
     <section className="overview-surface overview-map" aria-labelledby="overview-map-title" aria-busy={state.loading || (!isLoaded && !loadError)}>
       <div className="overview-section-heading">
         <h2 id="overview-map-title">Map Preview</h2>
-        <button className="overview-inline-action" type="button" onClick={onOpenMap}>
-          Open Full Map ↗
-        </button>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
+          {approximateFlags.length > 0 && (
+            <button
+              type="button"
+              aria-pressed={showApproximateLocations}
+              onClick={() => setShowApproximateLocations((visible) => !visible)}
+              style={{
+                minHeight: 44,
+                padding: "8px 12px",
+                border: "1px dashed #64748b",
+                borderRadius: 8,
+                background: showApproximateLocations ? "var(--color-surface)" : "transparent",
+                color: "#64748b",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              {showApproximateLocations ? "Hide" : "Show"} approximate locations ({approximateFlags.length})
+            </button>
+          )}
+          <button className="overview-inline-action" type="button" onClick={onOpenMap}>
+            Open Full Map ↗
+          </button>
+        </div>
       </div>
       <RequestFeedback state={state} label="map records" />
-      <p className="overview-section-sub">Up to 100 markers from the {state.hasResult ? formatOverviewNumber(flags.length) : "—"} loaded records. Open the full map to explore more.</p>
+      <p className="overview-section-sub">
+        Up to 100 exact locations are shown. Approximate previews are optional and do not affect counts.
+        {state.hasResult && ` ${formatOverviewNumber(noExactLocationCount)} businesses have no exact location yet.`}
+        {unassignedCount > 0 && ` ${formatOverviewNumber(unassignedCount)} have no stored barangay ID and are not placed.`}
+        {" "}Open the full map to explore more.
+      </p>
       <div className="overview-map-canvas">
         {loadError ? (
           <div style={miniMapFallback}>
@@ -431,7 +505,7 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
         ) : (
           <GoogleMap
             mapContainerStyle={{ width: "100%", height: "100%" }}
-            center={DEFAULT_CENTER}
+            center={DEFAULT_MAP_CENTER}
             zoom={12}
             options={{
               disableDefaultUI: true,

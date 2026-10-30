@@ -864,8 +864,9 @@ def get_barangay_overview():
         line_of_business_params = []
         if line_of_business_key:
             registry_line_expression = (
-                "LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), "
-                "'[^A-Za-z0-9]', '')) COLLATE utf8mb4_unicode_ci"
+                "CONVERT(LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), "
+                "'[^A-Za-z0-9]', '')) USING utf8mb4) "
+                "COLLATE utf8mb4_unicode_ci"
             )
             line_of_business_filter = f"""
                 AND EXISTS (
@@ -1005,8 +1006,10 @@ def get_barangay_overview():
             FROM official_registry o
             JOIN registry_sector_map sector_map
               ON sector_map.normalized_line_of_business =
-                 LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
-                   COLLATE utf8mb4_unicode_ci
+                 CONVERT(
+                     LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                     USING utf8mb4
+                 ) COLLATE utf8mb4_unicode_ci
              AND sector_map.match_status IN ('matched', 'combo')
             JOIN psic_active_version active_version
               ON active_version.singleton_id = 1
@@ -1043,8 +1046,10 @@ def get_barangay_overview():
             FROM official_registry o
             LEFT JOIN registry_sector_map rsm
               ON rsm.normalized_line_of_business =
-                 LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
-                   COLLATE utf8mb4_unicode_ci
+                 CONVERT(
+                     LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                     USING utf8mb4
+                 ) COLLATE utf8mb4_unicode_ci
              AND rsm.match_status IN ('matched', 'combo')
             WHERE 1=1 {registry_where}
             GROUP BY o.barangayID, category, label
@@ -1517,8 +1522,10 @@ def _prescriptive_sector_sql(effective_flag_color):
           ON r.businessID = COALESCE(c.registry_business_id, c.businessID)
         LEFT JOIN registry_sector_map rsm
           ON rsm.normalized_line_of_business =
-             LOWER(REGEXP_REPLACE(COALESCE(r.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
-               COLLATE utf8mb4_unicode_ci
+             CONVERT(
+                 LOWER(REGEXP_REPLACE(COALESCE(r.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                 USING utf8mb4
+             ) COLLATE utf8mb4_unicode_ci
          AND rsm.match_status IN ('matched', 'combo')
         WHERE c.eff_color IN ('Red', 'Yellow', 'Black')
         GROUP BY c.barangayID, rsm.display_sector_label

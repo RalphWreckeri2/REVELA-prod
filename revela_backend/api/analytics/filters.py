@@ -93,8 +93,8 @@ def registry_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
 
     if F.get("display_sector"):
         normalized_lob = (
-            f"LOWER(REGEXP_REPLACE(COALESCE({alias}.lineOfBusiness, ''), "
-            "'[^A-Za-z0-9]', '')) COLLATE utf8mb4_unicode_ci"
+            f"CONVERT(LOWER(REGEXP_REPLACE(COALESCE({alias}.lineOfBusiness, ''), "
+            "'[^A-Za-z0-9]', '')) USING utf8mb4) COLLATE utf8mb4_unicode_ci"
         )
         parts.append(
             "EXISTS (SELECT 1 FROM registry_sector_map rsm "

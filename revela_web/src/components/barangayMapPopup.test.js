@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { formatBarangayMapPopupCount } from "./barangayMapPopup.js";
+import {
+  formatBarangayMapPopupCount,
+  REGISTRY_TOTAL_TOOLTIP,
+} from "./barangayMapPopup.js";
 
 const mapPageSource = readFileSync(
   new URL("../pages/MapPage.jsx", import.meta.url),
@@ -21,6 +24,34 @@ test("shared barangay popup formats registry and map-view metrics accurately", (
   assert.equal(formatBarangayMapPopupCount(0, "registered businesses"), "0 registered businesses");
   assert.equal(formatBarangayMapPopupCount(null, "registered businesses"), "Unavailable registered businesses");
   assert.equal(formatBarangayMapPopupCount(3, "inspection reports"), "3 inspection reports");
+});
+
+test("registry hover totals are recorded-ID counts for all 16 barangays", () => {
+  const registryRows = Array.from({ length: 16 * 2 }, (_, index) => ({
+    businessID: `B-${index + 1}`,
+    barangayID: Math.floor(index / 2) + 1,
+  }));
+  const totalsByRecordedBarangay = new Map(
+    Array.from({ length: 16 }, (_, index) => [index + 1, 0]),
+  );
+  for (const row of registryRows) {
+    totalsByRecordedBarangay.set(
+      row.barangayID,
+      totalsByRecordedBarangay.get(row.barangayID) + 1,
+    );
+  }
+
+  assert.equal(totalsByRecordedBarangay.size, 16);
+  for (const count of totalsByRecordedBarangay.values()) {
+    assert.equal(formatBarangayMapPopupCount(count, "total businesses"), "2 total businesses");
+  }
+  assert.equal(
+    [...totalsByRecordedBarangay.values()].reduce((sum, count) => sum + count, 0),
+    registryRows.length,
+  );
+  assert.match(REGISTRY_TOTAL_TOOLTIP, /official_registry\.businessID/);
+  assert.match(REGISTRY_TOTAL_TOOLTIP, /recorded barangayID/);
+  assert.match(REGISTRY_TOTAL_TOOLTIP, /independent of map filters/);
 });
 
 test("map hover popup shows only the barangay name and total business count", () => {

@@ -1,3 +1,6 @@
+export const REGISTRY_TOTAL_TOOLTIP =
+  "Distinct official_registry.businessID values grouped by the recorded barangayID; includes rows without exact coordinates and is independent of map filters.";
+
 export function formatBarangayMapPopupCount(count, countLabel) {
   const numericCount = count == null || count === "" ? NaN : Number(count);
   const formattedCount = Number.isFinite(numericCount)
@@ -22,6 +25,10 @@ export function createBarangayMapPopup({
   const metric = document.createElement("span");
   metric.className = "revela-map-popup__metric";
   metric.textContent = formatBarangayMapPopupCount(count, countLabel);
+  if (countLabel === "total businesses") {
+    metric.title = REGISTRY_TOTAL_TOOLTIP;
+    metric.setAttribute("aria-label", `${metric.textContent}. ${REGISTRY_TOTAL_TOOLTIP}`);
+  }
 
   content.append(title, metric);
   details.filter(Boolean).forEach((text) => {

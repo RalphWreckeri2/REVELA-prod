@@ -69,6 +69,7 @@ Pygments==2.19.2
 PyJWT==2.10.1
 PyOTP==2.10.0
 pyparsing==3.3.2
+pyproj==3.7.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.1
 reportlab==4.4.5

@@ -213,6 +213,7 @@ def test_registry_matched_pin_uses_registry_barangay_for_display_and_filtering(d
     row = next(item for item in payload["data"] if item["logID"] == 17)
     assert row["barangayID"] == 2
     assert row["barangayName"] == "Barangay II"
+    assert row["recordedBarangayID"] == 1
     assert row["registryMatched"] == 1
 
     barangay_one, error = flags.get_flags(barangay_id=1)

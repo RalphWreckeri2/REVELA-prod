@@ -14,7 +14,6 @@ import { useTheme } from "../context/themeContext";
 import { FLAG_COLORS } from "./flagColors";
 import {
   getBarangayIdForGeoJsonName,
-  getGeoJsonCentroid,
   getShortBarangayLabel,
   normalizeGeoJsonWinding,
 } from "./barangayMapMapping";
@@ -58,7 +57,17 @@ import {
 import "../styles/MapOverview.css";
 import "../styles/barangayMapPopup.css";
 
-const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+import {
+  BARANGAY_POINT_DATA,
+  DEFAULT_MAP_CENTER,
+} from "../utils/barangayCentroids.js";
+const MAP_CENTER = DEFAULT_MAP_CENTER;
+const BARANGAY_POINTS_BY_ID = new Map(
+  BARANGAY_POINT_DATA.barangays.map((row) => [
+    Number(row.barangayID),
+    row.representativePoint,
+  ]),
+);
 const MAP_MIN_ZOOM = 12;
 const MAP_MAX_ZOOM = 20;
 const MAX_SELECTED_BARANGAY_ZOOM = 16;
@@ -560,19 +569,15 @@ export default function MapOverview({ token, filters }) {
     });
   }, []);
 
-  const addBarangayLabels = useCallback((features, sourceFeatures) => {
+  const addBarangayLabels = useCallback((features) => {
     labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     if (!mapRef.current || !window.google?.maps?.Marker) return;
-    const sourceByName = new Map(sourceFeatures.map((feature) => [
-      feature.properties.ADM4_EN,
-      feature,
-    ]));
     features.forEach((feature) => {
       const name = feature.getProperty("ADM4_EN");
       const id = getBarangayIdForGeoJsonName(name);
       if (id == null) return;
-      const position = getGeoJsonCentroid(sourceByName.get(name));
+      const position = BARANGAY_POINTS_BY_ID.get(Number(id));
       if (!position) return;
       const marker = new window.google.maps.Marker({
         map: mapRef.current,
@@ -633,10 +638,7 @@ export default function MapOverview({ token, filters }) {
     mapRef.current = map;
     hoverInfoWindowRef.current = new window.google.maps.InfoWindow();
     if (boundaryFeaturesRef.current.length) {
-      addBarangayLabels(
-        boundaryFeaturesRef.current,
-        sourceGeoJsonFeaturesRef.current,
-      );
+      addBarangayLabels(boundaryFeaturesRef.current);
       updateLabelVisibilityRef.current?.();
     }
     mapIdleListenerRef.current = map.addListener("idle", () => {
@@ -688,7 +690,7 @@ export default function MapOverview({ token, filters }) {
         boundaryFeaturesRef.current = features;
         sourceGeoJsonFeaturesRef.current = normalizedGeoJson.features;
         dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
-        addBarangayLabels(features, normalizedGeoJson.features);
+        addBarangayLabels(features);
         scheduleBarangayFit();
         updateLabelVisibilityRef.current?.();
       })

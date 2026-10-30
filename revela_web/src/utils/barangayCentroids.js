@@ -1,67 +1,77 @@
-export const DEFAULT_MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+import pointData from "../../../revela_backend/api/utils/barangay_points.json" with { type: "json" };
+import { ADM4_EN_TO_BARANGAY_ID } from "../components/barangayMapMapping.js";
 
-export const BARANGAY_CENTROIDS = {
-  "barangay ii-a": { lat: 13.95226, lng: 121.115799 },
-  "barangay ii-a (pob.)": { lat: 13.95226, lng: 121.115799 },
-  bayorbor: { lat: 13.979234, lng: 121.095818 },
-  bubuyan: { lat: 13.983266, lng: 121.108556 },
-  calingatan: { lat: 13.962879, lng: 121.121234 },
-  "district i": { lat: 13.955117, lng: 121.110199 },
-  "district i (pob.)": { lat: 13.955117, lng: 121.110199 },
-  "barangay i": { lat: 13.955117, lng: 121.110199 },
-  "district ii": { lat: 13.96063, lng: 121.113447 },
-  "district ii (pob.)": { lat: 13.96063, lng: 121.113447 },
-  "barangay ii": { lat: 13.96063, lng: 121.113447 },
-  "district iii": { lat: 13.961458, lng: 121.109487 },
-  "district iii (pob.)": { lat: 13.961458, lng: 121.109487 },
-  "barangay iii": { lat: 13.961458, lng: 121.109487 },
-  "district iv": { lat: 13.956173, lng: 121.117793 },
-  "district iv (pob.)": { lat: 13.956173, lng: 121.117793 },
-  "barangay iv": { lat: 13.956173, lng: 121.117793 },
-  kinalaglagan: { lat: 14.005574, lng: 121.094954 },
-  loob: { lat: 13.980785, lng: 121.114404 },
-  "lumang lipa": { lat: 13.974504, lng: 121.087937 },
-  lumanglipa: { lat: 13.974504, lng: 121.087937 },
-  manggahan: { lat: 13.967686, lng: 121.08886 },
-  nangkaan: { lat: 13.990223, lng: 121.089892 },
-  "san sebastian": { lat: 13.984496, lng: 121.103597 },
-  "san seb.": { lat: 13.984496, lng: 121.103597 },
-  santol: { lat: 13.972238, lng: 121.10485 },
-  upa: { lat: 13.968345, lng: 121.111783 },
+const pointsById = new Map(
+  pointData.barangays.map((row) => [Number(row.barangayID), row]),
+);
+
+export const BARANGAY_POINT_DATA = pointData;
+export const DEFAULT_MAP_CENTER = pointData.municipalityCentroid;
+
+const APPROXIMATE_POINT_GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+const aliasesById = {
+  1: ["district i", "district i (pob.)", "barangay i", "i"],
+  2: ["district ii", "district ii (pob.)", "barangay ii", "ii"],
+  3: ["barangay ii-a", "barangay ii-a (pob.)", "ii-a", "ii-a (pob.)"],
+  4: ["district iii", "district iii (pob.)", "barangay iii", "iii"],
+  5: ["district iv", "district iv (pob.)", "barangay iv", "iv"],
+  10: ["lumanglipa"],
+  14: ["san seb."],
 };
 
-const EXACT_CENTROID_ALIASES = {
-  i: "district i",
-  ii: "district ii",
-  iii: "district iii",
-  iv: "district iv",
-  "ii-a": "barangay ii-a",
-  "ii-a (pob.)": "barangay ii-a (pob.)",
-  lumanglipa: "lumanglipa",
-};
-
-export function getKnownBarangayCentroid(barangayName) {
-  if (!barangayName) return null;
-  const raw = String(barangayName)
+function normalizeBarangayName(name) {
+  return String(name || "")
     .toLowerCase()
     .replace(/^(barangay|brgy\.?)\s+/, "")
     .trim();
-  const key = EXACT_CENTROID_ALIASES[raw] || raw;
-  return BARANGAY_CENTROIDS[key] || null;
+}
+
+const pointsByName = new Map();
+for (const [featureName, barangayID] of Object.entries(ADM4_EN_TO_BARANGAY_ID)) {
+  const row = pointsById.get(Number(barangayID));
+  if (!row) continue;
+  pointsByName.set(normalizeBarangayName(featureName), row.representativePoint);
+  for (const alias of aliasesById[barangayID] || []) {
+    pointsByName.set(alias, row.representativePoint);
+  }
+}
+
+export const BARANGAY_CENTROIDS = Object.freeze(
+  Object.fromEntries(pointsByName),
+);
+
+export function getKnownBarangayCentroid(barangayName) {
+  if (!barangayName) return null;
+  return pointsByName.get(normalizeBarangayName(barangayName)) || null;
 }
 
 export function getBarangayCentroid(barangayName) {
-  if (!barangayName) return DEFAULT_MAP_CENTER;
-  const raw = String(barangayName)
-    .toLowerCase()
-    .replace("barangay ", "")
-    .replace("brgy. ", "")
-    .trim();
-  if (BARANGAY_CENTROIDS[raw]) return BARANGAY_CENTROIDS[raw];
-  for (const key in BARANGAY_CENTROIDS) {
-    if (raw.includes(key) || key.includes(raw)) {
-      return BARANGAY_CENTROIDS[key];
-    }
-  }
-  return DEFAULT_MAP_CENTER;
+  return getKnownBarangayCentroid(barangayName) || DEFAULT_MAP_CENTER;
+}
+
+export function getApproximateBarangayDisplayPoint(barangayID, index) {
+  const row = pointsById.get(Number(barangayID));
+  const pointIndex = Number(index);
+  if (!row || !Number.isInteger(pointIndex) || pointIndex < 0) return null;
+
+  const { lat, lng } = row.representativePoint;
+  const clearance = Number(row.representativeClearanceM);
+  if (!Number.isFinite(clearance) || clearance <= 0) return null;
+
+  const maxRadiusMeters = Math.min(60, clearance * 0.8);
+  const radiusMeters = maxRadiusMeters * Math.sqrt(
+    (pointIndex + 1) / (pointIndex + 20),
+  );
+  const angle = pointIndex * APPROXIMATE_POINT_GOLDEN_ANGLE;
+  const latitudeScale = 111_320;
+  const longitudeScale = latitudeScale * Math.max(
+    0.01,
+    Math.cos((lat * Math.PI) / 180),
+  );
+
+  return {
+    lat: lat + (Math.cos(angle) * radiusMeters) / latitudeScale,
+    lng: lng + (Math.sin(angle) * radiusMeters) / longitudeScale,
+  };
 }

@@ -293,6 +293,11 @@ class BarangayOverviewTests(unittest.TestCase):
             "COLLATE utf8mb4_unicode_ci" in sql
             for sql, _ in filtered_registry_queries
         ))
+        self.assertTrue(all(
+            "CONVERT(LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness" in sql
+            and "USING utf8mb4" in sql
+            for sql, _ in filtered_registry_queries
+        ))
         pin_sql = next(
             sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql
         )
@@ -328,6 +333,11 @@ class BarangayOverviewTests(unittest.TestCase):
         ))
         self.assertTrue(all(
             "COLLATE utf8mb4_unicode_ci" in sql
+            for sql, _ in filtered_registry_queries
+        ))
+        self.assertTrue(all(
+            "CONVERT(LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness" in sql
+            and "USING utf8mb4" in sql
             for sql, _ in filtered_registry_queries
         ))
         pin_sql = next(

@@ -7,6 +7,7 @@ import {
   assignInspectionBatchRequest,
   getAllFlagsRequest,
 } from "../services/api";
+import { hasMapCoordinates } from "./mapLocationMetrics.js";
 
 const FLAG_COLORS = {
   Red: { bg: "#fee2e2", text: "#b91c1c" },
@@ -22,6 +23,7 @@ function normalizeBatchFlag(flag) {
     barangayID: flag.barangayID,
     color: normalizeDispatchColor(flag.flagColor),
     verificationStatus: flag.verificationStatus,
+    hasExactCoords: hasMapCoordinates(flag),
     hasActiveInspection: flag.verificationStatus != null &&
       flag.verificationStatus !== "Verified",
   };
@@ -76,6 +78,12 @@ export default function BatchDispatchModal({ barangays, token, onClose, onSucces
     !flag.hasActiveInspection &&
     canDispatchFlag(flag, { isAdmin: true })
   )), [allFlags, selectedBarangayID]);
+  const noExactLocationCount = selectedBarangayID
+    ? allFlags.filter(flag => (
+      String(flag.barangayID) === String(selectedBarangayID) &&
+      !flag.hasExactCoords
+    )).length
+    : 0;
 
   const allSelected = eligibleFlags.length > 0 &&
     eligibleFlags.every(flag => selectedLogIDs.includes(flag.id));
@@ -168,7 +176,10 @@ export default function BatchDispatchModal({ barangays, token, onClose, onSucces
             <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={fetching || loading || eligibleFlags.length === 0} />
             Select all eligible
           </label>
-          <span style={{ fontSize: 12, color: "var(--color-muted)" }}>{selectedLogIDs.length} selected | {eligibleFlags.length} eligible</span>
+          <span style={{ fontSize: 12, color: "var(--color-muted)" }}>
+            {selectedLogIDs.length} selected | {eligibleFlags.length} eligible
+            {noExactLocationCount > 0 && ` | ${noExactLocationCount} excluded: No exact location`}
+          </span>
         </div>
 
         <div style={{ overflowY: "auto", minHeight: 150, maxHeight: "36vh" }}>

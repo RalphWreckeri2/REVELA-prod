@@ -48,6 +48,7 @@ from api.utils.places_quota import (
 )
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
+from api.utils.barangay_points import MUNICIPALITY_CENTROID
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places/{pid}"
@@ -55,7 +56,10 @@ GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 MUNICIPALITY = os.getenv("GEO_MUNICIPALITY", "Mataasnakahoy")
 PROVINCE = os.getenv("GEO_PROVINCE", "Batangas")
-DEFAULT_CENTER = (13.9667, 121.1167)
+DEFAULT_CENTER = (
+    MUNICIPALITY_CENTROID["lat"],
+    MUNICIPALITY_CENTROID["lng"],
+)
 DEFAULT_BIAS_RADIUS_M = 8000.0
 BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
@@ -167,7 +171,7 @@ def _is_within_municipal_bounds(lat, lng):
     """
     Screens candidate coordinates against Mataasnakahoy geographic bounds.
     Replaces unconstrained bounding box with Mataasnakahoy municipal polygon boundary screening
-    and center bias radius (8,000m from center: 13.9667, 121.1167).
+    and center bias radius (8,000m from the generated municipality centroid).
     """
     if lat is None or lng is None:
         return False

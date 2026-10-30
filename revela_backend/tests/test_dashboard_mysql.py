@@ -41,7 +41,7 @@ class DashboardMySQLTests(unittest.TestCase):
                     businessID VARCHAR(50) PRIMARY KEY, barangayID INT NOT NULL,
                     businessName VARCHAR(255), businessAddress VARCHAR(255), businessSize VARCHAR(50),
                     businessType VARCHAR(50), registrationType VARCHAR(50),
-                    lineOfBusiness VARCHAR(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
+                    lineOfBusiness VARCHAR(500) CHARACTER SET utf8mb3 COLLATE utf8mb3_unicode_ci,
                     latitude DECIMAL(10,8), longitude DECIMAL(11,8), placeID VARCHAR(255),
                     confirmedLogID INT NULL, applicationStatus VARCHAR(30), lastRenewalDate DATETIME,
                     matchStatus VARCHAR(30), coordSource VARCHAR(30), matchScore DECIMAL(4,3)
@@ -156,6 +156,26 @@ class DashboardMySQLTests(unittest.TestCase):
         self.inspection_patch.start()
         self.addCleanup(self.flag_patch.stop)
         self.addCleanup(self.inspection_patch.stop)
+
+    def test_map_payload_keeps_pin_barangay_separate_from_registry_barangay(self):
+        with self.db.cursor() as cur:
+            cur.execute("""INSERT INTO official_registry
+                (businessID,barangayID,businessName,applicationStatus,latitude,longitude)
+                VALUES ('PIN-ID-MISMATCH',2,'Registry Barangay Two','Active',13.95,121.11)""")
+            cur.execute("""INSERT INTO geospatial_logs
+                (logID,businessID,barangayID,detectedName,detectedDate,flagColor,
+                 latitude,longitude,source)
+                VALUES (901,'PIN-ID-MISMATCH',1,'Pin stored in Barangay One',
+                        UTC_TIMESTAMP(),'Green',13.95,121.11,'registry')""")
+        self.db.commit()
+
+        payload, error = flags.get_flags(per_page=100)
+
+        self.assertIsNone(error, error)
+        row = next(item for item in payload["data"] if item["logID"] == 901)
+        self.assertEqual(row["barangayID"], 2)
+        self.assertEqual(row["barangayName"], "Barangay Two")
+        self.assertEqual(row["recordedBarangayID"], 1)
 
     def test_hotspots_endpoint_sql_runs_under_only_full_group_by_and_accounts_for_red_population(self):
         from flask import Flask

@@ -1,0 +1,252 @@
+{
+  "sourceGeoJsonSha256": "c49f51d8eb337aa4bc4dab9e0abcc2d5cb3c9f321ff85b19327e01acb291ade2",
+  "generatedAtUtc": "2026-10-30T07:22:55Z",
+  "sourceCrs": "EPSG:4326",
+  "projectedCrs": "EPSG:32651",
+  "municipalityCentroid": {
+    "lat": 13.97614479223915,
+    "lng": 121.10199063258902
+  },
+  "barangays": [
+    {
+      "barangayID": 1,
+      "name": "District I (Pob.)",
+      "centroid": {
+        "lat": 13.954404760789764,
+        "lng": 121.10724742789145
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.95335185403816,
+        "lng": 121.10882446050493
+      },
+      "representativeClearanceM": 306.55850588686474,
+      "polygonAreaM2": 1116786.1695017046
+    },
+    {
+      "barangayID": 2,
+      "name": "District II (Pob.)",
+      "centroid": {
+        "lat": 13.95207553229465,
+        "lng": 121.11609152759719
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.952866858495437,
+        "lng": 121.1159277762863
+      },
+      "representativeClearanceM": 196.0251154434991,
+      "polygonAreaM2": 525715.615018119
+    },
+    {
+      "barangayID": 3,
+      "name": "Barangay II-A (Pob.)",
+      "centroid": {
+        "lat": 13.95836402486572,
+        "lng": 121.11273079136481
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.958503837148633,
+        "lng": 121.11348250952669
+      },
+      "representativeClearanceM": 66.4104643271094,
+      "polygonAreaM2": 97399.9335076133
+    },
+    {
+      "barangayID": 4,
+      "name": "District III (Pob.)",
+      "centroid": {
+        "lat": 13.960883130227353,
+        "lng": 121.10691916047189
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.9621281136345,
+        "lng": 121.10766223130214
+      },
+      "representativeClearanceM": 260.1542099145828,
+      "polygonAreaM2": 845905.6088451331
+    },
+    {
+      "barangayID": 5,
+      "name": "District IV (Pob.)",
+      "centroid": {
+        "lat": 13.959869213192496,
+        "lng": 121.11687160820914
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.959745979199376,
+        "lng": 121.11653332924978
+      },
+      "representativeClearanceM": 63.7260361574004,
+      "polygonAreaM2": 283492.91327835765
+    },
+    {
+      "barangayID": 6,
+      "name": "Bayorbor",
+      "centroid": {
+        "lat": 13.977743065712978,
+        "lng": 121.0935093397952
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.978233540146617,
+        "lng": 121.09427866553378
+      },
+      "representativeClearanceM": 445.7190438331396,
+      "polygonAreaM2": 1876383.7176386786
+    },
+    {
+      "barangayID": 7,
+      "name": "Bubuyan",
+      "centroid": {
+        "lat": 13.989669218264254,
+        "lng": 121.10640278895134
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.991393352551237,
+        "lng": 121.10636350962724
+      },
+      "representativeClearanceM": 184.4022513504012,
+      "polygonAreaM2": 1457916.4453337712
+    },
+    {
+      "barangayID": 8,
+      "name": "Calingatan",
+      "centroid": {
+        "lat": 13.96568804545638,
+        "lng": 121.12032050442264
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.966027365261489,
+        "lng": 121.11986660294274
+      },
+      "representativeClearanceM": 335.77396728453937,
+      "polygonAreaM2": 1304539.2896557418
+    },
+    {
+      "barangayID": 9,
+      "name": "Loob",
+      "centroid": {
+        "lat": 13.980509015741893,
+        "lng": 121.11520691244597
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.980915126232766,
+        "lng": 121.11652390421762
+      },
+      "representativeClearanceM": 398.21857062325324,
+      "polygonAreaM2": 1666484.6615292744
+    },
+    {
+      "barangayID": 10,
+      "name": "Lumang Lipa",
+      "centroid": {
+        "lat": 13.96753859343935,
+        "lng": 121.0875182649558
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.969577332294115,
+        "lng": 121.08552589835453
+      },
+      "representativeClearanceM": 166.7989597785185,
+      "polygonAreaM2": 1736309.4591785115
+    },
+    {
+      "barangayID": 11,
+      "name": "Kinalaglagan",
+      "centroid": {
+        "lat": 14.004932697287959,
+        "lng": 121.09497429063015
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 14.005233921805157,
+        "lng": 121.0953581940596
+      },
+      "representativeClearanceM": 333.6481664339191,
+      "polygonAreaM2": 725421.2078379014
+    },
+    {
+      "barangayID": 12,
+      "name": "Manggahan",
+      "centroid": {
+        "lat": 13.964074499964171,
+        "lng": 121.09749735238559
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.964251851406384,
+        "lng": 121.10172876394131
+      },
+      "representativeClearanceM": 203.80612690927984,
+      "polygonAreaM2": 1208971.7643633904
+    },
+    {
+      "barangayID": 13,
+      "name": "Nangkaan",
+      "centroid": {
+        "lat": 13.989807580147028,
+        "lng": 121.09055690211422
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.99033748617781,
+        "lng": 121.09050491364115
+      },
+      "representativeClearanceM": 682.3506064757287,
+      "polygonAreaM2": 2689389.0858903555
+    },
+    {
+      "barangayID": 14,
+      "name": "San Sebastian",
+      "centroid": {
+        "lat": 13.991167444206745,
+        "lng": 121.10105862811643
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.989823636670167,
+        "lng": 121.1018425703415
+      },
+      "representativeClearanceM": 319.38483027156855,
+      "polygonAreaM2": 1697386.1409217105
+    },
+    {
+      "barangayID": 15,
+      "name": "Santol",
+      "centroid": {
+        "lat": 13.972407795282155,
+        "lng": 121.10243743832564
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.973968460047892,
+        "lng": 121.10212651323057
+      },
+      "representativeClearanceM": 314.44389707950774,
+      "polygonAreaM2": 1948639.8188743494
+    },
+    {
+      "barangayID": 16,
+      "name": "Upa",
+      "centroid": {
+        "lat": 13.967662055984338,
+        "lng": 121.11238699425108
+      },
+      "centroidInsidePolygon": true,
+      "representativePoint": {
+        "lat": 13.967492238775634,
+        "lng": 121.1126747062879
+      },
+      "representativeClearanceM": 251.81461308834625,
+      "polygonAreaM2": 763190.8638944705
+    }
+  ]
+}

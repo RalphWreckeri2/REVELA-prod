@@ -64,6 +64,10 @@ from api.utils.places_rate_limit import (
     LEGACY_NEARBY_LIMITER,
 )
 from api.utils import quota_settings, test_mode
+from api.utils.barangay_points import (
+    BARANGAY_POINTS_BY_ID,
+    MUNICIPALITY_CENTROID,
+)
 from api.utils.barangay_scope import validate_barangay_scope
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -1382,25 +1386,17 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
         ]
 
     candidates = []
-    for idx, row in enumerate(barangay_rows):
-        name = (row.get("barangayName") if isinstance(
-            row, dict) else row[1]) or ""
-        matched = None
-        normalized_name = _normalize_barangay_name(name)
-        for poly_name, poly in _BARANGAY_POLYGONS.items():
-            if normalized_name and (
-                normalized_name in _normalize_barangay_name(poly_name)
-                or _normalize_barangay_name(poly_name) in normalized_name
-            ):
-                matched = poly.centroid
-                break
-
-        if matched is None:
-            lat = 13.9667 + ((idx % 4) - 1.5) * 0.0035
-            lng = 121.1167 + ((idx % 3) - 1) * 0.0038
-            matched = Point(lng, lat)
-
-        base_lat, base_lng = matched.y, matched.x
+    for row in barangay_rows:
+        barangay_id = (
+            row.get("barangayID") if isinstance(row, dict) else row[0]
+        )
+        point_data = BARANGAY_POINTS_BY_ID.get(int(barangay_id))
+        if point_data is None:
+            raise ValueError(
+                f"No generated point for barangayID {barangay_id!r}."
+            )
+        base_lat = point_data["representativePoint"]["lat"]
+        base_lng = point_data["representativePoint"]["lng"]
         offsets = [
             (0.0000, 0.0000),
             (0.0018, 0.0025),
@@ -1413,21 +1409,10 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
             if _within_municipality(lat, lng):
                 candidates.append((lat, lng))
 
-    anchor_points = [
-        (13.9490, 121.1040),
-        (13.9498, 121.1188),
-        (13.9595, 121.0900),
-        (13.9595, 121.1248),
-        (13.9705, 121.0925),
-        (13.9746, 121.1240),
-        (13.9832, 121.0998),
-        (13.9860, 121.1185),
-        (13.9988, 121.1090),
-        (13.9667, 121.1167),
-    ]
-    for lat, lng in anchor_points:
-        if _within_municipality(lat, lng):
-            candidates.append((lat, lng))
+    for point_data in BARANGAY_POINTS_BY_ID.values():
+        point = point_data["representativePoint"]
+        if _within_municipality(point["lat"], point["lng"]):
+            candidates.append((point["lat"], point["lng"]))
 
     seen = set()
     distinct = []
@@ -1438,7 +1423,12 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
         if key in seen:
             continue
         seen.add(key)
-        score = history.get(key, 0) + abs(lat - 13.9667) + abs(lng - 121.1167)
+        center = MUNICIPALITY_CENTROID
+        score = (
+            history.get(key, 0)
+            + abs(lat - center["lat"])
+            + abs(lng - center["lng"])
+        )
         scored.append((score, lat, lng))
 
     point_limit = max(1, min(24, int(max_points)))
@@ -1446,7 +1436,7 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
         distinct.append((lat, lng))
 
     if not distinct:
-        return [(13.9667, 121.1167)]
+        return [(MUNICIPALITY_CENTROID["lat"], MUNICIPALITY_CENTROID["lng"])]
 
     return distinct
 
@@ -3258,7 +3248,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     ) AS verificationStatus,
                     r.matchStatus,
                     r.coordSource,
-                    r.matchScore
+                    r.matchScore,
+                    g.barangayID AS recordedBarangayID
                 FROM geospatial_logs g
                 {registry_match_lateral}
                 LEFT JOIN barangays b
@@ -3294,7 +3285,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     NULL                       AS verificationStatus,
                     r.matchStatus              AS matchStatus,
                     r.coordSource              AS coordSource,
-                    r.matchScore               AS matchScore
+                    r.matchScore               AS matchScore,
+                    r.barangayID               AS recordedBarangayID
                 FROM (
                     SELECT official_registry.*,
                            ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
