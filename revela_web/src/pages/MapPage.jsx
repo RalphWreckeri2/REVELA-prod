@@ -1700,7 +1700,6 @@ function MapCanvas({
       width: ${w}px;
       height: ${h}px;
       cursor: ${isAdjusting ? 'grab' : 'pointer'};
-      filter: drop-shadow(0 ${isAdjusting ? 4 : 2}px ${isAdjusting ? 8 : 5}px rgba(0,0,0,${isAdjusting ? 0.5 : 0.35}));
       ${isAdjusting ? '' : 'transition: transform 0.15s ease;'}
       position: relative;
       user-select: none;

@@ -22,6 +22,10 @@ const mapOverviewSource = readFileSync(
   new URL("./MapOverview.jsx", import.meta.url),
   "utf8",
 );
+const mapOverviewStyles = readFileSync(
+  new URL("../styles/MapOverview.css", import.meta.url),
+  "utf8",
+);
 
 test("date presets apply to pin and inspection dates while preserving stricter filters", () => {
   const filters = {
@@ -75,6 +79,18 @@ test("line-of-business options follow the selected sector and sector changes cle
   assert.match(mapOverviewSource, /aria-label="Remove line-of-business filter"/);
   assert.match(mapOverviewSource, /No registered businesses match this filter\./);
   assert.match(mapOverviewSource, /setSelectedLineOfBusinessKey\(""\)/);
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-control-group\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/,
+  );
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-filter-label-heading\s*\{[^}]*height:\s*16px/,
+  );
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-filter-label-heading \.analytics-info-tip-trigger\s*\{[^}]*height:\s*20px/,
+  );
 });
 
 test("single-value registry dimensions are hidden", () => {

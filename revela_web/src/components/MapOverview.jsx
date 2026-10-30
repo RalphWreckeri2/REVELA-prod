@@ -490,17 +490,17 @@ export default function MapOverview({ token, filters }) {
     const colorIndex = quantileClass(count, mapBreaks);
     return {
       fillColor: showHotspots
-        ? "#e2e8f0"
+        ? isDark ? "#34d399" : "#166534"
         : colorIndex < 0
           ? isDark ? "#334155" : "#cbd5e1"
           : (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][colorIndex],
-      fillOpacity: showHotspots ? 0.72 : 1,
+      fillOpacity: showHotspots ? (isDark ? 0.2 : 0.16) : 1,
       strokeColor: showHotspots
-        ? "#ffffff"
+        ? isDark ? "#a7f3d0" : "#ffffff"
         : isSelected
           ? (isDark ? "#fbbf24" : "#0f172a")
           : isHovered ? "#f97316" : isDark ? "#94a3b8" : "#ffffff",
-      strokeWeight: showHotspots ? 1 : isSelected ? 4 : isHovered ? 2 : 1,
+      strokeWeight: showHotspots ? 1.5 : isSelected ? 4 : isHovered ? 2 : 1,
       zIndex: showHotspots ? 0 : isSelected ? 100 : isHovered ? 10 : 0,
     };
   }, [hoveredBarangayId, isDark, mapBreaks, mapRowsById, mapView, selectedBarangayId, showHotspots]);

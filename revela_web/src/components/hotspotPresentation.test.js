@@ -190,8 +190,10 @@ test("map stage stretches with its panel and map zoom stays focused on the munic
 test("hotspot legend is gated by hotspot mode and the choropleth is muted", () => {
   assert.match(mapOverviewSource, /legendOpen && showHotspots && \([\s\S]*?data-hotspot-legend/);
   assert.match(mapOverviewSource, /legendOpen && !showHotspots && \(/);
-  assert.match(mapOverviewSource, /showHotspots\s*\?\s*"#e2e8f0"/);
-  assert.match(mapOverviewSource, /strokeColor:\s*showHotspots\s*\?\s*"#ffffff"/);
+  assert.match(mapOverviewSource, /fillColor: showHotspots\s*\?\s*isDark \? "#34d399" : "#166534"/);
+  assert.match(mapOverviewSource, /fillOpacity: showHotspots \? \(isDark \? 0\.2 : 0\.16\) : 1/);
+  assert.match(mapOverviewSource, /strokeColor: showHotspots\s*\?\s*isDark \? "#a7f3d0" : "#ffffff"/);
+  assert.match(mapOverviewSource, /strokeWeight: showHotspots \? 1\.5/);
   assert.match(mapOverviewSource, /mapZoom >= 14/);
   assert.match(mapOverviewSource, /fillOpacity:\s*isDimmed\s*\?\s*0\.08\s*:\s*0\.25/);
   assert.match(mapOverviewSource, /strokeWeight:\s*isSelected\s*\?\s*4\s*:\s*2/);
@@ -312,6 +314,46 @@ test("selected hotspot details itemize pins from existing flag pages", async () 
   assert.match(mapOverviewSource, /<article className="map-overview-cluster-pin"/);
   assert.doesNotMatch(mapOverviewSource, /Cluster center|Hotspot cluster #/);
   assert.match(mapOverviewStyles, /\.map-overview-cluster-pin\s*\{/);
+});
+
+test("hotspot group member list scrolls without shrinking rows into its button footer", () => {
+  const listCss = mapOverviewStyles.match(
+    /\.map-overview-cluster-pin-list\s*\{[^}]*\}/,
+  )?.[0] || "";
+  const itemCss = mapOverviewStyles.match(
+    /\.map-overview-cluster-pin\s*\{[^}]*\}/,
+  )?.[0] || "";
+  const footerCss = mapOverviewStyles.match(
+    /\.map-overview-hotspot-actions\s*\{[^}]*\}/,
+  )?.[0] || "";
+
+  assert.match(listCss, /overflow-y:\s*auto/);
+  assert.match(listCss, /grid-auto-rows:\s*max-content/);
+  assert.match(listCss, /scrollbar-gutter:\s*stable/);
+  assert.match(listCss, /padding:[^;]*10px/);
+  assert.match(itemCss, /min-height:\s*max-content/);
+  assert.match(itemCss, /gap:\s*5px/);
+  assert.match(itemCss, /padding:\s*12px 12px/);
+  assert.match(footerCss, /flex:\s*0 0 auto/);
+  assert.match(mapOverviewStyles, /max-height:\s*min\(50dvh,\s*420px\)/);
+});
+
+test("Maps & Flags pins have no backing shadow while hotspot member rings remain", () => {
+  const markerBuilder = mapPageSource.slice(
+    mapPageSource.indexOf("const buildMarkerContent"),
+    mapPageSource.indexOf("el.innerHTML = innerHtml"),
+  );
+  assert.doesNotMatch(markerBuilder, /drop-shadow/);
+  assert.match(markerBuilder, /isHotspotGroupMember \? '<circle/);
+  assert.match(mapPageSource, /stroke="#111827" stroke-width="2\.5"/);
+  assert.match(mapPageSource, /stroke="#ffffff" stroke-width="5"/);
+});
+
+test("hotspot mode uses subtle green municipal fill and mode-specific clear borders", () => {
+  assert.match(mapOverviewSource, /fillColor: showHotspots\s*\?\s*isDark \? "#34d399" : "#166534"/);
+  assert.match(mapOverviewSource, /fillOpacity: showHotspots \? \(isDark \? 0\.2 : 0\.16\) : 1/);
+  assert.match(mapOverviewSource, /strokeColor: showHotspots\s*\?\s*isDark \? "#a7f3d0" : "#ffffff"/);
+  assert.match(mapOverviewSource, /strokeWeight: showHotspots \? 1\.5/);
 });
 
 test("group deep links cap IDs, use centroid and radius for large groups, and preserve pin links", () => {
