@@ -1,14 +1,16 @@
 {
-  "generated_at": "2026-10-26T23:10:19.641614+00:00",
-  "database": {
-    "host": "altaria.proxy.rlwy.net",
-    "port": 58810,
-    "name": "railway",
-    "transaction": "READ ONLY, consistent snapshot"
+  "snapshot": {
+    "source": "connected revela-mysql MCP",
+    "database": "railway",
+    "access": "read-only SELECT only",
+    "component_snapshot_utc": "2026-10-30T06:33:07.035Z",
+    "sector_aggregate_snapshot_utc": "2026-10-30T06:33:23.075Z",
+    "consistency_note": "The MCP accepts individual SELECT statements, not a multi-statement snapshot transaction. The barangay component and sector aggregates were therefore captured 16 seconds apart.",
+    "grain": "Barangay aggregate; no business names, addresses, or business/log IDs exported.",
+    "scope": "All 16 current barangays; no dashboard, registry, flag, date, or inspection filters beyond model eligibility."
   },
   "production_config": {
-    "source": "C:\\REVELA-prod\\revela_backend\\api\\analytics\\wlc_config.json",
-    "source_mtime": "2026-10-21T03:13:12.801531+00:00",
+    "source": "revela_backend/api/analytics/wlc_config.json",
     "weights_percent": {
       "w1_risk": 68,
       "w2_sector": 7,
@@ -18,32 +20,99 @@
       "lat": 13.960413,
       "lng": 121.114547
     },
-    "configured_sector_scores": 0
+    "barangay_overrides": {},
+    "legacy_database_table": {
+      "table": "wlc_config",
+      "rows": 1,
+      "weights_percent": {
+        "w1_risk": 68,
+        "w2_sector": 7,
+        "w3_distance": 25
+      },
+      "weights_match_code_config": true,
+      "use_by_scorer": false
+    }
   },
-  "unused_db_wlc_config_row": {
-    "id": 1,
-    "w1_risk": 68.0,
-    "w2_sector": 7.0,
-    "w3_distance": 25.0,
-    "bplo_lat": 13.960413,
-    "bplo_lng": 121.114547,
-    "sector_scores": "{}",
-    "updated_at": "2026-10-26 22:21:58"
+  "sector_risk_policy": {
+    "source": "live database sector_risk_policy row policy_id=1",
+    "version": 1,
+    "fallback_score": 50,
+    "categories": {
+      "Manufacturing": 90,
+      "Construction and utilities": 85,
+      "Wholesale and vehicles": 80,
+      "Retail": 80,
+      "Food and drink": 75,
+      "Hospitality, arts and recreation": 75,
+      "Transport and storage": 70,
+      "Real estate": 60,
+      "Finance and professional": 50,
+      "Information and communication": 50,
+      "Education, health and other services": 40,
+      "Agriculture and mining": 30
+    }
   },
-  "scoring": {
-    "model_version": "wlc-v2",
-    "builder": "shipped",
-    "ladder_columns_available": true,
-    "reference_max_burden": 126,
-    "sector_fallback_count": 16
+  "model": {
+    "version": "wlc-v3",
+    "source": "revela_backend/api/analytics/scoring.py",
+    "flag_weights": {
+      "Red": 3,
+      "Yellow": 2,
+      "Black": 4
+    },
+    "distance": "Haversine 6371.0088 km from BPLO to mean valid dispatchable Red/Yellow coordinates; cap distance penalty at 20 km; neutral proximity 50 for missing coordinates.",
+    "thresholds": {
+      "High": 60,
+      "Medium": 30
+    },
+    "sector_entity_count": 222,
+    "sector_known_entity_count": 0,
+    "sector_fallback_entity_count": 222,
+    "sector_fallback_barangay_count": 16,
+    "maximum_weighted_burden": 138
   },
   "totals": {
     "barangays": 16,
-    "red": 210,
-    "yellow": 21,
-    "black": 0,
-    "dispatch_eligible": 12
+    "flagged_records": 222,
+    "red_records": 201,
+    "yellow_records": 21,
+    "black_records": 0,
+    "dispatchable_red_records": 220,
+    "dispatchable_yellow_records": 0,
+    "dispatchable_business_identities": 220,
+    "barangays_with_dispatchable_targets": 11,
+    "barangays_with_no_flagged_records": 5,
+    "barangays_with_missing_dispatchable_coordinates": 5,
+    "active_inspectors": 2,
+    "available_inspectors": 1
   },
-  "csv": "C:\\REVELA-prod\\analytical performance\\wlc\\ops_sensitivity_input.csv",
-  "sql": "C:\\REVELA-prod\\analytical performance\\wlc\\ops_sensitivity_input.sql"
+  "sensitivity": {
+    "baseline_weights_percent": {
+      "risk": 68,
+      "sector": 7,
+      "proximity": 25
+    },
+    "range": "Exploratory local perturbation: each criterion may move by at most 10 percentage points from the baseline, in 5-point increments; every scenario is nonnegative, at most 100, and sums to 100.",
+    "scenario_count_including_baseline": 16,
+    "ahp_or_operational_weight_range_available": false,
+    "reason": "The checked-in policy documents the 68/7/25 interview-derived baseline and valid 0-100 weights totaling 100, but no AHP matrix or operational weight ranges. The bounded +/-10 percentage-point range is a transparent local stress test, not an endorsed policy interval."
+  },
+  "baseline_parity": {
+    "live_api_score_output_available": false,
+    "comparison": "Notebook perturbation scorer at 68/7/25 versus calculate_rankings() from the current checkout and the same frozen inputs.",
+    "not_claimed": "This does not independently verify which source revision/configuration is currently deployed in the live API process."
+  },
+  "live_database_recheck": {
+    "source": "connected read-only revela-mysql MCP",
+    "checked_at_utc": "2026-10-30T06:55:40Z",
+    "weights_and_bplo_match_legacy_config_row": true,
+    "sector_policy_version": 1,
+    "sector_fallback_score": 50,
+    "barangay_count": 16,
+    "active_inspectors": 2,
+    "available_inspectors": 1,
+    "deployment_scoring_output_verified": false
+  },
+  "input_file": "ops_sensitivity_input.csv",
+  "query_method": "Read-only aggregate SELECTs mirror the current _PIN_ACTIONABLE_SQL, _effective_flag_color_sql ladder, _no_open_inspection_sql, _barangay_rankings_sql, _prescriptive_sector_sql, and dispatch identity logic."
 }
