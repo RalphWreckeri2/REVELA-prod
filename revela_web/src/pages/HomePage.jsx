@@ -342,7 +342,7 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
 
   const buildMarkerEl = useCallback((color, approximate = false) => {
     if (approximate) {
-      return createApproximateMarkerContent();
+      return createApproximateMarkerContent(26, 34, false, false, color);
     }
     const el = document.createElement("div");
     el.style.cssText = `width:22px;height:22px;cursor:pointer;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.3))`;
@@ -429,7 +429,7 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
               ? APPROXIMATE_LOCATION_LABEL
               : f.detectedName || f.name || "Business location",
             icon: f.isCentroidPreview
-              ? createApproximateMarkerIcon(window.google.maps)
+              ? createApproximateMarkerIcon(window.google.maps, 1, fc.marker)
               : {
                 path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
                 fillColor: fc.marker,

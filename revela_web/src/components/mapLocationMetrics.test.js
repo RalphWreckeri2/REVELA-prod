@@ -298,6 +298,22 @@ test("all 16 polygon assignments, Lumang Lipa mismatches, and municipality total
     color: "Green",
     registryMatched: true,
   }));
+  const assignedToIVButInsideLumangLipa = {
+    id: 401,
+    barangayID: 5,
+    recordedBarangayID: 5,
+    latitude: 13.96511614,
+    longitude: 121.09128964,
+    color: "Green",
+  };
+  const inferredLumangLipa = {
+    id: 402,
+    barangayID: null,
+    recordedBarangayID: null,
+    latitude: pointsByID.get(10).lat,
+    longitude: pointsByID.get(10).lng,
+    color: "Green",
+  };
   const allRows = [...rows, ...mismatches, ...approximateRows];
 
   for (const row of rows) {
@@ -310,6 +326,29 @@ test("all 16 polygon assignments, Lumang Lipa mismatches, and municipality total
     assert.equal(matchesMapBarangayFilter(row, "12", boundaryData.features), true);
     assert.equal(getMapPositionBarangayIDs(row, boundaryData.features)[0], 10);
   }
+  assert.equal(
+    matchesMapBarangayFilter(assignedToIVButInsideLumangLipa, "5", boundaryData.features),
+    true,
+  );
+  assert.equal(
+    matchesMapBarangayFilter(assignedToIVButInsideLumangLipa, "10", boundaryData.features),
+    false,
+  );
+  assert.equal(
+    matchesMapBarangayFilter(inferredLumangLipa, "10", boundaryData.features),
+    true,
+  );
+  assert.equal(
+    matchesMapBarangayFilter(inferredLumangLipa, "5", boundaryData.features),
+    false,
+  );
+  assert.deepEqual(
+    findStoredBarangayLocationMismatches(
+      [inferredLumangLipa],
+      boundaryData.features,
+    ),
+    [],
+  );
   assert.equal(
     formatBarangayLocationMismatch("Manggahan", "Lumanglipa"),
     "Recorded in Manggahan; map position in Lumanglipa",
@@ -414,8 +453,8 @@ test("boundary points matching multiple polygons are reported, not silently attr
   const metrics = aggregateMapLocationMetrics([flag], adjacentFeatures);
 
   assert.deepEqual(getMapPositionBarangayIDs(flag, adjacentFeatures), [1, 2]);
-  assert.equal(matchesMapBarangayFilter(flag, "1", adjacentFeatures), true);
-  assert.equal(matchesMapBarangayFilter(flag, "2", adjacentFeatures), true);
+  assert.equal(matchesMapBarangayFilter(flag, "1", adjacentFeatures), false);
+  assert.equal(matchesMapBarangayFilter(flag, "2", adjacentFeatures), false);
   assert.equal(metrics.matchingLocations, 1);
   assert.equal(metrics.outsideBoundaryLocations, 0);
   assert.equal(metrics.ambiguousBoundaryLocations, 1);
@@ -432,6 +471,8 @@ test("map KPIs use exact-location totals and explain the effective Red populatio
     /recordedBarangayID: flag\.recordedBarangayID \?\? flag\.barangayID/,
   );
   assert.match(mapPageSource, /label: "Expired \/ Unregistered \(Red\)"/);
+  assert.match(mapPageSource, /Approx\. \(\{centroidPreviewFlags\.length\}\)/);
+  assert.match(mapPageSource, /locationReview\?\.kind === "inferred"/);
   assert.match(
     MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations,
     /Red includes expired registered businesses and unregistered detections/,

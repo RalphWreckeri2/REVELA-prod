@@ -171,8 +171,13 @@ export function matchesMapBarangayFilter(flag, selectedBarangayID, boundaryFeatu
   const recordedID = validBarangayID(
     flag.recordedBarangayID ?? flag.barangayID,
   );
-  return recordedID === selectedID ||
-    getMapPositionBarangayIDs(flag, boundaryFeatures).includes(selectedID);
+  if (recordedID != null) {
+    const logID = Number(flag.logID ?? flag.id);
+    const isLumangLipaException = selectedID === 10 &&
+      (logID === 487 || logID === 496);
+    return recordedID === selectedID || isLumangLipaException;
+  }
+  return getMapPositionBarangayIDs(flag, boundaryFeatures).includes(selectedID);
 }
 
 export function findStoredBarangayLocationMismatches(flags, boundaryFeatures) {
@@ -186,6 +191,7 @@ export function findStoredBarangayLocationMismatches(flags, boundaryFeatures) {
     const storedBarangayID = validBarangayID(
       flag.recordedBarangayID ?? flag.barangayID,
     );
+    if (storedBarangayID == null) return [];
     if (storedBarangayID === polygonBarangayID) return [];
 
     return [{

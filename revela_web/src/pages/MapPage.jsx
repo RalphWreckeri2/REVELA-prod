@@ -1014,6 +1014,11 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
               {formatBarangayLocationMismatch(flag.locationReview.storedName, flag.locationReview.polygonName)}. Review only; the recorded and map-position barangays remain distinct.
             </p>
           )}
+          {flag.locationReview?.kind === "inferred" && (
+            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+              No saved barangay ID. Inferred as {flag.locationReview.polygonName} from the map position.
+            </p>
+          )}
           {flag.locationReview?.kind === "unassigned" && (
             <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
               No stored barangay ID. This record remains unassigned; its map position does not change its grouping.
@@ -1736,12 +1741,20 @@ function MapCanvas({
   ) => {
     const w = (selected || isAdjusting) ? 34 : 26;
     const h = (selected || isAdjusting) ? 44 : 34;
+    const fc = getFlagColor(flag.color);
     if (isCentroidPreview) {
-      return createApproximateMarkerContent(w, h, selected, isAdjusting);
+      return createApproximateMarkerContent(
+        w,
+        h,
+        selected,
+        isAdjusting,
+        isAdjusting ? "#2563eb" : fc.marker,
+      );
     }
 
-    const fc = getFlagColor(flag.color);
-    const color = selected && !isHotspotGroupMember ? "#2563eb" : fc.marker;
+    const color = isAdjusting || (selected && !isHotspotGroupMember)
+      ? "#2563eb"
+      : fc.marker;
 
     const el = document.createElement("div");
     el.style.cssText = `
@@ -1899,14 +1912,20 @@ function MapCanvas({
 
       if (!marker) {
         const fc = getFlagColor(flag.color);
-        const color = isSelected && !isHotspotGroupMember ? "#2563eb" : fc.marker;
+        const color = isAdjusting || (isSelected && !isHotspotGroupMember)
+          ? "#2563eb"
+          : fc.marker;
         marker = new window.google.maps.Marker({
           position: { lat, lng },
           draggable: isAdjusting,
             title: flag.isCentroidPreview ? APPROXIMATE_LOCATION_LABEL : flag.name,
           zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
             icon: flag.isCentroidPreview
-              ? createApproximateMarkerIcon(window.google.maps, (isSelected || isAdjusting) ? 1.4 : 1)
+              ? createApproximateMarkerIcon(
+                window.google.maps,
+                (isSelected || isAdjusting) ? 1.4 : 1,
+                isAdjusting ? "#2563eb" : fc.marker,
+              )
               : {
                 path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
                 fillColor: color,
@@ -4698,6 +4717,16 @@ export default function MapPage() {
             : { kind: "unassigned" },
         };
       }
+      if (!Number.isInteger(storedID) || storedID <= 0) {
+        const polygonName = barangays.find((item) => (
+          Number(item.barangayID) === mapPositionBarangayID
+        ))?.barangayName || `Barangay ID ${mapPositionBarangayID}`;
+        return {
+          ...flag,
+          mapPositionBarangayID,
+          locationReview: { kind: "inferred", polygonName },
+        };
+      }
       return { ...flag, mapPositionBarangayID };
     }),
     [barangays, barangayLocationMismatchesByFlagId, boundaryFeatures, mapDisplayFlags],
@@ -5236,7 +5265,7 @@ export default function MapPage() {
                   className="map-centroid-preview-toggle"
                   aria-pressed={showCentroidOnlyPins}
                   aria-label={`${showCentroidOnlyPins ? "Hide" : "Show"} ${centroidPreviewFlags.length} approximate centroid pins`}
-                  title="Show businesses with no exact location at a deterministic approximate point near their stored barangay center. These points are display-only and do not affect counts or dispatch."
+                  title={`${showCentroidOnlyPins ? "Hide" : "Show"} businesses with no exact location at a deterministic approximate point near their stored barangay center. These points are display-only and do not affect counts or dispatch.`}
                   onClick={() => setShowCentroidOnlyPins((visible) => !visible)}
                   style={{
                     ...styles.layerToggle,
@@ -5249,7 +5278,7 @@ export default function MapPage() {
                     flexShrink: 0,
                   }}
                 >
-                  {showCentroidOnlyPins ? "Hide" : "Show"} approximate locations ({centroidPreviewFlags.length})
+                  Approx. ({centroidPreviewFlags.length})
                 </button>
               )}
             </div>
