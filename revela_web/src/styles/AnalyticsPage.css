@@ -1090,6 +1090,67 @@ html.theme-dark .analytics-quick-nav-btn:focus-visible {
 .analytics-kpi-value-skeleton { display: block; width: 68px; height: 26px; margin: 0 0 4px; }
 .analytics-kpi-value-skeleton--compact { width: 48px; height: 19px; margin: 0 0 2px; }
 .analytics-updating { color: var(--color-muted); font-size: 13px; margin-bottom: 16px; }
+.analytics-update-slot {
+  min-height: 18px;
+  margin-bottom: 16px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+.analytics-map-update-slot {
+  min-height: 18px;
+  color: var(--color-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+.analytics-loading-region { min-width: 0; }
+.analytics-loading-copy { display: grid; gap: 5px; min-width: 0; }
+.analytics-loading-line { width: min(100%, 190px); height: 14px; }
+.analytics-loading-copy .analytics-loading-line:last-child { width: min(100%, 310px); height: 12px; }
+.analytics-loading-heading { width: min(100%, 250px); height: 19px; }
+.analytics-loading-kpi { display: grid; align-content: center; gap: 8px; }
+.analytics-loading-kpi::before, .analytics-loading-kpi::after { content: ""; display: block; background: var(--color-border); border-radius: 5px; }
+.analytics-loading-kpi::before { width: 70px; height: 28px; }
+.analytics-loading-kpi::after { width: 60%; height: 14px; }
+.analytics-overview-skeleton .map-overview-filter-heading-icon { border-radius: 10px; }
+.analytics-loading-select { width: 100%; min-height: 44px; border-radius: 9px; }
+.analytics-loading-control { width: 88px; min-height: 44px; border-radius: 9px; }
+.analytics-overview-skeleton .map-overview-hotspot-toggle { width: 140px; min-height: 44px; }
+.analytics-overview-skeleton .map-overview-hotspot-controls > .analytics-loading-line { flex: 1; min-width: 80px; }
+.analytics-loading-map { width: 100%; height: 100%; min-height: 520px; border-radius: 9px; }
+.analytics-overview-skeleton .map-overview-map-hint .analytics-loading-line { height: 12px; }
+.analytics-overview-skeleton .map-overview-stacked-bar { width: 100%; height: 16px; }
+.analytics-loading-count-row { height: 16px; width: 100%; }
+.analytics-overview-skeleton .map-overview-count-list,
+.analytics-overview-skeleton .map-overview-status-list { display: grid; gap: 8px; }
+.analytics-loading-operations-chart { display: grid; align-content: center; gap: 40px; height: 260px; }
+.analytics-loading-operations-row { width: 75%; height: 24px; margin-left: 22%; }
+.analytics-loading-operations-row:last-child { width: 52%; }
+.analytics-inspector-operations-card .analytics-loading-copy .analytics-loading-line { width: min(100%, 430px); }
+.analytics-inspector-operations-card .analytics-operations-legend .analytics-loading-line { width: 100px; height: 14px; }
+.analytics-recommendations-skeleton .analytics-recommendation-heading { display: grid; gap: 5px; }
+.analytics-loading-recommendation-heading { width: min(100%, 380px); height: 31px; }
+.analytics-recommendations-skeleton .analytics-recommendation-heading .analytics-loading-line { width: min(100%, 540px); }
+.analytics-loading-recommendation-row {
+  display: grid;
+  grid-template-columns: var(--analytics-recommendation-columns);
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.analytics-recommendations-skeleton .analytics-recommendation-rank { width: 34px; height: 34px; }
+.analytics-recommendations-skeleton .analytics-recommendation-place .analytics-loading-line:last-child { height: 12px; width: 75%; }
+.analytics-loading-priority { width: 75px; height: 16px; }
+.analytics-recommendations-skeleton .analytics-recommendation-assignment { width: 200px; min-height: 28px; }
+.analytics-recommendations-skeleton .analytics-recommendation-toggle { width: 110px; height: 31px; }
+.analytics-loading-recommendation-footer { display: grid; justify-items: center; gap: 10px; margin-top: 14px; }
+.analytics-loading-recommendation-footer .analytics-loading-line { height: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .analytics-loading-region .ui-skeleton,
+  .map-overview .ui-skeleton,
+  .map-overview-hotspot-summary-skeleton span,
+  .map-overview-hotspot-list-skeleton span { animation: none; background-size: auto; }
+}
 .analytics-section-state { padding: 24px; text-align: center; margin-bottom: 24px; }
 
 @container analytics-content (max-width: 859px) {
@@ -1111,6 +1172,18 @@ html.theme-dark .analytics-quick-nav-btn:focus-visible {
   .analytics-skeleton-list-status { width: 60px; }
   .analytics-skeleton-table-header,
   .analytics-skeleton-table-row { gap: 6px; padding-inline: 4px; }
+  .analytics-loading-map { min-height: 350px; }
+}
+@container analytics-content (max-width: 639px) {
+  .analytics-recommendation-table {
+    --analytics-recommendation-columns: 34px minmax(0, 1fr) 66px 104px;
+  }
+  .analytics-recommendation-columns,
+  .analytics-recommendation-row > summary,
+  .analytics-loading-recommendation-row { gap: 6px; padding-inline: 8px; }
+  .analytics-recommendation-assignment { min-width: 0; width: 100%; }
+  .analytics-recommendations-skeleton .analytics-recommendation-assignment { width: 100%; }
+  .analytics-loading-priority { width: 100%; }
 }
 @container analytics-card (max-width: 429px) {
   .analytics-donut-layout { grid-template-columns: minmax(0, 1fr); gap: 4px; }

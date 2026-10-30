@@ -31,6 +31,11 @@ import {
 import { activeInspectorsForDispatch, canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { hotspotCircleSummary, opsRiskTooltipLines } from "../components/mapRiskPresentation";
+import { FLAG_COLORS, defaultColor } from "../components/flagColors";
+import {
+  matchesHotspotGroup,
+  parseHotspotGroupParams,
+} from "../components/hotspotPresentation";
 import { createBarangayMapPopup } from "../components/barangayMapPopup";
 import FilterDropdown from "../components/FilterDropdown";
 import {
@@ -441,19 +446,6 @@ const LAYER_OPTIONS = [
 ];
 
 // Flag color â†’ UI color mapping
-const FLAG_COLORS = {
-  Red: { marker: "#ef4444", bg: "var(--flag-red-bg)", text: "var(--flag-red-text)", label: "Detected Unregistered" },
-  Yellow: { marker: "#f59e0b", bg: "var(--flag-yellow-bg)", text: "var(--flag-yellow-text)", label: "Suspected Unregistered" },
-  Yellow_Inspector: { marker: "#f59e0b", bg: "var(--flag-yellow-bg)", text: "var(--flag-yellow-text)", label: "Suspected Unregistered from Inspectors" },
-  Orange: { marker: "#e65100", bg: "var(--flag-orange-bg)", text: "var(--flag-orange-text)", label: "1st/2nd Warning / 3rd Notice Closure" },
-  Black: { marker: "#000000", bg: "var(--flag-black-bg)", text: "var(--flag-black-text)", label: "Blacklisted / Non-Responsive" },
-  Purple: { marker: "#7c3aed", bg: "var(--flag-purple-bg)", text: "var(--flag-purple-text)", label: "Closed / Abandoned" },
-  Green: { marker: "#22c55e", bg: "var(--flag-green-bg)", text: "var(--flag-green-text)", label: "Active Business" },
-  in_inspection: { marker: "#0284c7", bg: "rgba(2, 132, 199, 0.12)", text: "#0284c7", label: "Currently Being Inspected / Dispatched" },
-};
-
-const defaultColor = { marker: "var(--color-muted)", bg: "var(--flag-default-bg)", text: "var(--flag-default-text)", label: "Unknown" };
-
 /** Discrete barangay risk fills (HRI-style). Keys align with analytics `risk_level` + edge cases. */
 const HEATMAP_RISK_STYLE = {
   High: {
@@ -537,6 +529,16 @@ function canonicalFlagColor(raw) {
   const s = String(raw).trim();
   const cap = s.length ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : "Red";
   return FLAG_COLORS[cap] ? cap : "Red";
+}
+
+function hotspotRingMarkerDataUri(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="52" viewBox="0 0 48 52">
+    <circle cx="24" cy="18" r="18" fill="none" stroke="#ffffff" stroke-width="5"/>
+    <circle cx="24" cy="18" r="15" fill="none" stroke="#111827" stroke-width="2.5"/>
+    <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" transform="translate(12 6)" fill="${color}" stroke="#ffffff" stroke-width="1.2"/>
+    <circle cx="24" cy="17" r="4.5" fill="#ffffff" opacity="0.95"/>
+  </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 // ── Point-in-polygon helpers (ray-casting) ────────────────────────────────────
@@ -1165,6 +1167,9 @@ function MapCanvas({
   barangayRiskLevels,
   opsRankings,
   selectedFlagId,
+  hotspotGroupActive,
+  hotspotGroupKey,
+  hotspotGroupMemberIds,
   onMarkerClick,
   onMapClick,
   onDataClick,
@@ -1201,6 +1206,39 @@ function MapCanvas({
   const minZoomRef = useRef(null);
   const restrictionBoundsRef = useRef(null);
   const initialMunicipalFitRef = useRef(false);
+  const hotspotFitKeyRef = useRef("");
+
+  useEffect(() => {
+    if (!hotspotGroupActive) {
+      hotspotFitKeyRef.current = "";
+      return;
+    }
+    if (!mapInstance || !hotspotGroupKey || !window.google?.maps?.LatLngBounds) return;
+
+    const locatedFlags = flags.filter((flag) => (
+      Number.isFinite(Number(flag.latitude))
+      && Number.isFinite(Number(flag.longitude))
+    ));
+    if (!locatedFlags.length) return;
+    const fitKey = `${hotspotGroupKey}:${locatedFlags.map((flag) => flag.id).join(",")}`;
+    if (hotspotFitKeyRef.current === fitKey) return;
+
+    if (locatedFlags.length === 1) {
+      mapInstance.panTo({
+        lat: Number(locatedFlags[0].latitude),
+        lng: Number(locatedFlags[0].longitude),
+      });
+      mapInstance.setZoom(18);
+    } else {
+      const bounds = new window.google.maps.LatLngBounds();
+      locatedFlags.forEach((flag) => bounds.extend({
+        lat: Number(flag.latitude),
+        lng: Number(flag.longitude),
+      }));
+      mapInstance.fitBounds(bounds, { top: 80, right: 80, bottom: 80, left: 80 });
+    }
+    hotspotFitKeyRef.current = fitKey;
+  }, [flags, hotspotGroupActive, hotspotGroupKey, mapInstance]);
 
   // Sync zoom prop if parent changes it
   useEffect(() => {
@@ -1426,13 +1464,20 @@ function MapCanvas({
       const map = internalMapRef.current;
       if (!map) return;
       window.google?.maps?.event?.trigger(map, "resize");
-      const needsFit = !initialMunicipalFitRef.current;
+      const needsFit = !initialMunicipalFitRef.current && !hotspotGroupActive;
       const applied = applyMunicipalViewLimits({ fit: needsFit });
       if (applied && needsFit) benchmarkStage(benchmarkTrial, "fit");
       if (applied) initialMunicipalFitRef.current = true;
     });
     return () => cancelAnimationFrame(frameId);
-  }, [isLoaded, mapInstance, municipalBounds, applyMunicipalViewLimits, benchmarkTrial]);
+  }, [
+    isLoaded,
+    mapInstance,
+    municipalBounds,
+    applyMunicipalViewLimits,
+    benchmarkTrial,
+    hotspotGroupActive,
+  ]);
 
   // Keep the map layout in sync with its container (desktop/mobile layout
   // changes, sidebar collapse, window resize). Google Maps needs an explicit
@@ -1639,9 +1684,14 @@ function MapCanvas({
   }, [isLoaded, mapInstance, showBoundaries, municipalOutline, isDark, satellite]);
 
   // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
-  const buildMarkerContent = useCallback((flag, selected, isAdjusting = false) => {
+  const buildMarkerContent = useCallback((
+    flag,
+    selected,
+    isAdjusting = false,
+    isHotspotGroupMember = false,
+  ) => {
     const fc = getFlagColor(flag.color);
-    const color = selected ? "#2563eb" : fc.marker;
+    const color = selected && !isHotspotGroupMember ? "#2563eb" : fc.marker;
     const w = (selected || isAdjusting) ? 34 : 26;
     const h = (selected || isAdjusting) ? 44 : 34;
 
@@ -1664,6 +1714,7 @@ function MapCanvas({
 
     let innerHtml = `
       <svg viewBox="0 0 24 32" width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg" style="display: block; overflow: visible; pointer-events: none;" draggable="false">
+        ${isHotspotGroupMember ? '<circle cx="12" cy="11" r="18" fill="none" stroke="#ffffff" stroke-width="5"/><circle cx="12" cy="11" r="15" fill="none" stroke="#111827" stroke-width="2.5"/>' : ""}
         <path d="M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z" fill="${color}" stroke="#ffffff" stroke-width="${isAdjusting ? 2.5 : 1.2}" />
         <circle cx="12" cy="11" r="4.5" fill="white" opacity="0.95"/>
       </svg>
@@ -1727,6 +1778,7 @@ function MapCanvas({
 
     visibleFlags.forEach(flag => {
       const isAdjusting = String(flag.id) === String(adjustingFlagId);
+      const isHotspotGroupMember = hotspotGroupMemberIds.has(Number(flag.id));
       let lat = Number(flag.latitude);
       let lng = Number(flag.longitude);
 
@@ -1754,10 +1806,10 @@ function MapCanvas({
         try {
           marker = new window.google.maps.marker.AdvancedMarkerElement({
             position: { lat, lng },
-            content: buildMarkerContent(flag, isSelected, isAdjusting),
+            content: buildMarkerContent(flag, isSelected, isAdjusting, isHotspotGroupMember),
             gmpDraggable: isAdjusting,
             title: flag.name,
-            zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
+            zIndex: isAdjusting ? 999999 : (isHotspotGroupMember ? 5000 : isSelected ? 9999 : 100),
           });
 
           marker.gmpDraggable = Boolean(isAdjusting);
@@ -1794,13 +1846,17 @@ function MapCanvas({
 
       if (!marker) {
         const fc = getFlagColor(flag.color);
-        const color = isSelected ? "#2563eb" : fc.marker;
+        const color = isSelected && !isHotspotGroupMember ? "#2563eb" : fc.marker;
         marker = new window.google.maps.Marker({
           position: { lat, lng },
           draggable: isAdjusting,
           title: flag.name,
           zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
-          icon: {
+          icon: isHotspotGroupMember ? {
+            url: hotspotRingMarkerDataUri(color),
+            scaledSize: new window.google.maps.Size(48, 52),
+            anchor: new window.google.maps.Point(24, 38),
+          } : {
             path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
             fillColor: color,
             fillOpacity: 1,
@@ -1949,7 +2005,7 @@ function MapCanvas({
       });
       effectMarkerRefs.clear();
     };
-  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd, benchmarkTrial]);
+  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd, benchmarkTrial, hotspotGroupMemberIds]);
 
   // Update cursor dynamically if picking state changes
   useEffect(() => {
@@ -2912,6 +2968,15 @@ export default function MapPage() {
   const [modalFlag, setModalFlag] = useState(null);   // flag object shown in detail modal
   const [complianceFlag, setComplianceFlag] = useState(null);
   const location = useLocation();
+  const hotspotGroup = useMemo(
+    () => parseHotspotGroupParams(location.search),
+    [location.search],
+  );
+  const hotspotGroupKey = hotspotGroup.active
+    ? hotspotGroup.logIds.length
+      ? `ids:${hotspotGroup.logIds.join(",")}`
+      : `radius:${hotspotGroup.center.lat},${hotspotGroup.center.lng},${hotspotGroup.radiusMeters}`
+    : "";
   const handledUrlFlagRef = useRef(null);
 
   const rememberMapCamera = useCallback(() => {
@@ -4461,10 +4526,23 @@ export default function MapPage() {
   }, [adjustingFlagId, isPickingYellowLocation, barangays, layers.barangay, layers.diagnostics]);
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const visibleFlags = flags.filter(flag => matchesMapFilters(flag, {
+  const mapFilteredFlags = flags.filter(flag => matchesMapFilters(flag, {
     status: filterColor, source: filterSource, registryLink: filterRegistryLink,
     search, barangayID: filterBarangay,
   }));
+  const visibleFlags = hotspotGroup.active
+    ? mapFilteredFlags.filter((flag) => matchesHotspotGroup(flag, hotspotGroup))
+    : mapFilteredFlags;
+  const hotspotGroupMemberIds = useMemo(
+    () => new Set(visibleFlags.map((flag) => Number(flag.id))),
+    [visibleFlags],
+  );
+  const clearHotspotGroup = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    ["hotspot_ids", "hotspot_lat", "hotspot_lng", "hotspot_radius_m"]
+      .forEach((key) => params.delete(key));
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
   const locations = paginateRecords(visibleFlags, locationsPage, 8);
   const barangayFilterOptions = [
     { value: "all", label: "All Barangays" },
@@ -5011,6 +5089,14 @@ export default function MapPage() {
             </div>
           </div>
 
+          {hotspotGroup.active && (
+            <div className="map-hotspot-group-chip" role="status">
+              <span>Showing {visibleFlags.length.toLocaleString()} locations from a hotspot group</span>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={clearHotspotGroup}>Clear</button>
+            </div>
+          )}
+
           {/* Map */}
           <div className="frosted-glass map-canvas-container" style={styles.mapWrapper}>
             <MapCanvas
@@ -5024,6 +5110,9 @@ export default function MapPage() {
               mapRef={mapRef}
               layers={layers}
               flags={visibleFlags}
+              hotspotGroupActive={hotspotGroup.active}
+              hotspotGroupKey={hotspotGroupKey}
+              hotspotGroupMemberIds={hotspotGroupMemberIds}
               boundaryFeatures={boundaryFeatures}
               barangays={barangays}
               selectedBarangayId={filterBarangay}

@@ -12,7 +12,7 @@ localStorage.clear();
 localStorage.setItem("revela_sidebar_collapsed", String(params.get("sidebar") === "collapsed"));
 localStorage.setItem("revela-theme", params.get("theme") === "dark" ? "dark" : "light");
 if (page !== "access") localStorage.setItem("revela_token", "dev-admin-token");
-history.replaceState(null, "", page === "reports" ? "/reports" : "/analytics");
+history.replaceState(null, "", page === "reports" ? "/reports" : `/analytics${params.get("tab") === "prescriptive" ? "?tab=prescriptive" : ""}`);
 
 const barangays = ["Barangay I", "Barangay II", "Barangay II-A", "Barangay III", "Barangay IV", "Barangay Bayorbor", "Barangay Bubuyan", "Barangay Calingatan", "Barangay Kinalaglagan", "Barangay Loob", "Barangay Lumang Lipa", "Barangay Manggahan", "Barangay Nangkaan", "Barangay San Sebastian", "Barangay Santol", "Barangay Upa"];
 const sectors = ["Retail Sale in Non-Specialized Stores with Food, Beverages or Tobacco Predominating", "Food and Beverage Service Activities — Restaurants and Mobile Food Services", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles", "Manufacture of Other Food Products and Prepared Meals", "Other Community, Social and Personal Service Activities", "Transportation and Storage"];
@@ -76,6 +76,12 @@ const sections = {
   prescriptive: { rankings: [], dispatch_recommendations: [], wlc_config: {} },
   operations: { inspector_stats: [{ userID: 1, fullName: "Inspector A" }, { userID: 2, fullName: "Inspector B" }], inspector_status_counts: [{ userID: 1, pending: 3, awaiting_review: 1, verified: 4 }, { userID: 2, pending: 2, awaiting_review: 2, verified: 5 }], status_breakdown: [{ status: "Assigned", count: 28 }, { status: "Submitted", count: 32 }, { status: "Verified", count: 64 }], inspection_timeline: [{ date: "2026-09-01", count: 12 }, { date: "2026-09-08", count: 24 }, { date: "2026-09-15", count: 19 }, { date: "2026-09-22", count: 32 }] },
 };
+if (params.get("recommendations") === "ranked") {
+  sections.prescriptive.rankings = barangays.slice(0, 6).map((barangayName, index) => ({
+    barangayID: index + 1, barangayName, rank: index + 1, flagged_count: 8 - index,
+    red_count: 4, yellow_count: 2, distance_km: 2.4, priority_label: "High",
+  }));
+}
 const registryBreakdown = {
   business_type: [
     { value: "Sole Proprietorship", count: 600 }, { value: "Corporation", count: 160 },

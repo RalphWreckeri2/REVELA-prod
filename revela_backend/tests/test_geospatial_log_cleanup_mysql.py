@@ -8,10 +8,28 @@ from scripts.cleanup_detection_geospatial_logs import (
     AUDIT_TABLE,
     apply_plan,
     build_plan,
+    load_boundaries,
     map_barangay_ids,
     read_totals,
 )
 from tests import test_registry_inspection_sync as mysql_test_support
+
+
+class SharedCleanupMappingTests(unittest.TestCase):
+    def test_cleanup_mapping_uses_shared_ids_for_every_boundary(self):
+        boundaries = load_boundaries()
+        barangay_rows = [
+            {"barangayID": barangay_id, "barangayName": f"Barangay {barangay_id}"}
+            for barangay_id in range(1, 17)
+        ]
+        ids_by_name, _ = map_barangay_ids(boundaries, barangay_rows)
+
+        self.assertEqual(len(ids_by_name), 16)
+        self.assertEqual(set(ids_by_name.values()), set(range(1, 17)))
+        self.assertEqual(ids_by_name["Loob"], 9)
+        self.assertEqual(ids_by_name["Kinalaglagan"], 11)
+        with self.assertRaisesRegex(ValueError, "No barangay ID mapping"):
+            map_barangay_ids([("Unknown Feature", boundaries[0][1])], barangay_rows)
 
 
 class GeospatialLogCleanupMySQLTests(unittest.TestCase):
@@ -49,7 +67,7 @@ class GeospatialLogCleanupMySQLTests(unittest.TestCase):
             )
             cursor.execute(
                 "INSERT INTO barangays (barangayID, barangayName) VALUES "
-                "(1, 'Barangay I'), (2, 'Barangay II')"
+                "(1, 'Barangay I'), (3, 'Barangay II-A')"
             )
         cls.db.commit()
 
@@ -95,12 +113,12 @@ class GeospatialLogCleanupMySQLTests(unittest.TestCase):
             boundaries,
             [
                 {"barangayID": 1, "barangayName": "Barangay I"},
-                {"barangayID": 2, "barangayName": "Barangay II-A"},
+                {"barangayID": 3, "barangayName": "Barangay II-A"},
             ],
         )
         self.assertEqual(ids_by_name, {
             "District I (Pob.)": 1,
-            "Barangay II-A (Pob.)": 2,
+            "Barangay II-A (Pob.)": 3,
         })
         return build_plan(cursor, boundaries, ids_by_name)
 
@@ -114,7 +132,7 @@ class GeospatialLogCleanupMySQLTests(unittest.TestCase):
             "detected_not_in_registry": 4,
             "red": 3,
         })
-        self.assertEqual(plan["pair_counts"][(1, 2)], 1)
+        self.assertEqual(plan["pair_counts"][(1, 3)], 1)
         self.assertEqual([row["logID"] for row in plan["updates"]], [1])
         self.assertEqual([row["logID"] for row in plan["deletions"]], [2])
         self.assertEqual(
@@ -142,7 +160,7 @@ class GeospatialLogCleanupMySQLTests(unittest.TestCase):
             cursor.execute(
                 "SELECT barangayID FROM geospatial_logs WHERE logID = 1"
             )
-            self.assertEqual(cursor.fetchone()["barangayID"], 2)
+            self.assertEqual(cursor.fetchone()["barangayID"], 3)
             cursor.execute(
                 "SELECT COUNT(*) AS count FROM geospatial_logs WHERE logID = 2"
             )

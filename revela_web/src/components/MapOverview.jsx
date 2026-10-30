@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Circle, Data, GoogleMap, Marker } from "@react-google-maps/api";
+import { Circle, Data, GoogleMap, Marker, Polyline } from "@react-google-maps/api";
 import { useNavigate } from "react-router-dom";
 import AnalyticsInfoTip from "./AnalyticsInfoTip";
 import {
@@ -8,8 +8,10 @@ import {
   getBarangayOverviewRequest,
 } from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
+import { OverviewMapSkeleton } from "./AnalyticsLoadingLayouts";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import { useTheme } from "../context/themeContext";
+import { FLAG_COLORS } from "./flagColors";
 import {
   getBarangayIdForGeoJsonName,
   getGeoJsonCentroid,
@@ -27,6 +29,8 @@ import {
   buildBarangayOverviewFilters,
   getBarangayTopTotals,
   getMapPinBuckets,
+  lineOfBusinessKeyAfterSectorChange,
+  lineOfBusinessOptionsForSector,
   quantileBreaks,
   quantileClass,
   quantileRangeLabels,
@@ -36,12 +40,18 @@ import {
 } from "./barangayOverviewPresentation";
 import {
   hotspotOverlayRadius,
+  hotspotBadgeTier,
+  hotspotCirclePath,
+  hotspotGroupLocation,
+  hotspotGroupMapPath,
   hotspotMethodNote,
   fetchHotspotClusterPins,
   hotspotClusterDetails,
-  hotspotPinMapPath,
+  hotspotTooltipLabel,
   hotspotViewTransition,
   hotspotRequestParams,
+  hotspotPeriodLabel,
+  hotspotResponseMatchesPeriod,
   hotspotScanNote,
   hotspotSummary,
 } from "./hotspotPresentation";
@@ -61,6 +71,7 @@ const DARK_CHOROPLETH_COLORS = {
   inspections: ["#172d4b", "#1d4772", "#286395", "#377fb7", "#68a8da"],
 };
 const EMPTY_BARANGAY_ROWS = Object.freeze([]);
+const EMPTY_OVERVIEW_OPTIONS = Object.freeze([]);
 const REGISTRY_DIMENSIONS = [
   { key: "business_size", label: "By size" },
   { key: "business_type", label: "By type" },
@@ -152,11 +163,11 @@ function useBarangayOverview(token, filters, datePreset) {
       })
       .catch((requestError) => {
         if (requestError.name !== "AbortError") {
-          setSnapshot({
+          setSnapshot(previous => ({
             key: requestKey,
-            overview: null,
+            overview: previous.overview,
             error: requestError.message || "The barangay overview could not be loaded.",
-          });
+          }));
         }
       });
     return () => controller.abort();
@@ -179,6 +190,8 @@ export default function MapOverview({ token, filters }) {
   const [selectedClusterId, setSelectedClusterId] = useState(null);
   const [selectedClusterRequestKey, setSelectedClusterRequestKey] = useState("");
   const [clusterDetailRetry, setClusterDetailRetry] = useState(0);
+  const [hotspotRetry, setHotspotRetry] = useState(0);
+  const [mapZoom, setMapZoom] = useState(13);
   const [clusterPinsState, setClusterPinsState] = useState({
     key: "",
     pins: [],
@@ -192,6 +205,7 @@ export default function MapOverview({ token, filters }) {
   });
   const [selectedBarangayId, setSelectedBarangayId] = useState(null);
   const [selectedSectorKey, setSelectedSectorKey] = useState("");
+  const [selectedLineOfBusinessKey, setSelectedLineOfBusinessKey] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
   const [hoveredBarangayId, setHoveredBarangayId] = useState(null);
   const [activeDimension, setActiveDimension] = useState("business_size");
@@ -222,8 +236,12 @@ export default function MapOverview({ token, filters }) {
   const updateLabelVisibilityRef = useRef(null);
   const { isLoaded, loadError } = useGoogleMapsScript();
   const overviewFilters = useMemo(
-    () => ({ ...filters, display_sector: selectedSectorKey }),
-    [filters, selectedSectorKey],
+    () => ({
+      ...filters,
+      display_sector: selectedSectorKey,
+      line_of_business_key: selectedLineOfBusinessKey,
+    }),
+    [filters, selectedLineOfBusinessKey, selectedSectorKey],
   );
   const { overview, loading, error, retry } = useBarangayOverview(
     token,
@@ -234,7 +252,7 @@ export default function MapOverview({ token, filters }) {
     () => hotspotRequestParams(datePreset),
     [datePreset],
   );
-  const hotspotRequestKey = `${token ? "authenticated" : "anonymous"}:${hotspotRequest.date_preset}`;
+  const hotspotRequestKey = `${token ? "authenticated" : "anonymous"}:${hotspotRequest.date_preset}:${hotspotRetry}`;
   useEffect(() => {
     if (!token) return undefined;
     const controller = new AbortController();
@@ -242,9 +260,13 @@ export default function MapOverview({ token, filters }) {
       signal: controller.signal,
     })
       .then((data) => {
-        if (!controller.signal.aborted) {
-          setHotspotState({ requestKey: hotspotRequestKey, data, error: "" });
+        if (controller.signal.aborted) return;
+        if (!hotspotResponseMatchesPeriod(data, hotspotRequest.date_preset)) {
+          throw new Error(
+            `Hotspot response period did not match ${hotspotPeriodLabel(hotspotRequest.date_preset)}.`,
+          );
         }
+        setHotspotState({ requestKey: hotspotRequestKey, data, error: "" });
       })
       .catch((requestError) => {
         if (!controller.signal.aborted && requestError.name !== "AbortError") {
@@ -256,8 +278,29 @@ export default function MapOverview({ token, filters }) {
         }
       });
     return () => controller.abort();
-  }, [hotspotRequest.date_preset, hotspotRequestKey, token]);
-  const displaySectorOptions = overview?.display_sectors || [];
+  }, [hotspotRequest.date_preset, hotspotRequestKey, hotspotRetry, token]);
+  const displaySectorOptions = overview?.display_sectors || EMPTY_OVERVIEW_OPTIONS;
+  const allLineOfBusinessOptions = (
+    overview?.line_of_business_options || EMPTY_OVERVIEW_OPTIONS
+  );
+  const lineOfBusinessOptions = useMemo(
+    () => lineOfBusinessOptionsForSector(
+      allLineOfBusinessOptions,
+      selectedSectorKey,
+    ),
+    [allLineOfBusinessOptions, selectedSectorKey],
+  );
+  const lineOfBusinessOptionsBySector = useMemo(() => (
+    displaySectorOptions.map((sector) => ({
+      ...sector,
+      options: lineOfBusinessOptions.filter(
+        (option) => option.sector_key === sector.value,
+      ),
+    })).filter((sector) => sector.options.length > 0)
+  ), [displaySectorOptions, lineOfBusinessOptions]);
+  const selectedLineOfBusinessOption = allLineOfBusinessOptions.find(
+    (option) => option.value === selectedLineOfBusinessKey,
+  );
 
   const barangayRows = overview?.barangays || EMPTY_BARANGAY_ROWS;
   const rowsById = useMemo(() => new Map(
@@ -297,15 +340,23 @@ export default function MapOverview({ token, filters }) {
   const hotspotError = token
     ? hotspotIsCurrent ? hotspotState.error : ""
     : "Hotspot data requires an authenticated session.";
-  const hotspotStats = hotspotSummary(
-    hotspotData,
-    selectedBarangayId,
+  const hotspotStats = hotspotSummary(hotspotData);
+  const hotspotClusters = useMemo(
+    () => [...(hotspotData?.clusters || [])].sort(
+      (first, second) => Number(second.size) - Number(first.size),
+    ),
+    [hotspotData?.clusters],
   );
   const selectedCluster = showHotspots && selectedClusterRequestKey === hotspotRequestKey
-    ? hotspotData?.clusters?.find(
+    ? hotspotClusters.find(
       (cluster) => Number(cluster.cluster_id) === Number(selectedClusterId),
     ) || null
     : null;
+  const hasSelectedCluster = Boolean(
+    showHotspots
+    && selectedClusterId != null
+    && selectedClusterRequestKey === hotspotRequestKey,
+  );
   const selectedClusterKey = selectedCluster
     ? `${hotspotRequestKey}:${selectedCluster.cluster_id}:${JSON.stringify(selectedCluster.log_ids || [])}`
     : "";
@@ -319,9 +370,47 @@ export default function MapOverview({ token, filters }) {
       clusterPinsAreCurrent ? clusterPinsState.pins : [],
     )
     : null;
+  const selectedClusterMapPath = selectedCluster
+    ? hotspotGroupMapPath(selectedCluster)
+    : null;
   const scanNote = hotspotScanNote(
     hotspotData?.last_detection_run,
   );
+
+  const fitHotspotCluster = useCallback((cluster, pins = []) => {
+    const map = mapRef.current;
+    const maps = window.google?.maps;
+    if (!map || !maps?.LatLngBounds) return;
+
+    const bounds = new maps.LatLngBounds();
+    const locatedPins = pins.filter((pin) => (
+      Number.isFinite(Number(pin.latitude))
+      && Number.isFinite(Number(pin.longitude))
+    ));
+    if (locatedPins.length > 1) {
+      locatedPins.forEach((pin) => bounds.extend({
+        lat: Number(pin.latitude),
+        lng: Number(pin.longitude),
+      }));
+    } else {
+      const lat = Number(cluster?.centroid?.lat);
+      const lng = Number(cluster?.centroid?.lng);
+      const radius = Math.max(8, Number(cluster?.radius_m) || 0);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const latDelta = radius / 111_320;
+      const lngDelta = radius / (111_320 * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
+      bounds.extend({ lat: lat - latDelta, lng: lng - lngDelta });
+      bounds.extend({ lat: lat + latDelta, lng: lng + lngDelta });
+    }
+
+    map.fitBounds(bounds, { top: 72, right: 72, bottom: 72, left: 72 });
+  }, []);
+
+  const selectHotspotCluster = useCallback((cluster) => {
+    setSelectedClusterId(Number(cluster.cluster_id));
+    setSelectedClusterRequestKey(hotspotRequestKey);
+    fitHotspotCluster(cluster);
+  }, [fitHotspotCluster, hotspotRequestKey]);
 
   useEffect(() => {
     if (!selectedCluster || !token) return undefined;
@@ -354,6 +443,16 @@ export default function MapOverview({ token, filters }) {
       });
     return () => controller.abort();
   }, [clusterPinsRequestKey, selectedCluster, token]);
+
+  useEffect(() => {
+    if (!selectedCluster || !clusterPinsAreCurrent || !clusterPinsState.pins.length) return;
+    fitHotspotCluster(selectedCluster, clusterPinsState.pins);
+  }, [
+    clusterPinsAreCurrent,
+    clusterPinsState.pins,
+    fitHotspotCluster,
+    selectedCluster,
+  ]);
 
   const clearSelectedCluster = useCallback(() => {
     setSelectedClusterId(null);
@@ -390,15 +489,21 @@ export default function MapOverview({ token, filters }) {
     const isSelected = Number(selectedBarangayId) === id;
     const colorIndex = quantileClass(count, mapBreaks);
     return {
-      fillColor: colorIndex < 0
-        ? isDark ? "#334155" : "#cbd5e1"
-        : (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][colorIndex],
-      fillOpacity: 1,
-      strokeColor: isSelected ? (isDark ? "#fbbf24" : "#0f172a") : isHovered ? "#f97316" : isDark ? "#94a3b8" : "#ffffff",
-      strokeWeight: isSelected ? 4 : isHovered ? 2 : 1,
-      zIndex: isSelected ? 100 : isHovered ? 10 : 0,
+      fillColor: showHotspots
+        ? "#e2e8f0"
+        : colorIndex < 0
+          ? isDark ? "#334155" : "#cbd5e1"
+          : (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][colorIndex],
+      fillOpacity: showHotspots ? 0.72 : 1,
+      strokeColor: showHotspots
+        ? "#ffffff"
+        : isSelected
+          ? (isDark ? "#fbbf24" : "#0f172a")
+          : isHovered ? "#f97316" : isDark ? "#94a3b8" : "#ffffff",
+      strokeWeight: showHotspots ? 1 : isSelected ? 4 : isHovered ? 2 : 1,
+      zIndex: showHotspots ? 0 : isSelected ? 100 : isHovered ? 10 : 0,
     };
-  }, [hoveredBarangayId, isDark, mapBreaks, mapRowsById, mapView, selectedBarangayId]);
+  }, [hoveredBarangayId, isDark, mapBreaks, mapRowsById, mapView, selectedBarangayId, showHotspots]);
 
   useEffect(() => {
     styleFeatureRef.current = styleFeature;
@@ -695,7 +800,7 @@ export default function MapOverview({ token, filters }) {
     .filter((row) => row.count > 0);
 
   if (loading && !overview) {
-    return <div className="map-overview-loading" role="status">Loading barangay details…</div>;
+    return <div role="status" aria-label="Loading barangay details" aria-busy="true"><OverviewMapSkeleton /></div>;
   }
   if (error && !overview) {
     return (
@@ -707,7 +812,10 @@ export default function MapOverview({ token, filters }) {
   }
 
   return (
-    <div className="map-overview">
+    <div
+      className="map-overview"
+      style={{ "--hotspot-flag-red": FLAG_COLORS.Red.marker }}
+    >
       <div className="map-overview-topbar" aria-label={`${selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"} totals`}>
         <div className="map-overview-total">
           <strong>{topTotals.registered.toLocaleString()}</strong>
@@ -756,7 +864,15 @@ export default function MapOverview({ token, filters }) {
                 aria-label="Filter registered businesses by sector"
                 value={selectedSectorKey}
                 onChange={(event) => {
-                  setSelectedSectorKey(event.target.value);
+                  const nextSectorKey = event.target.value;
+                  setSelectedLineOfBusinessKey((selectedKey) => (
+                    lineOfBusinessKeyAfterSectorChange(
+                      selectedKey,
+                      allLineOfBusinessOptions,
+                      nextSectorKey,
+                    )
+                  ));
+                  setSelectedSectorKey(nextSectorKey);
                   setActiveDimension("display_sector");
                 }}
               >
@@ -765,14 +881,50 @@ export default function MapOverview({ token, filters }) {
                   <option key={sector.value} value={sector.value}>{sector.label}</option>
                 ))}
               </select>
-              <small className="map-overview-sector-scope">
-                Filters registered businesses only.
-              </small>
+            </label>
+            <label className="map-overview-select-label map-overview-select-label--filter">
+              <span className="map-overview-filter-label-heading">
+                <span>Line of business</span>
+                <AnalyticsInfoTip label="About line-of-business filtering">
+                  Each business is counted under its first-listed PSIC activity.
+                  Secondary activities are not counted. The activity description
+                  is a label; the filter uses its full normalized key.
+                </AnalyticsInfoTip>
+              </span>
+              <select
+                aria-label="Filter registered businesses by line of business"
+                value={selectedLineOfBusinessKey}
+                disabled={loading || lineOfBusinessOptions.length === 0}
+                onChange={(event) => {
+                  setSelectedLineOfBusinessKey(event.target.value);
+                  setActiveDimension("display_sector");
+                }}
+              >
+                <option value="">All activities</option>
+                {selectedSectorKey
+                  ? lineOfBusinessOptions.map((option) => (
+                    <option key={option.value} value={option.value} title={option.label}>
+                      {option.label}
+                    </option>
+                  ))
+                  : lineOfBusinessOptionsBySector.map((sector) => (
+                    <optgroup key={sector.value} label={sector.label}>
+                      {sector.options.map((option) => (
+                        <option key={option.value} value={option.value} title={option.label}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+              </select>
             </label>
             <label className="map-overview-date-label" title="Choose the date range">
               <span>Date range</span>
               <select aria-label="Date range" title="Choose the date range"
-                value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
+                value={datePreset} onChange={(event) => {
+                  clearSelectedCluster();
+                  setDatePreset(event.target.value);
+                }}>
                 <option value="all">All time</option>
                 <option value="year">This year</option>
                 <option value="30days">Last 30 days</option>
@@ -781,10 +933,44 @@ export default function MapOverview({ token, filters }) {
             </label>
           </div>
         </div>
+        <p className="map-overview-filter-scope">
+          Filters registered businesses only.
+        </p>
+        {(selectedSectorKey || selectedLineOfBusinessOption) && (
+          <div className="map-overview-active-filters" aria-label="Active filters">
+            {selectedSectorKey && (
+              <span className="map-overview-active-filter">
+                Sector: {displaySectorOptions.find(
+                  (sector) => sector.value === selectedSectorKey,
+                )?.label || selectedSectorKey}
+                <button
+                  type="button"
+                  aria-label="Remove sector filter"
+                  onClick={() => setSelectedSectorKey("")}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {selectedLineOfBusinessOption && (
+              <span className="map-overview-active-filter">
+                Line of business: {selectedLineOfBusinessOption.label}
+                <button
+                  type="button"
+                  aria-label="Remove line-of-business filter"
+                  onClick={() => setSelectedLineOfBusinessKey("")}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+          </div>
+        )}
       </section>
 
-      {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
-      {error && <p className="map-overview-error-inline" role="alert">Some barangay details could not be updated.</p>}
+      <div className="analytics-map-update-slot" role="status" aria-live="polite">
+        {loading ? "Updating barangay details…" : error ? "Some barangay details could not be updated." : ""}
+      </div>
 
       <div className="map-overview-layout">
         <section className="map-overview-map-card" aria-label="Barangay map">
@@ -813,8 +999,6 @@ export default function MapOverview({ token, filters }) {
               </button>
               <div className="map-overview-hotspot-scan-note" role="status">
                 {scanNote.text}
-                {scanNote.coverageIncomplete
-                  && <span> Coverage incomplete: counts may be undercounted.</span>}
               </div>
             </div>
           </div>
@@ -830,6 +1014,10 @@ export default function MapOverview({ token, filters }) {
                 zoom={13}
                 onLoad={handleMapLoad}
                 onUnmount={handleMapUnmount}
+                onZoomChanged={() => {
+                  const zoom = mapRef.current?.getZoom();
+                  if (zoom != null) setMapZoom(zoom);
+                }}
                 onClick={clearSelectedCluster}
                 options={{
                    mapId: REVELA_MAP_ID,
@@ -851,50 +1039,111 @@ export default function MapOverview({ token, filters }) {
                   onMouseOver={setHoveredFeature}
                   onMouseOut={clearHoveredFeature}
                 />
-                {showHotspots && hotspotData?.clusters?.map((cluster) => (
-                  <Fragment key={cluster.cluster_id}>
-                    <Circle
-                      center={cluster.centroid}
-                      radius={hotspotOverlayRadius(cluster.radius_m)}
-                      onClick={(event) => {
-                        event.domEvent?.stopPropagation();
-                        setSelectedClusterId(Number(cluster.cluster_id));
-                        setSelectedClusterRequestKey(hotspotRequestKey);
-                      }}
-                      options={{
-                        clickable: true,
-                        fillColor: "#f97316",
-                        fillOpacity: 0.18,
-                        strokeColor: "#c2410c",
-                        strokeOpacity: 0.8,
-                        strokeWeight: 2,
-                        zIndex: 200,
-                      }}
-                    />
-                    <Marker
-                      position={cluster.centroid}
-                      title={`Select hotspot cluster ${cluster.cluster_id} (${cluster.size} pins)`}
-                      onClick={(event) => {
-                        event.domEvent?.stopPropagation();
-                        setSelectedClusterId(Number(cluster.cluster_id));
-                        setSelectedClusterRequestKey(hotspotRequestKey);
-                      }}
-                      options={{
-                        clickable: true,
-                        optimized: true,
-                        zIndex: 1100,
-                        icon: {
-                          path: window.google.maps.SymbolPath.CIRCLE,
-                          scale: 0,
-                        },
-                        label: {
-                          text: String(cluster.size),
-                          className: "map-overview-hotspot-badge",
-                        },
-                      }}
-                    />
-                  </Fragment>
-                ))}
+                {showHotspots && hotspotClusters.map((cluster) => {
+                  const isSelected = hasSelectedCluster
+                    && Number(cluster.cluster_id) === Number(selectedClusterId);
+                  const isDimmed = hasSelectedCluster && !isSelected;
+                  const zIndex = 200 + Number(cluster.size || 0);
+                  const outlinePath = hotspotCirclePath(
+                    cluster.centroid,
+                    hotspotOverlayRadius(cluster.radius_m),
+                  );
+                  const selectCluster = (event) => {
+                    event?.domEvent?.stopPropagation();
+                    selectHotspotCluster(cluster);
+                  };
+                  return (
+                    <Fragment key={cluster.cluster_id}>
+                      {mapZoom >= 14 && (
+                        <>
+                          <Circle
+                            center={cluster.centroid}
+                            radius={hotspotOverlayRadius(cluster.radius_m)}
+                            onClick={selectCluster}
+                            options={{
+                              clickable: true,
+                              fillColor: FLAG_COLORS.Red.marker,
+                              fillOpacity: isDimmed ? 0.08 : 0.25,
+                              strokeOpacity: 0,
+                              strokeWeight: 0,
+                              zIndex,
+                            }}
+                          />
+                          <Polyline
+                            path={outlinePath}
+                            onClick={selectCluster}
+                            options={{
+                              clickable: true,
+                              strokeOpacity: 0,
+                              zIndex: zIndex + 1,
+                              icons: [{
+                                icon: {
+                                  path: "M 0,-1 0,1",
+                                  strokeColor: FLAG_COLORS.Red.marker,
+                                  strokeOpacity: isDimmed ? 0.25 : 0.95,
+                                  strokeWeight: isSelected ? 4 : 2,
+                                  scale: 1,
+                                },
+                                repeat: "10px",
+                              }],
+                            }}
+                          />
+                        </>
+                      )}
+                      <Marker
+                        position={cluster.centroid}
+                        title={hotspotTooltipLabel(cluster)}
+                        onClick={selectCluster}
+                        options={{
+                          clickable: true,
+                          optimized: true,
+                          zIndex: (isSelected ? 10_000 : 1_000) + Number(cluster.size || 0),
+                          icon: {
+                            path: window.google.maps.SymbolPath.CIRCLE,
+                            scale: 0,
+                          },
+                          label: {
+                            text: String(cluster.size),
+                            className: [
+                              "map-overview-hotspot-badge",
+                              `map-overview-hotspot-badge--${hotspotBadgeTier(cluster.size)}`,
+                              isSelected && "map-overview-hotspot-badge--selected",
+                              isDimmed && "map-overview-hotspot-badge--dimmed",
+                            ].filter(Boolean).join(" "),
+                          },
+                        }}
+                      />
+                      {isSelected && clusterPinsAreCurrent && clusterPinsState.pins
+                        .filter((pin) => (
+                          Number.isFinite(Number(pin.latitude))
+                          && Number.isFinite(Number(pin.longitude))
+                        ))
+                        .map((pin) => (
+                          <Marker
+                            key={`member-${pin.logID}`}
+                            position={{
+                              lat: Number(pin.latitude),
+                              lng: Number(pin.longitude),
+                            }}
+                            title={pin.detectedName || "Unnamed detection"}
+                            options={{
+                              clickable: false,
+                              optimized: true,
+                              zIndex: zIndex + 2,
+                              icon: {
+                                path: window.google.maps.SymbolPath.CIRCLE,
+                                scale: 4,
+                                fillColor: FLAG_COLORS.Red.marker,
+                                fillOpacity: 1,
+                                strokeColor: "#ffffff",
+                                strokeWeight: 1,
+                              },
+                            }}
+                          />
+                        ))}
+                    </Fragment>
+                  );
+                })}
               </GoogleMap>
             )}
             <button
@@ -927,7 +1176,25 @@ export default function MapOverview({ token, filters }) {
                   <path d="M4 9h16M9 9v11" />
                 </svg>
               </button>
-              {legendOpen && (
+              {legendOpen && showHotspots && (
+                <div
+                  ref={legendPanelRef}
+                  id="map-overview-legend"
+                  className="map-overview-map-legend map-overview-hotspot-legend"
+                  role="group"
+                  aria-label="Hotspot legend"
+                  data-hotspot-legend
+                >
+                  <span className="map-overview-legend-title">Hotspot groups</span>
+                  <div className="map-overview-hotspot-legend-copy">
+                    <i aria-hidden="true" />
+                    <span>
+                      Hotspot group: 3 or more Red-flagged (expired or unregistered) locations within about 50 m. Number = locations in the group. Circle = area they cover.
+                    </span>
+                  </div>
+                </div>
+              )}
+              {legendOpen && !showHotspots && (
                 <div ref={legendPanelRef} id="map-overview-legend" className="map-overview-map-legend" role="group"
                   aria-label={mapView === "inspections"
                     ? "Inspections per barangay map legend"
@@ -977,87 +1244,120 @@ export default function MapOverview({ token, filters }) {
             <>
               <section className="map-overview-hotspot-summary" aria-live="polite">
                 <div className="map-overview-card-heading">
-                  <h4>Possible nearby groups</h4>
+                  <h4>Possible hotspot groups</h4>
                   <AnalyticsInfoTip label="About hotspot locations">
-                    Group locations are assigned by map position, which can differ slightly from the barangay recorded on each pin.
+                    {hotspotMethodNote(hotspotData?.parameters_used)}
                   </AnalyticsInfoTip>
                 </div>
+                <p className="map-overview-hotspot-period">
+                  Period: {hotspotPeriodLabel(datePreset)}
+                </p>
                 {hotspotLoading ? (
-                  <p>Loading possible groups…</p>
+                  <div className="map-overview-hotspot-summary-skeleton" role="status" aria-label="Loading hotspot groups">
+                    <span />
+                  </div>
                 ) : hotspotError ? (
-                  <p role="alert">{hotspotError}</p>
+                  <div role="alert" className="map-overview-hotspot-error">
+                    <p>{hotspotError}</p>
+                    <button type="button" onClick={() => setHotspotRetry((retry) => retry + 1)}>
+                      Retry
+                    </button>
+                  </div>
+                ) : !hotspotData?.last_detection_run ? (
+                  <p>No detection scan data yet. A scan is needed to identify possible groups.</p>
                 ) : hotspotStats.clusterCount === 0 ? (
-                  <p>No nearby groups for this period.</p>
+                  <>
+                    <p>No nearby groups for this period.</p>
+                    {datePreset !== "all" && (
+                      <button type="button" onClick={() => {
+                        clearSelectedCluster();
+                        setDatePreset("all");
+                      }}>
+                        Show all time
+                      </button>
+                    )}
+                  </>
                 ) : (
                   <p>
-                    Possible nearby groups: {hotspotStats.clusterCount} ({hotspotStats.locationCount.toLocaleString()} eligible effective-Red detection pins)
+                    {hotspotStats.clusterCount} possible groups found among {hotspotStats.redFlaggedCount.toLocaleString()} Red-flagged locations.
                   </p>
                 )}
-                {!selectedRow && hotspotStats.uncertainCount > 0 && (
-                  <p>
-                    {hotspotStats.uncertainCount.toLocaleString()} locations could not be assigned to a barangay.
+                {hotspotStats.outsideBoundaryCount > 0 && (
+                  <p className="map-overview-hotspot-outside-boundary">
+                    {hotspotStats.outsideBoundaryCount.toLocaleString()} locations are outside the municipal boundary.
                   </p>
                 )}
                 <p className="map-overview-hotspot-caveat">
                   Nearby groups are possible hotspots only; they do not confirm a violation.
                 </p>
-                {hotspotData?.parameters_used && (
-                  <p className="map-overview-hotspot-method">
-                    {hotspotMethodNote(hotspotData.parameters_used, mapView)}
-                  </p>
-                )}
               </section>
-              {selectedCluster && clusterDetail ? (
-            <section className="map-overview-hotspot-summary map-overview-cluster-detail" aria-live="polite">
-              <div className="map-overview-card-heading">
-                <div>
-                  <h4>Hotspot cluster #{clusterDetail.clusterId}</h4>
-                  <p>{clusterDetail.location} · {clusterDetail.pinCount} detected pins</p>
+              {hotspotLoading && (
+                <div className="map-overview-hotspot-list-skeleton" aria-hidden="true">
+                  {Array.from({ length: 7 }, (_, index) => (
+                    <span key={index} />
+                  ))}
                 </div>
-                <button type="button" className="map-overview-cluster-clear"
-                  aria-label="Clear selected hotspot cluster"
-                  onClick={clearSelectedCluster}>Clear</button>
-              </div>
-              <p className="map-overview-cluster-centroid">
-                Cluster center: {Number(clusterDetail.centroid?.lat).toFixed(6)}, {Number(clusterDetail.centroid?.lng).toFixed(6)}
-              </p>
-              <div className="map-overview-cluster-pin-list" aria-label="Pins in selected hotspot cluster">
-                {selectedCluster && token && (!clusterPinsAreCurrent || clusterPinsState.loading) ? (
-                  <p role="status">Loading detected pin details…</p>
-                ) : clusterPinsAreCurrent && clusterPinsState.error ? (
-                  <div>
-                    <p role="alert">{clusterPinsState.error}</p>
-                    <button type="button" onClick={() => setClusterDetailRetry((value) => value + 1)}>
-                      Retry details
-                    </button>
-                  </div>
-                ) : clusterDetail.pins.map((pin) => {
-                  const pinPath = hotspotPinMapPath(pin.logID);
-                  return (
-                    <button
-                      type="button"
-                      className="map-overview-cluster-pin"
-                      key={pin.logID}
-                      disabled={!pinPath}
-                      onClick={() => pinPath && navigate(pinPath)}
-                    >
-                      <strong>{pin.name}</strong>
-                      {pin.landmark && <span>{pin.landmark}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="map-overview-hotspot-caveat">
-                Nearby groups are possible hotspots only; they do not confirm a violation. Click the map or Clear to return to the hotspot summary.
-              </p>
-            </section>
-              ) : (
-                <section className="map-overview-hotspot-summary map-overview-cluster-prompt" role="status">
-                  <h4>Select a hotspot cluster</h4>
-                  <p>
-                    Select an orange hotspot cluster on the map to view its member detection pins and location details.
-                  </p>
-                </section>
+              )}
+              {!hotspotLoading && !hotspotError && hotspotStats.clusterCount > 0 && (
+                selectedCluster && clusterDetail ? (
+                  <section className="map-overview-hotspot-summary map-overview-cluster-detail" aria-live="polite">
+                    <div className="map-overview-card-heading">
+                      <div>
+                        <h4>Group of {clusterDetail.pinCount} nearby locations</h4>
+                        <p>{clusterDetail.location}</p>
+                      </div>
+                    </div>
+                    <div className="map-overview-cluster-pin-list" aria-label="Locations in selected hotspot group">
+                      {token && (!clusterPinsAreCurrent || clusterPinsState.loading) ? (
+                        <p role="status">Loading location details…</p>
+                      ) : clusterPinsAreCurrent && clusterPinsState.error ? (
+                        <div>
+                          <p role="alert">{clusterPinsState.error}</p>
+                          <button type="button" onClick={() => setClusterDetailRetry((value) => value + 1)}>
+                            Retry
+                          </button>
+                        </div>
+                      ) : clusterDetail.pins.map((pin) => (
+                        <article className="map-overview-cluster-pin" key={pin.logID}>
+                          <strong>{pin.name}</strong>
+                          <span>{pin.address}</span>
+                          <span>Detected {pin.detectedDate}</span>
+                        </article>
+                      ))}
+                    </div>
+                    <div className="map-overview-hotspot-actions">
+                      <button
+                        type="button"
+                        className="map-overview-hotspot-open-map"
+                        disabled={!selectedClusterMapPath}
+                        onClick={() => selectedClusterMapPath && navigate(selectedClusterMapPath)}
+                      >
+                        View on Maps &amp; Flags
+                      </button>
+                      <button
+                        type="button"
+                        className="map-overview-hotspot-back"
+                        onClick={clearSelectedCluster}
+                      >
+                        Back to list
+                      </button>
+                    </div>
+                  </section>
+                ) : (
+                  <section className="map-overview-hotspot-group-list" aria-label="All hotspot groups">
+                    {hotspotClusters.map((cluster) => (
+                      <button
+                        type="button"
+                        key={cluster.cluster_id}
+                        aria-pressed={selectedClusterRequestKey === hotspotRequestKey
+                          && Number(cluster.cluster_id) === Number(selectedClusterId)}
+                        onClick={() => selectHotspotCluster(cluster)}
+                      >
+                        Group of {Number(cluster.size)} · {hotspotGroupLocation(cluster)}
+                      </button>
+                    ))}
+                  </section>
+                )
               )}
             </>
           )}
@@ -1081,10 +1381,20 @@ export default function MapOverview({ token, filters }) {
                 </button>
               ))}
             </div>
-            <CountsBar rows={coloredDimensionRows}
-              emptyMessage={selectedSectorKey
-                ? "No registered businesses match this sector."
-                : "No registered businesses in this view yet."} />
+            {selectedLineOfBusinessKey
+              && Number(panelData?.registry_total || 0) === 0 ? (
+                <div className="map-overview-filter-empty">
+                  <p>No registered businesses match this filter.</p>
+                  <button type="button" onClick={() => setSelectedLineOfBusinessKey("")}>
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <CountsBar rows={coloredDimensionRows}
+                  emptyMessage={selectedSectorKey
+                    ? "No registered businesses match this sector."
+                    : "No registered businesses in this view yet."} />
+              )}
           </section>
 
           <section className="map-overview-detail-card">

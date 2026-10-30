@@ -1,6 +1,7 @@
 """Shared DBSCAN population, parameter, and aggregation helpers."""
 
 import json
+import logging
 import math
 import threading
 import time
@@ -14,6 +15,8 @@ import numpy as np
 from shapely.geometry import Point, shape
 from sklearn.cluster import DBSCAN
 
+from api.utils.barangay_mapping import map_adm4_barangay_ids
+
 
 HOTSPOT_EPS_SETTING = "hotspots.eps_m"
 HOTSPOT_MIN_SAMPLES_SETTING = "hotspots.min_samples"
@@ -24,15 +27,8 @@ HOTSPOT_CACHE_TTL_SECONDS = 60
 
 _hotspot_cache = {}
 _hotspot_cache_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
-_GEOJSON_BARANGAY_ALIASES = {
-    "District I (Pob.)": "Barangay I",
-    "District II (Pob.)": "Barangay II",
-    "District III (Pob.)": "Barangay III",
-    "District IV (Pob.)": "Barangay IV",
-    "Barangay II-A (Pob.)": "Barangay II-A",
-    "Lumang Lipa": "Barangay Lumanglipa",
-}
 _BARANGAY_GEOJSON_PATH = (
     Path(__file__).resolve().parents[1] / "utils" / "mataasnakahoy.json"
 )
@@ -155,11 +151,6 @@ def build_hotspot_population_sql(
     return sql, params
 
 
-def _geojson_barangay_id(name, barangay_ids_by_name):
-    canonical_name = _GEOJSON_BARANGAY_ALIASES.get(name, name)
-    return barangay_ids_by_name.get(canonical_name)
-
-
 @lru_cache(maxsize=1)
 def _read_barangay_geojson():
     with _BARANGAY_GEOJSON_PATH.open("r", encoding="utf-8") as geojson_file:
@@ -168,37 +159,48 @@ def _read_barangay_geojson():
 
 def load_barangay_polygons(barangay_rows):
     """Return canonical GeoJSON polygons paired with database IDs and labels."""
-    ids_by_name = {
-        str(row["barangayName"]).strip(): int(row["barangayID"])
-        for row in barangay_rows
-    }
+    features = _read_barangay_geojson().get("features", [])
+    feature_names = [
+        feature.get("properties", {}).get("ADM4_EN")
+        for feature in features
+        if feature.get("properties", {}).get("ADM4_EN") and feature.get("geometry")
+    ]
+    ids_by_geojson_name, names_by_id = map_adm4_barangay_ids(
+        feature_names,
+        barangay_rows,
+    )
     polygons = []
-    for feature in _read_barangay_geojson().get("features", []):
+    for feature in features:
         name = feature.get("properties", {}).get("ADM4_EN")
         if not name or not feature.get("geometry"):
             continue
-        barangay_id = _geojson_barangay_id(name, ids_by_name)
+        if name not in ids_by_geojson_name:
+            raise ValueError(f"Barangay polygon feature {name!r} has no ADM4_EN mapping.")
+        barangay_id = ids_by_geojson_name[name]
         polygons.append({
             "barangay_id": barangay_id,
-            "barangay_name": ids_by_name and next(
-                (label for label, candidate_id in ids_by_name.items()
-                 if candidate_id == barangay_id),
-                None,
-            ),
+            "barangay_name": names_by_id[barangay_id],
             "geometry": shape(feature["geometry"]),
         })
     return polygons
 
 
 def attribute_hotspot_point(latitude, longitude, polygons):
-    """Attribute a point only when it is inside exactly one canonical polygon."""
+    """Return its barangay, None if outside every polygon, or raise if ambiguous."""
     point = Point(float(longitude), float(latitude))
     matches = [
         polygon for polygon in polygons
-        if polygon["barangay_id"] is not None
-        and polygon["geometry"].contains(point)
+        if polygon["geometry"].contains(point)
     ]
-    return matches[0] if len(matches) == 1 else None
+    if not matches:
+        return None
+    if len(matches) > 1:
+        barangay_ids = sorted(polygon["barangay_id"] for polygon in matches)
+        raise ValueError(
+            f"Hotspot point ({latitude}, {longitude}) matches multiple "
+            f"barangay polygons: {barangay_ids}."
+        )
+    return matches[0]
 
 
 def _distance_m(first, second):
@@ -226,7 +228,22 @@ def cluster_hotspot_rows(rows, parameters, polygons):
             "clustered_points": 0,
             "noise_points": 0,
             "uncertain_points": 0,
+            "outside_boundary_count": 0,
         }
+
+    attributions_by_row_id = {}
+    outside_boundary_count = 0
+    for row in eligible:
+        attributed = attribute_hotspot_point(
+            row["latitude"], row["longitude"], polygons
+        )
+        attributions_by_row_id[id(row)] = attributed
+        if attributed is None:
+            outside_boundary_count += 1
+            _logger.warning(
+                "Hotspot detection logID=%s is outside the municipal boundary.",
+                row.get("logID"),
+            )
 
     coordinates = np.radians(np.array([
         [float(row["latitude"]), float(row["longitude"])]
@@ -267,9 +284,7 @@ def cluster_hotspot_rows(rows, parameters, polygons):
         barangay_counts = {}
         cluster_uncertain = 0
         for row in members:
-            attributed = attribute_hotspot_point(
-                row["latitude"], row["longitude"], polygons
-            )
+            attributed = attributions_by_row_id[id(row)]
             if attributed is None:
                 cluster_uncertain += 1
                 continue
@@ -300,6 +315,7 @@ def cluster_hotspot_rows(rows, parameters, polygons):
         "clustered_points": sum(len(members) for members in groups.values()),
         "noise_points": noise_points,
         "uncertain_points": uncertain_points,
+        "outside_boundary_count": outside_boundary_count,
     }
 
 

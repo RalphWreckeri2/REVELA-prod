@@ -587,6 +587,141 @@ class DashboardMySQLTests(unittest.TestCase):
             ],
         )
 
+    def test_barangay_overview_primary_psic_filter_reconciles_under_full_group_by(self):
+        from flask import Flask
+
+        from api.analytics import routes
+        with self.db.cursor() as cur:
+            cur.execute(
+                "SET SESSION sql_mode='STRICT_TRANS_TABLES,ONLY_FULL_GROUP_BY'"
+            )
+            cur.execute(
+                """INSERT INTO display_sector
+                       (normalized_major_type, display_sector_key,
+                        display_sector_label, sort_order, is_active)
+                   VALUES ('retailtrade', 'retail', 'Retail', 1, 1)"""
+            )
+            cur.execute(
+                "INSERT INTO psic_active_version (singleton_id, source_version) "
+                "VALUES (1, 'primary-filter-version')"
+            )
+            cur.executemany(
+                """INSERT INTO psic_lines
+                       (psic_line_id, source_version, source_row_number,
+                        normalized_line_of_business, normalized_major_type,
+                        major_type_clean, line_of_business)
+                   VALUES (%s, 'primary-filter-version', %s, %s,
+                           'retailtrade', 'Retail trade', %s)""",
+                [
+                    (1101, 1, "retailsellingingroceries", "Retail selling in groceries"),
+                    (1102, 2, "retailsellinginsarisaristores",
+                     "Retail selling in sari-sari stores"),
+                ],
+            )
+            cur.executemany(
+                """INSERT INTO official_registry
+                       (businessID, barangayID, businessName, lineOfBusiness)
+                   VALUES (%s, 1, %s, %s)""",
+                [
+                    ("LOB-GROCERY", "Grocery", "Retail selling in groceries"),
+                    (
+                        "LOB-GROCERY-COMBO",
+                        "Grocery combo",
+                        "Retail selling in groceries, Retail selling in sari-sari stores",
+                    ),
+                    (
+                        "LOB-SARI-COMBO",
+                        "Sari-sari combo",
+                        "Retail selling in sari-sari stores, Retail selling in groceries",
+                    ),
+                ],
+            )
+            cur.executemany(
+                """INSERT INTO registry_sector_map
+                       (normalized_line_of_business, source_version,
+                        match_status, primary_psic_line_id,
+                        display_sector_key, display_sector_label)
+                   VALUES (%s, 'primary-filter-version', %s, %s, 'retail', 'Retail')""",
+                [
+                    ("retailsellingingroceries", "matched", 1101),
+                    (
+                        "retailsellingingroceriesretailsellinginsarisaristores",
+                        "combo",
+                        1101,
+                    ),
+                    (
+                        "retailsellinginsarisaristoresretailsellingingroceries",
+                        "combo",
+                        1102,
+                    ),
+                ],
+            )
+            cur.execute(
+                """INSERT INTO geospatial_logs
+                       (logID, barangayID, detectedName, detectedDate, flagColor,
+                        latitude, longitude, source)
+                   VALUES (1103, 1, 'LOB-independent pin', %s, 'Green',
+                           13.9667, 121.1167, 'manual')""",
+                (self.as_of,),
+            )
+            cur.execute(
+                """INSERT INTO inspection_reports
+                       (reportID, userID, targetID, targetType,
+                        verificationStatus, inspectionResult, irTimestamp)
+                   VALUES (1104, 9, 1103, 'geospatial_log',
+                           'Verified', 'Green', %s)""",
+                (self.as_of,),
+            )
+        self.db.commit()
+
+        app = Flask(__name__)
+        original_mysql = routes.mysql
+        routes.mysql = SimpleNamespace(connection=self.db)
+        reset_ladder_column_cache()
+
+        def overview(query):
+            with app.test_request_context(
+                f"/api/analytics/barangay-overview?{query}"
+            ):
+                response, status = routes.get_barangay_overview.__wrapped__()
+            self.assertEqual(status, 200)
+            return response.get_json()
+
+        try:
+            sector_data = overview("display_sector=retail")
+            filtered_data = overview(
+                "display_sector=retail"
+                "&line_of_business_key=retailsellingingroceries"
+            )
+        finally:
+            routes.mysql = original_mysql
+            reset_ladder_column_cache()
+
+        self.assertEqual(sector_data["overall"]["registry_total"], 3)
+        self.assertEqual(filtered_data["overall"]["registry_total"], 2)
+        options = sector_data["line_of_business_options"]
+        counts_by_value = {option["value"]: option["count"] for option in options}
+        self.assertEqual(counts_by_value, {
+            "retailsellingingroceries": 2,
+            "retailsellinginsarisaristores": 1,
+        })
+        self.assertEqual(sum(counts_by_value.values()), 3)
+        self.assertEqual(
+            filtered_data["overall"]["pins"],
+            sector_data["overall"]["pins"],
+        )
+        self.assertEqual(
+            filtered_data["overall"]["inspections"],
+            sector_data["overall"]["inspections"],
+        )
+        self.assertEqual(
+            next(
+                option for option in options
+                if option["value"] == "retailsellingingroceries"
+            )["label"],
+            "Retail Selling In Groceries (2)",
+        )
+
     def test_psic_loader_dry_run_reads_mysql_without_psic_migration_tables(self):
         from contextlib import redirect_stdout
         from io import StringIO

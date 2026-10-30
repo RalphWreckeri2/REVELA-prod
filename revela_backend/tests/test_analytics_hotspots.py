@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 
 from shapely.geometry import box
 
+from api.analytics import hotspots
 from api.analytics.hotspots import (
     HOTSPOT_DEFAULT_EPS_M,
     HOTSPOT_DEFAULT_MIN_SAMPLES,
@@ -18,6 +19,10 @@ from api.analytics.hotspots import (
     invalidate_hotspots_cache,
     resolve_hotspot_parameters,
     serialize_map_hotspot_clusters,
+)
+from api.utils.barangay_mapping import (
+    load_adm4_barangay_mapping,
+    map_adm4_barangay_ids,
 )
 
 
@@ -157,16 +162,71 @@ class HotspotAttributionTests(unittest.TestCase):
         point = attribute_hotspot_point(0.5, 0.5, self.polygons)
         self.assertEqual(point["barangay_id"], 1)
 
-    def test_boundary_and_outside_points_are_uncertain(self):
+    def test_polygon_boundary_and_outside_points_are_not_attributed(self):
         self.assertIsNone(attribute_hotspot_point(0.5, 1, self.polygons))
         self.assertIsNone(attribute_hotspot_point(3, 3, self.polygons))
+        overlapping_polygons = [
+            {"barangay_id": 1, "geometry": box(0, 0, 1.5, 1)},
+            {"barangay_id": 2, "geometry": box(0.5, 0, 2, 1)},
+        ]
+        with self.assertRaisesRegex(ValueError, "matches multiple"):
+            attribute_hotspot_point(0.5, 1, overlapping_polygons)
 
-    def test_cluster_summaries_keep_uncertain_members_out_of_barangay_counts(self):
+    def test_shared_mapping_covers_all_features_and_matches_live_ids(self):
+        mapping = load_adm4_barangay_mapping()
+        feature_names = [
+            feature["properties"]["ADM4_EN"]
+            for feature in hotspots._read_barangay_geojson()["features"]
+        ]
+        live_rows = [
+            {"barangayID": barangay_id, "barangayName": f"Barangay {barangay_id}"}
+            for barangay_id in range(1, 17)
+        ]
+        ids_by_name, _ = map_adm4_barangay_ids(feature_names, live_rows)
+
+        self.assertEqual(len(mapping), 16)
+        self.assertEqual(set(ids_by_name.values()), set(range(1, 17)))
+        self.assertEqual(ids_by_name["Loob"], 9)
+        self.assertEqual(ids_by_name["Kinalaglagan"], 11)
+        with self.assertRaisesRegex(ValueError, "No barangay ID mapping"):
+            map_adm4_barangay_ids(["Unknown Feature"], live_rows)
+
+    def test_previously_unassigned_detection_members_map_to_their_polygons(self):
+        barangay_rows = [
+            {"barangayID": barangay_id, "barangayName": f"Barangay {barangay_id}"}
+            for barangay_id in range(1, 17)
+        ]
+        polygons = hotspots.load_barangay_polygons(barangay_rows)
+        live_coordinates = {
+            186: (13.96039790, 121.11429950),
+            189: (13.96020410, 121.11466200),
+            317: (13.97716950, 121.10996680),
+            325: (13.97253270, 121.11046260),
+            328: (13.97291230, 121.11015880),
+            331: (13.96912700, 121.10945700),
+            332: (13.96912700, 121.10945700),
+            334: (13.96912700, 121.10945700),
+            335: (13.97278210, 121.11012490),
+            350: (13.97709150, 121.10995100),
+            351: (13.97711660, 121.10993520),
+            352: (13.97710060, 121.10963750),
+        }
+        expected_ids = {
+            186: 16, 189: 16, 317: 7, 325: 16, 328: 16,
+            331: 15, 332: 15, 334: 15, 335: 16,
+            350: 7, 351: 7, 352: 7,
+        }
+        self.assertEqual(set(expected_ids), set(live_coordinates))
+        for log_id, (latitude, longitude) in live_coordinates.items():
+            attributed = attribute_hotspot_point(latitude, longitude, polygons)
+            self.assertEqual(attributed["barangay_id"], expected_ids[log_id], log_id)
+
+    def test_cluster_summaries_attribute_every_cluster_member(self):
         rows = [
             {"logID": 1, "latitude": 0.5, "longitude": 0.99990, "disposition": "eligible"},
             {"logID": 2, "latitude": 0.50001, "longitude": 0.99990, "disposition": "eligible"},
             {"logID": 3, "latitude": 0.50002, "longitude": 0.99990, "disposition": "eligible"},
-            {"logID": 4, "latitude": 0.50001, "longitude": 1, "disposition": "eligible"},
+            {"logID": 4, "latitude": 0.50001, "longitude": 0.99990, "disposition": "eligible"},
             {"logID": 5, "latitude": 0.51, "longitude": 1.5, "disposition": "eligible"},
         ]
         clusters, totals = cluster_hotspot_rows(
@@ -176,16 +236,37 @@ class HotspotAttributionTests(unittest.TestCase):
         )
         self.assertEqual(len(clusters), 1)
         self.assertEqual(clusters[0]["size"], 4)
-        self.assertEqual(clusters[0]["uncertain_count"], 1)
+        self.assertEqual(clusters[0]["uncertain_count"], 0)
         self.assertEqual(
             {row["barangay_id"]: row["count"] for row in clusters[0]["per_barangay"]},
-            {1: 3},
+            {1: 4},
         )
         self.assertEqual(totals, {
             "clustered_points": 4,
             "noise_points": 1,
-            "uncertain_points": 1,
+            "uncertain_points": 0,
+            "outside_boundary_count": 0,
         })
+
+    def test_outside_pin_is_counted_logged_and_excluded_from_barangay_attribution(self):
+        rows = [
+            {"logID": 1, "latitude": 0.5, "longitude": 0.99990, "disposition": "eligible"},
+            {"logID": 2, "latitude": 0.50001, "longitude": 0.99990, "disposition": "eligible"},
+            {"logID": 3, "latitude": 0.50002, "longitude": 0.99990, "disposition": "eligible"},
+            {"logID": 91, "latitude": 0.5, "longitude": 3, "disposition": "eligible"},
+        ]
+        with self.assertLogs("api.analytics.hotspots", level="WARNING") as captured:
+            clusters, totals = cluster_hotspot_rows(
+                rows,
+                {"eps_m": 20, "min_samples": 3, "metric": "haversine"},
+                self.polygons,
+            )
+
+        self.assertEqual(len(clusters), 1)
+        self.assertEqual(clusters[0]["size"], 3)
+        self.assertEqual(clusters[0]["per_barangay"][0]["count"], 3)
+        self.assertEqual(totals["outside_boundary_count"], 1)
+        self.assertTrue(any("logID=91" in message for message in captured.output))
 
     def test_canonical_50m_contract_clusters_detection_pins_and_preserves_noise(self):
         rows = [
@@ -221,7 +302,12 @@ class HotspotAttributionTests(unittest.TestCase):
             },
         ]
         parameters, _ = resolve_hotspot_parameters({})
-        clusters, totals = cluster_hotspot_rows(rows, parameters, self.polygons)
+        polygons = [{
+            "barangay_id": 1,
+            "barangay_name": "Test Barangay",
+            "geometry": box(120.9, 9.9, 121.1, 10.1),
+        }]
+        clusters, totals = cluster_hotspot_rows(rows, parameters, polygons)
         memberships, primary_cluster_id = hotspot_cluster_memberships(rows, clusters)
 
         self.assertEqual(parameters["eps_m"], 50)
@@ -234,6 +320,43 @@ class HotspotAttributionTests(unittest.TestCase):
 
 
 class MapHotspotEndpointContractTests(unittest.TestCase):
+    def test_endpoint_returns_outside_boundary_count_without_failing(self):
+        from flask import Flask
+        from api.analytics import routes as analytics_routes
+
+        cursor = Mock()
+        fake_mysql = Mock()
+        fake_mysql.connection.cursor.return_value = cursor
+        cursor.fetchall.side_effect = [
+            [],
+            [{
+                "logID": 91,
+                "latitude": 3,
+                "longitude": 3,
+                "disposition": "eligible",
+            }],
+            [{"barangayID": 1, "barangayName": "Barangay One"}],
+        ]
+        cursor.fetchone.return_value = None
+        polygons = [{
+            "barangay_id": 1,
+            "barangay_name": "Barangay One",
+            "geometry": box(0, 0, 1, 1),
+        }]
+
+        with patch.object(analytics_routes, "mysql", fake_mysql), \
+                patch.object(analytics_routes, "ladder_columns_available", return_value=False), \
+                patch.object(analytics_routes, "_effective_flag_color_sql", return_value="effective_color(g)"), \
+                patch.object(analytics_routes, "load_barangay_polygons", return_value=polygons):
+            with patch.object(analytics_routes, "get_cached_hotspots", return_value=None):
+                app = Flask(__name__)
+                with app.test_request_context("/api/analytics/hotspots?date_preset=all"):
+                    response, status = analytics_routes.get_analytics_hotspots.__wrapped__()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response.get_json()["totals"]["outside_boundary_count"], 1)
+        self.assertTrue(cursor.close.called)
+
     def test_map_endpoint_uses_shared_population_parameters_and_clusterer(self):
         from api.flags import service
 

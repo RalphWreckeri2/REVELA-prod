@@ -6,6 +6,8 @@ import {
   getBarangayTopTotals,
   getMapPinBuckets,
   getNotInRegistryPinTotal,
+  lineOfBusinessKeyAfterSectorChange,
+  lineOfBusinessOptionsForSector,
   quantileBreaks,
   quantileClass,
   quantileRangeLabels,
@@ -14,6 +16,12 @@ import {
   sortRegistryBreakdownRows,
   visibleRegistryDimensions,
 } from "./barangayOverviewPresentation.js";
+import { readFileSync } from "node:fs";
+
+const mapOverviewSource = readFileSync(
+  new URL("./MapOverview.jsx", import.meta.url),
+  "utf8",
+);
 
 test("date presets apply to pin and inspection dates while preserving stricter filters", () => {
   const filters = {
@@ -34,6 +42,39 @@ test("date presets apply to pin and inspection dates while preserving stricter f
     inspection_to: "2026-10-27",
   });
   assert.deepEqual(buildBarangayOverviewFilters(filters, "all"), filters);
+});
+
+test("line-of-business options follow the selected sector and sector changes clear incompatible keys", () => {
+  const options = [
+    { value: "groceries", sector_key: "retail", count: 45 },
+    { value: "real-estate", sector_key: "real_estate", count: 54 },
+  ];
+  assert.deepEqual(lineOfBusinessOptionsForSector(options), options);
+  assert.deepEqual(
+    lineOfBusinessOptionsForSector(options, "retail"),
+    [options[0]],
+  );
+  assert.equal(
+    lineOfBusinessKeyAfterSectorChange("groceries", options, "retail"),
+    "groceries",
+  );
+  assert.equal(
+    lineOfBusinessKeyAfterSectorChange("groceries", options, "real_estate"),
+    "",
+  );
+  assert.equal(
+    lineOfBusinessKeyAfterSectorChange("groceries", options, ""),
+    "groceries",
+  );
+  assert.match(mapOverviewSource, /line_of_business_key:\s*selectedLineOfBusinessKey/);
+  assert.match(mapOverviewSource, /<optgroup[^>]*label=\{sector\.label\}/);
+  assert.match(mapOverviewSource, /aria-label="Filter registered businesses by line of business"/);
+  assert.match(mapOverviewSource, /Filters registered businesses only\./);
+  assert.match(mapOverviewSource, /first-listed PSIC activity[\s\S]*Secondary activities are not counted/);
+  assert.match(mapOverviewSource, /aria-label="Remove sector filter"/);
+  assert.match(mapOverviewSource, /aria-label="Remove line-of-business filter"/);
+  assert.match(mapOverviewSource, /No registered businesses match this filter\./);
+  assert.match(mapOverviewSource, /setSelectedLineOfBusinessKey\(""\)/);
 });
 
 test("single-value registry dimensions are hidden", () => {

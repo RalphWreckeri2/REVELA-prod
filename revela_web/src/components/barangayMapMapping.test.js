@@ -10,25 +10,6 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-const GEOJSON_TO_LIVE_BARANGAY_NAME = {
-  "District I (Pob.)": "Barangay I",
-  "District II (Pob.)": "Barangay II",
-  "Barangay II-A (Pob.)": "Barangay II-A",
-  "District III (Pob.)": "Barangay III",
-  "District IV (Pob.)": "Barangay IV",
-  Bayorbor: "Barangay Bayorbor",
-  Bubuyan: "Barangay Bubuyan",
-  Calingatan: "Barangay Calingatan",
-  Loob: "Barangay Loob",
-  "Lumang Lipa": "Barangay Lumanglipa",
-  Kinalaglagan: "Barangay Kinalaglagan",
-  Manggahan: "Barangay Manggahan",
-  Nangkaan: "Barangay Nangkaan",
-  "San Sebastian": "Barangay San Sebastian",
-  Santol: "Barangay Santol",
-  Upa: "Barangay Upa",
-};
-
 test("GeoJSON barangay names map to all 16 numeric barangay IDs", () => {
   assert.deepEqual(ADM4_EN_TO_BARANGAY_ID, {
     "District I (Pob.)": 1,
@@ -63,7 +44,12 @@ test("every ADM4_EN mapping matches the exported live Railway barangay table", a
     "fixtures/railwayBarangays.json",
   );
   const { rows } = JSON.parse(await readFile(fixturePath, "utf8"));
-  const liveByName = new Map(rows.map((row) => [row.barangayName, row]));
+  const liveById = new Map(rows.map((row) => [row.barangayID, row]));
+  const sharedMappingPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../revela_backend/api/utils/adm4_en_barangay_ids.json",
+  );
+  const sharedMapping = JSON.parse(await readFile(sharedMappingPath, "utf8"));
   const geoJsonPath = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../../public/data/mataasnakahoy.json",
@@ -74,16 +60,19 @@ test("every ADM4_EN mapping matches the exported live Railway barangay table", a
   assert.equal(rows.length, 16);
   assert.equal(new Set(rows.map((row) => row.barangayID)).size, 16);
   assert.equal(featureNames.length, 16);
+  assert.deepEqual(ADM4_EN_TO_BARANGAY_ID, sharedMapping);
+  assert.equal(ADM4_EN_TO_BARANGAY_ID.Loob, 9);
+  assert.equal(ADM4_EN_TO_BARANGAY_ID.Kinalaglagan, 11);
 
   for (const geoJsonName of featureNames) {
-    const liveName = GEOJSON_TO_LIVE_BARANGAY_NAME[geoJsonName];
-    assert.ok(liveName, `Missing live-name mapping for ${geoJsonName}`);
-    const liveRow = liveByName.get(liveName);
-    assert.ok(liveRow, `Missing Railway fixture row for ${liveName}`);
+    const barangayId = sharedMapping[geoJsonName];
+    assert.ok(barangayId, `Missing shared mapping for ${geoJsonName}`);
+    const liveRow = liveById.get(barangayId);
+    assert.ok(liveRow, `Missing Railway fixture row for barangayID ${barangayId}`);
     assert.equal(
       getBarangayIdForGeoJsonName(geoJsonName),
-      liveRow.barangayID,
-      `${geoJsonName} should map to ${liveName} (ID ${liveRow.barangayID})`,
+      barangayId,
+      `${geoJsonName} should map to barangayID ${liveRow.barangayID}`,
     );
   }
 });

@@ -15,6 +15,8 @@ from geopy.distance import geodesic
 from shapely.geometry import Point, shape
 from shapely.ops import nearest_points, unary_union
 
+from api.utils.barangay_mapping import map_adm4_barangay_ids
+
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 BOUNDARY_PATH = BACKEND_DIR / "api" / "utils" / "mataasnakahoy_mpdo_compatible.json"
@@ -76,46 +78,12 @@ def load_boundaries(path=BOUNDARY_PATH):
     return boundaries
 
 
-def _barangay_key(name):
-    normalized = re.sub(r"[^a-z0-9]+", "", str(name or "").casefold())
-    if normalized.endswith("pob"):
-        normalized = normalized[:-3]
-    for prefix in ("barangay", "brgy", "district"):
-        if normalized.startswith(prefix):
-            normalized = normalized[len(prefix):]
-            break
-    return normalized
-
-
 def map_barangay_ids(boundaries, barangay_rows):
-    """Map ADM4_EN names to unique live barangay rows using normalized names."""
-    rows_by_key = {}
-    names_by_id = {}
-    for row in barangay_rows:
-        barangay_id = int(row["barangayID"])
-        name = str(row["barangayName"])
-        key = _barangay_key(name)
-        if key in rows_by_key:
-            raise ValueError(
-                f"Barangay table names are ambiguous after normalization: {name!r}."
-            )
-        rows_by_key[key] = barangay_id
-        names_by_id[barangay_id] = name
-
-    ids_by_geojson_name = {}
-    missing = []
-    for name, _ in boundaries:
-        barangay_id = rows_by_key.get(_barangay_key(name))
-        if barangay_id is None:
-            missing.append(name)
-        else:
-            ids_by_geojson_name[name] = barangay_id
-    if missing:
-        raise ValueError(
-            "No unique live barangays row matches these ADM4_EN names: "
-            + ", ".join(sorted(missing))
-        )
-    return ids_by_geojson_name, names_by_id
+    """Map ADM4_EN names through the shared explicit ID mapping."""
+    return map_adm4_barangay_ids(
+        (name for name, _ in boundaries),
+        barangay_rows,
+    )
 
 
 def read_totals(cursor):

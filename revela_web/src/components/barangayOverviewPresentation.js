@@ -37,6 +37,24 @@ export function buildBarangayOverviewFilters(filters, preset, now = new Date()) 
   return result;
 }
 
+export function lineOfBusinessOptionsForSector(options = [], sectorKey = "") {
+  return options.filter((option) => (
+    !sectorKey || option.sector_key === sectorKey
+  ));
+}
+
+export function lineOfBusinessKeyAfterSectorChange(
+  selectedKey,
+  options = [],
+  nextSectorKey = "",
+) {
+  if (!selectedKey || !nextSectorKey) return selectedKey;
+  const selectedOption = options.find((option) => option.value === selectedKey);
+  return selectedOption && selectedOption.sector_key !== nextSectorKey
+    ? ""
+    : selectedKey;
+}
+
 export function visibleRegistryDimensions(registry = {}) {
   return [
     { key: "business_size", label: "By size" },

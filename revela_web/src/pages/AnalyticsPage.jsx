@@ -9,6 +9,8 @@ import {
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
+import { OverviewMapSkeleton, InspectorOperationsSkeleton, RecommendationsSkeleton } from "../components/AnalyticsLoadingLayouts";
+import { scheduleAnalyticsSkeleton } from "../components/analyticsLoadingPolicy";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
 import PinMonitoringPanel from "../components/PinMonitoringPanel";
@@ -732,11 +734,23 @@ export default function AnalyticsPage() {
     } finally { window.clearTimeout(timer); }
   }, [token, setFilterOptions]);
   const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, effectiveFilters, undefined, "analytics", () => loadFilterOptions());
+  const [rememberedSections, setRememberedSections] = useState({ source: sections, data: {} });
+  if (rememberedSections.source !== sections) {
+    setRememberedSections({ source: sections, data: Object.fromEntries(
+      Object.entries(sections).map(([name, section]) => [name, section.data || rememberedSections.data[name]]),
+    ) });
+  }
   const currentSection = sections[activeTab];
+  const hasVisibleData = Boolean(currentSection.data || rememberedSections.data[activeTab]);
   const data = useMemo(() => Object.fromEntries(
-    Object.entries(sections).map(([name, section]) => [name, section.data]),
-  ), [sections]);
-  const loading = !currentSection.data && currentSection.status === "loading";
+    Object.entries(sections).map(([name, section]) => [name, section.data || rememberedSections.data[name]]),
+  ), [sections, rememberedSections.data]);
+  const loading = !hasVisibleData && currentSection.status === "loading";
+  const [skeletonTab, setSkeletonTab] = useState(null);
+  useEffect(() => {
+    if (!loading) return undefined;
+    return scheduleAnalyticsSkeleton(() => setSkeletonTab(activeTab));
+  }, [activeTab, loading]);
   const error = currentSection.error;
   const expiredSection = Object.values(sections).find(section => section.status === "expired");
   const snapshotIsExpired = Boolean(expiredSection);
@@ -1434,8 +1448,6 @@ export default function AnalyticsPage() {
       `}</style>
 
       <div className="analytics-page-shell">
-      {/* PAGE WRAPPER */}
-      <div style={{ width: "100%", minWidth: 0 }}>
 
         {/* PAGE HEADER */}
         <div className="analytics-page-heading">
@@ -1891,15 +1903,14 @@ export default function AnalyticsPage() {
             {!offline && <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()}>Retry analytics</button>}
           </div>
         )}
-        {currentSection.data && currentSection.updating && (
-          <p role="status" className="analytics-updating">Updating analytics… Showing the last available data.</p>
-        )}
-        {loading && (
-          <span role="status" aria-busy="true" className="analytics-sr-only">
-            Loading {activeTab} analytics…
-          </span>
-        )}
-        {!loading && !currentSection.data && !snapshotIsExpired && (
+        <div className="analytics-update-slot" role="status" aria-live="polite">
+          {hasVisibleData && (currentSection.updating || !currentSection.data)
+            ? "Updating analytics… Showing the last available data." : ""}
+        </div>
+        <span className="analytics-sr-only" role="status" aria-live="polite">
+          {loading ? `Loading ${activeTab === "descriptive" ? "Overview" : "Recommendations"} analytics…` : ""}
+        </span>
+        {!loading && !hasVisibleData && !snapshotIsExpired && (
           <div className="saas-card analytics-section-state">
             <h3>{offline ? "Analytics unavailable offline" : "Analytics could not be loaded"}</h3>
             <p>{offline ? "Reconnect to load this section automatically." : "Please retry to load this section."}</p>
@@ -1934,9 +1945,16 @@ export default function AnalyticsPage() {
             <button type="button" className="ghost-btn analytics-stale-alert-action" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}
-        {activeTab === "descriptive" && (
+        <div className="analytics-loading-region" aria-busy={loading}>
+        {activeTab === "descriptive" && loading && (
+          <section className="analytics-loading-section" style={{ visibility: skeletonTab === activeTab ? "visible" : "hidden", marginBottom: 52 }}>
+            <OverviewMapSkeleton />
+            <InspectorOperationsSkeleton />
+          </section>
+        )}
+        {activeTab === "descriptive" && !loading && (
           <section style={{ marginBottom: 52 }}>
-            <Suspense fallback={<Skeleton h={560} variant="map" />}>
+            <Suspense fallback={<OverviewMapSkeleton />}>
               <MapOverview
                 token={token}
                 filters={appliedFilters}
@@ -2202,7 +2220,10 @@ export default function AnalyticsPage() {
           </section>
         )}
 
-        {data.prescriptive && activeTab === "prescriptive" && (
+        {activeTab === "prescriptive" && loading && (
+          <div style={{ visibility: skeletonTab === activeTab ? "visible" : "hidden" }}><RecommendationsSkeleton /></div>
+        )}
+        {data.prescriptive && activeTab === "prescriptive" && !loading && (
           <section className="analytics-recommendation-list" aria-labelledby="recommendations-heading">
             <div className="analytics-recommendation-heading">
               <h2 id="recommendations-heading">Where should inspectors go first?</h2>
@@ -2210,7 +2231,7 @@ export default function AnalyticsPage() {
                 {Number(prescWorkforce?.available_inspectors ?? 0)} inspector{Number(prescWorkforce?.available_inspectors ?? 0) === 1 ? "" : "s"} available. Dispatch recommendations cover up to 3 barangays; others wait for a free inspector.
               </p>
             </div>
-            {loading ? <Skeleton h={320} variant="list" /> : (
+            {(
               <>
                 <div className="analytics-recommendation-table">
                   <div className="analytics-recommendation-columns">
@@ -3001,7 +3022,7 @@ export default function AnalyticsPage() {
             )}
           </section>
         )}
-      </div>
+        </div>
 
       {/* Footer */}
       <footer className="saas-footer frosted-glass">

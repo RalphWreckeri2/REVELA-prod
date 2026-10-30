@@ -857,6 +857,37 @@ def get_barangay_overview():
         filters["barangay_ids"] = None
         filters["registration_type_supported"] = True
         registry_where, registry_params = registry_sql("o", filters)
+        line_of_business_key = (
+            str(request.args.get("line_of_business_key") or "").strip() or None
+        )
+        line_of_business_filter = ""
+        line_of_business_params = []
+        if line_of_business_key:
+            registry_line_expression = (
+                "LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), "
+                "'[^A-Za-z0-9]', '')) COLLATE utf8mb4_unicode_ci"
+            )
+            line_of_business_filter = f"""
+                AND EXISTS (
+                    SELECT 1
+                    FROM registry_sector_map lob_map
+                    JOIN psic_active_version active_version
+                      ON active_version.singleton_id = 1
+                     AND lob_map.source_version = active_version.source_version
+                    JOIN psic_lines primary_line
+                      ON primary_line.psic_line_id = lob_map.primary_psic_line_id
+                     AND primary_line.source_version = active_version.source_version
+                    WHERE lob_map.normalized_line_of_business =
+                          {registry_line_expression}
+                      AND lob_map.match_status IN ('matched', 'combo')
+                      AND primary_line.normalized_line_of_business
+                          COLLATE utf8mb4_unicode_ci =
+                          %s COLLATE utf8mb4_unicode_ci
+                )
+            """
+            line_of_business_params.append(line_of_business_key)
+        registry_where += line_of_business_filter
+        registry_params = registry_params + line_of_business_params
         ladder = ladder_columns_available(cursor)
         geo_where, geo_params = geo_sql("g", filters, ladder=ladder)
         inspection_where, inspection_params = inspection_sql("ir", filters)
@@ -962,6 +993,44 @@ def get_barangay_overview():
             {
                 "value": row["display_sector_key"],
                 "label": row["display_sector_label"],
+            }
+            for row in cursor.fetchall()
+        ]
+        cursor.execute(
+            f"""
+            SELECT primary_line.normalized_line_of_business AS value,
+                   MIN(primary_line.line_of_business) AS description,
+                   sector_map.display_sector_key AS sector_key,
+                   COUNT(*) AS count
+            FROM official_registry o
+            JOIN registry_sector_map sector_map
+              ON sector_map.normalized_line_of_business =
+                 LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                   COLLATE utf8mb4_unicode_ci
+             AND sector_map.match_status IN ('matched', 'combo')
+            JOIN psic_active_version active_version
+              ON active_version.singleton_id = 1
+             AND sector_map.source_version = active_version.source_version
+            JOIN psic_lines primary_line
+              ON primary_line.psic_line_id = sector_map.primary_psic_line_id
+             AND primary_line.source_version = active_version.source_version
+            WHERE 1=1 {registry_sql("o", filters)[0]}
+            GROUP BY primary_line.normalized_line_of_business,
+                     sector_map.display_sector_key
+            ORDER BY sector_map.display_sector_key,
+                     MIN(primary_line.line_of_business)
+            """,
+            registry_sql("o", filters)[1],
+        )
+        line_of_business_options = [
+            {
+                "value": row["value"],
+                "label": (
+                    f"{str(row['description'] or row['value']).strip().title()} "
+                    f"({int(row['count'] or 0):,})"
+                ),
+                "sector_key": row["sector_key"],
+                "count": int(row["count"] or 0),
             }
             for row in cursor.fetchall()
         ]
@@ -1189,6 +1258,7 @@ def get_barangay_overview():
             "barangays": rows,
             "overall": overall,
             "display_sectors": display_sector_options,
+            "line_of_business_options": line_of_business_options,
         }), 200
     except Exception:
         current_app.logger.exception("Failed to load barangay overview")

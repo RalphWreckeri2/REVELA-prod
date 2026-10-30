@@ -75,16 +75,62 @@
 
 .map-overview-control-group {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
   gap: 16px;
 }
 
-.map-overview-sector-scope {
+.map-overview-filter-scope {
+  margin: 8px 0 0;
   color: var(--color-muted);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.35;
+}
+
+.map-overview-filter-label-heading {
+  display: flex;
+  min-height: 16px;
+  align-items: center;
+  gap: 4px;
+}
+
+.map-overview-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.map-overview-active-filter {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 11px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface, #fff);
+  color: var(--color-ink);
+  font-size: 12px;
+}
+
+.map-overview-active-filter button {
+  width: 36px;
+  min-height: 36px !important;
+  padding: 0;
+  border-radius: 50% !important;
+}
+
+.map-overview-filter-empty {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.map-overview-filter-empty p {
+  margin: 0;
 }
 
 .map-overview-topbar {
@@ -294,9 +340,8 @@
 }
 
 .map-overview-hotspot-toggle[aria-checked="true"] {
-  border-color: #c2410c;
-  background: #fff7ed;
-  color: #9a3412;
+  border-color: var(--hotspot-flag-red);
+  color: var(--hotspot-flag-red);
 }
 
 .map-overview-hotspot-scan-note {
@@ -308,20 +353,44 @@
 
 .map-overview-hotspot-badge {
   display: inline-flex;
-  min-width: 25px;
-  min-height: 25px;
   align-items: center;
   justify-content: center;
   padding: 2px 6px;
   border: 2px solid #fff;
   border-radius: 999px;
-  background: #c2410c;
+  background: var(--hotspot-flag-red);
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.35);
   color: #fff;
   font-size: 11px;
   font-weight: 800;
   line-height: 1;
   text-shadow: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.map-overview-hotspot-badge--small {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+.map-overview-hotspot-badge--medium {
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.map-overview-hotspot-badge--large {
+  min-width: 42px;
+  min-height: 42px;
+  font-size: 14px;
+}
+
+.map-overview-hotspot-badge--selected {
+  transform: scale(1.08);
+}
+
+.map-overview-hotspot-badge--dimmed {
+  opacity: 0.28;
 }
 
 .map-overview-hotspot-summary {
@@ -352,30 +421,22 @@
   line-height: 1.45;
 }
 
+.map-overview-hotspot-period {
+  color: var(--color-muted);
+  font-size: 11px !important;
+}
+
 .map-overview-hotspot-caveat {
   color: var(--color-muted);
 }
 
-.map-overview-hotspot-method {
+.map-overview-hotspot-outside-boundary {
   color: var(--color-muted);
   font-size: 11px !important;
 }
 
 .map-overview-cluster-detail {
   min-width: 0;
-}
-
-.map-overview-cluster-prompt {
-  border-style: dashed;
-  background: var(--color-input-bg, #f8fafc);
-}
-
-.map-overview-cluster-prompt h4 {
-  color: var(--color-ink);
-}
-
-.map-overview-cluster-prompt p {
-  color: var(--color-muted);
 }
 
 .map-overview-cluster-detail .map-overview-card-heading {
@@ -386,18 +447,73 @@
   color: var(--color-ink);
 }
 
-.map-overview-cluster-detail .map-overview-card-heading p,
-.map-overview-cluster-centroid {
+.map-overview-cluster-detail .map-overview-card-heading p {
   margin: 3px 0 0;
   color: var(--color-muted);
   font-size: 11px;
   line-height: 1.4;
 }
 
-.map-overview .map-overview-cluster-clear {
-  min-height: 34px;
-  padding: 5px 10px;
-  flex: 0 0 auto;
+.map-overview-hotspot-group-list {
+  display: grid;
+  max-height: 390px;
+  gap: 7px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.map-overview .map-overview-hotspot-group-list button {
+  min-height: 44px;
+  padding: 9px 12px;
+  text-align: left;
+  font-size: 12px;
+}
+
+.map-overview-hotspot-group-list button[aria-pressed="true"] {
+  border-color: var(--hotspot-flag-red);
+  box-shadow: inset 3px 0 var(--hotspot-flag-red);
+}
+
+.map-overview-hotspot-error {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.map-overview-hotspot-summary-skeleton {
+  display: grid;
+  min-height: 18px;
+}
+
+.map-overview-hotspot-summary-skeleton span,
+.map-overview-hotspot-list-skeleton span {
+  display: block;
+  border-radius: 9px;
+  background: linear-gradient(90deg, var(--color-card-alt, #eef2f7) 25%, #f8fafc 50%, var(--color-card-alt, #eef2f7) 75%);
+  background-size: 200% 100%;
+  animation: map-overview-hotspot-skeleton-shimmer 1.35s ease-in-out infinite;
+}
+
+.map-overview-hotspot-summary-skeleton span {
+  width: 72%;
+  height: 18px;
+}
+
+.map-overview-hotspot-list-skeleton {
+  display: grid;
+  min-height: 390px;
+  align-content: start;
+  gap: 7px;
+  padding-right: 2px;
+}
+
+.map-overview-hotspot-list-skeleton span {
+  height: 44px;
+  width: 100%;
+}
+
+@keyframes map-overview-hotspot-skeleton-shimmer {
+  to { background-position: -200% 0; }
 }
 
 .map-overview-cluster-pin-list {
@@ -419,19 +535,32 @@
   border-radius: 9px;
   background: var(--color-input-bg, #f8fafc);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
   overflow-wrap: anywhere;
-  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.map-overview .map-overview-cluster-pin:not(:disabled):hover {
-  border-color: #f97316;
-  background: #fff7ed;
+.map-overview-hotspot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
-.map-overview .map-overview-cluster-pin:focus-visible {
-  outline: 2px solid #f97316;
-  outline-offset: 2px;
+.map-overview .map-overview-hotspot-actions button {
+  min-height: 44px;
+}
+
+.map-overview .map-overview-hotspot-open-map {
+  border-color: var(--hotspot-flag-red);
+  background: var(--hotspot-flag-red);
+  color: #fff;
+}
+
+.map-overview .map-overview-hotspot-open-map:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+
+.map-overview .map-overview-hotspot-back {
+  background: transparent;
 }
 
 .map-overview-cluster-pin strong {
@@ -446,14 +575,6 @@
   line-height: 1.35;
 }
 
-.map-overview-cluster-pin .map-overview-cluster-pin-unavailable {
-  font-style: italic;
-}
-
-.map-overview-cluster-detail .map-overview-hotspot-caveat {
-  margin-top: 2px;
-}
-
 .map-overview-segmented button.active,
 .map-overview-choice-row button.active {
   border-color: #2563eb;
@@ -465,6 +586,21 @@
   display: flex;
   align-items: center;
   gap: 5px;
+}
+
+.map-overview-hotspot-legend-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.map-overview-hotspot-legend-copy i {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  border: 2px dashed var(--hotspot-flag-red);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hotspot-flag-red) 25%, transparent);
 }
 
 .map-overview-canvas {
@@ -928,9 +1064,9 @@ html.theme-dark .map-overview .map-overview-selection-chip {
   color: #bfdbfe;
 }
 html.theme-dark .map-overview .map-overview-hotspot-toggle[aria-checked="true"] {
-  border-color: #fb923c;
-  background: rgba(249, 115, 22, 0.18);
-  color: #fdba74;
+  border-color: var(--hotspot-flag-red);
+  background: color-mix(in srgb, var(--hotspot-flag-red) 18%, transparent);
+  color: #fca5a5;
 }
 html.theme-dark .map-overview .map-overview-selection-chip button,
 html.theme-dark .map-overview .map-overview-reset {
