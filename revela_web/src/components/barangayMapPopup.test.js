@@ -23,19 +23,18 @@ test("shared barangay popup formats registry and map-view metrics accurately", (
   assert.equal(formatBarangayMapPopupCount(3, "inspection reports"), "3 inspection reports");
 });
 
-test("map popup separates all registry records from metrics under the current map filters", () => {
+test("map hover popup shows only the barangay name and total business count", () => {
   const normalizeFlagSource = mapPageSource.match(/function normalizeFlag\(flag\) \{[\s\S]*?\n\}/)?.[0] ?? "";
   assert.match(normalizeFlagSource, /hasMapCoordinates/);
   assert.match(normalizeFlagSource, /const lat = hasExactCoords \? rawLat : null/);
   assert.match(normalizeFlagSource, /Coordinates unavailable/);
   assert.doesNotMatch(normalizeFlagSource, /getBarangayCentroid|DEFAULT_MAP_CENTER/);
-  assert.match(mapPageSource, /createBarangayMapPopup\(\{[\s\S]*?count:\s*ranking\?\.total_registered/);
-  assert.match(mapPageSource, /countLabel:\s*"registered businesses \(all registry records\)"/);
-  assert.match(mapPageSource, /Map-eligible locations \(current filters\)/);
-  assert.match(mapPageSource, /const scopedFilteredFlags = useMemo\(\(\) => hotspotGroup\.active/);
+  const hoverHandler = mapPageSource.match(/const handleBoundaryMouseOver = useCallback\([\s\S]*?\n\s{2}\},\s\[barangays,[\s\S]*?\]\);/)?.[0] ?? "";
+  assert.match(hoverHandler, /name:\s*label/);
+  assert.match(hoverHandler, /count:\s*ranking\?\.total_registered/);
+  assert.match(hoverHandler, /countLabel:\s*"total businesses"/);
+  assert.doesNotMatch(hoverHandler, /details:|mapMetricsByBarangay|opsRiskTooltipLines/);
   assert.match(mapPageSource, /aggregateMapLocationMetrics\(scopedFilteredFlags,\s*boundaryFeatures\)/);
-  assert.match(mapPageSource, /const visibleFlags = useMemo\(\s*\(\) => scopedFilteredFlags\.filter\(hasMapCoordinates\)/);
-  assert.match(mapPageSource, /mapMetricsByBarangay=\{filteredMapMetrics\.byBarangay\}/);
   assert.match(analyticsMapSource, /createBarangayMapPopup\(\{/);
   assert.match(analyticsMapSource, /row\?\.registry_total/);
   assert.match(analyticsMapSource, /row\?\.inspections\?\.total/);
