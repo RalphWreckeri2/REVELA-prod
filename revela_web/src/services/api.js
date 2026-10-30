@@ -1,7 +1,7 @@
 import { readDeviceAccessHints } from "../components/mobileDetection.js";
 
 export const API_ORIGIN =
-  import.meta.env.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
+  import.meta.env?.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
 const BASE_URL = `${API_ORIGIN}/api`;
 
 /** Shown when the backend refuses a session for inactivity. */
@@ -1388,6 +1388,7 @@ function analyticsFiltersToSearchParams(filters = {}) {
   set("barangay_id", filters.barangay_id);
   set("application_status", filters.application_status);
   set("line_of_business", filters.line_of_business);
+  set("line_of_business_key", filters.line_of_business_key);
   set("display_sector", filters.display_sector);
   set("business_type", filters.business_type);
   set("business_size", filters.business_size);

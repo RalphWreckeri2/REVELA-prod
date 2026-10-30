@@ -1,9 +1,10 @@
 from api.utils.cancellation import set_cancel
 import os
 import threading
+import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, g, request, jsonify, current_app
 from flask_jwt_extended import get_jwt_identity
 from app import mysql
 from api.registry.service import (
@@ -434,10 +435,28 @@ def review_queue():
     page = request.args.get("page", 1, type=int)
     per_page = max(1, min(request.args.get("limit", 20, type=int), 100))
     search = request.args.get("search", "").strip()
-    result, error = places_resolver.list_review_queue(
-        page=page, per_page=per_page, search=search)
+    request_id = getattr(g, "_revela_id", None) or uuid.uuid4().hex[:12]
+    try:
+        result, error = places_resolver.list_review_queue(
+            page=page, per_page=per_page, search=search)
+    except Exception:
+        current_app.logger.exception(
+            "Failed to load pin suggestions request_id=%s", request_id
+        )
+        return jsonify({
+            "error": "Could not load pin suggestions. Please try again.",
+            "request_id": request_id,
+        }), 500
     if error:
-        return jsonify({"error": error}), 500
+        current_app.logger.error(
+            "Could not load pin suggestions request_id=%s error=%s",
+            request_id,
+            error,
+        )
+        return jsonify({
+            "error": "Could not load pin suggestions. Please try again.",
+            "request_id": request_id,
+        }), 500
     return jsonify(result), 200
 
 

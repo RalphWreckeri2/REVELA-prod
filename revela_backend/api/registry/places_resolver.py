@@ -30,6 +30,7 @@ Scheduled maintenance (cron / task scheduler), inside an app context:
     purge_expired_coords(dry_run=False)   # safety net; clears Google coords older than 28 days
 """
 import hashlib
+import logging
 import math
 import os
 import random
@@ -808,6 +809,8 @@ def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, b
 def _g(row, key, idx):
     if isinstance(row, dict):
         return row.get(key)
+    if row is None:
+        return None
     return row[idx] if len(row) > idx else None
 
 
@@ -1012,6 +1015,14 @@ def list_review_queue(page=1, per_page=20, search=""):
                 "matchScore", "candidateScore",
             ):
                 d[k] = float(d[k]) if d.get(k) is not None else None
+            review_score = d.get("candidateScore")
+            if review_score is None:
+                review_score = d.get("matchScore")
+            d["lowMatchScore"] = (
+                d.get("matchStatus") == "review"
+                and review_score is not None
+                and review_score < AUTO_ACCEPT
+            )
             d.setdefault("reviewHistoryID", None)
             candidate_has_coordinates = (
                 d.get("candidateLatitude") is not None
@@ -1056,6 +1067,9 @@ def list_review_queue(page=1, per_page=20, search=""):
             items.append(d)
         return {"data": items, "total": total, "page": page, "limit": per_page}, None
     except Exception as e:
+        logging.getLogger(__name__).exception(
+            "Failed to load registry pin suggestions"
+        )
         return None, str(e)
     finally:
         cur.close()

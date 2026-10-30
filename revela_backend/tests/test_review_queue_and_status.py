@@ -1,4 +1,5 @@
 from api.registry.places_resolver import list_review_queue, decide_review
+from api.registry import places_resolver
 from api.inspections import service as inspection_service
 from api.flags.service import get_flags, update_flag_color
 import os
@@ -34,6 +35,90 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
         schema_check = patch("api.registry.reverify._ensure_history_table")
         schema_check.start()
         self.addCleanup(schema_check.stop)
+
+    def test_nullable_reverify_candidate_fields_do_not_break_review_queue(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"c": 1}
+        cursor.fetchall.return_value = [{
+            "businessID": "G-0401018-00047",
+            "barangayID": 16,
+            "barangayName": "Barangay Upa",
+            "businessName": "MARK J'S MOTORCYCLE PARTS AND ACCESSORIES TRADING",
+            "businessAddress": "UPA",
+            "originalLatitude": 13.947664,
+            "originalLongitude": 121.119366,
+            "originalPlaceID": None,
+            "coordSource": "geocode",
+            "matchScore": 0.554,
+            "matchStatus": "review",
+            "resolveKey": "current-key",
+            "reviewHistoryID": None,
+            "reviewOutcome": None,
+            "reviewType": None,
+            "reviewKey": None,
+            "candidateLatitude": None,
+            "candidateLongitude": None,
+            "candidatePlaceID": None,
+            "candidateScore": None,
+            "candidateSource": None,
+            "candidateCoordSource": None,
+            "previousAddress": None,
+            "previousBarangayID": None,
+            "previousBarangayName": None,
+            "previousLatitude": None,
+            "previousLongitude": None,
+            "previousCoordSource": None,
+            "previousPlaceID": None,
+            "previousPlaceIDKind": None,
+        }]
+        with patch("api.registry.places_resolver.mysql") as mock_mysql:
+            mock_mysql.connection.cursor.return_value = cursor
+            for search in ("G-0401018-00047", ""):
+                with self.subTest(search=search):
+                    result, error = list_review_queue(search=search)
+                    self.assertIsNone(error)
+                    candidate = result["data"][0]
+                    self.assertEqual(candidate["businessAddress"], "UPA")
+                    self.assertIsNone(candidate["originalPlaceID"])
+                    self.assertIsNone(candidate["candidatePlaceID"])
+                    self.assertEqual(candidate["matchScore"], 0.554)
+                    self.assertTrue(candidate["lowMatchScore"])
+
+    def test_nullable_tuple_row_accessor_is_safe(self):
+        from api.registry.places_resolver import _g
+
+        self.assertIsNone(_g(None, "candidatePlaceID", 0))
+
+    def test_review_queue_error_response_is_generic_and_includes_request_id(self):
+        app = Flask(__name__)
+        with app.test_request_context("/api/registry/review?search=G-0401018-00047"):
+            with patch.object(
+                places_resolver,
+                "list_review_queue",
+                return_value=(None, "object of type 'NoneType' has no len()"),
+            ):
+                response, status = registry_routes.review_queue.__wrapped__()
+
+        payload = response.get_json()
+        self.assertEqual(status, 500)
+        self.assertEqual(
+            payload["error"],
+            "Could not load pin suggestions. Please try again.",
+        )
+        self.assertTrue(payload["request_id"])
+        self.assertNotIn("NoneType", str(payload))
+
+    def test_review_queue_logs_traceback_for_internal_errors(self):
+        cursor = MagicMock()
+        cursor.execute.side_effect = RuntimeError("internal test failure")
+        with patch("api.registry.places_resolver.mysql") as mock_mysql:
+            mock_mysql.connection.cursor.return_value = cursor
+            with self.assertLogs("api.registry.places_resolver", level="ERROR") as logs:
+                result, error = list_review_queue()
+
+        self.assertIsNone(result)
+        self.assertEqual(error, "internal test failure")
+        self.assertIn("Traceback", "\n".join(logs.output))
 
     @patch("api.registry.places_resolver.mysql")
     def test_address_reapproval_rejects_missing_or_invalid_choice_even_with_candidate_id(

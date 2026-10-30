@@ -599,7 +599,10 @@ class DashboardMySQLTests(unittest.TestCase):
                 """INSERT INTO display_sector
                        (normalized_major_type, display_sector_key,
                         display_sector_label, sort_order, is_active)
-                   VALUES ('retailtrade', 'retail', 'Retail', 1, 1)"""
+                   VALUES
+                       ('retailtrade', 'retail', 'Retail', 1, 1),
+                       ('educationhealth', 'education_health_other_services',
+                        'Education, health and other services', 2, 1)"""
             )
             cur.execute(
                 "INSERT INTO psic_active_version (singleton_id, source_version) "
@@ -616,6 +619,7 @@ class DashboardMySQLTests(unittest.TestCase):
                     (1101, 1, "retailsellingingroceries", "Retail selling in groceries"),
                     (1102, 2, "retailsellinginsarisaristores",
                      "Retail selling in sari-sari stores"),
+                    (1103, 3, "barbershopactivities", "Barber shop activities"),
                 ],
             )
             cur.executemany(
@@ -637,23 +641,39 @@ class DashboardMySQLTests(unittest.TestCase):
                 ],
             )
             cur.executemany(
+                """INSERT INTO official_registry
+                       (businessID, barangayID, businessName, lineOfBusiness)
+                   VALUES (%s, 1, %s, 'Barber shop activities')""",
+                [
+                    (f"LOB-BARBER-{index}", f"Barber shop {index}")
+                    for index in range(1, 9)
+                ],
+            )
+            cur.executemany(
                 """INSERT INTO registry_sector_map
                        (normalized_line_of_business, source_version,
                         match_status, primary_psic_line_id,
                         display_sector_key, display_sector_label)
-                   VALUES (%s, 'primary-filter-version', %s, %s, 'retail', 'Retail')""",
+                   VALUES (%s, 'primary-filter-version', %s, %s, %s, %s)""",
                 [
-                    ("retailsellingingroceries", "matched", 1101),
+                    ("retailsellingingroceries", "matched", 1101, "retail", "Retail"),
                     (
                         "retailsellingingroceriesretailsellinginsarisaristores",
                         "combo",
                         1101,
+                        "retail",
+                        "Retail",
                     ),
                     (
                         "retailsellinginsarisaristoresretailsellingingroceries",
                         "combo",
                         1102,
+                        "retail",
+                        "Retail",
                     ),
+                    ("barbershopactivities", "matched", 1103,
+                     "education_health_other_services",
+                     "Education, health and other services"),
                 ],
             )
             cur.execute(
@@ -688,10 +708,14 @@ class DashboardMySQLTests(unittest.TestCase):
             return response.get_json()
 
         try:
+            all_data = overview("")
             sector_data = overview("display_sector=retail")
             filtered_data = overview(
                 "display_sector=retail"
                 "&line_of_business_key=retailsellingingroceries"
+            )
+            barber_data = overview(
+                "line_of_business_key=barbershopactivities"
             )
         finally:
             routes.mysql = original_mysql
@@ -699,6 +723,20 @@ class DashboardMySQLTests(unittest.TestCase):
 
         self.assertEqual(sector_data["overall"]["registry_total"], 3)
         self.assertEqual(filtered_data["overall"]["registry_total"], 2)
+        self.assertEqual(all_data["overall"]["registry_total"], 11)
+        self.assertEqual(barber_data["overall"]["registry_total"], 8)
+        self.assertEqual(
+            sum(row["registry_total"] for row in barber_data["barangays"]), 8
+        )
+        self.assertEqual(
+            barber_data["overall"]["registry"]["display_sector"],
+            [{
+                "value": "education_health_other_services",
+                "label": "Education, health and other services",
+                "short_label": "Education, health and other services",
+                "count": 8,
+            }],
+        )
         options = sector_data["line_of_business_options"]
         counts_by_value = {option["value"]: option["count"] for option in options}
         self.assertEqual(counts_by_value, {
@@ -713,6 +751,14 @@ class DashboardMySQLTests(unittest.TestCase):
         self.assertEqual(
             filtered_data["overall"]["inspections"],
             sector_data["overall"]["inspections"],
+        )
+        self.assertEqual(
+            barber_data["overall"]["pins"],
+            all_data["overall"]["pins"],
+        )
+        self.assertEqual(
+            barber_data["overall"]["inspections"],
+            all_data["overall"]["inspections"],
         )
         self.assertEqual(
             next(

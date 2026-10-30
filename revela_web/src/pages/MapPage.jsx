@@ -24,7 +24,11 @@ import {
   PREVIOUS_LOCATION,
   canConfirmLocationChoice,
   confirmLocationChoice,
+  formatPinMoveDistance,
+  isSamePinCandidate,
+  pinMoveDistanceMeters,
   resetLocationChoices,
+  reviewApprovalConfirmation,
   selectLocationChoice,
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
@@ -2836,6 +2840,7 @@ export default function MapPage() {
   const snapRunModeRef = useRef("snap");
   const [showReviewQueue, setShowReviewQueue] = useState(false);
   const [reviewQueue, setReviewQueue] = useState(null);
+  const reviewQueueRequestSequence = useRef(0);
   const [reviewQueuePage, setReviewQueuePage] = useState(1);
   const [reviewQueueSearch, setReviewQueueSearch] = useState("");
   const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
@@ -3225,7 +3230,9 @@ export default function MapPage() {
 
   const loadRegistryReviewQueue = async (page = 1, search = reviewQueueSearch) => {
     if (!token || !isAdmin) return;
+    const requestSequence = ++reviewQueueRequestSequence.current;
     setReviewQueueLoading(true);
+    setReviewQueue(null);
     setReviewQueueError("");
     setReviewLocationChoices(resetLocationChoices());
     try {
@@ -3235,12 +3242,22 @@ export default function MapPage() {
         REVIEW_QUEUE_PAGE_SIZE,
         search,
       );
+      if (requestSequence !== reviewQueueRequestSequence.current) return;
       setReviewQueue(result);
       setReviewQueuePage(result?.page ?? page);
     } catch (err) {
-      setReviewQueueError(err.message || "Unable to load pin review suggestions.");
+      if (requestSequence !== reviewQueueRequestSequence.current) return;
+      setReviewQueue(null);
+      const requestId = err.responseData?.request_id;
+      setReviewQueueError(
+        `Could not load pin suggestions. Please try again.${
+          requestId ? ` Request ID: ${requestId}` : ""
+        }`,
+      );
     } finally {
-      setReviewQueueLoading(false);
+      if (requestSequence === reviewQueueRequestSequence.current) {
+        setReviewQueueLoading(false);
+      }
     }
   };
 
@@ -3999,6 +4016,13 @@ export default function MapPage() {
 
   const handleReviewQueueDecision = async (candidate, action) => {
     const isApprove = action === "approve";
+    if (
+      isApprove
+      && !candidate.locationReapproval
+      && isSamePinCandidate(candidate)
+    ) {
+      return;
+    }
     const locationChoice = selectedLocationChoice(
       reviewLocationChoices, candidate,
     );
@@ -4013,9 +4037,11 @@ export default function MapPage() {
       icon: "warning",
       title: isApprove ? "Confirm selected location?" : "Reject location candidate?",
       text: isApprove
-        ? locationChoice === "previous"
-          ? `Keep the previously approved coordinates for ${candidate.businessName} and approve them for the updated address?`
-          : `Replace ${candidate.businessName}'s previous coordinates with the current imported/resolved candidate?`
+        ? !candidate.locationReapproval
+          ? reviewApprovalConfirmation(candidate)
+          : locationChoice === "previous"
+            ? `Keep the previously approved coordinates for ${candidate.businessName} and approve them for the updated address?`
+            : `Replace ${candidate.businessName}'s previous coordinates with the current imported/resolved candidate?`
         : `Reject this location candidate and keep the previous pin pending review?`,
       showCancelButton: true,
       confirmButtonText: isApprove ? "Confirm location" : "Reject candidate",
@@ -5608,7 +5634,11 @@ export default function MapPage() {
                 <SkeletonList rows={4} />
               ) : reviewQueue?.data?.length ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {reviewQueue.data.map((candidate) => (
+                  {reviewQueue.data.map((candidate) => {
+                    const moveDistance = pinMoveDistanceMeters(candidate);
+                    const samePin = !candidate.locationReapproval
+                      && isSamePinCandidate(candidate);
+                    return (
                     <article
                       key={candidate.businessID}
                       style={{
@@ -5622,13 +5652,14 @@ export default function MapPage() {
                         <div style={{ minWidth: 0 }}>
                           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{candidate.businessName}</h3>
                           <p style={{ margin: "4px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
-                            {candidate.businessID} · {candidate.barangayName || "Barangay not listed"}
+                            Barangay {String(candidate.barangayName || "not listed").replace(/^Barangay\s+/i, "")}
                           </p>
-                          {candidate.businessAddress && (
-                            <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
-                              {candidate.businessAddress}
-                            </p>
-                          )}
+                          <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
+                            Address: {candidate.businessAddress || "Not recorded"}
+                          </p>
+                          <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 11 }}>
+                            {candidate.businessID}
+                          </p>
                         </div>
                         {candidate.mapsUrl && (
                           <a
@@ -5755,8 +5786,31 @@ export default function MapPage() {
                               : `${Number(candidate.latitude).toFixed(6)}, ${Number(candidate.longitude).toFixed(6)}`}
                             {candidate.matchScore != null && ` · Match score ${Number(candidate.matchScore).toFixed(2)}`}
                           </div>
+                          <div style={{ color: "var(--color-muted)", marginTop: 3 }}>
+                            Distance to move: {moveDistance == null
+                              ? "Unavailable"
+                              : formatPinMoveDistance(moveDistance)}
+                          </div>
                         </div>
                       </div>
+                      {candidate.lowMatchScore && (
+                        <p role="note" style={{
+                          margin: "10px 0 0",
+                          color: "var(--color-warning, #b45309)",
+                          fontSize: 12,
+                        }}>
+                          Low match score. Check the Google place before approving.
+                        </p>
+                      )}
+                      {samePin && (
+                        <p role="status" style={{
+                          margin: "10px 0 0",
+                          color: "var(--color-muted)",
+                          fontSize: 12,
+                        }}>
+                          Proposed location is the same as the current pin
+                        </p>
+                      )}
                       {candidate.candidateOutsideMunicipality && (
                         <p role="alert" style={{
                           margin: "10px 0 0",
@@ -5780,7 +5834,7 @@ export default function MapPage() {
                           type="button"
                           className="primary-btn"
                           onClick={() => handleReviewQueueDecision(candidate, "approve")}
-                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || candidate.candidateOutsideMunicipality || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
+                          disabled={reviewQueueLoading || Boolean(reviewQueueActionId) || samePin || candidate.candidateOutsideMunicipality || (candidate.locationReapproval && !canConfirmLocationChoice(candidate, selectedLocationChoice(reviewLocationChoices, candidate)))}
                         >
                           {reviewQueueActionId === candidate.businessID ? "Saving…" : candidate.locationReapproval
                             ? selectedLocationChoice(reviewLocationChoices, candidate) === PREVIOUS_LOCATION
@@ -5790,7 +5844,8 @@ export default function MapPage() {
                         </button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : !reviewQueueLoading && !reviewQueueError ? (
                 <div style={{ padding: 32, textAlign: "center", color: "var(--color-muted)" }}>

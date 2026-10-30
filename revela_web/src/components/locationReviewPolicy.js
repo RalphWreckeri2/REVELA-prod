@@ -1,5 +1,6 @@
 export const PREVIOUS_LOCATION = "previous";
 export const IMPORTED_LOCATION = "imported";
+export const SAME_PIN_TOLERANCE_METERS = 2;
 
 function hasFiniteCoordinates(latitude, longitude) {
   return (
@@ -10,6 +11,64 @@ function hasFiniteCoordinates(latitude, longitude) {
     Number.isFinite(Number(latitude)) &&
     Number.isFinite(Number(longitude))
   );
+}
+
+function formatCoordinates(latitude, longitude) {
+  return hasFiniteCoordinates(latitude, longitude)
+    ? `${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}`
+    : "Coordinates unavailable";
+}
+
+export function pinMoveDistanceMeters(candidate) {
+  const proposedLatitude = candidate?.candidateLatitude
+    ?? candidate?.latitude;
+  const proposedLongitude = candidate?.candidateLongitude
+    ?? candidate?.longitude;
+  if (!hasFiniteCoordinates(candidate?.originalLatitude, candidate?.originalLongitude)
+    || !hasFiniteCoordinates(proposedLatitude, proposedLongitude)) {
+    return null;
+  }
+
+  const radians = (degrees) => (Number(degrees) * Math.PI) / 180;
+  const [lat1, lon1, lat2, lon2] = [
+    candidate.originalLatitude,
+    candidate.originalLongitude,
+    proposedLatitude,
+    proposedLongitude,
+  ].map(radians);
+  const latitudeDelta = lat2 - lat1;
+  const longitudeDelta = lon2 - lon1;
+  const haversine = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2)
+    * Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(haversine));
+}
+
+export function isSamePinCandidate(candidate) {
+  const distance = pinMoveDistanceMeters(candidate);
+  return distance !== null && distance <= SAME_PIN_TOLERANCE_METERS;
+}
+
+export function formatPinMoveDistance(distanceMeters) {
+  if (!Number.isFinite(distanceMeters)) return "Unavailable";
+  if (distanceMeters < 1) return "<1 m";
+  return `${Math.round(distanceMeters).toLocaleString()} m`;
+}
+
+export function reviewApprovalConfirmation(candidate) {
+  const distance = pinMoveDistanceMeters(candidate);
+  return [
+    `Business: ${candidate?.businessName || "Unnamed business"}`,
+    `Current pin: ${formatCoordinates(candidate?.originalLatitude, candidate?.originalLongitude)}`,
+    `Proposed pin: ${formatCoordinates(
+      candidate?.candidateLatitude ?? candidate?.latitude,
+      candidate?.candidateLongitude ?? candidate?.longitude,
+    )}`,
+    `Distance: ${formatPinMoveDistance(distance)}`,
+    `Match score: ${candidate?.matchScore == null
+      ? "Unavailable"
+      : Number(candidate.matchScore).toFixed(2)}`,
+  ].join("\n");
 }
 
 export function hasImportedLocationCandidate(candidate) {

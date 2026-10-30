@@ -71,6 +71,10 @@ test("line-of-business options follow the selected sector and sector changes cle
     "groceries",
   );
   assert.match(mapOverviewSource, /line_of_business_key:\s*selectedLineOfBusinessKey/);
+  assert.match(mapOverviewSource, /const requestKey = `\$\{token\}:\$\{filterKey\}:/);
+  assert.match(mapOverviewSource, /const topTotals = getBarangayTopTotals\(panelData\)/);
+  assert.match(mapOverviewSource, /mapCounts = useMemo[\s\S]*row\.registry_total/);
+  assert.match(mapOverviewSource, /A\. Official Registry · \{Number\(panelData\?\.registry_total/);
   assert.match(mapOverviewSource, /<optgroup[^>]*label=\{sector\.label\}/);
   assert.match(mapOverviewSource, /aria-label="Filter registered businesses by line of business"/);
   assert.match(mapOverviewSource, /Filters registered businesses only\./);
@@ -91,6 +95,44 @@ test("line-of-business options follow the selected sector and sector changes cle
     mapOverviewStyles,
     /\.map-overview-filter-label-heading \.analytics-info-tip-trigger\s*\{[^}]*height:\s*20px/,
   );
+});
+
+test("filtered Overview response drives registry totals and choropleth breaks; clearing restores all businesses", () => {
+  const filtered = {
+    overall: {
+      registry_total: 8,
+      pins: { detected_not_in_registry: 221 },
+      inspections: { pending: 6 },
+    },
+    barangays: Array.from({ length: 16 }, (_, index) => ({
+      barangayID: index + 1,
+      registry_total: index === 0 ? 8 : 0,
+    })),
+  };
+  const cleared = {
+    overall: {
+      registry_total: 602,
+      pins: filtered.overall.pins,
+      inspections: filtered.overall.inspections,
+    },
+    barangays: Array.from({ length: 16 }, (_, index) => ({
+      barangayID: index + 1,
+      registry_total: index === 0 ? 80 : 30,
+    })),
+  };
+
+  assert.equal(getBarangayTopTotals(filtered.overall).registered, 8);
+  assert.deepEqual(
+    filtered.barangays.map((row) => row.registry_total),
+    [8, ...Array(15).fill(0)],
+  );
+  assert.notDeepEqual(
+    quantileBreaks(filtered.barangays.map((row) => row.registry_total)),
+    quantileBreaks(cleared.barangays.map((row) => row.registry_total)),
+  );
+  assert.equal(getBarangayTopTotals(cleared.overall).registered, 602);
+  assert.equal(getBarangayTopTotals(filtered.overall).notInRegistry, 221);
+  assert.equal(getBarangayTopTotals(filtered.overall).beingInspected, 6);
 });
 
 test("single-value registry dimensions are hidden", () => {

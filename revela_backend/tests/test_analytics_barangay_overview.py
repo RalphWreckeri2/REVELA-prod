@@ -33,17 +33,28 @@ class BarangayOverviewCursor:
 
     def execute(self, sql, params=()):
         self.sql_calls.append((sql, params))
+        is_barber_filter = "barbershopactivities" in params
         if "SELECT barangayID, barangayName FROM barangays" in sql:
             self.rows = [
                 {"barangayID": key, "barangayName": value}
                 for key, value in BARANGAY_NAMES.items()
             ]
         elif "SELECT COUNT(*) AS total FROM official_registry" in sql:
-            self.rows = [{"total": 170 if "display_sector_key = %s" in sql else 602}]
+            total = (
+                8 if is_barber_filter
+                else 170 if "display_sector_key = %s" in sql
+                else 602
+            )
+            self.rows = [{"total": total}]
         elif "SELECT o.barangayID, COUNT(*) AS total" in sql:
+            total = (
+                8 if is_barber_filter
+                else 170 if "display_sector_key = %s" in sql
+                else 602
+            )
             self.rows = [{
                 "barangayID": 1,
-                "total": 170 if "display_sector_key = %s" in sql else 602,
+                "total": total,
             }]
         elif "FROM display_sector" in sql and "GROUP BY display_sector_key" in sql:
             self.rows = [
@@ -292,6 +303,41 @@ class BarangayOverviewTests(unittest.TestCase):
         self.assertNotIn("primary_line", pin_sql)
         self.assertNotIn("registry_sector_map", inspection_sql)
         self.assertNotIn("primary_line", inspection_sql)
+
+    def test_barber_primary_line_filter_keeps_map_and_inspection_totals(self):
+        data, status, cursor = self.run_endpoint(
+            "line_of_business_key=barbershopactivities"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(data["overall"]["registry_total"], 8)
+        self.assertEqual(data["overall"]["pins"]["total"], 495)
+        self.assertEqual(data["overall"]["inspections"]["total"], 9)
+        registry_queries = [
+            (sql, params) for sql, params in cursor.sql_calls
+            if "FROM official_registry o" in sql
+        ]
+        filtered_registry_queries = [
+            (sql, params) for sql, params in registry_queries
+            if "AND EXISTS (" in sql
+        ]
+        self.assertTrue(filtered_registry_queries)
+        self.assertTrue(all(
+            "barbershopactivities" in params
+            for _, params in filtered_registry_queries
+        ))
+        self.assertTrue(all(
+            "COLLATE utf8mb4_unicode_ci" in sql
+            for sql, _ in filtered_registry_queries
+        ))
+        pin_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql
+        )
+        inspection_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS waiting_for_review" in sql
+        )
+        self.assertNotIn("AND EXISTS (", pin_sql)
+        self.assertNotIn("AND EXISTS (", inspection_sql)
 
 
 if __name__ == "__main__":
