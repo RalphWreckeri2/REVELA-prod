@@ -5432,35 +5432,17 @@ export default function MapPage() {
               </div>
             ))}
           </div>
-          {(filteredMapMetrics.withoutCoordinates > 0 ||
-            filteredMapMetrics.unassignedLocations > 0 ||
-            filteredMapMetrics.outsideBoundaryLocations > 0 ||
-            filteredMapMetrics.ambiguousBoundaryLocations > 0 ||
-            barangayLocationMismatches.length > 0) && (
+          {(filteredMapMetrics.unassignedLocations > 0 ||
+            filteredMapMetrics.ambiguousBoundaryLocations > 0) && (
             <div role="note" style={{ margin: "8px 0 0", color: "var(--color-muted)", fontSize: 11 }}>
-              {filteredMapMetrics.withoutCoordinates > 0 && (
-                <p style={{ margin: "2px 0" }}>
-                  {filteredMapMetrics.withoutCoordinates.toLocaleString()} businesses have no exact location yet. Approximate previews are excluded from location counts, flags, and dispatch.
-                </p>
-              )}
               {filteredMapMetrics.unassignedLocations > 0 && (
                 <p style={{ margin: "2px 0" }}>
                   {filteredMapMetrics.unassignedLocations.toLocaleString()} records have no stored barangay ID; uniquely assigned exact pins use the polygon position without rewriting that ID.
                 </p>
               )}
-              {filteredMapMetrics.outsideBoundaryLocations > 0 && (
-                <p style={{ margin: "2px 0" }}>
-                  {filteredMapMetrics.outsideBoundaryLocations.toLocaleString()} exact pins fall outside every barangay polygon.
-                </p>
-              )}
               {filteredMapMetrics.ambiguousBoundaryLocations > 0 && (
                 <p style={{ margin: "2px 0" }}>
                   {filteredMapMetrics.ambiguousBoundaryLocations.toLocaleString()} exact pins touch multiple barangay polygons; polygon attribution is unclear.
-                </p>
-              )}
-              {barangayLocationMismatches.length > 0 && (
-                <p style={{ margin: "2px 0" }}>
-                  {barangayLocationMismatches.length.toLocaleString()} exact pins differ from their recorded barangay. They appear in both relevant barangay filters; All Barangays counts each record once.
                 </p>
               )}
             </div>

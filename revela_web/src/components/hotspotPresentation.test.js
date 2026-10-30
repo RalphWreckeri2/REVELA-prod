@@ -88,8 +88,9 @@ test("hotspot request is scoped only by the selected date preset", () => {
   assert.deepEqual(hotspotRequestParams("30days"), { date_preset: "30days" });
   assert.deepEqual(hotspotRequestParams("7days"), { date_preset: "7days" });
   assert.deepEqual(hotspotRequestParams(""), { date_preset: "all" });
-  assert.match(apiSource, /getAnalyticsHotspotsRequest\(token, datePreset = "all"/);
+  assert.match(apiSource, /getAnalyticsHotspotsRequest\(\s*token,\s*datePreset = "all"/);
   assert.match(apiSource, /new URLSearchParams\(\{\s*date_preset: datePreset \|\| "all"/);
+  assert.match(mapOverviewSource, /population: "unregistered_candidates"/);
   assert.doesNotMatch(
     apiSource.slice(
       apiSource.indexOf("export async function getAnalyticsHotspotsRequest"),

@@ -37,6 +37,9 @@ from api.models.detection_runs import (
     get_recent_detection_runs,
 )
 from api.analytics.hotspots import (
+    HOTSPOT_POPULATIONS,
+    HOTSPOT_POPULATION_OBJECTIVE,
+    HOTSPOT_POPULATION_UNREGISTERED,
     build_hotspot_population_sql,
     cache_hotspots,
     cluster_hotspot_rows,
@@ -44,6 +47,7 @@ from api.analytics.hotspots import (
     get_cached_hotspots,
     hotspot_cluster_memberships,
     hotspot_date_window,
+    hotspot_population_flags,
     invalidate_hotspots_cache,
     load_barangay_polygons,
     read_hotspot_settings,
@@ -691,6 +695,8 @@ analytics_bp = Blueprint("analytics", __name__)
 def get_all_analytics():
     try:
         F = parse_analytics_filters(request.args)
+        if F["population"] not in HOTSPOT_POPULATIONS:
+            return jsonify({"error": "Unknown DBSCAN population."}), 400
         section = request.args.get("section")
         if section:
             if section not in _ANALYTICS_READ_SECTIONS:
@@ -713,8 +719,13 @@ def get_all_analytics():
 @analytics_bp.route("/hotspots", methods=["GET"])
 @jwt_required()
 def get_analytics_hotspots():
-    """Return date-scoped groups of eligible effective-Red detection pins."""
+    """Return date-scoped clusters for the selected hotspot population."""
     date_preset = (request.args.get("date_preset") or "all").strip().lower()
+    population = (
+        request.args.get("population") or HOTSPOT_POPULATION_OBJECTIVE
+    ).strip()
+    if population not in HOTSPOT_POPULATIONS:
+        return jsonify({"error": "Unknown DBSCAN population."}), 400
     try:
         start, end = hotspot_date_window(date_preset)
     except ValueError as exc:
@@ -724,13 +735,16 @@ def get_analytics_hotspots():
     try:
         settings = read_hotspot_settings(cursor)
         parameters, fallbacks = resolve_hotspot_parameters(settings)
+        flags = hotspot_population_flags(population, parameters["flags"])
         date_key = (
             start.isoformat() if start else None,
             end.isoformat() if end else None,
         )
         cache_key = (
             date_preset, date_key, parameters["eps_m"],
-            parameters["min_samples"], tuple(sorted(fallbacks.items())),
+            parameters["min_samples"], tuple(parameters["flags"]),
+            tuple(sorted(parameters["sources"].items())),
+            population, tuple(flags), tuple(sorted(fallbacks.items())),
         )
         cached = get_cached_hotspots(cache_key)
         if cached is not None:
@@ -743,6 +757,8 @@ def get_analytics_hotspots():
             registry_link_sql("g"),
             start,
             end,
+            population=population,
+            flags=flags,
         )
         cursor.execute(population_sql, population_params)
         population_rows = list(cursor.fetchall() or [])
@@ -792,7 +808,11 @@ def get_analytics_hotspots():
             "date_window": date_window,
             "parameters_used": parameters,
             "parameter_fallbacks": fallbacks,
-            "population": count_hotspot_dispositions(population_rows),
+            "population": count_hotspot_dispositions(
+                population_rows,
+                population=population,
+                flags=flags,
+            ),
             "clusters": clusters,
             "totals": {
                 **totals,
@@ -844,6 +864,36 @@ def _barangay_overview_dimension(rows, limit=None):
     ]
 
 
+def _registry_line_of_business_filter(line_of_business_key, alias="o"):
+    if not line_of_business_key:
+        return "", []
+    registry_line_expression = (
+        f"CONVERT(LOWER(REGEXP_REPLACE(COALESCE({alias}.lineOfBusiness, ''), "
+        "'[^A-Za-z0-9]', '')) USING utf8mb4) "
+        "COLLATE utf8mb4_unicode_ci"
+    )
+    return f"""
+        AND EXISTS (
+            SELECT 1
+            FROM registry_sector_map lob_map
+            JOIN psic_active_version active_version
+              ON active_version.singleton_id = 1
+             AND lob_map.source_version = active_version.source_version
+            JOIN psic_lines primary_line
+              ON primary_line.psic_line_id = lob_map.primary_psic_line_id
+             AND primary_line.source_version = active_version.source_version
+            WHERE lob_map.normalized_line_of_business =
+                  {registry_line_expression}
+              AND lob_map.match_status IN ('matched', 'combo')
+              AND CONVERT(
+                      primary_line.normalized_line_of_business
+                      USING utf8mb4
+                  ) COLLATE utf8mb4_unicode_ci =
+                  CONVERT(%s USING utf8mb4) COLLATE utf8mb4_unicode_ci
+        )
+    """, [line_of_business_key]
+
+
 @analytics_bp.route("/barangay-overview", methods=["GET"])
 @jwt_required()
 def get_barangay_overview():
@@ -860,35 +910,9 @@ def get_barangay_overview():
         line_of_business_key = (
             str(request.args.get("line_of_business_key") or "").strip() or None
         )
-        line_of_business_filter = ""
-        line_of_business_params = []
-        if line_of_business_key:
-            registry_line_expression = (
-                "CONVERT(LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), "
-                "'[^A-Za-z0-9]', '')) USING utf8mb4) "
-                "COLLATE utf8mb4_unicode_ci"
-            )
-            line_of_business_filter = f"""
-                AND EXISTS (
-                    SELECT 1
-                    FROM registry_sector_map lob_map
-                    JOIN psic_active_version active_version
-                      ON active_version.singleton_id = 1
-                     AND lob_map.source_version = active_version.source_version
-                    JOIN psic_lines primary_line
-                      ON primary_line.psic_line_id = lob_map.primary_psic_line_id
-                     AND primary_line.source_version = active_version.source_version
-                    WHERE lob_map.normalized_line_of_business =
-                          {registry_line_expression}
-                      AND lob_map.match_status IN ('matched', 'combo')
-                      AND CONVERT(
-                              primary_line.normalized_line_of_business
-                              USING utf8mb4
-                          ) COLLATE utf8mb4_unicode_ci =
-                          CONVERT(%s USING utf8mb4) COLLATE utf8mb4_unicode_ci
-                )
-            """
-            line_of_business_params.append(line_of_business_key)
+        line_of_business_filter, line_of_business_params = (
+            _registry_line_of_business_filter(line_of_business_key)
+        )
         registry_where += line_of_business_filter
         registry_params = registry_params + line_of_business_params
         ladder = ladder_columns_available(cursor)
@@ -1270,6 +1294,216 @@ def get_barangay_overview():
     except Exception:
         current_app.logger.exception("Failed to load barangay overview")
         return jsonify({"error": "Failed to load barangay overview"}), 500
+    finally:
+        cursor.close()
+
+
+@analytics_bp.route("/registry-status-by-size", methods=["GET"])
+@jwt_required()
+def get_registry_status_by_size():
+    """Return read-only official-registry status aggregates by barangay and size."""
+    cursor = mysql.connection.cursor()
+    try:
+        filters = parse_analytics_filters(request.args)
+        filters["display_sector"] = (
+            str(request.args.get("display_sector") or "").strip() or None
+        )
+        filters["registration_type_supported"] = True
+        registry_where, registry_params = registry_sql("o", filters)
+        line_of_business_key = (
+            str(request.args.get("line_of_business_key") or "").strip() or None
+        )
+        line_of_business_filter, line_of_business_params = (
+            _registry_line_of_business_filter(line_of_business_key)
+        )
+        registry_where += line_of_business_filter
+        registry_params.extend(line_of_business_params)
+
+        cursor.execute(
+            """
+            SELECT barangayID, barangayName
+            FROM barangays
+            ORDER BY barangayID
+            """
+        )
+        known_barangays = cursor.fetchall()
+        barangay_names = {
+            int(row["barangayID"]): str(row["barangayName"])
+            for row in known_barangays
+        }
+
+        cursor.execute(
+            f"""
+            SELECT
+                COALESCE(b.barangayID, -1) AS barangay_id,
+                COALESCE(NULLIF(TRIM(b.barangayName), ''), 'Unknown/Unassigned')
+                    AS barangay_name,
+                COALESCE(NULLIF(TRIM(o.businessSize), ''), 'Unknown')
+                    AS business_size,
+                COALESCE(NULLIF(TRIM(o.applicationStatus), ''), 'Unknown')
+                    AS application_status,
+                COUNT(DISTINCT o.businessID) AS business_count
+            FROM official_registry o
+            LEFT JOIN barangays b ON b.barangayID = o.barangayID
+            WHERE 1=1 {registry_where}
+            GROUP BY barangay_id, barangay_name, business_size, application_status
+            ORDER BY barangay_name, business_size, application_status
+            """,
+            registry_params,
+        )
+        grouped_rows = cursor.fetchall()
+
+        known_statuses = ["Active", "Expired", "Revoked", "Pending", "Closed"]
+        statuses = set(known_statuses)
+        for row in grouped_rows:
+            statuses.add(str(row["application_status"] or "Unknown"))
+        status_order = known_statuses + sorted(
+            statuses.difference(known_statuses).difference({"Unknown"}),
+            key=str.casefold,
+        )
+        if "Unknown" in statuses:
+            status_order.append("Unknown")
+
+        requested_barangay_ids = filters.get("barangay_ids")
+        scoped_barangay_ids = (
+            [barangay_id for barangay_id in barangay_names
+             if barangay_id in requested_barangay_ids]
+            if requested_barangay_ids else list(barangay_names)
+        )
+        barangay_aggregates = {
+            barangay_id: {
+                "barangayID": barangay_id,
+                "barangayName": barangay_names[barangay_id],
+                "total": 0,
+                "status_counts": {status: 0 for status in status_order},
+                "business_sizes": {},
+            }
+            for barangay_id in scoped_barangay_ids
+        }
+        overall_aggregate = {
+            "total": 0,
+            "status_counts": {status: 0 for status in status_order},
+            "business_sizes": {},
+        }
+
+        def add_group(aggregate, business_size, application_status, count):
+            size_row = aggregate["business_sizes"].setdefault(
+                business_size,
+                {
+                    "business_size": business_size,
+                    "total": 0,
+                    "status_counts": {status: 0 for status in status_order},
+                },
+            )
+            size_row["total"] += count
+            size_row["status_counts"][application_status] = (
+                size_row["status_counts"].get(application_status, 0) + count
+            )
+            aggregate["total"] += count
+            aggregate["status_counts"][application_status] = (
+                aggregate["status_counts"].get(application_status, 0) + count
+            )
+
+        for row in grouped_rows:
+            barangay_id = int(row["barangay_id"])
+            application_status = str(row["application_status"] or "Unknown")
+            business_size = str(row["business_size"] or "Unknown")
+            count = int(row["business_count"] or 0)
+            add_group(overall_aggregate, business_size, application_status, count)
+            if barangay_id == -1:
+                aggregate = barangay_aggregates.setdefault(
+                    -1,
+                    {
+                        "barangayID": None,
+                        "barangayName": "Unknown/Unassigned",
+                        "total": 0,
+                        "status_counts": {status: 0 for status in status_order},
+                        "business_sizes": {},
+                    },
+                )
+            else:
+                aggregate = barangay_aggregates.get(barangay_id)
+                if aggregate is None:
+                    continue
+            add_group(aggregate, business_size, application_status, count)
+
+        def serialize_aggregate(aggregate):
+            denominator = int(aggregate["total"])
+
+            def serialize_size(size_row):
+                size_denominator = int(size_row["total"])
+                return {
+                    **size_row,
+                    "status_percentages": {
+                        status: (
+                            100.0 * int(size_row["status_counts"].get(status, 0))
+                            / size_denominator
+                            if size_denominator else None
+                        )
+                        for status in status_order
+                    },
+                }
+
+            return {
+                **aggregate,
+                "status_percentages": {
+                    status: (
+                        100.0 * int(aggregate["status_counts"].get(status, 0))
+                        / denominator
+                        if denominator else None
+                    )
+                    for status in status_order
+                },
+                "business_sizes": [
+                    serialize_size(size_row)
+                    for _, size_row in sorted(
+                        aggregate["business_sizes"].items(),
+                        key=lambda item: (
+                            item[0] == "Unknown",
+                            item[0].casefold(),
+                        ),
+                    )
+                ],
+            }
+
+        barangay_results = [
+            serialize_aggregate(aggregate)
+            for _, aggregate in sorted(
+                barangay_aggregates.items(),
+                key=lambda item: (
+                    item[0] == -1,
+                    item[1]["barangayName"].casefold(),
+                ),
+            )
+        ]
+        applied_registry_filters = {
+            key: filters.get(key)
+            for key in (
+                "barangay_ids",
+                "application_status",
+                "business_size",
+                "business_type",
+                "registration_type",
+                "line_of_business",
+                "display_sector",
+                "renewal_from",
+                "renewal_to",
+            )
+            if filters.get(key) not in (None, [], "")
+        }
+        if line_of_business_key:
+            applied_registry_filters["line_of_business_key"] = line_of_business_key
+        return jsonify({
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "statuses": status_order,
+            "filters_applied": applied_registry_filters,
+            "total": overall_aggregate["total"],
+            "municipality": serialize_aggregate(overall_aggregate),
+            "barangays": barangay_results,
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to load registry status-by-size aggregates")
+        return jsonify({"error": "Failed to load registry status-by-size aggregates"}), 500
     finally:
         cursor.close()
 
@@ -2386,18 +2620,30 @@ def _get_all_analytics_inner(F=None):
     # DBSCAN Hotspot Intelligence
     dbscan_insight = "There is not enough location data to identify nearby groups of flagged records."
     dbscan_clusters = []
+    dbscan_population = {}
+    dbscan_parameters = {}
     _dbscan_t0 = _phase_start(phases)
     try:
-        parameters, _ = resolve_hotspot_parameters(read_hotspot_settings(cur))
+        population = F.get("population") or HOTSPOT_POPULATION_OBJECTIVE
+        if population not in HOTSPOT_POPULATIONS:
+            raise ValueError(f"Unknown DBSCAN population: {population!r}.")
+        parameters, parameter_fallbacks = resolve_hotspot_parameters(
+            read_hotspot_settings(cur)
+        )
+        flags = hotspot_population_flags(population, parameters["flags"])
+        dbscan_parameters = parameters
         dbscan_settings = (
             f"DBSCAN settings: Haversine eps={parameters['eps_m']:g} m, "
-            f"min_samples={parameters['min_samples']}."
+            f"min_samples={parameters['min_samples']}; population={population}; "
+            f"flags={', '.join(flags) if flags else 'none'}."
         )
         population_sql, population_params = build_hotspot_population_sql(
             effective_flag_color,
             registry_link_sql("g"),
             None,
             None,
+            population=population,
+            flags=flags,
             extra_where_sql=geo_g,
             extra_params=geo_g_p,
         )
@@ -2405,6 +2651,12 @@ def _get_all_analytics_inner(F=None):
             cur, "diagnostic.dbscan_hotspots", population_sql, population_params
         )
         hotspot_data = list(cur.fetchall() or [])
+        dbscan_population = count_hotspot_dispositions(
+            hotspot_data,
+            population=population,
+            flags=flags,
+        )
+        dbscan_population["parameter_fallbacks"] = parameter_fallbacks
         _execute(
             cur,
             "diagnostic.dbscan_barangays",
@@ -2450,19 +2702,19 @@ def _get_all_analytics_inner(F=None):
                 )["barangay_name"]
             dbscan_insight = (
                 f"Largest nearby group: {largest_group['size']} eligible "
-                f"effective-Red detection pins around {dominant_barangay}. "
+                f"effective-flagged records around {dominant_barangay}. "
                 f"{dbscan_settings} Consider "
                 "prioritizing this area for inspection; proximity alone does "
                 "not confirm a violation."
             )
         elif dbscan_clusters:
             dbscan_insight = (
-                "No nearby groups of eligible effective-Red detection pins "
+                "No nearby groups of eligible effective-flagged records "
                 f"were found. {dbscan_settings}"
             )
         else:
             dbscan_insight = (
-                "There is not enough eligible effective-Red detection-pin "
+                "There is not enough eligible effective-flagged record "
                 f"location data to form a group. {dbscan_settings}"
             )
     except Exception as e:
@@ -2565,6 +2817,8 @@ def _get_all_analytics_inner(F=None):
         "category_risk_drivers": category_risk_drivers,
         "category_linkage_summary": category_linkage_summary,
         "flag_trend": flag_trend, "dbscan_insight": dbscan_insight,
+        "dbscan_population": dbscan_population,
+        "parameters_used": dbscan_parameters,
         "morans_insight": morans_insight, "dbscan_clusters": dbscan_clusters,
         "morans_data": morans_data,
     }
@@ -3508,9 +3762,9 @@ def analytics_chat():
             "- **Registry active-flag rate**: Unique current Red/Yellow/Black registry businesses / all registry businesses; null means N/A. Not a confirmed non-compliance rate. Unregistered candidates are a separate count\n"
             "- **Risk Level**: Derived from OPS score — High (>=60), Medium (>=30), Low (<30)\n"
             "- **Dispatch Recommendations**: Deterministic WLC-ranked plans, not AI-generated allocations. High priority starts at OPS 60, Standard at 30, Monitor below 30. Only currently free inspectors are allocated (maximum six). Deferred plans have zero inspectors; never invent staffing or promise a deployment date for them. Black-only barangays and already-assigned targets are skipped: dispatchable_count must be positive for a new field plan. Black flags are administrative risk context, never an authorization for redispatch\n"
-            "- **Nearby flagged records (DBSCAN)**: Uses eligible geospatial log records with effective Red flag, detection origin, coordinates, no businessID, and no registry link. This is the shared population used by Analytics and Map cluster views. Each dot and group size counts detection records, not distinct businesses. Uses Haversine distance and the shared configurable parameters (default eps=50 m, min_samples=3 including the point itself); the actual settings are included in dbscan_insight. Connected neighborhoods can extend beyond eps end-to-end, and groups may cross barangay boundaries. Isolated eligible records are noise, not clusters. The number of groups is not the number of records in a group\n"
+            "- **Nearby flagged records (DBSCAN)**: The objective population is eligible geolocated geospatial-log records with effective Red or Black flags, from any source, with registry-linked records allowed. The Map Overview overlay uses the narrower `unregistered_candidates` subset: effective Red only, detection source, no direct registry link, and no businessID; its existing Red-location wording describes that subset. `hotspots.flags` defaults to Red and Black, and response metadata identifies the population, parameter sources, flag/source counts, and exclusions. Each point and group size counts geospatial records, not distinct businesses. Uses Haversine distance and DBSCAN MinPts including the point itself. Connected neighborhoods can extend beyond eps end-to-end, groups may cross barangay boundaries, and noise points are not clusters. Neither proximity nor an internal clustering score establishes a real hotspot or violation\n"
             "- **Severe flags by barangay**: Separately counts distinct eligible geospatial log IDs with effective Red or Black flags and coordinates, grouped within barangay boundaries. Its dashed benchmark is NumPy's 75th percentile (default linear interpolation) of those counts across geolocated barangays; at least four such barangays are required, and only positive counts strictly above the benchmark are highlighted. A high count is not a spatial group\n"
-            "- **Filters for these two spatial charts**: DBSCAN applies selected barangay, effective flag-color, and detection-date filters to eligible effective-Red detection pins; a selected flag color further narrows the effective-Red input. The separate severe-flags chart counts effective Red or Black records and also applies those geospatial filters. Registry/business and inspection filters do not affect these calculations\n"
+            "- **Filters for these two spatial charts**: DBSCAN applies selected barangay, effective flag-color, and detection-date filters to the selected population. The separate severe-flags chart counts effective Red or Black records and also applies those geospatial filters. Registry/business and inspection filters do not affect these calculations\n"
             "- **Unavailable chart data**: In spatialDiagnostics, analysisAvailable=false means the corresponding chart could not be calculated from sufficient available data; do not present empty arrays or zero counts as evidence that there were no groups or severe flags\n"
             "- **Keep spatial measures distinct**: Spatial-group count, records per group, number of above-benchmark barangays, and OPS/WLC inspection-priority rankings are different measures. OPS rankings are not calculated from the number of DBSCAN groups or from the chart's above-benchmark count. Neither proximity nor a high count proves a violation or its cause\n"
             "- **Inspector Stats**: Performance metrics for individual inspectors (inspections completed, resolution time, etc.).\n"

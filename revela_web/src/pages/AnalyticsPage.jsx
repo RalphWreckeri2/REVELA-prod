@@ -1095,6 +1095,8 @@ export default function AnalyticsPage() {
       spatialDiagnostics: data?.diagnostic ? {
         nearbyFlaggedGroups: {
           analysisAvailable: dbscanEntries.length > 0,
+          population: data?.diagnostic?.dbscan_population || {},
+          parametersUsed: data?.diagnostic?.parameters_used || {},
           eligibleRecordCount: dbscanEntries.length,
           ungroupedRecordCount: dbscanEntries.filter((entry) => entry.cluster === -1).length,
           groupCount: groupedRecords.size,

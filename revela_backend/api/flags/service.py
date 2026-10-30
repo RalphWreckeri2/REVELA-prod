@@ -21,8 +21,11 @@ from api.flags.compliance import (
     decorate_compliance, origin_source_sql, registry_link_sql, verified_green_at_sql,
 )
 from api.analytics.hotspots import (
+    HOTSPOT_POPULATION_OBJECTIVE,
     build_hotspot_population_sql,
     cluster_hotspot_rows,
+    count_hotspot_dispositions,
+    hotspot_population_flags,
     load_barangay_polygons,
     read_hotspot_settings,
     resolve_hotspot_parameters,
@@ -4343,20 +4346,23 @@ def delete_flag(log_id, actor_role=None):
             cursor.close()
 
 
-def get_red_flag_clusters():
-    """
-    Return eligible effective-Red detection clusters using shared hotspot rules.
-    """
+def get_hotspot_cluster_payload(population=HOTSPOT_POPULATION_OBJECTIVE):
+    """Return canonical cluster results and provenance for a named population."""
     cursor = None
     try:
         cursor = mysql.connection.cursor()
         ladder = ladder_columns_available(cursor)
-        parameters, _ = resolve_hotspot_parameters(read_hotspot_settings(cursor))
+        parameters, fallbacks = resolve_hotspot_parameters(
+            read_hotspot_settings(cursor)
+        )
+        flags = hotspot_population_flags(population, parameters["flags"])
         population_sql, population_params = build_hotspot_population_sql(
             _effective_flag_color_sql("g", ladder=ladder),
             registry_link_sql("g"),
             None,
             None,
+            population=population,
+            flags=flags,
         )
         cursor.execute(population_sql, population_params)
         population_rows = list(cursor.fetchall() or [])
@@ -4370,10 +4376,27 @@ def get_red_flag_clusters():
             parameters,
             load_barangay_polygons(barangay_rows),
         )
-        return serialize_map_hotspot_clusters(clusters, parameters), None
+        return {
+            "clusters": serialize_map_hotspot_clusters(clusters, parameters),
+            "population": count_hotspot_dispositions(
+                population_rows,
+                population=population,
+                flags=flags,
+            ),
+            "parameters_used": parameters,
+            "parameter_fallbacks": fallbacks,
+        }, None
 
     except Exception as e:
         return None, str(e)
     finally:
         if cursor is not None:
             cursor.close()
+
+
+def get_red_flag_clusters(population=HOTSPOT_POPULATION_OBJECTIVE):
+    """Compatibility wrapper returning only the historical cluster list."""
+    payload, error = get_hotspot_cluster_payload(population)
+    if error:
+        return None, error
+    return payload["clusters"], None

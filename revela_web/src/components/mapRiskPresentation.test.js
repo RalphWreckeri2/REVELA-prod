@@ -33,7 +33,7 @@ test("OPS polygon tooltip distinguishes priority score from its risk component",
   assert.match(mapPageSource, /not DBSCAN cluster density/i);
 });
 
-test("DBSCAN circle presentation identifies eligible detection records and its parameters", () => {
+test("DBSCAN circle presentation identifies eligible geospatial records and parameters", () => {
   assert.deepEqual(hotspotCircleSummary({
     clusterID: 2,
     size: 3,
@@ -41,8 +41,8 @@ test("DBSCAN circle presentation identifies eligible detection records and its p
     eps_m: 50,
     min_samples: 3,
   }), {
-    title: "Detection hotspot (DBSCAN) #2",
-    members: "3 eligible effective-Red detection pins",
+    title: "Nearby flagged cluster (DBSCAN) #2",
+    members: "3 eligible geospatial records",
     radius: "42.2 m from centroid",
     parameters: "Haversine eps = 50 m · MinPts = 3",
   });

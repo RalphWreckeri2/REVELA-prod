@@ -97,6 +97,9 @@ def main():
                     if args.test and any(name.startswith("tests.test_sector_risk_policy_mysql") for name in args.test):
                         from tests import test_sector_risk_policy_mysql as sector_policy
                         sector_policy.connect_to_disposable_mysql = isolated_connect
+                    if args.test and any(name.startswith("tests.test_analytics_hotspots_mysql") for name in args.test):
+                        from tests import test_analytics_hotspots_mysql as hotspot_tests
+                        hotspot_tests.connect_to_disposable_mysql = isolated_connect
                     if args.baseline:
                         from api.analytics import routes as analytics
                         for module, path in (

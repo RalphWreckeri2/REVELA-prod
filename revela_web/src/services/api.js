@@ -398,14 +398,15 @@ export async function syncRegistryFile(file, token, signal) {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
-export async function getDiagnosticClustersRequest(token) {
+export async function getDiagnosticClustersRequest(token, population = "objective") {
   try {
-    const res = await fetch(`${BASE_URL}/geospatial/diagnostics/clusters`, {
+    const query = new URLSearchParams({ population });
+    const res = await fetch(`${BASE_URL}/geospatial/diagnostics/clusters?${query}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await handleResponse(res);
-    return data.clusters ?? data;
+    return data;
   } catch (err) {
     connectionGuard(err);
   }
@@ -1398,6 +1399,7 @@ function analyticsFiltersToSearchParams(filters = {}) {
   set("flag_color", filters.flag_color);
   set("detected_from", filters.detected_from);
   set("detected_to", filters.detected_to);
+  set("population", filters.population);
   set("inspection_result", filters.inspection_result);
   set("verification_status", filters.verification_status);
   set("inspection_from", filters.inspection_from);
@@ -1454,13 +1456,44 @@ export async function getBarangayOverviewRequest(token, filters = {}, { signal }
   }
 }
 
-export async function getAnalyticsHotspotsRequest(token, datePreset = "all", { signal } = {}) {
+export async function getRegistryStatusBySizeRequest(
+  token,
+  filters = {},
+  { signal } = {},
+) {
+  try {
+    if (!token) {
+      throw new Error("Missing authentication token.");
+    }
+    const qs = analyticsFiltersToSearchParams(filters);
+    const query = qs.toString();
+    const url = query
+      ? `${BASE_URL}/analytics/registry-status-by-size?${query}`
+      : `${BASE_URL}/analytics/registry-status-by-size`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: authHeaders(token),
+      signal,
+      cache: "no-store",
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getAnalyticsHotspotsRequest(
+  token,
+  datePreset = "all",
+  { signal, population = "objective" } = {},
+) {
   try {
     if (!token) {
       throw new Error("Missing authentication token.");
     }
     const query = new URLSearchParams({
       date_preset: datePreset || "all",
+      population,
     });
     const res = await fetch(`${BASE_URL}/analytics/hotspots?${query}`, {
       method: "GET",

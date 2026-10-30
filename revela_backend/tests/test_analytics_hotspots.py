@@ -7,7 +7,10 @@ from shapely.geometry import box
 from api.analytics import hotspots
 from api.analytics.hotspots import (
     HOTSPOT_DEFAULT_EPS_M,
+    HOTSPOT_DEFAULT_FLAGS,
     HOTSPOT_DEFAULT_MIN_SAMPLES,
+    HOTSPOT_POPULATION_OBJECTIVE,
+    HOTSPOT_POPULATION_UNREGISTERED,
     attribute_hotspot_point,
     build_hotspot_population_sql,
     cluster_hotspot_rows,
@@ -36,6 +39,9 @@ class HotspotParameterTests(unittest.TestCase):
             "eps_m": HOTSPOT_DEFAULT_EPS_M,
             "min_samples": HOTSPOT_DEFAULT_MIN_SAMPLES,
             "metric": "haversine",
+            "flags": list(HOTSPOT_DEFAULT_FLAGS),
+            "source": "default",
+            "sources": {"eps_m": "default", "min_samples": "default", "flags": "default"},
         })
         self.assertEqual(fallbacks, {})
 
@@ -47,6 +53,9 @@ class HotspotParameterTests(unittest.TestCase):
             "eps_m": 75.0,
             "min_samples": 5,
             "metric": "haversine",
+            "flags": list(HOTSPOT_DEFAULT_FLAGS),
+            "source": "setting",
+            "sources": {"eps_m": "setting", "min_samples": "setting", "flags": "default"},
         })
         self.assertEqual(fallbacks, {})
 
@@ -57,7 +66,32 @@ class HotspotParameterTests(unittest.TestCase):
         })
         self.assertEqual(parameters["eps_m"], 50)
         self.assertEqual(parameters["min_samples"], 3)
+        self.assertEqual(parameters["source"], "default")
+        self.assertEqual(parameters["sources"]["eps_m"], "default")
+        self.assertEqual(parameters["sources"]["min_samples"], "default")
         self.assertEqual(set(fallbacks), {"eps_m", "min_samples"})
+
+    def test_flag_setting_and_mixed_parameter_sources_are_reported(self):
+        parameters, fallbacks = resolve_hotspot_parameters({
+            "hotspots.eps_m": "75",
+            "hotspots.flags": '["Red"]',
+        })
+        self.assertEqual(fallbacks, {})
+        self.assertEqual(parameters["flags"], ["Red"])
+        self.assertEqual(parameters["source"], "setting")
+        self.assertEqual(parameters["sources"], {
+            "eps_m": "setting",
+            "min_samples": "default",
+            "flags": "setting",
+        })
+
+    def test_invalid_flags_use_the_default_and_report_fallback(self):
+        parameters, fallbacks = resolve_hotspot_parameters({
+            "hotspots.flags": '["Green"]',
+        })
+        self.assertEqual(parameters["flags"], ["Red", "Black"])
+        self.assertEqual(parameters["sources"]["flags"], "default")
+        self.assertEqual(fallbacks, {"flags": "Invalid flag list; using default Red and Black."})
 
     def test_overview_date_presets_use_inclusive_calendar_days(self):
         today = date(2026, 10, 29)
@@ -92,25 +126,58 @@ class HotspotParameterTests(unittest.TestCase):
 
 
 class HotspotPopulationTests(unittest.TestCase):
-    def test_population_sql_uses_effective_red_color_and_date_range(self):
+    def test_objective_sql_uses_configured_effective_flags_and_date_range(self):
         sql, params = build_hotspot_population_sql(
             "effective_color(g)",
             "EXISTS (SELECT 1 FROM official_registry r WHERE r.businessID = g.businessID)",
             date(2026, 10, 23),
             date(2026, 10, 29),
         )
-        self.assertIn("(effective_color(g)) = 'Red'", sql)
+        self.assertIn("(effective_color(g)) IN (%s, %s)", sql)
         self.assertIn("g.detectedDate >= %s", sql)
         self.assertIn("DATE_ADD(%s, INTERVAL 1 DAY)", sql)
-        self.assertIn("registry_linked", sql)
+        self.assertNotIn("'registry_linked'", sql)
         self.assertIn("missing_coordinates", sql)
-        self.assertIn("COALESCE(g.source, 'unknown') <> 'detection'", sql)
-        self.assertIn("g.businessID IS NOT NULL", sql)
+        self.assertNotIn("COALESCE(g.source, 'unknown') <> 'detection'", sql)
+        self.assertNotIn("g.businessID IS NOT NULL", sql)
         self.assertIn("g.latitude IS NULL OR g.longitude IS NULL", sql)
         self.assertEqual(params, [
+            "Red",
+            "Black",
             date(2026, 10, 23),
             date(2026, 10, 29),
         ])
+
+    def test_unregistered_candidate_sql_uses_red_subset_and_exclusions(self):
+        sql, params = build_hotspot_population_sql(
+            "effective_color(g)",
+            "registry_linked(g)",
+            None,
+            None,
+            population=HOTSPOT_POPULATION_UNREGISTERED,
+            flags=["Red"],
+        )
+        self.assertIn("(effective_color(g)) IN (%s)", sql)
+        self.assertIn("COALESCE(g.source, 'unknown') <> 'detection'", sql)
+        self.assertIn("WHEN registry_linked(g)", sql)
+        self.assertIn("g.businessID IS NOT NULL", sql)
+        self.assertEqual(params, ["Red"])
+
+    def test_export_projection_omits_sensitive_columns_and_exposes_audit_fields(self):
+        sql, params = build_hotspot_population_sql(
+            "effective_color(g)",
+            "registry_linked(g)",
+            None,
+            None,
+            include_sensitive_fields=False,
+            include_legacy_evidence=True,
+        )
+        select_clause = sql.split("FROM geospatial_logs", 1)[0]
+        self.assertNotIn("g.detectedName", select_clause)
+        self.assertNotIn("g.businessID,", select_clause)
+        self.assertIn("AS registry_linked", select_clause)
+        self.assertIn("AS legacy_evidence_eligible", select_clause)
+        self.assertEqual(params, ["Red", "Black"])
 
     def test_population_sql_appends_shared_page_scope_after_date_parameters(self):
         sql, params = build_hotspot_population_sql(
@@ -123,24 +190,37 @@ class HotspotPopulationTests(unittest.TestCase):
         )
         self.assertIn("AND g.barangayID = %s", sql)
         self.assertEqual(params, [
+            "Red",
+            "Black",
             date(2026, 10, 23),
             date(2026, 10, 29),
             7,
         ])
 
-    def test_population_exclusions_are_mutually_exclusive_and_account_for_red_rows(self):
+    def test_population_counts_are_mutually_exclusive_and_count_flags_and_sources(self):
         rows = [
-            {"disposition": "eligible"},
-            {"disposition": "not_detection"},
-            {"disposition": "registry_linked"},
-            {"disposition": "missing_coordinates"},
+            {"disposition": "eligible", "flagColor": "Red", "source": "detection"},
+            {"disposition": "not_detection", "flagColor": "Red", "source": "manual"},
+            {"disposition": "registry_linked", "flagColor": "Red", "source": "detection"},
+            {"disposition": "missing_coordinates", "flagColor": "Black", "source": "registry"},
         ]
-        counts = count_hotspot_dispositions(rows)
+        counts = count_hotspot_dispositions(
+            rows,
+            population=HOTSPOT_POPULATION_UNREGISTERED,
+            flags=["Red", "Black"],
+        )
         self.assertEqual(
-            counts["considered_red_pins"],
+            counts["considered_records"],
             counts["eligible_points"] + sum(counts["excluded"].values()),
         )
         self.assertEqual(counts["eligible_points"], 1)
+        self.assertEqual(counts["counts_by_flag"], {"Red": 3, "Black": 1})
+        self.assertEqual(counts["counts_by_source"], {
+            "detection": 2,
+            "manual": 1,
+            "registry": 1,
+        })
+        self.assertEqual(counts["excluded_by_reason"], counts["excluded"])
 
 
 class HotspotAttributionTests(unittest.TestCase):
@@ -190,6 +270,23 @@ class HotspotAttributionTests(unittest.TestCase):
         self.assertEqual(ids_by_name["Kinalaglagan"], 11)
         with self.assertRaisesRegex(ValueError, "No barangay ID mapping"):
             map_adm4_barangay_ids(["Unknown Feature"], live_rows)
+
+    def test_dbscan_results_are_invariant_to_input_row_order(self):
+        rows = [
+            {"logID": 13, "latitude": 10.00054, "longitude": 121.0, "disposition": "eligible"},
+            {"logID": 11, "latitude": 10.0, "longitude": 121.0, "disposition": "eligible"},
+            {"logID": 12, "latitude": 10.00027, "longitude": 121.0, "disposition": "eligible"},
+        ]
+        parameters, _ = resolve_hotspot_parameters({})
+        polygons = [{
+            "barangay_id": 1,
+            "barangay_name": "Test Barangay",
+            "geometry": box(120.9, 9.9, 121.1, 10.1),
+        }]
+        forward, _ = cluster_hotspot_rows(rows, parameters, polygons)
+        reverse, _ = cluster_hotspot_rows(list(reversed(rows)), parameters, polygons)
+        self.assertEqual(forward, reverse)
+        self.assertEqual(forward[0]["log_ids"], [11, 12, 13])
 
     def test_previously_unassigned_detection_members_map_to_their_polygons(self):
         barangay_rows = [
@@ -396,9 +493,9 @@ class MapHotspotEndpointContractTests(unittest.TestCase):
         self.assertEqual(clusters[0]["eps_m"], 50)
         self.assertEqual(clusters[0]["min_samples"], 3)
         population_sql = cursor.execute.call_args_list[1].args[0]
-        self.assertIn("(effective_color(g)) = 'Red'", population_sql)
-        self.assertIn("COALESCE(g.source, 'unknown') <> 'detection'", population_sql)
-        self.assertIn("g.businessID IS NOT NULL", population_sql)
+        self.assertIn("(effective_color(g)) IN (%s, %s)", population_sql)
+        self.assertNotIn("THEN 'not_detection'", population_sql)
+        self.assertNotIn("THEN 'business_id_present'", population_sql)
         self.assertTrue(cursor.close.called)
 
     def test_map_endpoint_adapter_keeps_legacy_fields_and_shared_parameters(self):

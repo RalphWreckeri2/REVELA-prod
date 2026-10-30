@@ -868,6 +868,119 @@
 
 .map-overview-detail-card:last-child { border-bottom: 0; }
 
+.map-overview-registry-status {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.map-overview-registry-status-note,
+.map-overview-registry-status-scope {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.map-overview-registry-status-scope {
+  color: var(--color-ink);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.map-overview-registry-status-total {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+}
+
+.map-overview-registry-status-total h5 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.map-overview-registry-status-barangays {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.map-overview-registry-status-barangay {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+}
+
+.map-overview-registry-status-barangay > summary {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 11px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.map-overview-registry-status-barangay > summary strong {
+  color: var(--color-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.map-overview-registry-status-table-wrap {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.map-overview-registry-status-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+  font-size: 11px;
+  text-align: right;
+}
+
+.map-overview-registry-status-table th,
+.map-overview-registry-status-table td {
+  padding: 7px 8px;
+  border-top: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.map-overview-registry-status-table thead th {
+  color: var(--color-muted);
+  font-weight: 650;
+}
+
+.map-overview-registry-status-table th:first-child,
+.map-overview-registry-status-table td:first-child {
+  text-align: left;
+}
+
+.map-overview-registry-status-table tbody th {
+  font-weight: 550;
+}
+
+.map-overview-registry-status-table .is-total {
+  font-weight: 750;
+}
+
+.map-overview-registry-status-table .is-total th,
+.map-overview-registry-status-table .is-total td {
+  border-top: 1px solid var(--color-border);
+}
+
 .map-overview-choice-row button {
   flex: 0 1 auto;
   padding: 7px 10px;

@@ -177,7 +177,7 @@ class DashboardMySQLTests(unittest.TestCase):
         self.assertEqual(row["barangayName"], "Barangay Two")
         self.assertEqual(row["recordedBarangayID"], 1)
 
-    def test_hotspots_endpoint_sql_runs_under_only_full_group_by_and_accounts_for_red_population(self):
+    def test_hotspots_endpoint_sql_runs_under_only_full_group_by_and_accounts_for_populations(self):
         from flask import Flask
         from api.analytics import routes as analytics_routes
         from api.analytics.hotspots import invalidate_hotspots_cache
@@ -207,11 +207,35 @@ class DashboardMySQLTests(unittest.TestCase):
 
         app = Flask(__name__)
         settings_mysql = SimpleNamespace(connection=self.db)
-        with patch.object(analytics_routes, "mysql", settings_mysql):
+        with patch.object(analytics_routes, "mysql", settings_mysql), \
+                patch.object(analytics_routes, "load_barangay_polygons", return_value=[]):
             with app.test_request_context("/api/analytics/hotspots?date_preset=7days"):
                 invalidate_hotspots_cache()
                 response, status = analytics_routes.get_analytics_hotspots.__wrapped__()
             payload = response.get_json()
+
+            with self.db.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO revela_app_settings (settingKey, settingValue) "
+                    "VALUES ('hotspots.eps_m', '50')"
+                )
+            self.db.commit()
+
+            with app.test_request_context("/api/analytics/hotspots?date_preset=7days"):
+                source_response, source_status = (
+                    analytics_routes.get_analytics_hotspots.__wrapped__()
+                )
+            source_payload = source_response.get_json()
+
+            invalidate_hotspots_cache()
+            with app.test_request_context(
+                "/api/analytics/hotspots?date_preset=7days"
+                "&population=unregistered_candidates"
+            ):
+                candidates_response, candidates_status = (
+                    analytics_routes.get_analytics_hotspots.__wrapped__()
+                )
+            candidates_payload = candidates_response.get_json()
 
             invalidate_hotspots_cache()
             with app.test_request_context(
@@ -224,20 +248,48 @@ class DashboardMySQLTests(unittest.TestCase):
             filtered_payload = filtered_response.get_json()
 
         self.assertEqual(status, 200)
+        self.assertEqual(source_status, 200)
+        self.assertEqual(candidates_status, 200)
         self.assertEqual(filtered_status, 200)
         self.assertEqual(payload["parameters_used"], {
             "eps_m": 50,
             "min_samples": 3,
             "metric": "haversine",
+            "flags": ["Red", "Black"],
+            "source": "default",
+            "sources": {
+                "eps_m": "default",
+                "min_samples": "default",
+                "flags": "default",
+            },
         })
-        self.assertEqual(payload["population"]["considered_red_pins"], 4)
+        self.assertEqual(payload["parameters_used"]["source"], "default")
+        self.assertEqual(source_payload["parameters_used"]["source"], "setting")
         self.assertEqual(
-            payload["population"]["considered_red_pins"],
+            source_payload["parameters_used"]["sources"],
+            {"eps_m": "setting", "min_samples": "default", "flags": "default"},
+        )
+        self.assertEqual(payload["population"]["considered_records"], 4)
+        self.assertEqual(
+            payload["population"]["considered_records"],
             payload["population"]["eligible_points"]
             + sum(payload["population"]["excluded"].values()),
         )
-        self.assertEqual(payload["population"]["eligible_points"], 1)
+        self.assertEqual(payload["population"]["eligible_points"], 3)
         self.assertEqual(payload["population"]["excluded"], {
+            "not_detection": 0,
+            "registry_linked": 0,
+            "business_id_present": 0,
+            "missing_coordinates": 1,
+        })
+        self.assertEqual(payload["population"]["counts_by_flag"], {"Red": 4, "Black": 0})
+        self.assertEqual(
+            candidates_payload["population"]["name"],
+            "unregistered_candidates",
+        )
+        self.assertEqual(candidates_payload["population"]["flags"], ["Red"])
+        self.assertEqual(candidates_payload["population"]["eligible_points"], 1)
+        self.assertEqual(candidates_payload["population"]["excluded"], {
             "not_detection": 1,
             "registry_linked": 1,
             "business_id_present": 0,

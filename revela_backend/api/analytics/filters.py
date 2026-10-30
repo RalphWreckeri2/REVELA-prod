@@ -59,6 +59,7 @@ def parse_analytics_filters(args) -> Dict[str, Any]:
         "flag_color": _strip(args.get("flag_color")),
         "detected_from": _strip(args.get("detected_from")),
         "detected_to": _strip(args.get("detected_to")),
+        "population": _strip(args.get("population")) or "objective",
         "inspection_result": _strip(args.get("inspection_result")),
         "verification_status": _strip(args.get("verification_status")),
         "inspection_from": _strip(args.get("inspection_from")),

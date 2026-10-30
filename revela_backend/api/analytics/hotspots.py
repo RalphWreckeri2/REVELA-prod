@@ -20,10 +20,18 @@ from api.utils.barangay_mapping import map_adm4_barangay_ids
 
 HOTSPOT_EPS_SETTING = "hotspots.eps_m"
 HOTSPOT_MIN_SAMPLES_SETTING = "hotspots.min_samples"
+HOTSPOT_FLAGS_SETTING = "hotspots.flags"
 HOTSPOT_DEFAULT_EPS_M = 50
 HOTSPOT_DEFAULT_MIN_SAMPLES = 3
+HOTSPOT_DEFAULT_FLAGS = ("Red", "Black")
 HOTSPOT_EARTH_RADIUS_M = 6_371_008.8
 HOTSPOT_CACHE_TTL_SECONDS = 60
+HOTSPOT_POPULATION_OBJECTIVE = "objective"
+HOTSPOT_POPULATION_UNREGISTERED = "unregistered_candidates"
+HOTSPOT_POPULATIONS = (
+    HOTSPOT_POPULATION_OBJECTIVE,
+    HOTSPOT_POPULATION_UNREGISTERED,
+)
 
 _hotspot_cache = {}
 _hotspot_cache_lock = threading.Lock()
@@ -47,15 +55,21 @@ def resolve_hotspot_parameters(settings):
     """Validate persisted settings and return safe values plus fallback notes."""
     settings = settings or {}
     fallbacks = {}
+    sources = {}
 
     raw_eps = _setting_value(settings.get(HOTSPOT_EPS_SETTING, HOTSPOT_DEFAULT_EPS_M))
     try:
         eps_m = float(raw_eps)
         if isinstance(raw_eps, bool) or not math.isfinite(eps_m) or not 10 <= eps_m <= 200:
             raise ValueError
+        sources["eps_m"] = (
+            "setting" if HOTSPOT_EPS_SETTING in settings else "default"
+        )
     except (TypeError, ValueError, OverflowError):
         eps_m = HOTSPOT_DEFAULT_EPS_M
-        fallbacks["eps_m"] = "Invalid or out of range; using default 50 m."
+        sources["eps_m"] = "default"
+        if HOTSPOT_EPS_SETTING in settings:
+            fallbacks["eps_m"] = "Invalid or out of range; using default 50 m."
 
     raw_min_samples = _setting_value(
         settings.get(HOTSPOT_MIN_SAMPLES_SETTING, HOTSPOT_DEFAULT_MIN_SAMPLES)
@@ -68,22 +82,55 @@ def resolve_hotspot_parameters(settings):
             or not 2 <= min_samples <= 10
         ):
             raise ValueError
+        sources["min_samples"] = (
+            "setting" if HOTSPOT_MIN_SAMPLES_SETTING in settings else "default"
+        )
     except (TypeError, ValueError, OverflowError):
         min_samples = HOTSPOT_DEFAULT_MIN_SAMPLES
-        fallbacks["min_samples"] = "Invalid or out of range; using default 3."
+        sources["min_samples"] = "default"
+        if HOTSPOT_MIN_SAMPLES_SETTING in settings:
+            fallbacks["min_samples"] = "Invalid or out of range; using default 3."
+
+    raw_flags = _setting_value(
+        settings.get(HOTSPOT_FLAGS_SETTING, list(HOTSPOT_DEFAULT_FLAGS))
+    )
+    try:
+        if (
+            not isinstance(raw_flags, (list, tuple))
+            or not raw_flags
+            or any(flag not in HOTSPOT_DEFAULT_FLAGS for flag in raw_flags)
+            or len(set(raw_flags)) != len(raw_flags)
+        ):
+            raise ValueError
+        flags = list(raw_flags)
+        sources["flags"] = (
+            "setting" if HOTSPOT_FLAGS_SETTING in settings else "default"
+        )
+    except (TypeError, ValueError):
+        flags = list(HOTSPOT_DEFAULT_FLAGS)
+        sources["flags"] = "default"
+        if HOTSPOT_FLAGS_SETTING in settings:
+            fallbacks["flags"] = "Invalid flag list; using default Red and Black."
 
     return {
         "eps_m": eps_m,
         "min_samples": min_samples,
         "metric": "haversine",
+        "flags": flags,
+        "source": "setting" if "setting" in sources.values() else "default",
+        "sources": sources,
     }, fallbacks
 
 
 def read_hotspot_settings(cursor):
     cursor.execute(
         "SELECT settingKey, settingValue FROM revela_app_settings "
-        "WHERE settingKey IN (%s, %s)",
-        (HOTSPOT_EPS_SETTING, HOTSPOT_MIN_SAMPLES_SETTING),
+        "WHERE settingKey IN (%s, %s, %s)",
+        (
+            HOTSPOT_EPS_SETTING,
+            HOTSPOT_MIN_SAMPLES_SETTING,
+            HOTSPOT_FLAGS_SETTING,
+        ),
     )
     return {
         row["settingKey"]: row["settingValue"]
@@ -114,25 +161,40 @@ def build_hotspot_population_sql(
     start,
     end,
     *,
+    population=HOTSPOT_POPULATION_OBJECTIVE,
+    flags=HOTSPOT_DEFAULT_FLAGS,
+    include_sensitive_fields=True,
+    include_legacy_evidence=False,
     extra_where_sql="",
     extra_params=(),
 ):
-    """Build exclusive disposition rows for all effective-Red pins in scope."""
+    """Build disposition rows for one named population and effective flag set."""
+    if population not in HOTSPOT_POPULATIONS:
+        raise ValueError(f"Unknown hotspot population: {population!r}.")
+    flags = tuple(flags)
+    if any(flag not in HOTSPOT_DEFAULT_FLAGS for flag in flags):
+        raise ValueError("Hotspot flags must be Red and/or Black.")
+
     date_sql = ""
-    params = []
+    params = list(flags)
     if start is not None and end is not None:
         date_sql = " AND g.detectedDate >= %s AND g.detectedDate < DATE_ADD(%s, INTERVAL 1 DAY)"
         params.extend((start, end))
     params.extend(extra_params)
     extra_where = f" {extra_where_sql}" if extra_where_sql else ""
-
-    sql = f"""
-        SELECT g.logID, g.detectedName, g.detectedDate,
-               ({effective_flag_sql}) AS flagColor,
-               g.latitude, g.longitude, g.barangayID,
-               COALESCE(b.barangayName, 'Unknown Area') AS barangayName,
-               g.source, g.businessID,
-               CASE
+    flag_placeholders = ", ".join(["%s"] * len(flags))
+    flag_predicate = (
+        f"({effective_flag_sql}) IN ({flag_placeholders})"
+        if flags else "1 = 0"
+    )
+    if population == HOTSPOT_POPULATION_OBJECTIVE:
+        disposition_sql = """CASE
+                 WHEN g.latitude IS NULL OR g.longitude IS NULL
+                   THEN 'missing_coordinates'
+                 ELSE 'eligible'
+               END"""
+    else:
+        disposition_sql = f"""CASE
                  WHEN COALESCE(g.source, 'unknown') <> 'detection'
                    THEN 'not_detection'
                  WHEN {registry_link_sql}
@@ -142,13 +204,45 @@ def build_hotspot_population_sql(
                  WHEN g.latitude IS NULL OR g.longitude IS NULL
                    THEN 'missing_coordinates'
                  ELSE 'eligible'
-               END AS disposition
+               END"""
+
+    sensitive_fields = (
+        "g.detectedName, g.businessID, " if include_sensitive_fields else ""
+    )
+    legacy_evidence_field = ""
+    if include_legacy_evidence:
+        legacy_evidence_field = """,
+               (
+                   g.placeID IS NOT NULL
+                   OR g.reportedByUserID IS NOT NULL
+                   OR g.flagColor = 'Orange'
+                   OR EXISTS (
+                       SELECT 1 FROM inspection_reports evidence
+                       WHERE evidence.targetID = g.logID
+                   )
+               ) AS legacy_evidence_eligible"""
+    sql = f"""
+        SELECT g.logID, {sensitive_fields}g.detectedDate,
+               ({effective_flag_sql}) AS flagColor,
+               g.latitude, g.longitude, g.barangayID,
+               COALESCE(b.barangayName, 'Unknown Area') AS barangayName,
+               g.source, ({registry_link_sql}) AS registry_linked,
+               {disposition_sql} AS disposition{legacy_evidence_field}
         FROM geospatial_logs g
         LEFT JOIN barangays b ON b.barangayID = g.barangayID
-        WHERE ({effective_flag_sql}) = 'Red' {date_sql}{extra_where}
+        WHERE {flag_predicate} {date_sql}{extra_where}
         ORDER BY g.logID
     """
     return sql, params
+
+
+def hotspot_population_flags(population, configured_flags):
+    """Keep the legacy map overlay restricted to its effective-Red subset."""
+    if population not in HOTSPOT_POPULATIONS:
+        raise ValueError(f"Unknown hotspot population: {population!r}.")
+    if population == HOTSPOT_POPULATION_UNREGISTERED:
+        return [flag for flag in configured_flags if flag == "Red"]
+    return list(configured_flags)
 
 
 @lru_cache(maxsize=1)
@@ -217,12 +311,12 @@ def _distance_m(first, second):
 
 def cluster_hotspot_rows(rows, parameters, polygons):
     """Cluster eligible rows and summarize point-in-polygon memberships."""
-    eligible = [
+    eligible = sorted([
         row for row in rows
         if row.get("disposition") == "eligible"
         and row.get("latitude") is not None
         and row.get("longitude") is not None
-    ]
+    ], key=lambda row: int(row["logID"]))
     if not eligible:
         return [], {
             "clustered_points": 0,
@@ -352,10 +446,20 @@ def serialize_map_hotspot_clusters(clusters, parameters):
     ]
 
 
-def count_hotspot_dispositions(rows):
+def count_hotspot_dispositions(
+    rows,
+    *,
+    population=HOTSPOT_POPULATION_OBJECTIVE,
+    flags=HOTSPOT_DEFAULT_FLAGS,
+):
+    flags = list(flags)
     counts = {
-        "considered_red_pins": len(rows),
+        "name": population,
+        "flags": flags,
+        "considered_records": len(rows),
         "eligible_points": 0,
+        "counts_by_flag": {flag: 0 for flag in flags},
+        "counts_by_source": {},
         "excluded": {
             "not_detection": 0,
             "registry_linked": 0,
@@ -364,11 +468,19 @@ def count_hotspot_dispositions(rows):
         },
     }
     for row in rows:
+        flag = row.get("flagColor")
+        if flag in counts["counts_by_flag"]:
+            counts["counts_by_flag"][flag] += 1
+        source = row.get("source") or "unknown"
+        counts["counts_by_source"][source] = (
+            counts["counts_by_source"].get(source, 0) + 1
+        )
         disposition = row.get("disposition")
         if disposition == "eligible":
             counts["eligible_points"] += 1
         elif disposition in counts["excluded"]:
             counts["excluded"][disposition] += 1
+    counts["excluded_by_reason"] = dict(counts["excluded"])
     return counts
 
 

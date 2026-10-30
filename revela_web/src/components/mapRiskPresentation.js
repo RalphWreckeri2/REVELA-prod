@@ -16,8 +16,8 @@ export function hotspotCircleSummary(cluster) {
   const size = Number(cluster.size) || 0;
   const radius = Number(cluster.radius_m) || 0;
   return {
-    title: `Detection hotspot (DBSCAN) #${Number(cluster.clusterID)}`,
-    members: `${size} eligible effective-Red detection pin${size === 1 ? "" : "s"}`,
+    title: `Nearby flagged cluster (DBSCAN) #${Number(cluster.clusterID)}`,
+    members: `${size} eligible geospatial record${size === 1 ? "" : "s"}`,
     radius: `${radius.toFixed(1)} m from centroid`,
     parameters: `Haversine eps = ${Number(cluster.eps_m ?? 50)} m · MinPts = ${Number(cluster.min_samples ?? 3)}`,
   };

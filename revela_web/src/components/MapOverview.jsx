@@ -6,6 +6,7 @@ import {
   getFlagsRequest,
   getAnalyticsHotspotsRequest,
   getBarangayOverviewRequest,
+  getRegistryStatusBySizeRequest,
 } from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { OverviewMapSkeleton } from "./AnalyticsLoadingLayouts";
@@ -86,6 +87,7 @@ const REGISTRY_DIMENSIONS = [
   { key: "business_type", label: "By type" },
   { key: "registration_type", label: "By registration type" },
   { key: "display_sector", label: "By sector" },
+  { key: "status_size", label: "Status × size" },
 ];
 const STATUS_COLORS = {
   registered_on_map: "#2563eb",
@@ -190,6 +192,142 @@ function useBarangayOverview(token, filters, datePreset) {
   };
 }
 
+function useRegistryStatusBySize(token, filters, enabled) {
+  const [retry, setRetry] = useState(0);
+  const filterKey = JSON.stringify(filters || {});
+  const requestKey = `${token}:${filterKey}:${retry}`;
+  const [snapshot, setSnapshot] = useState({
+    key: null,
+    data: null,
+    error: "",
+  });
+  const loading = enabled && Boolean(token) && snapshot.key !== requestKey;
+  const data = snapshot.key === requestKey ? snapshot.data : null;
+  const error = enabled && !token
+    ? "Registry status breakdown requires an authenticated session."
+    : snapshot.key === requestKey ? snapshot.error : "";
+
+  useEffect(() => {
+    if (!enabled || !token) return undefined;
+
+    const controller = new AbortController();
+    getRegistryStatusBySizeRequest(token, JSON.parse(filterKey), {
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(result?.statuses)
+          || !Array.isArray(result?.barangays)
+          || !result?.municipality
+          || !result?.as_of) {
+          throw new Error("The registry status-by-size response is incomplete.");
+        }
+        setSnapshot({ key: requestKey, data: result, error: "" });
+      })
+      .catch((requestError) => {
+        if (requestError.name !== "AbortError") {
+          setSnapshot({
+            key: requestKey,
+            data: null,
+            error: requestError.message
+              || "Registry status breakdown could not be loaded.",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [enabled, filterKey, requestKey, token]);
+
+  return {
+    data,
+    loading,
+    error,
+    retry: () => setRetry((previous) => previous + 1),
+  };
+}
+
+function RegistryStatusTable({ aggregate, statuses, totalLabel }) {
+  const rows = [
+    ...(aggregate?.business_sizes || []),
+    {
+      business_size: totalLabel,
+      total: aggregate?.total || 0,
+      status_counts: aggregate?.status_counts || {},
+      status_percentages: aggregate?.status_percentages || {},
+      isTotal: true,
+    },
+  ];
+
+  return (
+    <div className="map-overview-registry-status-table-wrap">
+      <table className="map-overview-registry-status-table">
+        <thead>
+          <tr>
+            <th scope="col">Business size</th>
+            <th scope="col">Total businesses</th>
+            {statuses.map((status) => (
+              <th scope="col" key={status}>{status}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.business_size} className={row.isTotal ? "is-total" : ""}>
+              <th scope="row">{row.business_size}</th>
+              <td>{Number(row.total || 0).toLocaleString()}</td>
+              {statuses.map((status) => {
+                const count = Number(row.status_counts?.[status] || 0);
+                const percentage = row.status_percentages?.[status];
+                return (
+                  <td key={status}>
+                    {row.total && percentage != null
+                      ? `${count.toLocaleString()} (${Number(percentage).toFixed(1)}%)`
+                      : "N/A"}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function registryStatusScopeLabel(data) {
+  const filters = data?.filters_applied || {};
+  const barangays = data?.barangays || [];
+  const parts = [];
+  const selectedBarangayIds = filters.barangay_ids;
+  if (Array.isArray(selectedBarangayIds) && selectedBarangayIds.length) {
+    const names = selectedBarangayIds.map((id) => (
+      barangays.find((row) => Number(row.barangayID) === Number(id))?.barangayName
+      || `Barangay ${id}`
+    ));
+    parts.push(`Barangay: ${names.join(", ")}`);
+  } else {
+    parts.push("All barangays");
+  }
+
+  const filterLabels = [
+    ["application_status", "Application status"],
+    ["line_of_business", "Line of business"],
+    ["business_size", "Business size"],
+    ["business_type", "Business type"],
+    ["registration_type", "Registration type"],
+    ["line_of_business_key", "Line of business"],
+    ["display_sector", "Sector"],
+    ["renewal_from", "Renewal from"],
+    ["renewal_to", "Renewal to"],
+  ];
+  filterLabels.forEach(([key, label]) => {
+    const value = filters[key];
+    if (value !== undefined && value !== null && value !== "") {
+      parts.push(`${label}: ${Array.isArray(value) ? value.join(", ") : value}`);
+    }
+  });
+  return parts.join(" · ");
+}
+
 export default function MapOverview({ token, filters }) {
   const navigate = useNavigate();
   const { isDark } = useTheme();
@@ -257,6 +395,27 @@ export default function MapOverview({ token, filters }) {
     overviewFilters,
     datePreset,
   );
+  const registryStatusFilters = useMemo(() => ({
+    ...overviewFilters,
+    ...(selectedBarangayId == null
+      ? {}
+      : {
+        barangay_id: selectedBarangayId,
+        barangay_ids: [selectedBarangayId],
+      }),
+  }), [overviewFilters, selectedBarangayId]);
+  const registryStatusViewActive = !showHotspots
+    && activeDimension === "status_size";
+  const {
+    data: registryStatusData,
+    loading: registryStatusLoading,
+    error: registryStatusError,
+    retry: retryRegistryStatus,
+  } = useRegistryStatusBySize(
+    token,
+    registryStatusFilters,
+    registryStatusViewActive,
+  );
   const hotspotRequest = useMemo(
     () => hotspotRequestParams(datePreset),
     [datePreset],
@@ -267,6 +426,7 @@ export default function MapOverview({ token, filters }) {
     const controller = new AbortController();
     getAnalyticsHotspotsRequest(token, hotspotRequest.date_preset, {
       signal: controller.signal,
+      population: "unregistered_candidates",
     })
       .then((data) => {
         if (controller.signal.aborted) return;
@@ -1383,7 +1543,67 @@ export default function MapOverview({ token, filters }) {
                 </button>
               ))}
             </div>
-            {selectedLineOfBusinessKey
+            {activeDimension === "status_size" ? (
+              <div className="map-overview-registry-status">
+                <p className="map-overview-registry-status-note">
+                  Official registry application status only—not geospatial flag color or inspection outcome.
+                  Registry records are included whether or not they have coordinates or a map pin.
+                </p>
+                {registryStatusLoading && (
+                  <p role="status">Loading registry status breakdown…</p>
+                )}
+                {registryStatusError && (
+                  <div className="map-overview-error-inline" role="alert">
+                    <span>{registryStatusError}</span>
+                    <button type="button" onClick={retryRegistryStatus}>Retry</button>
+                  </div>
+                )}
+                {registryStatusData && (
+                  <>
+                    <p className="map-overview-registry-status-scope">
+                      Snapshot as of {new Date(registryStatusData.as_of).toLocaleString()}
+                      {" · Scope: "}
+                      {registryStatusScopeLabel(registryStatusData)}
+                    </p>
+                    <p className="map-overview-registry-status-note">
+                      Registry date filters are shown only when applied; map-pin and inspection date ranges do not filter this view.
+                    </p>
+                    <section className="map-overview-registry-status-total"
+                      aria-label="Municipality registry status totals">
+                      <h5>
+                        Mataasnakahoy municipality total ·{" "}
+                        {Number(registryStatusData.municipality.total || 0).toLocaleString()} businesses
+                      </h5>
+                      <RegistryStatusTable
+                        aggregate={registryStatusData.municipality}
+                        statuses={registryStatusData.statuses}
+                        totalLabel="Municipality total"
+                      />
+                    </section>
+                    <div className="map-overview-registry-status-barangays">
+                      {registryStatusData.barangays.map((barangay) => (
+                        <details
+                          className="map-overview-registry-status-barangay"
+                          key={barangay.barangayID ?? "unknown"}
+                        >
+                          <summary>
+                            <span>{barangay.barangayName}</span>
+                            <strong>
+                              {Number(barangay.total || 0).toLocaleString()} businesses
+                            </strong>
+                          </summary>
+                          <RegistryStatusTable
+                            aggregate={barangay}
+                            statuses={registryStatusData.statuses}
+                            totalLabel="Barangay total"
+                          />
+                        </details>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : selectedLineOfBusinessKey
               && Number(panelData?.registry_total || 0) === 0 ? (
                 <div className="map-overview-filter-empty">
                   <p>No registered businesses match this filter.</p>
