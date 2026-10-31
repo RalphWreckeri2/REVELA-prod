@@ -40,6 +40,8 @@ test("PDF exports download directly instead of opening the browser print dialog"
   assert.match(page, /headerCanvas:\s*cropRegion\(reportRegionBounds\["\.print-header"\]\)/);
   assert.match(page, /footerCanvas:\s*cropRegion\(reportRegionBounds\["\.print-footer"\]\)/);
   assert.match(page, /pageBreaks:\s*safePageBreaks/);
+  assert.match(page, /title:\s*"PDF Exported!"/);
+  assert.match(page, /text:\s*`Saved as \$\{filename\}`/);
   assert.match(pdfDownload, /pdf\.save\(filename\)/);
   assert.doesNotMatch(page, /window\.print\(\)/);
   assert.match(page, /await downloadReportPdf\(\{/);

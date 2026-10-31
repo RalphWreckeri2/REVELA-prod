@@ -120,6 +120,9 @@ try {
       await waitFor("window.__pdfDownloads.length === 1");
       assert.match(await evaluate("window.__pdfDownloads[0].filename"), /\.pdf$/i);
       assert.equal(await evaluate("window.__printCount"), 0, "PDF download does not open the print dialog");
+      await waitFor("document.querySelector('.swal2-title')?.textContent === 'PDF Exported!'");
+      assert.ok(await evaluate("document.querySelector('.swal2-html-container').textContent.includes(window.__pdfDownloads[0].filename)"),
+        "PDF success popup confirms the downloaded filename");
       await waitFor("!document.querySelector('.print-report-container')");
     }
     await evaluate("document.querySelector('#chart-card-size .export-actions-menu > summary').click()");
@@ -135,6 +138,9 @@ try {
       await waitFor("window.__pdfDownloads.length === 2");
       assert.match(await evaluate("window.__pdfDownloads[1].filename"), /\.pdf$/i);
       assert.equal(await evaluate("window.__printCount"), 0, "chart PDF downloads without printing");
+      await waitFor("document.querySelector('.swal2-title')?.textContent === 'PDF Exported!'");
+      assert.ok(await evaluate("document.querySelector('.swal2-html-container').textContent.includes(window.__pdfDownloads[1].filename)"),
+        "chart PDF success popup confirms the downloaded filename");
       await waitFor("!document.querySelector('.print-report-container')");
     }
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Field reports')).click()");
@@ -173,7 +179,9 @@ try {
         await waitFor(`window.__pdfDownloads.length === ${downloadCount}`);
         assert.match(await evaluate(`window.__pdfDownloads[${downloadCount - 1}].filename`), /\.pdf$/i, `${name} downloads a PDF file`);
         assert.equal(await evaluate("window.__printCount"), 0, `${name} does not open the print dialog`);
-        await evaluate("document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto')");
+        await waitFor("document.querySelector('.swal2-title')?.textContent === 'PDF Exported!'");
+        assert.ok(await evaluate(`document.querySelector('.swal2-html-container').textContent.includes(window.__pdfDownloads[${downloadCount - 1}].filename)`),
+          `${name} success popup confirms the downloaded filename`);
         await waitFor("!document.querySelector('.print-report-container')");
       };
       const download = async label => {

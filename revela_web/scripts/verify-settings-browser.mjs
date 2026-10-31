@@ -431,14 +431,24 @@ try {
       const layout = await evaluate(`(() => {
         const section = document.querySelector('#settings-database-backup-title').closest('section');
         const panel = document.querySelector('.database-backup-panel');
+        const footer = panel.querySelector('.database-backup-history-footer');
+        const note = footer.querySelector('.database-backup-note').getBoundingClientRect();
+        const buttons = footer.querySelector('.database-backup-buttons').getBoundingClientRect();
         const b = section.getBoundingClientRect();
         return { viewportOverflow: document.documentElement.scrollWidth > innerWidth, sectionOverflow: section.scrollWidth > section.clientWidth + 1,
           panelOverflow: panel.scrollWidth > panel.clientWidth + 1, cardInViewport: b.left >= 0 && b.right <= innerWidth,
           buttonsFit: [...panel.querySelectorAll('.database-backup-buttons button')].every(button => { const r = button.getBoundingClientRect(); return r.left >= b.left && r.right <= b.right; }),
+          footerRow: getComputedStyle(footer).flexDirection === "row",
+          footerAligned: Math.abs((note.top + note.height / 2) - (buttons.top + buttons.height / 2)) < 3,
+          footerButtonsAfterNote: buttons.left >= note.right,
           titleFont: getComputedStyle(document.querySelector('#settings-database-backup-title')).fontSize,
           matchingBorder: getComputedStyle(section).borderRadius === getComputedStyle(document.querySelector('#settings-evidence-title').closest('section')).borderRadius };
       })()`);
-      assert.deepEqual(layout, { viewportOverflow: false, sectionOverflow: false, panelOverflow: false, cardInViewport: true, buttonsFit: true, titleFont: "18px", matchingBorder: true }, `${theme} ${width}px backup layout`);
+      assert.deepEqual(layout, {
+        viewportOverflow: false, sectionOverflow: false, panelOverflow: false, cardInViewport: true,
+        buttonsFit: true, footerRow: width > 600, footerAligned: width > 600,
+        footerButtonsAfterNote: width > 600, titleFont: "18px", matchingBorder: true,
+      }, `${theme} ${width}px backup layout`);
       const { data } = await call("Page.captureScreenshot", { format: "png", fromSurface: true, captureBeyondViewport: false });
       await writeFile(join(profile, `database-backup-${theme}-${width}.png`), Buffer.from(data, "base64"));
     }

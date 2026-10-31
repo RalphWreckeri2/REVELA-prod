@@ -499,6 +499,13 @@ export default function ExportReportsPage() {
         footerCanvas: cropRegion(reportRegionBounds[".print-footer"]),
         pageBreaks: safePageBreaks,
       });
+      await Swal.fire({
+        icon: "success",
+        title: "PDF Exported!",
+        text: `Saved as ${filename}`,
+        timer: 2500,
+        showConfirmButton: false,
+      });
     } finally {
       flushSync(() => {
         setPrintReport(null);

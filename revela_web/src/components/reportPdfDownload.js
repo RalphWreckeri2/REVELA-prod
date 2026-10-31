@@ -28,7 +28,7 @@ export async function downloadCanvasAsPdf(
     createCanvas = () => document.createElement("canvas"),
     headerCanvas,
     footerCanvas,
-    pageGap = 4,
+    pageGap = 12,
     pageBreaks = [],
   },
 ) {

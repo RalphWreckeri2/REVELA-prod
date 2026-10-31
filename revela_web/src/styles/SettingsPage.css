@@ -210,7 +210,6 @@
 .settings-page .saas-content button:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 3px; }
 .settings-section-state.is-ready { background: var(--color-primary-light); color: var(--color-primary-dark); }
 .database-backup-panel { display: grid; gap: 14px; min-width: 0; }
-.database-backup-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .database-backup-note { margin: 0; color: var(--color-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .database-backup-panel .settings-error { margin: 0; }
 .database-backup-notice { margin: 0; padding: 14px 16px; border: 1px solid var(--color-border-soft); border-radius: 12px; background: var(--color-hover); color: var(--color-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
@@ -234,7 +233,8 @@
 .database-backup-history { min-width: 0; }
 .database-backup-history-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
 .database-backup-history-heading > span { color: var(--color-muted); font-size: 10px; }
-.database-backup-history > .database-backup-note { margin-top: 10px; font-size: 12px; }
+.database-backup-history-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 10px; }
+.database-backup-history-footer > .database-backup-note { font-size: 12px; }
 .database-backup-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--color-border-soft); border-radius: 9px; }
 .database-backup-table-wrap:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 3px; }
 .database-backup-table { width: 100%; border-collapse: collapse; color: var(--color-ink); font-size: 11px; text-align: left; }
@@ -247,7 +247,7 @@
 html.theme-dark .database-backup-metrics { background: var(--color-card-alt); }
 html.theme-dark .database-backup-warning { color: #fbbf24; }
 @media (max-width: 600px) {
-  .database-backup-header { flex-direction: column; }
+  .database-backup-history-footer { align-items: flex-start; flex-direction: column; }
   .database-backup-buttons { width: 100%; }
   .database-backup-buttons button { flex: 1 1 140px; }
   .database-backup-metrics { grid-template-columns: minmax(0, 1fr); }

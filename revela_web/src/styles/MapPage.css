@@ -706,7 +706,7 @@
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.flag-location-source-value { white-space: nowrap; }
+.flag-location-source-value { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .business-compliance-info {
   display: block;
   color: var(--color-muted);
@@ -737,7 +737,6 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 12px;
   }
-  .flag-location-source-value { white-space: normal; }
 }
 
 html.theme-dark .map-detection-controls {

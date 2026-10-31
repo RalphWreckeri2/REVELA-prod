@@ -28,18 +28,6 @@ export default function BackupStatusPanel({
 
   return (
     <div className="database-backup-panel" aria-busy={loading}>
-      <div className="database-backup-header">
-        <div className="database-backup-buttons">
-          <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
-          <button
-            type="button"
-            className="primary-btn"
-            onClick={onBackupNow}
-            disabled={loading || actionLoading || !data?.canManualBackup || data?.status === "running" || typeof onBackupNow !== "function"}
-            aria-describedby={!data?.canManualBackup ? "database-backup-action-reason" : undefined}
-          >{actionLoading ? "Starting…" : data?.status === "running" ? "Backup Running…" : "Back Up Now"}</button>
-        </div>
-      </div>
       {error && <p className="settings-error" role="alert">{error}</p>}
       {actionError && <p className="settings-error" role="alert">{actionError}</p>}
       {notice && <p className="database-backup-notice" role="status">{notice}</p>}
@@ -119,9 +107,21 @@ export default function BackupStatusPanel({
             </tbody>
           </table>
         </div>
-        <p id="database-backup-download-reason" className="database-backup-note">
-          {completedBackupsExist && !data?.canDownload ? downloadReason : "Only completed backups can be downloaded."}
-        </p>
+        <div className="database-backup-history-footer">
+          <p id="database-backup-download-reason" className="database-backup-note">
+            {completedBackupsExist && !data?.canDownload ? downloadReason : "Only completed backups can be downloaded."}
+          </p>
+          <div className="database-backup-buttons">
+            <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={onBackupNow}
+              disabled={loading || actionLoading || !data?.canManualBackup || data?.status === "running" || typeof onBackupNow !== "function"}
+              aria-describedby={!data?.canManualBackup ? "database-backup-action-reason" : undefined}
+            >{actionLoading ? "Starting…" : data?.status === "running" ? "Backup Running…" : "Back Up Now"}</button>
+          </div>
+        </div>
       </div>
     </div>
   );
