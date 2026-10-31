@@ -77,6 +77,7 @@ try {
       console.log(`Layout screenshot: ${output}`);
     }
     assert.equal(await evaluate("document.body.textContent.includes('BPLO Official')"), false);
+    assert.equal(await evaluate("document.body.textContent.includes('Active Municipality-wide')"), false);
     assert.equal(await evaluate("document.querySelectorAll('.export-report-view-nav button').length"), 2);
     assert.equal(await evaluate("document.querySelectorAll('.export-report-demographic-grid .export-actions-menu').length"), 7);
     assert.equal(await evaluate("Boolean(document.querySelector('.operational-report-card'))"), false);
@@ -84,6 +85,29 @@ try {
     assert.equal(await evaluate("[...document.querySelectorAll('.export-profile-menu button')].map(button => button.textContent.trim()).join('|')"),
       "Demographics spreadsheet (CSV)|Complete dossier (PDF)");
     await evaluate("document.querySelector('.export-profile-menu > summary').click()");
+    if (width === 1440 && theme === "light") {
+      await evaluate("document.querySelector('.export-profile-menu > summary').click(); document.querySelector('.export-profile-menu button:last-child').click()");
+      await waitFor("document.querySelectorAll('.demographic-complete-body .dossier-section').length === 8");
+      await call("Emulation.setEmulatedMedia", { media: "print" });
+      const printStyles = await evaluate(`(() => ({
+        header: getComputedStyle(document.querySelector('.print-header')).position,
+        footer: getComputedStyle(document.querySelector('.print-footer')).position,
+        tableColors: [...new Set([...document.querySelectorAll('.demographic-complete-body .print-table th')]
+          .map(th => getComputedStyle(th).backgroundColor))]
+      }))()`);
+      assert.equal(printStyles.header, "fixed");
+      assert.equal(printStyles.footer, "fixed");
+      assert.deepEqual(printStyles.tableColors, ["rgb(234, 241, 237)"], "dossier uses one quiet table-header color");
+      if (process.env.REVELA_EXPORT_CAPTURE) {
+        const pdf = await call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
+        const output = join(tempRoot, "revela-export-complete-dossier.pdf");
+        await writeFile(output, Buffer.from(pdf.data, "base64"));
+        console.log(`Print preview: ${output}`);
+      }
+      await call("Emulation.setEmulatedMedia", { media: "screen" });
+      await evaluate("window.dispatchEvent(new Event('afterprint'))");
+      await waitFor("!document.querySelector('.print-report-container')");
+    }
     await evaluate("document.querySelector('#chart-card-size .export-actions-menu > summary').click()");
     assert.equal(await evaluate("document.querySelectorAll('#chart-card-size .export-actions-menu__panel button').length"), 2);
     if (width === 1440 && theme === "light") {

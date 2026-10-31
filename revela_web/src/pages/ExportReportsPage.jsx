@@ -423,7 +423,7 @@ export default function ExportReportsPage() {
   }, [printReport]);
 
   // ── Derived Demographic Datasets ───────────────────────────────────────────
-  const { desc, kpis, sizeData, totalBySize, typeData, totalByType, regTypeData,
+  const { desc, sizeData, totalBySize, typeData, totalByType, regTypeData,
     totalByRegType, sectoralData, chartSectorData, barangaySpreadData,
     totalBusinessesAcrossBarangays, complianceBySizeData, timelineData, hasTimelineData,
     isRegistryEmpty } = demographicView(analyticsData);
@@ -1116,66 +1116,6 @@ export default function ExportReportsPage() {
                 </div>
               </div>
             )}
-
-            {/* Quick Census KPI Strip */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-                gap: 14,
-                marginBottom: 16
-              }}
-            >
-              <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase" }}>
-                  Total Registered
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-ink)", marginTop: 4 }}>
-                   {!analyticsData ? "—" : kpis?.total_businesses ?? 0}
-                </div>
-                <div style={{ fontSize: 11, color: "#10b981", marginTop: 2, fontWeight: 600 }}>Active Municipality-wide</div>
-              </div>
-
-              <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase" }}>
-                  Active &amp; Compliant
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#10b981", marginTop: 4 }}>
-                   {!analyticsData ? "—" : kpis?.active_count ?? 0}
-                </div>
-                <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Current year valid permits</div>
-              </div>
-
-              <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase" }}>
-                  Expired / Lapsed
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#ef4444", marginTop: 4 }}>
-                   {!analyticsData ? "—" : kpis?.expired_count ?? 0}
-                </div>
-                <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Awaiting renewal</div>
-              </div>
-
-              <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase" }}>
-                  Pending Review
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#f59e0b", marginTop: 4 }}>
-                   {!analyticsData ? "—" : kpis?.pending_count ?? 0}
-                </div>
-                <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>In processing queue</div>
-              </div>
-
-              <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase" }}>
-                  Compliance Rate
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: "#3b82f6", marginTop: 4 }}>
-                   {!analyticsData ? "—" : kpis?.compliance_rate != null ? `${kpis.compliance_rate}%` : "0%"}
-                </div>
-                <div style={{ fontSize: 11, color: "var(--color-muted)", marginTop: 2 }}>Active vs Total Ratio</div>
-              </div>
-            </div>
 
             {!loadingAnalytics && analyticsData && <details className="export-report-compliance-note">
               <summary>Office/inspection-confirmed compliance <strong>{desc?.confirmed_compliance?.total_confirmed ?? 0} distinct businesses</strong></summary>
@@ -1982,6 +1922,14 @@ export default function ExportReportsPage() {
                 padding: 0 15mm !important;
               }
 
+              /* Repeat the safe content inset on each printed dossier fragment. */
+              .print-report-container:has(.demographic-complete-body) .report-body {
+                margin: 0 !important;
+                padding: 180px 15mm 110px !important;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
+              }
+
               .print-report-separate-summary {
                 break-before: page;
                 page-break-before: always;
@@ -2012,6 +1960,52 @@ export default function ExportReportsPage() {
                 -webkit-print-color-adjust: exact;
                 print-color-adjust: exact;
               }
+
+              /* Dossier body only: quiet, compact tables; official header/footer stay as-is. */
+              .demographic-complete-body .dossier-section {
+                margin-bottom: 12px;
+                break-inside: avoid-page;
+                page-break-inside: avoid;
+              }
+              .demographic-complete-body .dossier-section-title {
+                margin: 0 0 5px;
+                color: #243446;
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
+                break-after: avoid-page;
+              }
+              .demographic-complete-body .print-table {
+                margin: 0;
+                table-layout: fixed;
+              }
+              .demographic-complete-body .print-table thead { display: table-header-group; }
+              .demographic-complete-body .print-table th,
+              .demographic-complete-body .print-table td {
+                padding: 4px 8px;
+                border: 0;
+                border-bottom: 1px solid #e2e8e5;
+                background: #fff !important;
+                color: #243446 !important;
+                font-size: 10px;
+                line-height: 1.35;
+                vertical-align: top;
+                overflow-wrap: anywhere;
+              }
+              .demographic-complete-body .print-table th {
+                background: #eaf1ed !important;
+                border-bottom-color: #b9d0c3;
+                color: #234535 !important;
+                font-weight: 700;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              .demographic-complete-body .print-table tbody tr:nth-child(even) td {
+                background: #fafbfa !important;
+              }
+              .demographic-complete-body .print-table :is(th, td):last-child { text-align: right; }
+              .demographic-complete-body .print-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
 
               body { counter-reset: page; }
               .print-page-number::after {
@@ -2174,17 +2168,17 @@ export default function ExportReportsPage() {
 
             {/* ── CASE 2: Complete Demographic Profile Dossier ── */}
             {printReport.type === "demographic-complete" && (
-              <div>
+              <div className="demographic-complete-body">
                 {/* Census KPIs Table */}
-                <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section">
+                  <h3 className="dossier-section-title">
                     I. Business Census Key Performance Indicators
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#10b981", color: "#fff" }}>Demographic Indicator</th>
-                        <th style={{ background: "#10b981", color: "#fff", width: "160px" }}>Reported Value</th>
+                        <th>Demographic Indicator</th>
+                        <th style={{ width: "145px" }}>Reported Value</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2199,16 +2193,16 @@ export default function ExportReportsPage() {
                 </div>
 
                 {/* Size Distribution */}
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section">
+                  <h3 className="dossier-section-title">
                     II. Business Size Classification
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#8b5cf6", color: "#fff" }}>Classification</th>
-                        <th style={{ background: "#8b5cf6", color: "#fff", width: "120px" }}>Entity Count</th>
-                        <th style={{ background: "#8b5cf6", color: "#fff", width: "120px" }}>Percentage Share</th>
+                        <th>Classification</th>
+                        <th style={{ width: "110px" }}>Entity Count</th>
+                        <th style={{ width: "110px" }}>Percentage Share</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2232,16 +2226,16 @@ export default function ExportReportsPage() {
                 </div>
 
                 {/* Legal Structure */}
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section">
+                  <h3 className="dossier-section-title">
                     III. Business Legal Structure Distribution
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#14b8a6", color: "#fff" }}>Legal Structure Type</th>
-                        <th style={{ background: "#14b8a6", color: "#fff", width: "120px" }}>Registered Count</th>
-                        <th style={{ background: "#14b8a6", color: "#fff", width: "120px" }}>Percentage Share</th>
+                        <th>Legal Structure Type</th>
+                        <th style={{ width: "110px" }}>Registered Count</th>
+                        <th style={{ width: "110px" }}>Percentage Share</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2265,17 +2259,17 @@ export default function ExportReportsPage() {
                 </div>
 
                 {/* Top Sectors */}
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section dossier-section--long">
+                  <h3 className="dossier-section-title">
                     IV. Top Commercial Lines of Business (Sectors)
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#3b82f6", color: "#fff", width: "60px" }}>Rank</th>
-                        <th style={{ background: "#3b82f6", color: "#fff" }}>Economic Sector / Industry</th>
-                        <th style={{ background: "#3b82f6", color: "#fff", width: "120px" }}>Entities Count</th>
-                        <th style={{ background: "#3b82f6", color: "#fff", width: "120px" }}>Share</th>
+                        <th style={{ width: "48px" }}>Rank</th>
+                        <th>Economic Sector / Industry</th>
+                        <th style={{ width: "94px" }}>Entities Count</th>
+                        <th style={{ width: "74px" }}>Share</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2300,16 +2294,16 @@ export default function ExportReportsPage() {
                 </div>
 
                 {/* Geographic Density */}
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section dossier-section--long">
+                  <h3 className="dossier-section-title">
                     V. Barangay Establishment Density Breakdown
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#059669", color: "#fff" }}>Barangay</th>
-                        <th style={{ background: "#059669", color: "#fff", width: "140px" }}>Registered Entities</th>
-                        <th style={{ background: "#059669", color: "#fff", width: "120px" }}>Municipality Share</th>
+                        <th>Barangay</th>
+                        <th style={{ width: "125px" }}>Registered Entities</th>
+                        <th style={{ width: "110px" }}>Municipality Share</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2333,17 +2327,17 @@ export default function ExportReportsPage() {
                 </div>
 
                 {/* Compliance by Size */}
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section">
+                  <h3 className="dossier-section-title">
                     VI. Compliance Status by Business Size Tier
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#f59e0b", color: "#fff" }}>Classification Tier</th>
-                        <th style={{ background: "#f59e0b", color: "#fff", width: "110px" }}>Active</th>
-                        <th style={{ background: "#f59e0b", color: "#fff", width: "110px" }}>Non-Active</th>
-                        <th style={{ background: "#f59e0b", color: "#fff", width: "130px" }}>Compliance Rate</th>
+                        <th>Classification Tier</th>
+                        <th style={{ width: "70px" }}>Active</th>
+                        <th style={{ width: "85px" }}>Non-Active</th>
+                        <th style={{ width: "105px" }}>Compliance Rate</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2367,16 +2361,16 @@ export default function ExportReportsPage() {
                   </table>
                 </div>
 
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section">
+                  <h3 className="dossier-section-title">
                     VII. Registration Lifecycle
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#6366f1", color: "#fff" }}>Registration Type</th>
-                        <th style={{ background: "#6366f1", color: "#fff", width: "120px" }}>Registered Count</th>
-                        <th style={{ background: "#6366f1", color: "#fff", width: "120px" }}>Percentage Share</th>
+                        <th>Registration Type</th>
+                        <th style={{ width: "110px" }}>Registered Count</th>
+                        <th style={{ width: "110px" }}>Percentage Share</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2405,16 +2399,16 @@ export default function ExportReportsPage() {
                   </table>
                 </div>
 
-                <div style={{ marginBottom: 20 }} className="page-break-avoid">
-                  <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                <div className="dossier-section dossier-section--long">
+                  <h3 className="dossier-section-title">
                     VIII. 12-Month Renewal &amp; Compliance Trend
                   </h3>
                   <table className="print-table">
                     <thead>
                       <tr>
-                        <th style={{ background: "#0ea5e9", color: "#fff" }}>Month</th>
-                        <th style={{ background: "#0ea5e9", color: "#fff", width: "140px" }}>Active Renewals</th>
-                        <th style={{ background: "#0ea5e9", color: "#fff", width: "140px" }}>Non-Active Gap</th>
+                        <th>Month</th>
+                        <th style={{ width: "125px" }}>Active Renewals</th>
+                        <th style={{ width: "125px" }}>Non-Active Gap</th>
                       </tr>
                     </thead>
                     <tbody>

@@ -16,6 +16,13 @@ test("exports separate demographic charts from field reports without the title p
   assert.match(styles, /\.export-report-view-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
 });
 
+test("export page omits the redundant KPI strip without removing figures from downloads", () => {
+  assert.doesNotMatch(page, /Quick Census KPI Strip|Active Municipality-wide|Active vs Total Ratio/);
+  assert.match(page, /Section: "KPI", Metric: "Total Registered Entities", Value: kpis\?\.total_businesses/);
+  assert.match(page, /Section: "KPI", Metric: "Compliance Rate", Value: `\$\{kpis\?\.compliance_rate/);
+  assert.match(page, /type: "demographic-complete"/);
+});
+
 test("each chart keeps its PNG and PDF handlers behind one export menu", () => {
   for (const id of ["size", "type", "reg-type", "sector", "barangay", "compliance_size", "timeline"]) {
     assert.equal((page.match(new RegExp(`<ChartExportMenu chartId="${id}"`, "g")) || []).length, 1);
@@ -25,4 +32,14 @@ test("each chart keeps its PNG and PDF handlers behind one export menu", () => {
   assert.match(page, /<ExportActionsMenu className="no-export"/);
   assert.match(page, /querySelectorAll\("\.no-export"\)/);
   assert.match(compliance, /<details className="operational-report-details">/);
+});
+
+test("complete dossier tables share one print palette while the official header and footer remain", () => {
+  const dossier = page.split("CASE 2: Complete Demographic Profile Dossier")[1]?.split("CASE 3: List of Unregistered Businesses")[0] ?? "";
+  assert.equal((dossier.match(/className="dossier-section(?: dossier-section--long)?"/g) || []).length, 8);
+  assert.doesNotMatch(dossier, /<th style=\{\{ background:/);
+  assert.match(page, /\.demographic-complete-body \.print-table th\s*\{[^}]*background: #eaf1ed !important/);
+  assert.match(page, /box-decoration-break: clone/);
+  assert.match(page, /className="print-header"/);
+  assert.match(page, /className="print-footer"/);
 });
