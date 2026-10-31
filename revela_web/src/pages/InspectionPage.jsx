@@ -34,7 +34,7 @@ import {
   canReassignInspection,
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
-import { dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, matchesDispatchSearch, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
+import { dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
@@ -110,6 +110,11 @@ const Icon = {
   Search: () => (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+  ),
+  Filter: () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 5h16l-6.5 7.5v5l-3 1.5v-6.5L4 5z" />
     </svg>
   ),
   AlignJustify: () => (
@@ -1034,6 +1039,9 @@ export default function InspectionPage() {
   // Filter state (admin only)
   const filterStatus = searchParams.get("status") || "";
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
+  const [filterBarangay, setFilterBarangay] = useState("");
+  const [filterFlag, setFilterFlag] = useState("");
+  const [filterDeadline, setFilterDeadline] = useState("");
   useEffect(() => { setSearch(searchParams.get("search") || ""); }, [searchParams]);
   const requestKey = `inspections:${isAdmin ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}` : "tasks"}`;
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
@@ -1086,7 +1094,20 @@ export default function InspectionPage() {
   });
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const filteredReports = reports.filter(report => matchesDispatchSearch(report, search));
+  const filteredReports = reports.filter(report => matchesDispatchFilters(report, {
+    search,
+    barangay: filterBarangay,
+    flag: filterFlag,
+    deadline: filterDeadline,
+  }));
+  const barangayOptions = [...new Set(reports.map(report => report.barangayName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const flagOptions = [
+    ...Object.keys(FLAG_COLOR).filter(flag => reports.some(report => report.flagColor === flag)),
+    ...[...new Set(reports.map(report => report.flagColor).filter(Boolean))]
+      .filter(flag => !Object.hasOwn(FLAG_COLOR, flag))
+      .sort((a, b) => a.localeCompare(b)),
+  ];
+  const hasLocalFilters = Boolean(search.trim() || filterBarangay || filterFlag || filterDeadline);
   const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
   const hasWorkloadFilter = view !== "all" || Boolean(reportID);
   const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus);
@@ -1144,7 +1165,7 @@ export default function InspectionPage() {
         <div className="dispatch-search-field">
           <div className="dispatch-search-label">
             <label htmlFor="dispatch-search">Search inspections</label>
-            {search.trim() && (
+            {hasLocalFilters && (
               <span className="dispatch-search-count" role="status">
                 {filteredReports.length} {filteredReports.length === 1 ? "match" : "matches"} on this page
               </span>
@@ -1156,6 +1177,43 @@ export default function InspectionPage() {
             {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); changeParams({ search: null }); searchRef.current.focus(); }}><Icon.X /></button>}
           </div>
         </div>
+        <span className="dispatch-filter-icon" aria-hidden="true"><Icon.Filter /></span>
+        <select
+          className="dispatch-filter-select"
+          aria-label="Filter inspections by barangay"
+          value={filterBarangay}
+          onChange={event => setFilterBarangay(event.target.value)}
+        >
+          <option value="">All Barangays</option>
+          {filterBarangay && !barangayOptions.includes(filterBarangay) && (
+            <option value={filterBarangay}>{filterBarangay}</option>
+          )}
+          {barangayOptions.map(barangay => <option key={barangay} value={barangay}>{barangay}</option>)}
+        </select>
+        <select
+          className="dispatch-filter-select"
+          aria-label="Filter inspections by flag"
+          value={filterFlag}
+          onChange={event => setFilterFlag(event.target.value)}
+        >
+          <option value="">All Flags</option>
+          {filterFlag && !flagOptions.includes(filterFlag) && (
+            <option value={filterFlag}>{getFriendlyFlagLabel(filterFlag)}</option>
+          )}
+          {flagOptions.map(flag => <option key={flag} value={flag}>{getFriendlyFlagLabel(flag)}</option>)}
+        </select>
+        <select
+          className="dispatch-filter-select"
+          aria-label="Filter inspections by deadline"
+          value={filterDeadline}
+          onChange={event => setFilterDeadline(event.target.value)}
+        >
+          <option value="">All Deadlines</option>
+          <option value="overdue">Overdue</option>
+          <option value="today">Due today</option>
+          <option value="upcoming">Upcoming</option>
+          <option value="missing">No deadline</option>
+        </select>
       </div>
 
       {isAdmin && (
@@ -1224,7 +1282,7 @@ export default function InspectionPage() {
                 status={status}
                 reports={byStatus(status)}
                 onViewDetail={openDetail}
-                isFiltered={Boolean(search.trim() || filterStatus)}
+                isFiltered={Boolean(hasLocalFilters || filterStatus)}
                 isCollapsed={collapsedCols.has(status)}
                 onToggleCollapse={() => toggleCollapse(status)}
                 onFocusColumn={openGrid}

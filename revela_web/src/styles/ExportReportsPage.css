@@ -79,8 +79,6 @@ html.theme-dark .export-report-compliance-note summary strong { color: var(--col
 .export-actions-menu > summary::-webkit-details-marker { display: none; }
 .export-actions-menu > summary[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
 .export-actions-menu > summary:not([aria-disabled="true"]):hover { border-color: var(--color-primary); }
-.export-actions-chevron { font-size: 17px; line-height: 1; transition: transform var(--duration-fast); }
-.export-actions-menu[open] .export-actions-chevron { transform: rotate(180deg); }
 .export-actions-menu__panel {
   position: absolute;
   top: calc(100% + 6px);
@@ -135,6 +133,7 @@ html.theme-dark .export-report-compliance-note summary strong { color: var(--col
   flex-wrap: wrap;
   align-content: flex-start;
   flex: 0 0 auto;
+  min-height: 64px;
   min-width: 0;
 }
 .export-report-demographic-grid > [id^="chart-card-"] > div:first-child > div:first-child {

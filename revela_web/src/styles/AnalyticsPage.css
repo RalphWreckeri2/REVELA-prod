@@ -1,5 +1,5 @@
 .analytics-page .saas-content {
-  gap: 24px;
+  gap: 16px;
   container: analytics-content / inline-size;
   padding-bottom: 104px;
 }
@@ -62,7 +62,7 @@ html.theme-dark .analytics-page .saas-content .kpi-card {
   align-items: flex-start;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 0;
 }
 
 .analytics-page-heading-copy { min-width: 240px; }

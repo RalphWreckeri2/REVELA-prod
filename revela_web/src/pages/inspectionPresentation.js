@@ -64,6 +64,34 @@ export function matchesDispatchSearch(report, search = "") {
   return SEARCH_FIELDS.map(field => report[field]).filter(Boolean).join(" ").toLowerCase().includes(query);
 }
 
+export function matchesDispatchFilters(report, {
+  search = "",
+  barangay = "",
+  flag = "",
+  deadline = "",
+  now = new Date(),
+} = {}) {
+  if (!matchesDispatchSearch(report, search)) return false;
+  if (barangay && report.barangayName !== barangay) return false;
+  if (flag && report.flagColor !== flag) return false;
+  if (!deadline) return true;
+
+  const value = report.deadline;
+  if (deadline === "missing") return !value;
+  if (!value) return false;
+
+  const dueAt = new Date(value);
+  if (!Number.isFinite(dueAt.getTime())) return false;
+  const dueToday = dueAt.getFullYear() === now.getFullYear()
+    && dueAt.getMonth() === now.getMonth()
+    && dueAt.getDate() === now.getDate();
+
+  if (deadline === "today") return dueToday;
+  if (deadline === "overdue") return !dueToday && dueAt < now;
+  if (deadline === "upcoming") return !dueToday && dueAt > now;
+  return true;
+}
+
 export function matchesGridSearch(report, search = "", initialSearch = "") {
   // An unchanged copied query must match the board exactly, including status text.
   if (search.trim().toLowerCase() === initialSearch.trim().toLowerCase()) {

@@ -28,7 +28,6 @@ export function OverviewMapSkeleton() {
         </div>
         <p className="map-overview-filter-scope">Filters registered businesses only.</p>
       </section>
-      <div className="analytics-map-update-slot" />
       <div className="map-overview-layout">
         <section className="map-overview-map-card">
           <div className="map-overview-map-heading map-overview-map-toolbar">

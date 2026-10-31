@@ -62,7 +62,6 @@ function ExportActionsMenu({ label, ariaLabel = label, options, disabled = false
           <path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4" />
         </svg>
         {label}
-        <span className="export-actions-chevron" aria-hidden="true">⌄</span>
       </summary>
       <div className="export-actions-menu__panel" role="group" aria-label={`${label} formats`}>
         {options.map(option => (
@@ -1292,12 +1291,12 @@ export default function ExportReportsPage() {
                   position: "relative"
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
                   <div>
-                    <h3 style={{ fontSize: 15, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 3px 0" }}>
+                    <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>
                       Registration Lifecycle
                     </h3>
-                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
+                    <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0, lineHeight: 1.5 }}>
                       New establishments vs. renewed permits
                     </p>
                   </div>

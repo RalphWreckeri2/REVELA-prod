@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline,
-  inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchSearch,
+  inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchFilters, matchesDispatchSearch,
   matchesGridSearch, workloadFilterLabel, workloadResultLabel,
 } from "./inspectionPresentation.js";
 
@@ -30,6 +30,24 @@ test("main search keeps existing fields, case-insensitive substring matching, an
   assert.ok(matchesDispatchSearch(reports[0], "700"));
   assert.equal(matchesDispatchSearch(reports[0], "#123"), false);
   assert.equal(matchesDispatchSearch({ ...reports[0], remarks: "unsearched notes" }, "unsearched"), false);
+});
+
+test("dispatch filters combine search, barangay, flag, and deadline criteria", () => {
+  const now = new Date("2026-10-31T12:00:00");
+  const rows = [
+    { detectedName: "North Market", barangayName: "Barangay II", flagColor: "Orange", deadline: "2026-10-30T12:00:00" },
+    { detectedName: "South Market", barangayName: "Barangay II", flagColor: "Green", deadline: "2026-10-31T18:00:00" },
+    { detectedName: "East Market", barangayName: "Barangay III", flagColor: "Orange", deadline: "2026-11-02T12:00:00" },
+    { detectedName: "West Market", barangayName: "Barangay III", flagColor: "Orange", deadline: null },
+  ];
+
+  assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, {
+    search: "market", barangay: "Barangay II", flag: "Orange", deadline: "overdue", now,
+  })), [rows[0]]);
+  assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, { deadline: "today", now })), [rows[1]]);
+  assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, { deadline: "upcoming", now })), [rows[2]]);
+  assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, { deadline: "missing", now })), [rows[3]]);
+  assert.equal(matchesDispatchFilters(rows[0], { flag: "Red", now }), false);
 });
 
 test("copied grid searches initially return the exact board results", () => {
