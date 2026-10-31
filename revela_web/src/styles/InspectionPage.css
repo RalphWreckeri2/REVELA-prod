@@ -57,6 +57,12 @@
   font-size: 13px;
   cursor: pointer;
 }
+.dispatch-filter-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 12px;
+}
 .dispatch-toolbar label,
 .dispatch-grid-search label {
   display: block;
@@ -188,7 +194,7 @@
 }
 .dispatch-workload-context-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px 10px;
   margin-left: auto;
@@ -557,12 +563,16 @@ html.theme-dark .dispatch-dialog {
   .dispatch-filter-icon {
     display: none;
   }
+  .dispatch-filter-error {
+    grid-column: 1 / -1;
+  }
   .dispatch-workload-context {
     align-items: flex-start;
   }
   .dispatch-workload-context-actions {
     flex: 1 1 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
     margin-left: 0;
     padding-top: 9px;
     border-top: 1px solid var(--color-border-soft);

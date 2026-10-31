@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline,
+  dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline,
   inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchFilters, matchesDispatchSearch,
   matchesGridSearch, workloadFilterLabel, workloadResultLabel,
 } from "./inspectionPresentation.js";
@@ -123,6 +123,12 @@ test("workload result counts describe visible rows without inventing a total", (
   assert.equal(workloadResultLabel(45, 99), "Showing 41–45 of 45");
   assert.equal(workloadResultLabel(45, 2, 10), "Showing 11–20 of 45");
   assert.equal(workloadResultLabel(undefined, undefined, 0), "Showing 0 of 0");
+});
+
+test("local dispatch filters update visible counts and identify paginated counts", () => {
+  assert.equal(filteredWorkloadResultLabel(3, 14, 14), "Showing 3 of 14");
+  assert.equal(filteredWorkloadResultLabel(3, 20, 45), "Showing 3 of 20 on this page");
+  assert.equal(filteredWorkloadResultLabel(undefined, undefined, undefined), "Showing 0 of 0");
 });
 
 test("dashboard timestamps are readable in Manila time and hide UTC strings", () => {

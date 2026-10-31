@@ -15,6 +15,7 @@ import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage
 import {
   getInspectionWorkloadRequest,
   getInspectorTasksRequest,
+  getBarangaysRequest,
   assignInspectionRequest,
   reassignSubmittedInspectionRequest,
   verifyInspectionRequest,
@@ -34,7 +35,7 @@ import {
   canReassignInspection,
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
-import { dashboardUpdatedLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
+import { dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
@@ -1042,7 +1043,36 @@ export default function InspectionPage() {
   const [filterBarangay, setFilterBarangay] = useState("");
   const [filterFlag, setFilterFlag] = useState("");
   const [filterDeadline, setFilterDeadline] = useState("");
+  const [barangayOptions, setBarangayOptions] = useState([]);
+  const [barangayOptionsError, setBarangayOptionsError] = useState("");
   useEffect(() => { setSearch(searchParams.get("search") || ""); }, [searchParams]);
+  useEffect(() => {
+    if (!token) return undefined;
+    let active = true;
+    getBarangaysRequest(token)
+      .then(result => {
+        const rows = Array.isArray(result)
+          ? result
+          : Array.isArray(result?.data)
+            ? result.data
+            : null;
+        if (!rows) throw new Error("The barangay list response was invalid.");
+        if (active) {
+          setBarangayOptions(rows
+            .map(row => row?.barangayName)
+            .filter(name => typeof name === "string" && name.trim())
+            .sort((a, b) => a.localeCompare(b)));
+          setBarangayOptionsError("");
+        }
+      })
+      .catch(err => {
+        if (active) {
+          console.error("Failed to load inspection barangays", err);
+          setBarangayOptionsError(err.message || "Barangay filters could not be loaded.");
+        }
+      });
+    return () => { active = false; };
+  }, [token]);
   const requestKey = `inspections:${isAdmin ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}` : "tasks"}`;
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
   const reports = reportData?.data ?? [];
@@ -1100,7 +1130,6 @@ export default function InspectionPage() {
     flag: filterFlag,
     deadline: filterDeadline,
   }));
-  const barangayOptions = [...new Set(reports.map(report => report.barangayName).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const flagOptions = [
     ...Object.keys(FLAG_COLOR).filter(flag => reports.some(report => report.flagColor === flag)),
     ...[...new Set(reports.map(report => report.flagColor).filter(Boolean))]
@@ -1110,11 +1139,13 @@ export default function InspectionPage() {
   const hasLocalFilters = Boolean(search.trim() || filterBarangay || filterFlag || filterDeadline);
   const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
   const hasWorkloadFilter = view !== "all" || Boolean(reportID);
-  const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus);
+  const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus) || hasLocalFilters;
   const workloadFilterName = view === "all" && reportID
     ? "Selected inspection report"
     : workloadFilterLabel(view, deadlineDate);
-  const workloadResult = workloadResultLabel(total, page, WORKLOAD_PAGE_SIZE);
+  const workloadResult = hasLocalFilters
+    ? filteredWorkloadResultLabel(filteredReports.length, reports.length, total)
+    : workloadResultLabel(total, page, WORKLOAD_PAGE_SIZE);
   const updatedLabel = dashboardUpdatedLabel(reportData?.as_of);
   const periodLabel = view === "resolution"
     ? inspectionPeriodLabel(reportData?.period_from, reportData?.as_of)
@@ -1138,6 +1169,20 @@ export default function InspectionPage() {
     gridReturnRef.current = trigger;
     gridVersionRef.current += 1;
     setFocusColumn({ status, initialSearch: search, key: gridVersionRef.current });
+  };
+  const clearAllFilters = () => {
+    setSearch("");
+    setFilterBarangay("");
+    setFilterFlag("");
+    setFilterDeadline("");
+    changeParams({
+      search: null,
+      view: null,
+      reportID: null,
+      deadlineDate: null,
+      status: null,
+      page: null,
+    });
   };
 
   return (
@@ -1165,10 +1210,13 @@ export default function InspectionPage() {
         <div className="dispatch-search-field">
           <div className="dispatch-search-label">
             <label htmlFor="dispatch-search">Search inspections</label>
-            {hasLocalFilters && (
-              <span className="dispatch-search-count" role="status">
-                {filteredReports.length} {filteredReports.length === 1 ? "match" : "matches"} on this page
-              </span>
+            {!isAdmin && hasLocalFilters && (
+              <>
+                <span className="dispatch-search-count" role="status">
+                  {filteredWorkloadResultLabel(filteredReports.length, reports.length, reports.length)}
+                </span>
+                <button className="dispatch-workload-clear" type="button" onClick={clearAllFilters}>Clear filters</button>
+              </>
             )}
           </div>
           <div className="dispatch-search-input">
@@ -1214,6 +1262,9 @@ export default function InspectionPage() {
           <option value="upcoming">Upcoming</option>
           <option value="missing">No deadline</option>
         </select>
+        {barangayOptionsError && (
+          <p className="dispatch-filter-error" role="alert">{barangayOptionsError}</p>
+        )}
       </div>
 
       {isAdmin && (
@@ -1245,7 +1296,7 @@ export default function InspectionPage() {
               </nav>
             )}
             {hasActiveFilter && (
-              <button className="dispatch-workload-clear" type="button" onClick={() => changeParams({ view: null, reportID: null, deadlineDate: null, status: null, page: null })}>Clear filter</button>
+              <button className="dispatch-workload-clear" type="button" onClick={clearAllFilters}>Clear filters</button>
             )}
           </div>
         </section>

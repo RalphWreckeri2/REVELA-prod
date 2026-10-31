@@ -155,7 +155,6 @@ html.theme-dark .export-report-compliance-note summary strong { color: var(--col
 .export-report-demographic-grid > #chart-card-sector > div:nth-child(2) { flex: 0 0 auto; min-width: 0; width: 100%; }
 .export-report-demographic-grid > #chart-card-barangay > div:nth-child(2) { height: auto !important; min-height: 260px; }
 .export-report-demographic-grid > #chart-card-barangay > div:nth-child(2) > :not(.responsive-chart) { height: 260px !important; }
-.export-report-demographic-grid > #chart-card-timeline > div:nth-child(2) { height: 260px !important; }
 .export-report-demographic-grid > [id^="chart-card-"] > div:nth-child(2) > * { box-sizing: border-box; }
 .export-report-demographic-grid > [id^="chart-card-"] > div:last-child:not(.export-doughnut-legend):not(.export-sector-legend) {
   box-sizing: border-box;

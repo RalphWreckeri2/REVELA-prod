@@ -49,6 +49,13 @@ export function workloadResultLabel(total, page = 1, pageSize = 20) {
   return `Showing ${first}–${last} of ${count}`;
 }
 
+export function filteredWorkloadResultLabel(filteredCount, loadedCount, totalCount) {
+  const filtered = Number.isFinite(Number(filteredCount)) ? Math.max(0, Number(filteredCount)) : 0;
+  const loaded = Number.isFinite(Number(loadedCount)) ? Math.max(0, Number(loadedCount)) : 0;
+  const total = Number.isFinite(Number(totalCount)) ? Math.max(0, Number(totalCount)) : 0;
+  return `Showing ${filtered} of ${loaded}${loaded < total ? " on this page" : ""}`;
+}
+
 export function dashboardUpdatedLabel(value) {
   const label = formatOverviewUpdatedAt(value);
   return label ? label.replace(/^Updated /, "Dashboard data updated ") : null;
