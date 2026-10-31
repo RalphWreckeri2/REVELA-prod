@@ -17,6 +17,7 @@
     "test:overview:browser": "node scripts/verify-compliance-browser.mjs actionable-smoke",
     "test:notifications:browser": "node scripts/verify-compliance-browser.mjs notification-pagination-smoke",
     "test:field-focus:browser": "node scripts/verify-compliance-browser.mjs text-field-focus-smoke",
+    "test:export-ui:browser": "node scripts/verify-export-ui-browser.mjs",
     "test:actionable:browser": "node scripts/verify-compliance-browser.mjs actionable-smoke",
     "test:analytics-layout:browser": "node scripts/verify-layout-browser.mjs --analytics-fixes-only",
     "test:analytics-theme:browser": "node scripts/verify-analytics-theme-browser.mjs",

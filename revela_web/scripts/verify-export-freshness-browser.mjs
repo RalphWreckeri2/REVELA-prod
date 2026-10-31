@@ -86,7 +86,7 @@ try {
   await sleep(200);
   assert.ok(await evaluate("document.body.textContent.includes('1,301') || document.body.textContent.includes('1301')"), "late older response did not overwrite the newer snapshot");
   await evaluate("window.__demographicOverride = { total_businesses: 1500 }");
-  await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Export Demographics CSV')).click()");
+  await evaluate("document.querySelector('.export-profile-menu > summary').click(); [...document.querySelectorAll('.export-profile-menu button')].find(b => b.textContent.includes('CSV')).click()");
   await wait("document.body.textContent.includes('1500') || document.body.textContent.includes('1,500')", "immediate export snapshot");
   await wait("[...document.querySelectorAll('.saas-card')].some(card => card.textContent.includes('1500') || card.textContent.includes('1,500'))", "display refreshed");
   for (let i = 0; i < 100 && !readdirSync(profile).some(name => name.endsWith('.csv')); i += 1) await sleep(100);
@@ -94,16 +94,16 @@ try {
   assert.ok(csvFile, "CSV download completed");
   assert.match(readFileSync(join(profile, csvFile), "utf8"), /Total Registered Entities,1500/);
   await evaluate("window.__demographicOverride = { total_businesses: 1600 }");
-  await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Complete Demographic Dossier (PDF)')).click()");
+  await evaluate("document.querySelector('.export-profile-menu > summary').click(); [...document.querySelectorAll('.export-profile-menu button')].find(b => b.textContent.includes('PDF')).click()");
   await wait("document.querySelector('.print-report-container')?.textContent.includes('1600')", "fresh PDF data");
   await evaluate("window.__demographicSizeOverride = [{ size_label: 'Micro', count: 777 }]");
-  await evaluate("[...document.querySelectorAll('#chart-card-size button')].find(b => b.textContent.includes('Export PNG')).click()");
+  await evaluate("document.querySelector('#chart-card-size .export-actions-menu > summary').click(); [...document.querySelectorAll('#chart-card-size button')].find(b => b.textContent.includes('PNG')).click()");
   await wait("document.querySelector('#chart-card-size')?.textContent.includes('777')", "fresh PNG card and legend");
   await wait("document.body.textContent.includes('Chart Exported')", "PNG capture completed", 600);
   for (let i = 0; i < 300 && !readdirSync(profile).some(name => name.endsWith('.png')); i += 1) await sleep(100);
   assert.ok(readdirSync(profile).some(name => name.endsWith('.png')), `fresh PNG downloaded (${readdirSync(profile).join(", ")})`);
   await evaluate("window.__failNextDemographic = true; window.__demographicOverride = { total_businesses: 2000 }");
-  await evaluate("[...document.querySelectorAll('button')].find(b => b.textContent.includes('Export Demographics CSV')).click()");
+  await evaluate("document.querySelector('.export-profile-menu > summary').click(); [...document.querySelectorAll('.export-profile-menu button')].find(b => b.textContent.includes('CSV')).click()");
   await wait("document.body.textContent.includes('Report not exported')", "refresh failure blocks export");
   assert.equal(readdirSync(profile).filter(name => name.endsWith('.csv')).length, 1);
   await call("Page.navigate", { url: `http://127.0.0.1:${server.httpServer.address().port}/scripts/layout-preview.html?page=analytics` });

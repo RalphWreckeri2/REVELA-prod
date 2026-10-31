@@ -47,6 +47,44 @@ const SECTOR_COLORS = [
 const REGISTRATION_COLORS = { new: "#2563eb", renewal: "#b45309" };
 const CAPTURE_MIN_WIDTH = { size: 520, type: 520, "reg-type": 520, sector: 640, barangay: 720 };
 
+function ExportActionsMenu({ label, ariaLabel = label, options, disabled = false, className = "" }) {
+  const menuRef = useRef(null);
+  return (
+    <details className={`export-actions-menu ${className}`} ref={menuRef}
+      onKeyDown={event => {
+        if (event.key === "Escape") {
+          menuRef.current.open = false;
+          menuRef.current.querySelector("summary")?.focus();
+        }
+      }}>
+      <summary aria-label={ariaLabel} aria-disabled={disabled} onClick={event => { if (disabled) event.preventDefault(); }}>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 3v12m-4-4 4 4 4-4M4 17v4h16v-4" />
+        </svg>
+        {label}
+        <span className="export-actions-chevron" aria-hidden="true">⌄</span>
+      </summary>
+      <div className="export-actions-menu__panel" role="group" aria-label={`${label} formats`}>
+        {options.map(option => (
+          <button type="button" key={option.label} title={option.title} disabled={disabled || option.disabled}
+            onClick={() => { menuRef.current.open = false; option.onClick(); }}>
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function ChartExportMenu({ chartId, chartTitle, hasData, preparingExport, exportingImageId, exportingPdfId, onPng, onPdf }) {
+  const label = exportingImageId === chartId ? "Saving…" : exportingPdfId === chartId ? "Generating…" : "Download chart";
+  return <ExportActionsMenu className="no-export" label={label} ariaLabel={`Download ${chartTitle}`}
+    disabled={preparingExport || !hasData} options={[
+    { label: "Save image (PNG)", title: "Export chart as high-resolution PNG image", onClick: onPng },
+    { label: "Official report (PDF)", title: "Export chart as printable official PDF document", onClick: onPdf },
+  ]} />;
+}
+
 function demographicView(snapshot) {
   const desc = snapshot?.descriptive;
   const kpis = desc?.kpis;
@@ -288,6 +326,17 @@ export default function ExportReportsPage() {
   const [exportingPdfId, setExportingPdfId] = useState(null);
   const [operationalLoadingId, setOperationalLoadingId] = useState(null);
   const [printReport, setPrintReport] = useState(null);
+  const [activeSection, setActiveSection] = useState("profile");
+
+  useEffect(() => {
+    const closeMenus = event => {
+      document.querySelectorAll(".export-actions-menu[open]").forEach(menu => {
+        if (!menu.contains(event.target)) menu.open = false;
+      });
+    };
+    document.addEventListener("pointerdown", closeMenus);
+    return () => document.removeEventListener("pointerdown", closeMenus);
+  }, []);
 
   // References for chart DOM elements to capture via html2canvas
   const chartRefs = useRef({});
@@ -948,91 +997,40 @@ export default function ExportReportsPage() {
       <div className="screen-only no-print">
         <DashboardLayout className="export-reports-page">
           {/* Page Header */}
-          <div className="page-header" style={{ marginBottom: 28 }}>
+          <div className="page-header">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16, width: "100%" }}>
               <div style={{ flex: "1 1 320px" }}>
                 <div className="export-report-title-row" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                   <h1 className="page-title" style={{ margin: 0, fontSize: 24, fontWeight: 800 }}>
                     Export Reports &amp; Demographics
                   </h1>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: "uppercase",
-                      padding: "3px 10px",
-                      background: "rgba(16, 185, 129, 0.12)",
-                      color: "#10b981",
-                      borderRadius: 99
-                    }}
-                  >
-                    BPLO Official
-                  </span>
                 </div>
                 <p className="page-subtitle" style={{ margin: 0, color: "var(--color-muted)", fontSize: 14 }}>
-                  Export visual demographic profile charts with custom legends (Image or PDF) and official field operational plans.
+                  Browse business profile charts or download field reports.
                 </p>
               </div>
 
-              {/* Quick Master Actions */}
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginLeft: "auto", flexShrink: 0 }}>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={exportDemographicCsv}
-                  disabled={loadingAnalytics || Boolean(analyticsError)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 13,
-                    padding: "9px 15px",
-                    borderRadius: 8,
-                    fontWeight: 600,
-                    cursor: "pointer"
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" strokeWidth="2" fill="none">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                    <line x1="16" y1="13" x2="8" y2="13" />
-                    <line x1="16" y1="17" x2="8" y2="17" />
-                    <polyline points="10 9 9 9 8 9" />
-                  </svg>
-                  Export Demographics CSV
-                </button>
-
-                <button
-                  type="button"
-                  className="primary-btn"
-                  onClick={exportCompleteDemographicPdf}
-                  disabled={loadingAnalytics || Boolean(analyticsError)}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    fontSize: 13,
-                    padding: "9px 16px",
-                    borderRadius: 8,
-                    fontWeight: 600,
-                    cursor: "pointer"
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" width="15" height="15" stroke="currentColor" strokeWidth="2" fill="none">
-                    <polyline points="6 9 6 2 18 2 18 9" />
-                    <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                    <rect x="6" y="14" width="12" height="8" />
-                  </svg>
-                  Complete Demographic Dossier (PDF)
-                </button>
-              </div>
+              {activeSection === "profile" && <ExportActionsMenu className="export-profile-menu" label="Download full profile"
+                disabled={loadingAnalytics || Boolean(analyticsError) || preparingExport} options={[
+                  { label: "Demographics spreadsheet (CSV)", onClick: exportDemographicCsv },
+                  { label: "Complete dossier (PDF)", onClick: exportCompleteDemographicPdf },
+                ]} />}
             </div>
           </div>
+
+          <nav className="export-report-view-nav" aria-label="Report categories">
+            <button type="button" className={activeSection === "profile" ? "active" : ""}
+              aria-pressed={activeSection === "profile"}
+              onClick={() => setActiveSection("profile")}>Business profile <span>Charts &amp; census</span></button>
+            <button type="button" className={activeSection === "operations" ? "active" : ""}
+              aria-pressed={activeSection === "operations"}
+              onClick={() => setActiveSection("operations")}>Field reports <span>Inspections &amp; dispatch</span></button>
+          </nav>
 
           {/* ══════════════════════════════════════════════════════════════════════
               SECTION 1: DEMOGRAPHIC PROFILE & VISUALIZATIONS
           ══════════════════════════════════════════════════════════════════════ */}
-          <section style={{ marginBottom: 44 }}>
+          {activeSection === "profile" && <section style={{ marginBottom: 24 }}>
             {/* Section Header */}
             <div className="export-report-section-heading"
               style={{
@@ -1043,41 +1041,16 @@ export default function ExportReportsPage() {
                 paddingBottom: 10,
                 borderBottom: "2px solid rgba(226, 232, 240, 0.7)"
               }}
-            >
+              >
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span
-                    style={{
-                      background: "var(--color-primary, #10b981)",
-                      color: "#fff",
-                      fontWeight: 800,
-                      fontSize: 12,
-                      padding: "3px 8px",
-                      borderRadius: 6
-                    }}
-                  >
-                    Section 1
-                  </span>
-                  <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0, color: "var(--color-ink)" }}>
-                    Business Demographic Profile
-                  </h2>
-                </div>
+                <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0, color: "var(--color-ink)" }}>
+                  Business Demographic Profile
+                </h2>
                 <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--color-muted)" }}>
-                  Official municipal census charts with interactive legends. Export any graph as high-res PNG image or official PDF report.
+                  Explore the registry census. Download a chart only when you need it.
                 </p>
               </div>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--color-muted)",
-                  background: "rgba(0,0,0,0.04)",
-                  padding: "4px 10px",
-                  borderRadius: 6
-                }}
-              >
-                Source: BPLO Registry Census
-              </span>
+              <span className="export-report-source-note">Source: BPLO Registry Census</span>
             </div>
 
             {/* Empty Registry Notice Banner (displays when database has 0 registered records) */}
@@ -1113,12 +1086,6 @@ export default function ExportReportsPage() {
             {preparingExport && <p role="status" style={{ padding: "10px 14px", color: "var(--color-ink)" }}>
               Refreshing report data and preparing export…
             </p>}
-             {!loadingAnalytics && analyticsData && <div className="saas-card frosted-glass" style={{ padding: 16, marginBottom: 20 }}>
-              <strong>Current confirmed compliance (distinct linked businesses)</strong>
-              <p style={{ margin: "8px 0" }}>Office-confirmed compliant: {desc?.confirmed_compliance?.office_confirmed ?? 0} · Inspection-verified compliant: {desc?.confirmed_compliance?.inspection_verified ?? 0} · Combined: {desc?.confirmed_compliance?.total_confirmed ?? 0}</p>
-              <small>Latest qualifying confirmation determines one category per business. These are not counts of every Green registry business.</small>
-            </div>}
-
             {isRegistryEmpty && !loadingAnalytics && (
               <div
                 style={{
@@ -1156,7 +1123,7 @@ export default function ExportReportsPage() {
                 display: "grid",
                 gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
                 gap: 14,
-                marginBottom: 24
+                marginBottom: 16
               }}
             >
               <div className="saas-card frosted-glass" style={{ padding: "14px 16px", borderRadius: 10 }}>
@@ -1210,6 +1177,12 @@ export default function ExportReportsPage() {
               </div>
             </div>
 
+            {!loadingAnalytics && analyticsData && <details className="export-report-compliance-note">
+              <summary>Office/inspection-confirmed compliance <strong>{desc?.confirmed_compliance?.total_confirmed ?? 0} distinct businesses</strong></summary>
+              <p>Office-confirmed compliant: {desc?.confirmed_compliance?.office_confirmed ?? 0} · Inspection-verified compliant: {desc?.confirmed_compliance?.inspection_verified ?? 0} · Combined: {desc?.confirmed_compliance?.total_confirmed ?? 0}</p>
+              <small>Latest qualifying confirmation determines one category per business. These are not counts of every Green registry business.</small>
+            </details>}
+
             {/* Columns follow available content width, including sidebar changes. */}
             <div className="export-report-demographic-grid">
               {/* ── CHART 1: Business Size Classification ── */}
@@ -1244,70 +1217,11 @@ export default function ExportReportsPage() {
                     </p>
                   </div>
 
-                  <div className="no-export" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("size", "Business_Size_Classification", sizeData.length > 0)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: sizeData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: sizeData.length > 0 ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: sizeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: sizeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "size" ? "Saving..." : "Export PNG"}
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "size",
-                          "Business Size Classification",
-                           "Official breakdown of registered commercial enterprises categorized by enterprise asset scale"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: sizeData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: sizeData.length > 0 ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: sizeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: sizeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "size" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="size" chartTitle="Business Size Classification" hasData={sizeData.length > 0} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("size")}
+                    onPdf={() => exportChartAsPdf("size", "Business Size Classification",
+                      "Official breakdown of registered commercial enterprises categorized by enterprise asset scale")} />
                 </div>
 
                 {/* Chart Visual / Empty State */}
@@ -1380,70 +1294,11 @@ export default function ExportReportsPage() {
                     </p>
                   </div>
 
-                  <div className="no-export" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("type", "Business_Legal_Structure", typeData.length > 0)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: typeData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: typeData.length > 0 ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: typeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: typeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "type" ? "Saving..." : "Export PNG"}
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "type",
-                          "Business Legal Structure",
-                           "Official breakdown of registered commercial enterprises categorized by legal organization structure"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: typeData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: typeData.length > 0 ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: typeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: typeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "type" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="type" chartTitle="Business Legal Structure" hasData={typeData.length > 0} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("type")}
+                    onPdf={() => exportChartAsPdf("type", "Business Legal Structure",
+                      "Official breakdown of registered commercial enterprises categorized by legal organization structure")} />
                 </div>
 
                 {/* Chart Visual / Empty State */}
@@ -1506,69 +1361,11 @@ export default function ExportReportsPage() {
                       New establishments vs. renewed permits
                     </p>
                   </div>
-                  <div className="no-export" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("reg-type", "Registration_Lifecycle", regTypeData.length > 0)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: regTypeData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: regTypeData.length > 0 ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: regTypeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: regTypeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "reg-type" ? "Saving..." : "Export PNG"}
-                    </button>
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "reg-type",
-                          "Registration Lifecycle (New vs Renewal)",
-                           "Official breakdown of registered commercial enterprises categorized by registration status"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: regTypeData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: regTypeData.length > 0 ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: regTypeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: regTypeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "reg-type" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="reg-type" chartTitle="Registration Lifecycle" hasData={regTypeData.length > 0} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("reg-type")}
+                    onPdf={() => exportChartAsPdf("reg-type", "Registration Lifecycle (New vs Renewal)",
+                      "Official breakdown of registered commercial enterprises categorized by registration status")} />
                 </div>
 
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
@@ -1644,70 +1441,11 @@ export default function ExportReportsPage() {
                     </p>
                   </div>
 
-                  <div className="no-export" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("sector", "Top_Economic_Sectors", sectoralData.length > 0)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: sectoralData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: sectoralData.length > 0 ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: sectoralData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: sectoralData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "sector" ? "Saving..." : "Export PNG"}
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "sector",
-                          "Dominant Economic Sectors",
-                           "Official distribution ranking of commercial enterprises across top industry sectors and lines of business"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: sectoralData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: sectoralData.length > 0 ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: sectoralData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: sectoralData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "sector" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="sector" chartTitle="Top Economic Sectors" hasData={sectoralData.length > 0} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("sector")}
+                    onPdf={() => exportChartAsPdf("sector", "Dominant Economic Sectors",
+                      "Official distribution ranking of commercial enterprises across top industry sectors and lines of business")} />
                 </div>
 
                 {/* Chart Visual / Empty State */}
@@ -1790,70 +1528,11 @@ export default function ExportReportsPage() {
                     </p>
                   </div>
 
-                  <div className="no-export" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("barangay", "Geographic_Spread_Barangays", barangaySpreadData.length > 0)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: barangaySpreadData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: barangaySpreadData.length > 0 ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: barangaySpreadData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: barangaySpreadData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "barangay" ? "Saving..." : "Export PNG"}
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "barangay",
-                          "Geographic Spread Across Barangays",
-                           "Official spatial distribution and density analysis of registered commercial entities per Barangay"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: barangaySpreadData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: barangaySpreadData.length > 0 ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: barangaySpreadData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: barangaySpreadData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "barangay" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="barangay" chartTitle="Geographic Spread Across Barangays" hasData={barangaySpreadData.length > 0} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("barangay")}
+                    onPdf={() => exportChartAsPdf("barangay", "Geographic Spread Across Barangays",
+                      "Official spatial distribution and density analysis of registered commercial entities per Barangay")} />
                 </div>
 
                 {/* Chart Visual / Empty State */}
@@ -1925,70 +1604,11 @@ export default function ExportReportsPage() {
                     </p>
                   </div>
 
-                  <div className="no-export" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("compliance_size", "Compliance_By_Business_Size", complianceBySizeData.length > 0)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: complianceBySizeData.length > 0 ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: complianceBySizeData.length > 0 ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: complianceBySizeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: complianceBySizeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "compliance_size" ? "Saving..." : "Export PNG"}
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "compliance_size",
-                          "Compliance by Business Size",
-                           "Comparative analysis of active permit status versus expired/inactive non-compliance across enterprise size tiers"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: complianceBySizeData.length > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: complianceBySizeData.length > 0 ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: complianceBySizeData.length > 0 ? "pointer" : "not-allowed",
-                        opacity: complianceBySizeData.length > 0 ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "compliance_size" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="compliance_size" chartTitle="Compliance by Business Size" hasData={complianceBySizeData.length > 0} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("compliance_size")}
+                    onPdf={() => exportChartAsPdf("compliance_size", "Compliance by Business Size",
+                      "Comparative analysis of active permit status versus expired/inactive non-compliance across enterprise size tiers")} />
                 </div>
 
                 {/* Chart Visual / Empty State */}
@@ -2082,70 +1702,11 @@ export default function ExportReportsPage() {
                     </p>
                   </div>
 
-                  <div className="no-export" style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                    <button
-                      type="button"
-                      title="Export chart as high-resolution PNG image"
-                      onClick={() => exportChartAsImage("timeline", "Compliance_Timeline_Trend", hasTimelineData)}
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: hasTimelineData ? "rgba(59, 130, 246, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: hasTimelineData ? "#2563eb" : "#94a3b8",
-                        border: "1px solid rgba(59, 130, 246, 0.25)",
-                        cursor: hasTimelineData ? "pointer" : "not-allowed",
-                        opacity: hasTimelineData ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <polyline points="21 15 16 10 5 21" />
-                      </svg>
-                      {exportingImageId === "timeline" ? "Saving..." : "Export PNG"}
-                    </button>
-
-                    <button
-                      type="button"
-                      title="Export chart as printable official PDF document"
-                      onClick={() =>
-                        exportChartAsPdf(
-                          "timeline",
-                          "12-Month Compliance & Renewal Trend",
-                           "Chronological trajectory of monthly business permit renewal volumes and non-renewal intervals over the past 12 months"
-                        )
-                      }
-                      disabled={preparingExport}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        fontSize: 11.5,
-                        fontWeight: 600,
-                        padding: "6px 10px",
-                        borderRadius: 6,
-                        background: hasTimelineData ? "rgba(16, 185, 129, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                        color: hasTimelineData ? "#059669" : "#94a3b8",
-                        border: "1px solid rgba(16, 185, 129, 0.25)",
-                        cursor: hasTimelineData ? "pointer" : "not-allowed",
-                        opacity: hasTimelineData ? 1 : 0.6
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" width="13" height="13" stroke="currentColor" strokeWidth="2" fill="none">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="12" y1="18" x2="12" y2="12" />
-                        <line x1="9" y1="15" x2="15" y2="15" />
-                      </svg>
-                      {exportingPdfId === "timeline" ? "Generating..." : "Export PDF"}
-                    </button>
-                  </div>
+                  <ChartExportMenu chartId="timeline" chartTitle="12-Month Renewal & Compliance Trend" hasData={hasTimelineData} preparingExport={preparingExport}
+                    exportingImageId={exportingImageId} exportingPdfId={exportingPdfId}
+                    onPng={() => exportChartAsImage("timeline")}
+                    onPdf={() => exportChartAsPdf("timeline", "12-Month Compliance & Renewal Trend",
+                      "Chronological trajectory of monthly business permit renewal volumes and non-renewal intervals over the past 12 months")} />
                 </div>
 
                 {/* Chart Visual / Empty State */}
@@ -2217,12 +1778,12 @@ export default function ExportReportsPage() {
                 </div>
               </div>
             </div>
-          </section>
+          </section>}
 
           {/* ══════════════════════════════════════════════════════════════════════
               SECTION 2: FIELD OPERATIONS & DISPATCH REPORTS
           ══════════════════════════════════════════════════════════════════════ */}
-          <section style={{ marginBottom: 40 }}>
+          {activeSection === "operations" && <section style={{ marginBottom: 24 }}>
             {/* Section Header */}
             <div
               style={{
@@ -2235,39 +1796,13 @@ export default function ExportReportsPage() {
               }}
             >
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span
-                    style={{
-                      background: "#3b82f6",
-                      color: "#fff",
-                      fontWeight: 800,
-                      fontSize: 12,
-                      padding: "3px 8px",
-                      borderRadius: 6
-                    }}
-                  >
-                    Section 2
-                  </span>
-                  <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0, color: "var(--color-ink)" }}>
-                    Operational &amp; Dispatch Reports
-                  </h2>
-                </div>
+                <h2 style={{ fontSize: 19, fontWeight: 800, margin: 0, color: "var(--color-ink)" }}>
+                  Operational &amp; Dispatch Reports
+                </h2>
                 <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--color-muted)" }}>
-                  Official municipal operational intelligence for field inspectors and enforcement teams.
+                  Choose the report you need for inspection or field planning.
                 </p>
               </div>
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--color-muted)",
-                  background: "rgba(0,0,0,0.04)",
-                  padding: "4px 10px",
-                  borderRadius: 6
-                }}
-              >
-                Formats: PDF &bull; CSV
-              </span>
             </div>
 
             {/* Operational reports remain independent of the registry census. */}
@@ -2277,7 +1812,7 @@ export default function ExportReportsPage() {
               ) : (
                 <div
                   key={report.id}
-                  className="saas-card frosted-glass"
+                  className="saas-card frosted-glass operational-report-card"
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
@@ -2288,23 +1823,9 @@ export default function ExportReportsPage() {
                   }}
                 >
                   <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                      <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "var(--color-ink)" }}>
-                        {report.title}
-                      </h3>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 700,
-                          padding: "2px 8px",
-                          borderRadius: 4,
-                          color: report.tagColor,
-                          background: report.tagBg
-                        }}
-                      >
-                        {report.tag}
-                      </span>
-                    </div>
+                    <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 700, color: "var(--color-ink)" }}>
+                      {report.title}
+                    </h3>
                     <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13, lineHeight: 1.5 }}>
                       {report.desc}
                     </p>
@@ -2338,10 +1859,10 @@ export default function ExportReportsPage() {
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
 
           {/* Footer */}
-          <footer className="saas-footer frosted-glass" style={{ marginTop: 40 }}>
+          <footer className="saas-footer frosted-glass" style={{ marginTop: 24 }}>
             <p>&copy; 2026 Municipality of Mataasnakahoy. All Rights Reserved.</p>
             <p className="footer-links">
               <span>BPLO Portal</span> &bull; <span>Compliance Analytics</span> &bull;{" "}

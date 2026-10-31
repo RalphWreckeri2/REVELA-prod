@@ -355,12 +355,12 @@ try {
   console.log("Checking PNG and PDF exports");
   await navigate("reports");
   await scrollTo("#chart-card-size");
-  await evaluate(`document.querySelector('#chart-card-size button[title*="PNG"]').click()`);
+  await evaluate(`document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PNG"]').click()`);
   await wait(`document.body.textContent.includes('Chart Exported!') || document.body.textContent.includes('Export Failed')`, "PNG export", 30000);
   assert.equal(await evaluate(`document.body.textContent.includes('Chart Exported!')`), true, "PNG capture succeeds");
   await sleep(200);
   assert.ok(downloads.some(filename => filename.endsWith(".png")), "PNG download starts");
-  await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
+  await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
   await wait(`window.__printCount > 0`, "PDF print flow", 30000);
   assert.ok(await evaluate(`Boolean(document.querySelector('.print-report-container img[src^="data:image/png"]'))`), "PDF includes chart image");
   await call("Emulation.setEmulatedMedia", { media: "print" });
