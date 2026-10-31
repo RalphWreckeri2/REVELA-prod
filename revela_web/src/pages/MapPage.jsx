@@ -1466,7 +1466,10 @@ function MapCanvas({
 
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
-    hoverInfoWindowRef.current = new window.google.maps.InfoWindow({ disableAutoPan: true });
+    hoverInfoWindowRef.current = new window.google.maps.InfoWindow({
+      disableAutoPan: true,
+      headerDisabled: true,
+    });
     setMapInstance(map);
     setCurrentZoom(map.getZoom() || zoom || 13);
     if (mapRef) mapRef.current = map;

@@ -796,7 +796,10 @@ export default function MapOverview({ token, filters }) {
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
-    hoverInfoWindowRef.current = new window.google.maps.InfoWindow();
+    hoverInfoWindowRef.current = new window.google.maps.InfoWindow({
+      disableAutoPan: true,
+      headerDisabled: true,
+    });
     if (boundaryFeaturesRef.current.length) {
       addBarangayLabels(boundaryFeaturesRef.current);
       updateLabelVisibilityRef.current?.();

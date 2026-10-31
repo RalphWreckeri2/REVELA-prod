@@ -72,12 +72,14 @@ test("map hover popup shows only the barangay name and total business count", ()
   assert.match(analyticsMapSource, /"registered businesses"\s*:\s*"inspection reports"/);
 });
 
-test("shared popup shell removes Google white surfaces and styles both themes consistently", () => {
-  for (const selector of [".map-page .gm-style-iw-c", ".map-overview .gm-style-iw-c"]) {
-    assert.ok(sharedPopupStyles.includes(selector));
+test("both maps use compact hover-only info windows with theme-aware popup shells", () => {
+  for (const source of [mapPageSource, analyticsMapSource]) {
+    assert.match(source, /hoverInfoWindowRef\.current = new window\.google\.maps\.InfoWindow\(\{[\s\S]*?headerDisabled: true/);
   }
+  assert.match(sharedPopupStyles, /:is\(\.map-page, \.map-overview\) \.gm-style-iw-c:has\(\.revela-map-popup\)/);
   assert.match(sharedPopupStyles, /background:\s*var\(--color-modal-bg\)\s*!important/);
   assert.match(sharedPopupStyles, /border:\s*1px solid var\(--color-border\)\s*!important/);
   assert.match(sharedPopupStyles, /box-shadow:/);
-  assert.match(sharedPopupStyles, /html\.theme-dark[\s\S]*?filter:\s*invert\(1\)/);
+  assert.match(sharedPopupStyles, /button\.gm-ui-hover-effect\s*\{\s*display:\s*none\s*!important/);
+  assert.match(sharedPopupStyles, /html\.theme-dark[\s\S]*?background:\s*var\(--color-card-alt\)\s*!important/);
 });

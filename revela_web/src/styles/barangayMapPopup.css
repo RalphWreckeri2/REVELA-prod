@@ -1,78 +1,35 @@
-.map-page .gm-style-iw-t,
-.map-overview .gm-style-iw-t,
-.map-page .gm-style-iw-tc,
-.map-overview .gm-style-iw-tc {
-  background: transparent !important;
-}
-
-.map-page .gm-style-iw-c,
-.map-overview .gm-style-iw-c,
-.map-page .gm-style-iw,
-.map-overview .gm-style-iw,
-.map-page .gm-style-iw-d,
-.map-overview .gm-style-iw-d,
-.map-page .gm-style-iw-ch,
-.map-overview .gm-style-iw-ch,
-.map-page .gm-style-iw-chr,
-.map-overview .gm-style-iw-chr {
+/* Only boundary hover cards: leave marker and other Google info windows alone. */
+:is(.map-page, .map-overview) .gm-style-iw-c:has(.revela-map-popup) {
+  padding: 12px 14px !important;
+  border: 1px solid var(--color-border) !important;
+  border-top: 2px solid var(--color-primary) !important;
+  border-radius: 12px !important;
   background: var(--color-modal-bg) !important;
   color: var(--color-ink) !important;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16) !important;
 }
 
-.map-page .gm-style-iw-c,
-.map-overview .gm-style-iw-c {
-  border: 1px solid var(--color-border) !important;
-  border-radius: var(--radius-md) !important;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2) !important;
+:is(.map-page, .map-overview) .gm-style-iw-c:has(.revela-map-popup) .gm-style-iw-d {
+  overflow: hidden !important;
 }
 
-.map-page .gm-style-iw-tc::after,
-.map-overview .gm-style-iw-tc::after {
+/* Hover cards close on mouseout; do not show Google's oversized close header. */
+:is(.map-page, .map-overview) .gm-style-iw-c:has(.revela-map-popup) .gm-style-iw-ch,
+:is(.map-page, .map-overview) .gm-style-iw-c:has(.revela-map-popup) button.gm-ui-hover-effect {
+  display: none !important;
+}
+
+:is(.map-page, .map-overview) .gm-style-iw-t:has(.revela-map-popup) .gm-style-iw-tc::after {
   background: var(--color-modal-bg) !important;
   box-shadow: 1px 1px 0 var(--color-border);
 }
 
-.map-page .gm-style-iw-d,
-.map-overview .gm-style-iw-d {
-  overflow: auto !important;
-  scrollbar-color: var(--color-border) var(--color-modal-bg);
-}
-
-.map-page .gm-style-iw-c button.gm-ui-hover-effect,
-.map-overview .gm-style-iw-c button.gm-ui-hover-effect {
-  top: 4px !important;
-  right: 4px !important;
-  border: 0 !important;
-  border-radius: 6px !important;
-  background: transparent !important;
-  opacity: 1 !important;
-}
-
-.map-page .gm-style-iw-c button.gm-ui-hover-effect:hover,
-.map-overview .gm-style-iw-c button.gm-ui-hover-effect:hover {
-  background: var(--color-hover) !important;
-}
-
-.map-page .gm-style-iw-c button.gm-ui-hover-effect img,
-.map-overview .gm-style-iw-c button.gm-ui-hover-effect img,
-.map-page .gm-style-iw-c button.gm-ui-hover-effect span,
-.map-overview .gm-style-iw-c button.gm-ui-hover-effect span {
-  filter: none;
-}
-
-html.theme-dark .map-page .gm-style-iw-c button.gm-ui-hover-effect img,
-html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect img,
-html.theme-dark .map-page .gm-style-iw-c button.gm-ui-hover-effect span,
-html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect span {
-  filter: invert(1);
-}
-
 .revela-map-popup {
   display: flex;
-  max-width: 280px;
+  min-width: 156px;
+  max-width: min(250px, calc(100vw - 64px));
   flex-direction: column;
-  gap: 4px;
-  padding: 2px 32px 2px 4px;
+  gap: 5px;
   color: var(--color-ink);
   font: 12px/1.45 Inter, system-ui, sans-serif;
   overflow-wrap: anywhere;
@@ -80,6 +37,7 @@ html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect span {
 
 .revela-map-popup__title {
   font-size: 13px;
+  line-height: 1.35;
   font-weight: 700;
 }
 
@@ -91,4 +49,13 @@ html.theme-dark .map-overview .gm-style-iw-c button.gm-ui-hover-effect span {
 .revela-map-popup__detail {
   color: var(--color-muted);
   font-size: 11px;
+}
+
+html.theme-dark :is(.map-page, .map-overview) .gm-style-iw-c:has(.revela-map-popup) {
+  background: var(--color-card-alt) !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45) !important;
+}
+
+html.theme-dark :is(.map-page, .map-overview) .gm-style-iw-t:has(.revela-map-popup) .gm-style-iw-tc::after {
+  background: var(--color-card-alt) !important;
 }
