@@ -1,0 +1,81 @@
+name: Database backup trigger
+
+on:
+  schedule:
+    - cron: "0 11 * * 5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: revela-database-backup
+  cancel-in-progress: false
+
+jobs:
+  trigger-and-poll:
+    if: vars.DB_BACKUP_EXTERNAL_TRIGGER_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Wake API and request the scheduled backup
+        id: trigger
+        env:
+          TRIGGER_URL: ${{ secrets.DB_BACKUP_TRIGGER_URL }}
+          TRIGGER_TOKEN: ${{ secrets.DB_BACKUP_TRIGGER_TOKEN }}
+          IDEMPOTENCY_KEY: gha-${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$TRIGGER_URL" || -z "$TRIGGER_TOKEN" ]]; then
+            echo "::error::Database backup trigger secrets are not configured."
+            exit 1
+          fi
+          response="$(curl --silent --show-error --fail-with-body \
+            --connect-timeout 15 --max-time 45 --retry 4 --retry-delay 5 \
+            --retry-max-time 90 \
+            -X POST "$TRIGGER_URL" \
+            -H "Authorization: Bearer $TRIGGER_TOKEN" \
+            -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
+            -H "Accept: application/json")"
+          job_id="$(jq -er '.job_id | select(test("^[0-9a-f]{32}$"))' <<<"$response")"
+          status_url="$(jq -er '.status_url | select(startswith("/api/admin-settings/database-backup/trigger/"))' <<<"$response")"
+          printf 'job_id=%s\nstatus_url=%s\n' "$job_id" "$status_url" >> "$GITHUB_OUTPUT"
+
+      - name: Poll the durable job status for at most 60 minutes
+        env:
+          TRIGGER_URL: ${{ secrets.DB_BACKUP_TRIGGER_URL }}
+          TRIGGER_TOKEN: ${{ secrets.DB_BACKUP_TRIGGER_TOKEN }}
+          STATUS_PATH: ${{ steps.trigger.outputs.status_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          origin="${TRIGGER_URL%/api/admin-settings/database-backup/trigger}"
+          for attempt in $(seq 1 240); do
+            response="$(curl --silent --show-error --fail-with-body \
+              --connect-timeout 15 --max-time 45 --retry 3 --retry-delay 3 \
+              --retry-max-time 30 \
+              "$origin$STATUS_PATH" \
+              -H "Authorization: Bearer $TRIGGER_TOKEN" \
+              -H "Accept: application/json")"
+            state="$(jq -er '.status' <<<"$response")"
+            case "$state" in
+              completed)
+                echo "Scheduled database backup completed."
+                exit 0
+                ;;
+              failed)
+                reason="$(jq -r '.failure_reason // "unspecified"' <<<"$response")"
+                echo "::error::Scheduled database backup failed ($reason)."
+                exit 1
+                ;;
+              queued|running)
+                sleep 15
+                ;;
+              *)
+                echo "::error::Unexpected database backup job state."
+                exit 1
+                ;;
+            esac
+          done
+          echo "::error::Timed out polling the backup job after 60 minutes; the API job is not cancelled."
+          exit 1

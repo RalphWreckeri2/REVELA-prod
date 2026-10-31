@@ -79,6 +79,9 @@ def create_app():
     from api.admin_settings.routes import admin_settings_bp
     app.register_blueprint(admin_settings_bp, url_prefix="/api/admin-settings")
 
+    from recovery.runner import start_scheduler
+    start_scheduler(app)
+
     @app.route("/api/health", methods=["GET"])
     def health():
         return jsonify({"status": "ok"}), 200

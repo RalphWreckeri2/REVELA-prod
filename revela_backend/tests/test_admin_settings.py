@@ -350,6 +350,7 @@ class AuthenticationTests(unittest.TestCase):
     #: Read-only usage monitoring: every administrator may call these.
     ADMIN_READ_ROUTES = (
         ("get", "/api/admin-settings/usage"),
+        ("get", "/api/admin-settings/database-backup/status"),
     )
 
     #: Quota edits/resets, Test Mode config/resets, fixture purge.
@@ -559,6 +560,111 @@ class AuthenticationTests(unittest.TestCase):
             with self.subTest(path=path):
                 response = getattr(client, method)(path, json={})
                 self.assertEqual(response.status_code, 400)
+
+
+class DatabaseBackupStatusTests(unittest.TestCase):
+    PATH = "/api/admin-settings/database-backup/status"
+
+    def test_completed_history_exposes_admin_verification_metadata(self):
+        record = {
+            "id": "a" * 32,
+            "scheduled": True,
+            "scheduled_for": "2026-10-30T11:00:00+00:00",
+            "monthly_archive": False,
+            "created_at": "2026-10-30T11:00:00+00:00",
+            "completed_at": "2026-10-30T11:01:00+00:00",
+            "bytes": 1024,
+            "sha256": "f" * 64,
+            "mysql_version": "8.0.46",
+            "source_server_uuid": "source-fixture",
+            "tables": ["inspection_reports", "users"],
+        }
+        report = {
+            "configuration_issues": [],
+            "mode": "cloud",
+            "can_backup": False,
+            "enabled": False,
+            "phase": "pending_verification",
+            "files": [record],
+            "last_success": record,
+            "current_job": None,
+            "running": False,
+            "failures": [],
+            "automatic_execution_ready": False,
+            "external_trigger_configured": False,
+            "automatic_execution_reason": "No external trigger is integrated.",
+            "retention_policy": {
+                "weekly_successful_copies": 4,
+                "monthly_archives": 3,
+                "manual_days_proposed": 30,
+                "cleanup_enabled": False,
+            },
+            "manual_retention": "Proposed manual retention is 30 days.",
+        }
+        client = make_client(self, role="Admin")
+        with patch("recovery.status.report", return_value=report):
+            response = client.get(self.PATH)
+
+        self.assertEqual(response.status_code, 200)
+        history_record = response.get_json()["history"][0]
+        self.assertEqual(history_record["sha256"], "f" * 64)
+        self.assertEqual(history_record["mysqlVersion"], "8.0.46")
+        self.assertEqual(history_record["sourceServerUuid"], "source-fixture")
+        self.assertEqual(history_record["tableCount"], 2)
+        self.assertTrue(history_record["monthlyArchive"])
+        self.assertFalse(response.get_json()["automaticExecutionEnabled"])
+        self.assertFalse(response.get_json()["retention"]["cleanupEnabled"])
+
+    def test_admin_roles_receive_honest_unconfigured_capabilities(self):
+        for role in ("Admin", "SUPER_ADMIN", "System Administrator"):
+            with self.subTest(role=role):
+                response = make_client(self, role=role).get(self.PATH)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["Cache-Control"], "private, no-store")
+                data = response.get_json()
+                self.assertEqual(data["status"], "not_configured")
+                self.assertFalse(data["configured"])
+                self.assertIsNone(data["lastSuccessfulBackup"])
+                self.assertIsNone(data["history"])
+                self.assertFalse(data["schedule"]["configured"])
+                self.assertFalse(data["schedule"]["enabled"])
+                self.assertIsNone(data["schedule"]["nextRunAt"])
+                self.assertFalse(data["retention"]["configured"])
+                self.assertIn("runtime configuration is incomplete", data["manualBackupDisabledReason"])
+                self.assertIn("private storage", data["downloadDisabledReason"])
+
+    def test_missing_and_invalid_real_jwt_are_rejected(self):
+        from flask_jwt_extended import JWTManager
+
+        app = Flask(__name__)
+        app.config.update(TESTING=True, JWT_SECRET_KEY="synthetic-backup-test-secret-not-for-production")
+        JWTManager(app)
+        app.register_blueprint(admin_routes.admin_settings_bp, url_prefix="/api/admin-settings")
+        client = app.test_client()
+        for headers in ({}, {"Authorization": "Bearer not-a-valid-jwt"}):
+            with self.subTest(headers=headers):
+                response = client.get(self.PATH, headers=headers)
+                self.assertEqual(response.status_code, 401)
+                self.assertNotIn("status", response.get_json())
+
+    def test_changed_admin_role_cannot_read_status(self):
+        client = make_client(self, role="Admin")
+        with patch.object(decorators, "find_user_by_id", return_value={
+            "isActive": True, "userRole": "Inspector",
+        }):
+            self.assertEqual(client.get(self.PATH).status_code, 401)
+
+    def test_inactive_admin_cannot_read_status(self):
+        client = make_client(self, role="Admin")
+        with patch.object(decorators, "find_user_by_id", return_value={"isActive": False}):
+            self.assertEqual(client.get(self.PATH).status_code, 401)
+
+    def test_status_check_fails_closed_when_authorization_is_unavailable(self):
+        client = make_client(self, role="Admin")
+        with patch.object(decorators, "find_user_by_id", side_effect=RuntimeError("synthetic DB outage")):
+            response = client.get(self.PATH)
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn("status", response.get_json())
 
 
 class SettingsPersistenceTests(unittest.TestCase):

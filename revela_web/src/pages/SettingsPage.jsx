@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext, useCallback } from "react";
+import { useState, useEffect, useContext, useCallback, useRef } from "react";
 import { useTheme } from "../context/themeContext";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
@@ -29,6 +29,9 @@ import {
   getEvidenceStorageStatsRequest,
   downloadEvidenceArchiveRequest,
   cleanupEvidenceStorageRequest,
+  getDatabaseBackupStatusRequest,
+  startDatabaseBackupRequest,
+  downloadDatabaseBackupRequest,
   API_ORIGIN
 } from "../services/api";
 import { GoogleMap, Marker } from "@react-google-maps/api";
@@ -39,6 +42,8 @@ import PrivacyPage from "../components/PrivacyPage";
 import CookiePolicyPage from "../components/CookiePolicyPage";
 import AboutCreditsModal from "../components/AboutCreditsModal";
 import InstructionalManualModal from "../components/InstructionalManualModal";
+import BackupStatusPanel from "../components/BackupStatusPanel";
+import { backupStatusPresentation } from "../components/backupStatusView";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
 import "../styles/SettingsPage.css";
@@ -460,6 +465,72 @@ export default function SettingsPage() {
   const [downloadingArchive, setDownloadingArchive] = useState(false);
   const [cleaningStorage, setCleaningStorage] = useState(false);
 
+  const [backupStatus, setBackupStatus] = useState(null);
+  const [backupLoading, setBackupLoading] = useState(true);
+  const [backupError, setBackupError] = useState("");
+  const [backupActionError, setBackupActionError] = useState("");
+  const [backupActionLoading, setBackupActionLoading] = useState(false);
+  const [backupNotice, setBackupNotice] = useState("");
+  const backupRequest = useRef(null);
+  const fetchBackupStatus = useCallback(() => {
+    if (!token || !canEditPolicy) return Promise.resolve(true);
+    if (backupRequest.current) return backupRequest.current.promise;
+    const controller = new AbortController();
+    const request = { controller, promise: null };
+    backupRequest.current = request;
+    setBackupLoading(true);
+    setBackupError("");
+    request.promise = getDatabaseBackupStatusRequest(token, { signal: controller.signal })
+      .then(data => {
+        if (!controller.signal.aborted) setBackupStatus(data);
+        return true;
+      })
+      .catch(err => {
+        if (!controller.signal.aborted) {
+          setBackupStatus(null);
+          setBackupError(err.status === 404
+            ? "The backend does not provide GET /api/admin-settings/database-backup/status. Database backup status and actions are unavailable."
+            : err.message || "Could not load database backup status.");
+        }
+        return false;
+      })
+      .finally(() => {
+        if (backupRequest.current === request) backupRequest.current = null;
+        if (!controller.signal.aborted) setBackupLoading(false);
+      });
+    return request.promise;
+  }, [token, canEditPolicy]);
+  const handleDatabaseBackup = useCallback(async () => {
+    setBackupActionLoading(true);
+    setBackupActionError("");
+    setBackupNotice("");
+    try {
+      await startDatabaseBackupRequest(token);
+      setBackupNotice("Database backup started. Refresh status to check progress.");
+      await fetchBackupStatus();
+    } catch (err) {
+      setBackupActionError(err.message || "Could not start the database backup.");
+    } finally {
+      setBackupActionLoading(false);
+    }
+  }, [token, fetchBackupStatus]);
+  const handleDatabaseBackupDownload = useCallback(async identifier => {
+    setBackupActionError("");
+    try {
+      await downloadDatabaseBackupRequest(token, identifier);
+    } catch (err) {
+      setBackupActionError(err.message || "Could not download the database backup.");
+    }
+  }, [token]);
+  useEffect(() => {
+    // Also check on revisits when the page's other Settings datasets are cached.
+    void fetchBackupStatus();
+    return () => {
+      backupRequest.current?.controller.abort();
+      backupRequest.current = null;
+    };
+  }, [fetchBackupStatus]);
+
   // Stable across renders so the mount effect below can depend on it; a plain
   // arrow function would be a new reference every render and re-run storage
   // stats on each one.
@@ -540,7 +611,7 @@ export default function SettingsPage() {
       setSectorRiskPolicyLoading(false);
     }
   }, [token, savedSectorRiskPolicy]);
-  useAppDataRefresh("settings", () => refreshResults([loadPolicy(), loadSectorRiskPolicy(), fetchStorageStats()]));
+  useAppDataRefresh("settings", () => refreshResults([loadPolicy(), loadSectorRiskPolicy(), fetchStorageStats(), fetchBackupStatus()]));
   useEffect(() => () => setPreviewTheme(null), [setPreviewTheme]);
 
   const handleExecuteCleanup = async (filterToClean) => {
@@ -900,6 +971,7 @@ export default function SettingsPage() {
   const sectorRiskPolicyDirty = savedSectorRiskPolicy
     && sectorRiskPolicySignature(sectorRiskPolicy) !== sectorRiskPolicySignature(savedSectorRiskPolicy);
   const selectedStorage = storageStats?.categories?.[selectedFilter];
+  const backupView = backupStatusPresentation(backupStatus, backupLoading, backupError);
   const preferencesSummary = <>
     <span>Saved: appearance {theme} (browser) · Email {emailAlertsSeed === null ? "unavailable" : emailAlertsSeed ? "On" : "Off"}{emailAlertsSeed !== null ? serverEmailAlerts !== null ? " (account)" : " (browser fallback)" : ""}</span>
     {preferencesDirty && <span className="settings-draft-summary">Draft: appearance {activeTheme} · Email {emailAlerts ? "On" : "Off"}</span>}
@@ -1532,6 +1604,21 @@ export default function SettingsPage() {
             </div>
           </div>
         </SettingsSection>
+
+        {canEditPolicy && <SettingsSection id="settings-database-backup" title="Database Backup"
+          summary={backupView.summary} status={backupView}>
+          <BackupStatusPanel
+            data={backupStatus}
+            loading={backupLoading}
+            error={backupError}
+            actionError={backupActionError}
+            actionLoading={backupActionLoading}
+            notice={backupNotice}
+            onRefresh={fetchBackupStatus}
+            onBackupNow={handleDatabaseBackup}
+            onDownload={handleDatabaseBackupDownload}
+          />
+        </SettingsSection>}
 
         {/* Instructional Material & System SOP */}
         <SettingsSection id="settings-manual" title="Manual / SOP" summary="BPLO manual · Roles, map, registry, inspections, reports, and API usage guides">
