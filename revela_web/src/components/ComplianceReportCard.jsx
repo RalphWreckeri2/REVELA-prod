@@ -64,7 +64,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
         saveAs(new Blob([complianceCsv(exportReport)], { type: "text/csv;charset=utf-8;" }),
           `Inspection_Verified_Compliant_Businesses_${snapshot.generatedAt.slice(0, 10)}.csv`);
       } else {
-        onPrint(compliancePrintReport(exportReport, user));
+        await onPrint(compliancePrintReport(exportReport, user));
       }
       return true;
     } catch (err) {
@@ -113,7 +113,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
           {confirmationSummary && <small>Office-confirmed: {confirmationSummary.office_confirmed} · Inspection-verified: {confirmationSummary.inspection_verified} · Combined distinct businesses: {confirmationSummary.total_confirmed}. Counts exclude Green businesses without qualifying confirmation history.</small>}
           {unlinkedVerifiedPinCount > 0 && <small>{unlinkedVerifiedPinCount} historical inspection-verified unlinked {unlinkedVerifiedPinCount === 1 ? "pin appears" : "pins appear"} in the report list, but not in distinct linked-business counts.</small>}
           <small>{COMPLIANCE_REPORT_SCOPE}</small>
-          <small>Downloads use the View List filters. PDF opens the print / Save as PDF dialog.</small>
+          <small>Downloads use the View List filters. PDF downloads directly as a file.</small>
           {checkedAt && <small>Applied filters: {report.filtersLabel}</small>}
         </details>
         {!open && error && <p role="alert">{error} <button type="button" className="ghost-btn" disabled={loading} onClick={() => void load()}>Retry</button></p>}

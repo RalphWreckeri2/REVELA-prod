@@ -13,12 +13,6 @@ function hasFiniteCoordinates(latitude, longitude) {
   );
 }
 
-function formatCoordinates(latitude, longitude) {
-  return hasFiniteCoordinates(latitude, longitude)
-    ? `${Number(latitude).toFixed(6)}, ${Number(longitude).toFixed(6)}`
-    : "Coordinates unavailable";
-}
-
 export function pinMoveDistanceMeters(candidate) {
   const proposedLatitude = candidate?.candidateLatitude
     ?? candidate?.latitude;
@@ -57,18 +51,11 @@ export function formatPinMoveDistance(distanceMeters) {
 
 export function reviewApprovalConfirmation(candidate) {
   const distance = pinMoveDistanceMeters(candidate);
-  return [
-    `Business: ${candidate?.businessName || "Unnamed business"}`,
-    `Current pin: ${formatCoordinates(candidate?.originalLatitude, candidate?.originalLongitude)}`,
-    `Proposed pin: ${formatCoordinates(
-      candidate?.candidateLatitude ?? candidate?.latitude,
-      candidate?.candidateLongitude ?? candidate?.longitude,
-    )}`,
-    `Distance: ${formatPinMoveDistance(distance)}`,
-    `Match score: ${candidate?.matchScore == null
-      ? "Unavailable"
-      : Number(candidate.matchScore).toFixed(2)}`,
-  ].join("\n");
+  const businessName = candidate?.businessName || "this business";
+  if (distance === null || distance <= SAME_PIN_TOLERANCE_METERS) {
+    return `Confirm the suggested location for ${businessName}?`;
+  }
+  return `Move the pin for ${businessName} to the suggested location? It will move about ${formatPinMoveDistance(distance)}.`;
 }
 
 export function hasImportedLocationCandidate(candidate) {

@@ -1,7 +1,10 @@
 import datetime
+from zoneinfo import ZoneInfo
 from app import mysql
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
+
+MANILA_TIMEZONE = ZoneInfo("Asia/Manila")
 
 TABLE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS `detection_runs` (
@@ -30,19 +33,46 @@ def ensure_detection_runs_table():
         print(f"[detection_runs] Error ensuring table exists: {e}")
 
 
-def get_monthly_detection_count():
+def _manila_month_utc_window(now=None):
+    """Return naive UTC DATETIME bounds for the current Manila calendar month."""
+    local_now = now or datetime.datetime.now(MANILA_TIMEZONE)
+    if local_now.tzinfo is None:
+        local_now = local_now.replace(tzinfo=MANILA_TIMEZONE)
+    else:
+        local_now = local_now.astimezone(MANILA_TIMEZONE)
+
+    month_start = datetime.datetime(
+        local_now.year, local_now.month, 1, tzinfo=MANILA_TIMEZONE
+    )
+    if local_now.month == 12:
+        next_month_start = datetime.datetime(
+            local_now.year + 1, 1, 1, tzinfo=MANILA_TIMEZONE
+        )
+    else:
+        next_month_start = datetime.datetime(
+            local_now.year, local_now.month + 1, 1, tzinfo=MANILA_TIMEZONE
+        )
+
+    return tuple(
+        boundary.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        for boundary in (month_start, next_month_start)
+    )
+
+
+def get_monthly_detection_count(now=None):
     """
     Count how many completed detection scans were executed in the current calendar month.
     Cancelled or failed runs do NOT consume the monthly quota.
     """
     ensure_detection_runs_table()
+    month_start_utc, next_month_start_utc = _manila_month_utc_window(now)
     cur = mysql.connection.cursor()
     cur.execute("""
         SELECT COUNT(*) AS cnt FROM detection_runs
         WHERE status IN ('completed', 'completed_with_gaps')
-          AND YEAR(startedAt) = YEAR(CURRENT_DATE())
-          AND MONTH(startedAt) = MONTH(CURRENT_DATE())
-    """)
+          AND startedAt >= %s
+          AND startedAt < %s
+    """, (month_start_utc, next_month_start_utc))
     row = cur.fetchone()
     cur.close()
     if isinstance(row, dict):
@@ -224,11 +254,11 @@ def get_detection_quota_info():
     remaining = max(0, monthly_limit - used)
 
     # Calculate reset date (1st of next month)
-    today = datetime.date.today()
-    if today.month == 12:
-        next_month = datetime.date(today.year + 1, 1, 1)
+    local_today = datetime.datetime.now(MANILA_TIMEZONE).date()
+    if local_today.month == 12:
+        next_month = datetime.date(local_today.year + 1, 1, 1)
     else:
-        next_month = datetime.date(today.year, today.month + 1, 1)
+        next_month = datetime.date(local_today.year, local_today.month + 1, 1)
 
     last_run = get_latest_detection_run()
     last_run_data = None

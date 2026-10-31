@@ -83,6 +83,8 @@ class ReviewQueueAndStatusExposureTests(unittest.TestCase):
                     self.assertIsNone(candidate["candidatePlaceID"])
                     self.assertEqual(candidate["matchScore"], 0.554)
                     self.assertTrue(candidate["lowMatchScore"])
+                    self.assertIn("maps/search", candidate["mapsUrl"])
+                    self.assertIn("MARK", candidate["mapsUrl"])
 
     def test_nullable_tuple_row_accessor_is_safe(self):
         from api.registry.places_resolver import _g

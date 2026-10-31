@@ -470,7 +470,7 @@ test("map KPIs use exact-location totals and explain the effective Red populatio
     mapPageSource,
     /recordedBarangayID: flag\.recordedBarangayID \?\? flag\.barangayID/,
   );
-  assert.match(mapPageSource, /label: "Expired \/ Unregistered \(Red\)"/);
+  assert.match(mapPageSource, /label: "Unregistered \(Red\)"/);
   assert.match(mapPageSource, /Approx\. \(\{centroidPreviewFlags\.length\}\)/);
   assert.match(mapPageSource, /locationReview\?\.kind === "inferred"/);
   assert.match(

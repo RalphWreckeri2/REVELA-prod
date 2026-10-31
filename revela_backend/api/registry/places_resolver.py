@@ -37,6 +37,7 @@ import random
 import re
 import threading
 import time
+from urllib.parse import urlencode
 import requests
 
 from app import mysql
@@ -1100,8 +1101,37 @@ def list_review_queue(page=1, per_page=20, search=""):
                 d.get("candidatePlaceID") if candidate_is_valid
                 else d.get("originalPlaceID")
             )
-            d["mapsUrl"] = (f"https://www.google.com/maps/search/?api=1&query=x&query_place_id={d['placeID']}"
-                            if d.get("placeID") else None)
+            if d.get("placeID"):
+                maps_query = urlencode({
+                    "api": "1",
+                    "query": "x",
+                    "query_place_id": d["placeID"],
+                })
+            else:
+                search_terms = [
+                    d.get("businessName"),
+                    d.get("businessAddress"),
+                    d.get("barangayName"),
+                    MUNICIPALITY,
+                    PROVINCE,
+                ]
+                maps_search = ", ".join(
+                    str(term).strip() for term in search_terms if term
+                )
+                if (
+                    not maps_search
+                    and d.get("latitude") is not None
+                    and d.get("longitude") is not None
+                ):
+                    maps_search = f"{d['latitude']},{d['longitude']}"
+                maps_query = (
+                    urlencode({"api": "1", "query": maps_search})
+                    if maps_search else None
+                )
+            d["mapsUrl"] = (
+                f"https://www.google.com/maps/search/?{maps_query}"
+                if maps_query else None
+            )
             items.append(d)
         return {"data": items, "total": total, "page": page, "limit": per_page}, None
     except Exception as e:

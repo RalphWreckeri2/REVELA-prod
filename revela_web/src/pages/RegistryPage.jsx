@@ -755,7 +755,7 @@ export default function RegistryPage() {
                     key={b.businessID}
                     style={{ ...styles.tr, background: i % 2 === 0 ? "var(--color-input-bg)" : "transparent" }}
                   >
-                    <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "#475569" }}>
+                    <td style={{ ...styles.td, fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: "var(--color-muted)" }}>
                       {b.businessID}
                     </td>
                     <td style={{ ...styles.td, fontWeight: 700, color: "var(--color-ink)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }} title={b.businessName}>

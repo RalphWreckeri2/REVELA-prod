@@ -931,6 +931,19 @@ function OfficeComplianceModal({ flag, token, onClose, onSuccess }) {
   );
 }
 
+function formatDetectedDate(value) {
+  if (!value) return "—";
+  const datePart = String(value).slice(0, 10);
+  const date = new Date(`${datePart}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? datePart
+    : new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(date);
+}
+
 function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocation, onDelete, onUpdateColor, onConfirmCompliance, onReviewLocation, isAdmin, actionLoading, isClosing }) {
   const [showMoreActions, setShowMoreActions] = useState(false);
   const fc = getFlagColor(flag.color);
@@ -957,15 +970,17 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
         className={"modal-panel" + (isClosing ? " closing" : "")}
         style={{
           ...styles.detailModal,
-          width: "min(100%, 420px)",
+          width: "min(100%, 520px)",
           borderRadius: 16,
           background: "var(--color-modal-bg)",
           boxShadow: "0 20px 50px rgba(0, 0, 0, 0.4)",
           border: "1px solid var(--color-border)",
           padding: 24,
+          maxHeight: "90dvh",
+          overflowY: "auto",
           display: "flex",
           flexDirection: "column",
-          gap: 20
+          gap: 18
         }}
         onClick={e => e.stopPropagation()}
       >
@@ -1000,56 +1015,69 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
           </button>
         </div>
 
-        {/* Metadata Card */}
-        <div style={{ background: "var(--color-surface)", borderRadius: 12, padding: "16px", display: "flex", flexDirection: "column", gap: 12, border: "1px solid var(--color-border-soft)" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
-            <div style={{ color: "var(--color-muted)", marginTop: 2 }}><Icon.MapPin size={16} /></div>
-            <div style={{ lineHeight: 1.4 }}>
-              <span style={{ fontWeight: 600 }}>{flag.barangay || "Mataasnakahoy"}</span>
-              {flag.size && flag.size !== "—" && flag.size !== "â€”" && <span style={{ color: "var(--color-muted)" }}> &bull; {flag.size} Size</span>}
+        <section className="flag-location-summary">
+          <div className="flag-location-primary">
+            <Icon.MapPin size={20} aria-hidden="true" />
+            <div className="flag-location-copy">
+              <div className="flag-location-barangay">
+                {flag.barangay || "Mataasnakahoy"}
+                {flag.size && flag.size !== "—" && flag.size !== "â€”" && (
+                  <span>{flag.size} Size</span>
+                )}
+              </div>
+              {flag.address && <div className="flag-location-address">{flag.address}</div>}
+              {mapsUrl && (
+                <a
+                  className="flag-location-maps-link"
+                  href={mapsUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open in maps <Icon.ExternalLink size={16} aria-hidden="true" />
+                </a>
+              )}
             </div>
           </div>
           {flag.locationReview?.kind === "mismatch" && (
-            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+            <p role="note" className="flag-location-notice">
               {formatBarangayLocationMismatch(flag.locationReview.storedName, flag.locationReview.polygonName)}. Review only; the recorded and map-position barangays remain distinct.
             </p>
           )}
           {flag.locationReview?.kind === "inferred" && (
-            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+            <p role="note" className="flag-location-notice">
               No saved barangay ID. Inferred as {flag.locationReview.polygonName} from the map position.
             </p>
           )}
           {flag.locationReview?.kind === "unassigned" && (
-            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+            <p role="note" className="flag-location-notice">
               No stored barangay ID. This record remains unassigned; its map position does not change its grouping.
             </p>
           )}
           {flag.isCentroidPreview && (
-            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+            <p role="note" className="flag-location-notice">
               This approximate marker is for display only. It is not an exact business location and does not affect counts or dispatch eligibility.
             </p>
           )}
-          {flag.address && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
-              <div style={{ color: "var(--color-muted)", marginTop: 2 }}><Icon.Search size={16} /></div>
-              <div style={{ lineHeight: 1.4 }}>{flag.address}</div>
-            </div>
-          )}
-          <div className="business-source-info">
-            <p>{information.source}</p>
-            {information.compliance && <p className="business-compliance-info">{information.compliance}</p>}
-          </div>
           {flag.notes && (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
-              <div style={{ color: "var(--color-muted)", marginTop: 2 }}><Icon.FileText size={16} /></div>
-              <div style={{ lineHeight: 1.4 }}>{flag.notes}</div>
+            <div className="flag-location-notes">
+              <Icon.FileText size={15} aria-hidden="true" />
+              <span>{flag.notes}</span>
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
-            <div style={{ color: "var(--color-muted)" }}><Icon.Calendar size={16} /></div>
-            <div>Detected: <span style={{ color: "var(--color-muted)" }}>{flag.detectedDate ? flag.detectedDate.slice(0, 10) : "—"}</span></div>
+          <div className="flag-location-facts">
+            <div>
+              <span className="flag-location-fact-label">Detected</span>
+              <strong>{formatDetectedDate(flag.detectedDate)}</strong>
+            </div>
+            <div>
+              <span className="flag-location-fact-label">Source</span>
+              <strong>{information.source}</strong>
+              {information.compliance && (
+                <span className="business-compliance-info">{information.compliance}</span>
+              )}
+            </div>
           </div>
-        </div>
+        </section>
 
         {isAdmin && flag.matchStatus === "review" && flag.businessID != null && (
           <button
@@ -1129,16 +1157,6 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             >
               Mark as active
             </button>
-          )}
-          {mapsUrl && (
-            <a
-              href={mapsUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 44, borderRadius: 10, border: flag.color === "Black" ? "1px solid var(--color-border)" : "none", background: flag.color === "Black" ? "var(--color-surface)" : "transparent", color: "#3b82f6", fontSize: 14, fontWeight: 600, textDecoration: "none", cursor: "pointer", transition: "all 0.15s" }}
-            >
-              <Icon.ExternalLink size={16} /> Open in maps
-            </a>
           )}
         </div>
 
@@ -1974,6 +1992,10 @@ function MapCanvas({
           maxZoom: 16,
           minPoints: 2,
         }),
+        onClusterClick: (_event, cluster, map) => {
+          map.setCenter(cluster.position);
+          map.setZoom(Math.min((map.getZoom() ?? 0) + 2, 20));
+        },
         renderer: {
           render: (cluster) => {
             const { count, position, markers: clusterMarkers } = cluster;
@@ -5391,7 +5413,7 @@ export default function MapPage() {
               { label: "Matching Locations", value: filteredMapMetrics.matchingLocations, color: "var(--color-ink)" },
               { label: "Active Businesses", value: filteredMapMetrics.activeBusinesses, color: isDark ? "#4ade80" : "#22c55e", title: MAP_LOCATION_METRIC_DEFINITIONS.activeBusinesses },
               { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Expired / Unregistered (Red)", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Unregistered (Red)", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
               { label: "Suspected Unregistered", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
               { label: "Closed / Abandoned", value: filteredCounts.Purple, color: isDark ? "#c084fc" : "#7c3aed", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
               { label: "Critical Violations", value: filteredCounts.Black, color: "var(--color-ink)", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },

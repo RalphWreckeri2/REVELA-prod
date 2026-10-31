@@ -55,7 +55,12 @@ try {
   await call("Runtime.enable");
   const evaluate = async expression => {
     const result = await call("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
-    if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+    if (result.exceptionDetails) {
+      throw new Error(
+        result.exceptionDetails.exception?.description
+        || result.exceptionDetails.text,
+      );
+    }
     return result.result.value;
   };
   const waitFor = async expression => {
@@ -70,6 +75,28 @@ try {
     await call("Emulation.setDeviceMetricsOverride", { width, height, mobile: false, deviceScaleFactor: 1 });
     await call("Page.navigate", { url: `http://127.0.0.1:${server.httpServer.address().port}/scripts/layout-preview.html?page=reports&theme=${theme}` });
     await waitFor("document.querySelector('#chart-card-size .export-actions-menu > summary:not([aria-disabled=true])')");
+    await evaluate(`(() => {
+      window.__pdfDownloads = [];
+      window.__printCount = 0;
+      const observedPdfAnchors = new WeakSet();
+      const recordPdfDownload = anchor => {
+        if (anchor?.download?.toLowerCase().endsWith(".pdf") && !observedPdfAnchors.has(anchor)) {
+          observedPdfAnchors.add(anchor);
+          window.__pdfDownloads.push({ filename: anchor.download, href: anchor.href });
+        }
+      };
+      window.print = () => { window.__printCount += 1; };
+      const click = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function() {
+        recordPdfDownload(this);
+        return click.call(this);
+      };
+      const dispatchEvent = HTMLAnchorElement.prototype.dispatchEvent;
+      HTMLAnchorElement.prototype.dispatchEvent = function(event) {
+        if (event.type === "click") recordPdfDownload(this);
+        return dispatchEvent.call(this, event);
+      };
+    })()`);
     if (process.env.REVELA_EXPORT_CAPTURE) {
       const screenshot = await call("Page.captureScreenshot", { format: "png" });
       const output = join(tempRoot, `revela-export-ui-${width}-${theme}.png`);
@@ -88,36 +115,21 @@ try {
     if (width === 1440 && theme === "light") {
       await evaluate("document.querySelector('.export-profile-menu > summary').click(); document.querySelector('.export-profile-menu button:last-child').click()");
       await waitFor("document.querySelectorAll('.demographic-complete-body .dossier-section').length === 8");
-      await call("Emulation.setEmulatedMedia", { media: "print" });
-      const printStyles = await evaluate(`(() => ({
-        header: getComputedStyle(document.querySelector('.print-header')).position,
-        footer: getComputedStyle(document.querySelector('.print-footer')).position,
-        tableColors: [...new Set([...document.querySelectorAll('.demographic-complete-body .print-table th')]
-          .map(th => getComputedStyle(th).backgroundColor))]
-      }))()`);
-      assert.equal(printStyles.header, "fixed");
-      assert.equal(printStyles.footer, "fixed");
-      assert.deepEqual(printStyles.tableColors, ["rgb(234, 241, 237)"], "dossier uses one quiet table-header color");
-      if (process.env.REVELA_EXPORT_CAPTURE) {
-        const pdf = await call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
-        const output = join(tempRoot, "revela-export-complete-dossier.pdf");
-        await writeFile(output, Buffer.from(pdf.data, "base64"));
-        console.log(`Print preview: ${output}`);
-      }
-      await call("Emulation.setEmulatedMedia", { media: "screen" });
-      await evaluate("window.dispatchEvent(new Event('afterprint'))");
+      await waitFor("window.__pdfDownloads.length === 1");
+      assert.match(await evaluate("window.__pdfDownloads[0].filename"), /\.pdf$/i);
+      assert.equal(await evaluate("window.__printCount"), 0, "PDF download does not open the print dialog");
       await waitFor("!document.querySelector('.print-report-container')");
     }
     await evaluate("document.querySelector('#chart-card-size .export-actions-menu > summary').click()");
     assert.equal(await evaluate("document.querySelectorAll('#chart-card-size .export-actions-menu__panel button').length"), 2);
     if (width === 1440 && theme === "light") {
-      await evaluate(`window.print = () => { window.__printCount = (window.__printCount || 0) + 1; }; document.querySelector('#chart-card-size button[title*="PNG"]').click()`);
+      await evaluate("document.querySelector('#chart-card-size button[title*=\"PNG\"]').click()");
       await waitFor("document.body.textContent.includes('Chart Exported!') || document.body.textContent.includes('Export Failed')");
       assert.equal(await evaluate("document.body.textContent.includes('Chart Exported!')"), true, "PNG export still works from the menu");
       await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
-      await waitFor(`document.querySelector('.print-report-container img[src^="data:image/png"]')`);
-      assert.equal(await evaluate("Boolean(document.querySelector('.print-report-container img'))"), true, "PDF includes the chart image");
-      await evaluate("window.dispatchEvent(new Event('afterprint'))");
+      await waitFor("window.__pdfDownloads.length === 2");
+      assert.match(await evaluate("window.__pdfDownloads[1].filename"), /\.pdf$/i);
+      assert.equal(await evaluate("window.__printCount"), 0, "chart PDF downloads without printing");
       await waitFor("!document.querySelector('.print-report-container')");
     }
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Field reports')).click()");
@@ -150,31 +162,13 @@ try {
         };
       })()`);
 
-      const checkPdf = async (selector, rows, name) => {
+      const checkPdf = async (selector, rows, name, downloadCount) => {
         await waitFor(`document.querySelector('${selector}')`);
         assert.equal(await evaluate(`document.querySelectorAll('${selector} .print-table:first-of-type tbody tr').length`), rows);
-        await call("Emulation.setEmulatedMedia", { media: "print" });
-        const printStyle = await evaluate(`(() => ({
-          header: getComputedStyle(document.querySelector('.print-header')).position,
-          footer: getComputedStyle(document.querySelector('.print-footer')).position,
-          colors: [...new Set([...document.querySelectorAll('${selector} .print-table th')]
-            .map(th => getComputedStyle(th).backgroundColor))]
-        }))()`);
-        assert.equal(printStyle.header, "fixed");
-        assert.equal(printStyle.footer, "fixed");
-        assert.deepEqual(printStyle.colors, ["rgb(234, 241, 237)"], `${name} uses the quiet table palette`);
-        const pdf = await call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
-        const pdfBuffer = Buffer.from(pdf.data, "base64");
-        const pages = (pdfBuffer.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
-        assert.ok(pages > 0 && pages <= (name === "unregistered" ? 10 : name === "dispatch" ? 2 : 1),
-          `${name} fits within the expected printed pages (${pages})`);
-        if (process.env.REVELA_EXPORT_CAPTURE) {
-          const output = join(tempRoot, `revela-export-${name}.pdf`);
-          await writeFile(output, pdfBuffer);
-          console.log(`Print preview: ${output}`);
-        }
-        await call("Emulation.setEmulatedMedia", { media: "screen" });
-        await evaluate("window.dispatchEvent(new Event('afterprint')); document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto')");
+        await waitFor(`window.__pdfDownloads.length === ${downloadCount}`);
+        assert.match(await evaluate(`window.__pdfDownloads[${downloadCount - 1}].filename`), /\.pdf$/i, `${name} downloads a PDF file`);
+        assert.equal(await evaluate("window.__printCount"), 0, `${name} does not open the print dialog`);
+        await evaluate("document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto')");
         await waitFor("!document.querySelector('.print-report-container')");
       };
       const download = async label => {
@@ -185,11 +179,11 @@ try {
       };
 
       await download("List of Unregistered Businesses");
-      await checkPdf(".unregistered-print-body", 224, "unregistered");
+      await checkPdf(".unregistered-print-body", 224, "unregistered", 3);
       await download("Inspection-Verified Compliant Businesses");
-      await checkPdf(".inspection-print-body", 2, "inspection-compliant");
+      await checkPdf(".inspection-print-body", 2, "inspection-compliant", 4);
       await download("Field Inspector Dispatch Plan");
-      await checkPdf(".dispatch-print-body", 16, "dispatch");
+      await checkPdf(".dispatch-print-body", 16, "dispatch", 5);
     }
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Business profile')).click()");
     await waitFor("document.querySelector('#chart-card-size') && !document.querySelector('.operational-report-card')");

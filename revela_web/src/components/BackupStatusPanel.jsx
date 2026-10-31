@@ -14,7 +14,8 @@ export default function BackupStatusPanel({
     ? "Complete the setup requirements below."
     : !data?.schedule?.enabled
       ? "Automatic scheduling is disabled in the backend configuration."
-      : data?.automaticExecutionReason || "Automatic backup readiness is still being verified.";
+      : data?.automaticExecutionReason
+        || "Automatic backup readiness is pending runtime, restore, retention, and cost verification. A scheduled run may still be attempted if the GitHub Actions workflow is enabled.";
   const actionReason = loading ? "Checking backend status. Backup actions are unavailable while status is loading."
     : error || !data ? "Backup actions are unavailable until the backend status can be verified."
       : data.manualBackupDisabledReason || (data.canManualBackup
@@ -70,7 +71,8 @@ export default function BackupStatusPanel({
         </div>
         <div className="database-backup-metric">
           <dt>Automatic backup</dt>
-          <dd>{automaticBackupStatus}
+          <dd className="database-backup-automatic-status">
+            <span>{automaticBackupStatus}</span>
             {!loading && data && automaticBackupStatus !== "On" && (
               <span className="database-backup-detail database-backup-warning">{automaticBackupReason}</span>
             )}

@@ -35,7 +35,7 @@ import {
   canReassignInspection,
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
-import { dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
+import { dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, inspectionResultOptions, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
@@ -874,9 +874,10 @@ function InspectionEvidenceModal({ url, token, onClose, isClosing, returnFocusRe
 // ── Column Focus Modal (Grid View) ─────────────────────────────────────────────
 function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [search, setSearch] = useState(initialSearch);
-  const [filterFlag, setFilterFlag] = useState("");
+  const [filterResult, setFilterResult] = useState("");
   const gridSearchRef = useRef(null);
-  const filteredReports = reports.filter(report => (!filterFlag || report.flagColor === filterFlag)
+  const resultOptions = inspectionResultOptions(reports);
+  const filteredReports = reports.filter(report => (!filterResult || report.inspectionResult === filterResult)
     && matchesGridSearch(report, search, initialSearch));
 
   return (
@@ -895,24 +896,24 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
             {search && <button className="dispatch-clear-search" type="button" aria-label="Clear grid search" title="Clear grid search" onClick={() => { setSearch(""); gridSearchRef.current.focus(); }}><Icon.X /></button>}
           </div>
         </div>
-        <p className="dispatch-grid-help">Search starts with the Dispatch query. Edit or clear it here without changing the board. Current-flag filters also apply only here; their counts show the loaded column before search.</p>
-        <div className="dispatch-grid-flags" role="group" aria-label="Filter grid by current flag">
-            {["all", ...Object.keys(FLAG_COLOR)].map(c => {
-              const count = c === "all" ? reports.length : reports.filter(r => r.flagColor === c).length;
-              if (count === 0 && c !== "all") return null;
+        <p className="dispatch-grid-help">Search starts with the Dispatch query. Edit or clear it here without changing the board. Submitted-result filters apply only here; their counts show the loaded column before search.</p>
+        <div className="dispatch-grid-flags" role="group" aria-label="Filter grid by submitted result">
+            {["all", ...resultOptions].map(result => {
+              const count = result === "all" ? reports.length : reports.filter(report => report.inspectionResult === result).length;
+              if (count === 0 && result !== "all") return null;
               
-              const isActive = filterFlag === c || (filterFlag === "" && c === "all");
+              const isActive = filterResult === result || (filterResult === "" && result === "all");
               
               return (
                 <button
-                  key={c}
+                  key={result}
                   type="button"
                   aria-pressed={isActive}
-                  aria-label={`Current flag ${c === "all" ? "All" : c}, ${count} loaded reports`}
-                  title={c === "all" ? "All current flags" : `Current flag: ${c}`}
-                  onClick={() => setFilterFlag(c === "all" ? "" : c)}
+                  aria-label={`Submitted result ${result === "all" ? "All" : result}, ${count} loaded reports`}
+                  title={result === "all" ? "All submitted results" : `Submitted result: ${result}`}
+                  onClick={() => setFilterResult(result === "all" ? "" : result)}
                 >
-                  {c === "all" ? "All" : (getFriendlyFlagLabel(c) ?? c)} ({count})
+                  {result === "all" ? "All" : (getFriendlyFlagLabel(result) ?? result)} ({count})
                 </button>
               );
             })}
@@ -1041,7 +1042,7 @@ export default function InspectionPage() {
   const filterStatus = searchParams.get("status") || "";
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
   const [filterBarangay, setFilterBarangay] = useState("");
-  const [filterFlag, setFilterFlag] = useState("");
+  const [filterResult, setFilterResult] = useState("");
   const [filterDeadline, setFilterDeadline] = useState("");
   const [barangayOptions, setBarangayOptions] = useState([]);
   const [barangayOptionsError, setBarangayOptionsError] = useState("");
@@ -1127,16 +1128,11 @@ export default function InspectionPage() {
   const filteredReports = reports.filter(report => matchesDispatchFilters(report, {
     search,
     barangay: filterBarangay,
-    flag: filterFlag,
+    flag: filterResult,
     deadline: filterDeadline,
   }));
-  const flagOptions = [
-    ...Object.keys(FLAG_COLOR).filter(flag => reports.some(report => report.flagColor === flag)),
-    ...[...new Set(reports.map(report => report.flagColor).filter(Boolean))]
-      .filter(flag => !Object.hasOwn(FLAG_COLOR, flag))
-      .sort((a, b) => a.localeCompare(b)),
-  ];
-  const hasLocalFilters = Boolean(search.trim() || filterBarangay || filterFlag || filterDeadline);
+  const resultOptions = inspectionResultOptions(reports);
+  const hasLocalFilters = Boolean(search.trim() || filterBarangay || filterResult || filterDeadline);
   const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
   const hasWorkloadFilter = view !== "all" || Boolean(reportID);
   const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus) || hasLocalFilters;
@@ -1173,7 +1169,7 @@ export default function InspectionPage() {
   const clearAllFilters = () => {
     setSearch("");
     setFilterBarangay("");
-    setFilterFlag("");
+    setFilterResult("");
     setFilterDeadline("");
     changeParams({
       search: null,
@@ -1240,15 +1236,15 @@ export default function InspectionPage() {
         </select>
         <select
           className="dispatch-filter-select"
-          aria-label="Filter inspections by flag"
-          value={filterFlag}
-          onChange={event => setFilterFlag(event.target.value)}
+          aria-label="Filter inspections by submitted result"
+          value={filterResult}
+          onChange={event => setFilterResult(event.target.value)}
         >
-          <option value="">All Flags</option>
-          {filterFlag && !flagOptions.includes(filterFlag) && (
-            <option value={filterFlag}>{getFriendlyFlagLabel(filterFlag)}</option>
+          <option value="">All Submitted Results</option>
+          {filterResult && !resultOptions.includes(filterResult) && (
+            <option value={filterResult}>{getFriendlyFlagLabel(filterResult)}</option>
           )}
-          {flagOptions.map(flag => <option key={flag} value={flag}>{getFriendlyFlagLabel(flag)}</option>)}
+          {resultOptions.map(result => <option key={result} value={result}>{getFriendlyFlagLabel(result)}</option>)}
         </select>
         <select
           className="dispatch-filter-select"
@@ -1289,7 +1285,7 @@ export default function InspectionPage() {
             {loading && !hasReports
               ? <span className="ui-skeleton dispatch-workload-count-skeleton" aria-hidden="true" />
               : <span className="dispatch-workload-count">{workloadResult}</span>}
-            {workloadPages > 1 && (
+            {workloadPages > 1 && hasWorkloadFilter && (
               <nav className="dispatch-workload-pager" aria-label="Inspection results pagination">
                 <button type="button" disabled={page <= 1} onClick={() => changeParams({ page: page - 1 })}>Previous</button>
                 <button type="button" disabled={page >= workloadPages} onClick={() => changeParams({ page: page + 1 })}>Next</button>

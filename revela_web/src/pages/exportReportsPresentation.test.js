@@ -5,6 +5,7 @@ import test from "node:test";
 const page = readFileSync(new URL("./ExportReportsPage.jsx", import.meta.url), "utf8");
 const compliance = readFileSync(new URL("../components/ComplianceReportCard.jsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../styles/ExportReportsPage.css", import.meta.url), "utf8");
+const pdfDownload = readFileSync(new URL("../components/reportPdfDownload.js", import.meta.url), "utf8");
 
 test("exports separate demographic charts from field reports without the title pill", () => {
   assert.doesNotMatch(page, /BPLO Official/);
@@ -32,6 +33,14 @@ test("each chart keeps its PNG and PDF handlers behind one export menu", () => {
   assert.match(page, /<ExportActionsMenu className="no-export"/);
   assert.match(page, /querySelectorAll\("\.no-export"\)/);
   assert.match(compliance, /<details className="operational-report-details">/);
+});
+
+test("PDF exports download directly instead of opening the browser print dialog", () => {
+  assert.match(page, /downloadCanvasAsPdf\(canvas/);
+  assert.match(pdfDownload, /pdf\.save\(filename\)/);
+  assert.doesNotMatch(page, /window\.print\(\)/);
+  assert.match(page, /await downloadReportPdf\(\{/);
+  assert.match(compliance, /PDF downloads directly as a file/);
 });
 
 test("complete dossier tables share one print palette while the official header and footer remain", () => {

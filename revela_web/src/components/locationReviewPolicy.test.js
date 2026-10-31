@@ -177,7 +177,7 @@ test("same-pin proposals can be approved to synchronize the map pin", () => {
   assert.match(mapPageSource, /samePin \? "Approve & sync pin" : "Approve pin move"/);
 });
 
-test("approval confirmation includes the move distance, coordinates, business, and score", () => {
+test("approval confirmation is concise and only shows distance when the pin moves", () => {
   const candidate = pendingCandidate("BIZ-MOVE", {
     businessName: "Example Shop",
     locationReapproval: false,
@@ -188,11 +188,21 @@ test("approval confirmation includes the move distance, coordinates, business, a
     matchScore: 0.55,
   });
   const confirmation = reviewApprovalConfirmation(candidate);
-  assert.match(confirmation, /Business: Example Shop/);
-  assert.match(confirmation, /Current pin: 13\.947664, 121\.119366/);
-  assert.match(confirmation, /Proposed pin: 13\.948664, 121\.119366/);
-  assert.match(confirmation, /Distance: \d+ m/);
-  assert.match(confirmation, /Match score: 0\.55/);
+  assert.match(confirmation, /Move the pin for Example Shop/);
+  assert.match(confirmation, /move about \d+ m/);
+  assert.doesNotMatch(confirmation, /13\.947664|13\.948664|Match score/);
+
+  const samePinConfirmation = reviewApprovalConfirmation({
+    ...candidate,
+    originalLatitude: 13.957185,
+    originalLongitude: 121.115486,
+    candidateLatitude: 13.957185,
+    candidateLongitude: 121.115486,
+  });
+  assert.equal(
+    samePinConfirmation,
+    "Confirm the suggested location for Example Shop?",
+  );
 });
 
 test("review queue clears stale cards, keeps Retry, and allows same-pin approval", () => {

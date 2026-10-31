@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline,
-  inspectionNoticeLabel, inspectionPeriodLabel, matchesDispatchFilters, matchesDispatchSearch,
+  inspectionNoticeLabel, inspectionPeriodLabel, inspectionResultOptions, matchesDispatchFilters, matchesDispatchSearch,
   matchesGridSearch, workloadFilterLabel, workloadResultLabel,
 } from "./inspectionPresentation.js";
 
@@ -35,10 +35,10 @@ test("main search keeps existing fields, case-insensitive substring matching, an
 test("dispatch filters combine search, barangay, flag, and deadline criteria", () => {
   const now = new Date("2026-10-31T12:00:00");
   const rows = [
-    { detectedName: "North Market", barangayName: "Barangay II", flagColor: "Orange", deadline: "2026-10-30T12:00:00" },
-    { detectedName: "South Market", barangayName: "Barangay II", flagColor: "Green", deadline: "2026-10-31T18:00:00" },
-    { detectedName: "East Market", barangayName: "Barangay III", flagColor: "Orange", deadline: "2026-11-02T12:00:00" },
-    { detectedName: "West Market", barangayName: "Barangay III", flagColor: "Orange", deadline: null },
+    { detectedName: "North Market", barangayName: "Barangay II", flagColor: "Orange", inspectionResult: "Orange", deadline: "2026-10-30T12:00:00" },
+    { detectedName: "South Market", barangayName: "Barangay II", flagColor: "Green", inspectionResult: "Green", deadline: "2026-10-31T18:00:00" },
+    { detectedName: "East Market", barangayName: "Barangay III", flagColor: "Orange", inspectionResult: "Orange", deadline: "2026-11-02T12:00:00" },
+    { detectedName: "West Market", barangayName: "Barangay III", flagColor: "Orange", inspectionResult: "Orange", deadline: null },
   ];
 
   assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, {
@@ -48,6 +48,29 @@ test("dispatch filters combine search, barangay, flag, and deadline criteria", (
   assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, { deadline: "upcoming", now })), [rows[2]]);
   assert.deepEqual(rows.filter(row => matchesDispatchFilters(row, { deadline: "missing", now })), [rows[3]]);
   assert.equal(matchesDispatchFilters(rows[0], { flag: "Red", now }), false);
+});
+
+test("dispatch result filter uses submitted result rather than current flag color", () => {
+  const report = {
+    flagColor: "Green",
+    inspectionResult: "Red",
+  };
+  assert.equal(matchesDispatchFilters(report, { flag: "Red" }), true);
+  assert.equal(matchesDispatchFilters(report, { flag: "Green" }), false);
+});
+
+test("inspection result options follow known result order and include unknown submitted results", () => {
+  const rows = [
+    { inspectionResult: "Purple" },
+    { inspectionResult: "Red" },
+    { inspectionResult: "Other result" },
+    { inspectionResult: "Green" },
+    { inspectionResult: null },
+  ];
+  assert.deepEqual(
+    inspectionResultOptions(rows),
+    ["Red", "Green", "Purple", "Other result"],
+  );
 });
 
 test("copied grid searches initially return the exact board results", () => {
@@ -68,11 +91,11 @@ test("changing and clearing a grid query is local and retains #ID matching", () 
   assert.equal(initialSearch, "North");
 });
 
-test("a grid flag filter intersects the copied search without changing ordering", () => {
-  const result = reports.filter(report => report.flagColor === "Red" && matchesGridSearch(report, "market", "market"));
+test("a submitted-result filter intersects the copied search without changing ordering", () => {
+  const result = reports.filter(report => report.inspectionResult === "Red" && matchesGridSearch(report, "market", "market"));
   assert.deepEqual(result, []);
-  const withFlags = reports.map(report => ({ ...report, flagColor: "Red" }));
-  assert.deepEqual(withFlags.filter(report => report.flagColor === "Red" && matchesGridSearch(report, "market", "market")).map(report => report.reportID), [123, 124]);
+  const withResults = reports.map(report => ({ ...report, inspectionResult: "Red" }));
+  assert.deepEqual(withResults.filter(report => report.inspectionResult === "Red" && matchesGridSearch(report, "market", "market")).map(report => report.reportID), [123, 124]);
 });
 
 test("missing and malformed deadlines are not presented as assigned dates", () => {

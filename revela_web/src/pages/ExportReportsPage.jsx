@@ -29,6 +29,10 @@ import Papa from "papaparse";
 import { saveAs } from "file-saver";
 import Swal from "sweetalert2";
 import html2canvas from "html2canvas";
+import {
+  downloadCanvasAsPdf,
+  reportPdfFilename,
+} from "../components/reportPdfDownload";
 import bpLogo from "../assets/bagongpilipinas.png";
 import sealImg from "../assets/seal.png";
 import ComplianceReportCard from "../components/ComplianceReportCard";
@@ -80,7 +84,7 @@ function ChartExportMenu({ chartId, chartTitle, hasData, preparingExport, export
   return <ExportActionsMenu className="no-export" label={label} ariaLabel={`Download ${chartTitle}`}
     disabled={preparingExport || !hasData} options={[
     { label: "Save image (PNG)", title: "Export chart as high-resolution PNG image", onClick: onPng },
-    { label: "Official report (PDF)", title: "Export chart as printable official PDF document", onClick: onPdf },
+    { label: "Official report (PDF)", title: "Download chart as an official PDF document", onClick: onPdf },
   ]} />;
 }
 
@@ -325,7 +329,10 @@ export default function ExportReportsPage() {
   const [exportingPdfId, setExportingPdfId] = useState(null);
   const [operationalLoadingId, setOperationalLoadingId] = useState(null);
   const [printReport, setPrintReport] = useState(null);
+  const [pdfRendering, setPdfRendering] = useState(false);
   const [activeSection, setActiveSection] = useState("profile");
+  const printReportRef = useRef(null);
+  const pdfExportInProgress = useRef(false);
 
   useEffect(() => {
     const closeMenus = event => {
@@ -402,24 +409,49 @@ export default function ExportReportsPage() {
     }
   };
 
-  // Handle native printing when printReport state changes
-  useEffect(() => {
-    if (printReport) {
-      const handleAfterPrint = () => {
+  const downloadReportPdf = async (report, filename = reportPdfFilename(report.title)) => {
+    if (!report || pdfExportInProgress.current) return;
+    pdfExportInProgress.current = true;
+    flushSync(() => {
+      setPrintReport(report);
+      setPdfRendering(true);
+    });
+
+    try {
+      await new Promise(resolve => requestAnimationFrame(
+        () => requestAnimationFrame(resolve),
+      ));
+      await document.fonts?.ready;
+      const element = printReportRef.current;
+      if (!element) throw new Error("The report could not be prepared for download.");
+      const images = [...element.querySelectorAll("img")];
+      await Promise.all(images.map(image => image.decode()));
+      const canvas = await html2canvas(element, {
+        scale: Math.min(
+          2,
+          30000 / element.scrollWidth,
+          30000 / element.scrollHeight,
+        ),
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        width: element.scrollWidth,
+        height: element.scrollHeight,
+        windowWidth: element.scrollWidth,
+        windowHeight: element.scrollHeight,
+      });
+      await downloadCanvasAsPdf(canvas, {
+        filename,
+        orientation: report.isLandscape ? "landscape" : "portrait",
+      });
+    } finally {
+      flushSync(() => {
         setPrintReport(null);
-      };
-      window.addEventListener("afterprint", handleAfterPrint);
-
-      const timer = setTimeout(() => {
-        window.print();
-      }, 500);
-
-      return () => {
-        clearTimeout(timer);
-        window.removeEventListener("afterprint", handleAfterPrint);
-      };
+        setPdfRendering(false);
+      });
+      pdfExportInProgress.current = false;
     }
-  }, [printReport]);
+  };
 
   // ── Derived Demographic Datasets ───────────────────────────────────────────
   const { desc, sizeData, totalBySize, typeData, totalByType, regTypeData,
@@ -549,7 +581,7 @@ export default function ExportReportsPage() {
 
       const chartImage = canvas.toDataURL("image/png");
 
-      setPrintReport({
+      await downloadReportPdf({
         type: "demographic-single",
         title: `Official Demographic Profile: ${chartTitle}`,
         subtitle: chartSubtitle,
@@ -562,7 +594,7 @@ export default function ExportReportsPage() {
         separateSummary: chartId === "sector" || chartId === "barangay",
         summaryTable,
         isLandscape: false
-      });
+      }, reportPdfFilename(`Demographic_${chartTitle}`));
     } catch (err) {
       console.error("Error generating chart PDF:", err);
       Swal.fire({
@@ -581,7 +613,7 @@ export default function ExportReportsPage() {
       totalByRegType, sectoralData, totalBySector, barangaySpreadData,
       totalBusinessesAcrossBarangays, complianceBySizeData, timelineData, confirmedCompliance } = view;
     try {
-      setPrintReport({
+      await downloadReportPdf({
         type: "demographic-complete",
         title: "Comprehensive Municipal Business Demographic Profile",
         subtitle: "Official census analysis, sectoral breakdown, geographic distribution, and compliance indicators",
@@ -642,7 +674,7 @@ export default function ExportReportsPage() {
             "Non-Active Gap": t["Non-Active"]
           }))
         }
-      });
+      }, reportPdfFilename("Comprehensive_Municipal_Business_Demographic_Profile"));
     } catch (err) {
       console.error("Error creating full demographic dossier:", err);
       Swal.fire({
@@ -892,7 +924,7 @@ export default function ExportReportsPage() {
       const csv = Papa.unparse(formattedData.length > 0 ? formattedData : [{ Note: "No active red or yellow flagged unregistered businesses detected" }]);
       saveAs(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `${filename}.csv`);
     } else {
-      setPrintReport({
+      await downloadReportPdf({
         type: "unregistered",
         title: "List of Unregistered Businesses",
         subtitle: "Field inspection target list of commercial locations operating without active permits",
@@ -909,7 +941,7 @@ export default function ExportReportsPage() {
             yellow: flags.filter((f) => f.flagColor === "Yellow").length
           }
         }
-      });
+      }, filename + ".pdf");
     }
   };
 
@@ -971,7 +1003,7 @@ export default function ExportReportsPage() {
       const csv = Papa.unparse(formattedData.length > 0 ? formattedData : [{ Note: "No operational dispatch rankings currently available" }]);
       saveAs(new Blob([csv], { type: "text/csv;charset=utf-8;" }), `${filename}.csv`);
     } else {
-      setPrintReport({
+      await downloadReportPdf({
         type: "dispatch",
         title: "Field Inspector Dispatch Plan",
         subtitle: "WLC Operational Priority Rankings and targeted allocation strategy for municipal inspectors",
@@ -986,13 +1018,13 @@ export default function ExportReportsPage() {
           workforce,
           computedAt,
         }
-      });
+      }, filename + ".pdf");
     }
   };
 
   return (
     <>
-      {/* ── Screen UI Container (Completely hidden during window.print()) ── */}
+      {/* ── Screen UI Container ── */}
       <div className="screen-only no-print">
         <DashboardLayout className="export-reports-page">
           {/* Page Header */}
@@ -1747,7 +1779,7 @@ export default function ExportReportsPage() {
             {/* Operational reports remain independent of the registry census. */}
             <div style={{ display: "grid", gap: 16 }}>
               {OPERATIONAL_REPORTS.map((report) => report.id === "inspection-compliant" ? (
-                <ComplianceReportCard key={report.id} token={token} user={user} onPrint={setPrintReport} />
+                <ComplianceReportCard key={report.id} token={token} user={user} onPrint={report => downloadReportPdf(report)} />
               ) : (
                 <div
                   key={report.id}
@@ -1818,10 +1850,23 @@ export default function ExportReportsPage() {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════
-          PRINTABLE REPORT VIEW (Visible ONLY during window.print())
+          REPORT VIEW USED TO GENERATE DOWNLOADABLE PDFS
       ══════════════════════════════════════════════════════════════════════ */}
       {printReport && (
-        <div className="print-report-container hidden print:block bg-white text-black font-sans w-full">
+        <div
+          ref={printReportRef}
+          className={`print-report-container hidden print:block bg-white text-black font-sans w-full${pdfRendering ? " pdf-export-render" : ""}`}
+          style={pdfRendering ? {
+            display: "block",
+            position: "fixed",
+            inset: "0 auto auto 0",
+            zIndex: 12000,
+            width: printReport.isLandscape ? "297mm" : "210mm",
+            minHeight: printReport.isLandscape ? "210mm" : "297mm",
+            overflow: "visible",
+            background: "#ffffff",
+          } : undefined}
+        >
           {/* Custom Print CSS */}
           <style>{`
             @media print {

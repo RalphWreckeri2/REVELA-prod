@@ -275,6 +275,9 @@ try {
   await click(`${backupScope} button`, "Refresh");
   await wait(`document.querySelectorAll('${backupScope} dd')[1].textContent.startsWith('Pending verification')`, "automatic execution readiness");
   assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-warning').textContent.includes('Restore verification is pending')`));
+  await evaluate(`__settings.backup.automaticExecutionReason = null`);
+  await click(`${backupScope} button`, "Refresh");
+  await wait(`document.querySelectorAll('${backupScope} dd')[1].textContent.includes('Automatic backup readiness is pending runtime, restore, retention, and cost verification. A scheduled run may still be attempted if the GitHub Actions workflow is enabled.')`, "pending verification explanation fallback");
   await evaluate(`__settings.backup.automaticExecutionStatus = 'ready'`);
   await click(`${backupScope} button`, "Refresh");
   await wait(`document.querySelectorAll('${backupScope} dd')[1].textContent.trim() === 'On'`, "automatic backup ready");

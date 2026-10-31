@@ -5,6 +5,10 @@ const SEARCH_FIELDS = [
   "inspectionResult", "reportID", "logID",
 ];
 
+const INSPECTION_RESULT_ORDER = Object.freeze([
+  "Red", "Yellow", "Green", "Orange", "Black", "Purple",
+]);
+
 const WORKLOAD_FILTER_LABELS = Object.freeze({
   all: "All inspection reports",
   open: "Open assignments",
@@ -80,7 +84,7 @@ export function matchesDispatchFilters(report, {
 } = {}) {
   if (!matchesDispatchSearch(report, search)) return false;
   if (barangay && report.barangayName !== barangay) return false;
-  if (flag && report.flagColor !== flag) return false;
+  if (flag && report.inspectionResult !== flag) return false;
   if (!deadline) return true;
 
   const value = report.deadline;
@@ -97,6 +101,17 @@ export function matchesDispatchFilters(report, {
   if (deadline === "overdue") return !dueToday && dueAt < now;
   if (deadline === "upcoming") return !dueToday && dueAt > now;
   return true;
+}
+
+export function inspectionResultOptions(reports = []) {
+  const results = new Set(
+    reports.map(report => report.inspectionResult).filter(Boolean),
+  );
+  const known = INSPECTION_RESULT_ORDER.filter(result => results.delete(result));
+  return [
+    ...known,
+    ...[...results].sort((a, b) => String(a).localeCompare(String(b))),
+  ];
 }
 
 export function matchesGridSearch(report, search = "", initialSearch = "") {
