@@ -5,8 +5,16 @@ export default function BackupStatusPanel({
   onRefresh, onBackupNow, onDownload,
 }) {
   const lastBackup = data?.lastSuccessfulBackup;
-  const scheduled = data?.configured === true && data.schedule.configured === true
-    && data.schedule.enabled === true && data.automaticExecutionStatus !== "not_ready";
+  const automaticBackupStatus = loading ? "Loading…" : !data ? "Unavailable"
+    : !data.configured ? "Setup required"
+      : !data.schedule.enabled ? "Off"
+        : !data.externalTriggerConfigured ? "Trigger missing"
+          : data.automaticExecutionStatus === "ready" ? "On" : "Pending verification";
+  const automaticBackupReason = !data?.configured
+    ? "Complete the setup requirements below."
+    : !data?.schedule?.enabled
+      ? "Automatic scheduling is disabled in the backend configuration."
+      : data?.automaticExecutionReason || "Automatic backup readiness is still being verified.";
   const actionReason = loading ? "Checking backend status. Backup actions are unavailable while status is loading."
     : error || !data ? "Backup actions are unavailable until the backend status can be verified."
       : data.manualBackupDisabledReason || (data.canManualBackup
@@ -62,9 +70,9 @@ export default function BackupStatusPanel({
         </div>
         <div className="database-backup-metric">
           <dt>Automatic backup</dt>
-          <dd>{loading ? "Loading…" : !data ? "Unavailable" : scheduled ? "On" : "Off"}
-            {!loading && data?.automaticExecutionStatus === "not_ready" && (
-              <span className="database-backup-detail database-backup-warning">Scheduler not configured yet</span>
+          <dd>{automaticBackupStatus}
+            {!loading && data && automaticBackupStatus !== "On" && (
+              <span className="database-backup-detail database-backup-warning">{automaticBackupReason}</span>
             )}
           </dd>
         </div>

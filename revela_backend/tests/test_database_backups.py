@@ -971,6 +971,22 @@ def test_panel_status_exposes_history_and_keeps_automatic_schedule_disabled(setu
     assert response.json["history"] == []
 
 
+def test_panel_status_reports_enabled_schedule_separately_from_readiness(setup, monkeypatch):
+    client = auth_client(monkeypatch)
+    monkeypatch.setenv("DB_BACKUP_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_SCHEDULE_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_EXTERNAL_TRIGGER_ENABLED", "0")
+
+    response = client.get("/api/admin-settings/database-backup/status")
+
+    assert response.status_code == 200
+    assert response.json["schedule"]["enabled"] is True
+    assert response.json["schedule"]["executionReady"] is False
+    assert response.json["automaticExecutionStatus"] == "not_ready"
+    assert response.json["externalTriggerConfigured"] is False
+    assert response.json["schedule"]["nextRunAt"] is None
+
+
 def test_admin_manual_backup_is_blocked_when_global_switch_is_disabled(setup, monkeypatch):
     client = auth_client(monkeypatch)
     monkeypatch.setenv("DB_BACKUP_ENABLED", "0")

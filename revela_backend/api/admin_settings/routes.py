@@ -122,6 +122,7 @@ def database_backup_status_route():
     can_backup = bool(result.get("can_backup"))
     automatic_enabled = bool(result.get("automatic_execution_ready")
                               and result.get("external_trigger_configured"))
+    schedule_enabled = bool(result.get("schedule_enabled"))
     schedule_summary = (
         "Every Friday at 7:00 PM Asia/Manila; automatic execution is not ready "
         "until a reliable external trigger is integrated."
@@ -152,9 +153,10 @@ def database_backup_status_route():
         if result.get("last_success") else None,
         "schedule": {
             "configured": configured,
-            "enabled": automatic_enabled,
+            "enabled": schedule_enabled,
             "nextRunAt": result.get("next_schedule") if automatic_enabled else None,
             "summary": schedule_summary if configured else None,
+            "executionReady": automatic_enabled,
         },
         "retention": {
             "configured": configured,
