@@ -152,10 +152,15 @@ def list_notifications(user_id: int, limit: int = 50, offset: int = 0) -> Tuple[
     _ensure_tables()
     cur = mysql.connection.cursor()
     cur.execute(
-        "SELECT COUNT(*) AS n FROM revela_notifications WHERE recipientUserId = %s",
+        """
+        SELECT COUNT(*) AS n,
+               COALESCE(SUM(CASE WHEN readAt IS NULL THEN 1 ELSE 0 END), 0) AS unreadCount
+        FROM revela_notifications
+        WHERE recipientUserId = %s
+        """,
         (user_id,),
     )
-    total = cur.fetchone()["n"]
+    counts = cur.fetchone()
     cur.execute(
         """
         SELECT id, type, title, body, link, readAt, createdAt
@@ -173,7 +178,11 @@ def list_notifications(user_id: int, limit: int = 50, offset: int = 0) -> Tuple[
             r["createdAt"] = str(r["createdAt"])
         if r.get("readAt"):
             r["readAt"] = str(r["readAt"])
-    return {"data": rows, "total": total}, None
+    return {
+        "data": rows,
+        "total": counts["n"],
+        "unreadCount": counts["unreadCount"],
+    }, None
 
 
 def unread_count(user_id: int) -> Tuple[Dict[str, Any], None]:
@@ -545,4 +554,3 @@ def notify_yellow_flag_reported(
 
     except Exception as e:
         print(f"notify_yellow_flag_reported error: {e}")
-

@@ -1790,29 +1790,16 @@ class _DashboardPageState extends State<DashboardPage>
                   ),
                 ),
                 const SizedBox(height: 4),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: context.adaptiveTextMid,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 16,
-                      color: effectiveColor,
-                    ),
-                  ],
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: context.adaptiveTextMid,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
                 ),
               ],
             ),

@@ -31,7 +31,11 @@ class _NotificationsPageState extends State<NotificationsPage>
     with WidgetsBindingObserver {
   List<InAppNotification> _items = [];
   List<InspectionTask> _activeTasks = [];
+  int _notificationTotal = 0;
+  int _unreadCount = 0;
   bool _loading = true;
+  bool _loadingPrevious = false;
+  String? _previousError;
   String? _error;
   bool _isOfflineMode = false;
   bool _isDrawerOpen = false;
@@ -73,6 +77,42 @@ class _NotificationsPageState extends State<NotificationsPage>
     }
   }
 
+  Future<void> _loadPreviousNotifications() async {
+    if (_loadingPrevious || _items.length >= _notificationTotal) return;
+    setState(() {
+      _loadingPrevious = true;
+      _previousError = null;
+    });
+
+    try {
+      final page = await InAppNotificationsService().fetchNotifications(
+        offset: _items.length,
+      );
+      if (mounted) {
+        setState(() {
+          final loadedIds = _items.map((item) => item.id).toSet();
+          _items.addAll(
+            page.notifications.where((item) => loadedIds.add(item.id)),
+          );
+          _notificationTotal = page.notifications.isEmpty
+              ? _items.length
+              : page.total;
+          _unreadCount = page.unreadCount;
+          _isOfflineMode = page.isOffline;
+        });
+      }
+    } catch (e) {
+      debugPrint('Could not load previous notifications: $e');
+      if (mounted) {
+        setState(
+          () => _previousError = 'Could not load previous notifications.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPrevious = false);
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -93,15 +133,24 @@ class _NotificationsPageState extends State<NotificationsPage>
       });
     }
     try {
-      final list = await InAppNotificationsService().fetchNotifications();
+      final page = await InAppNotificationsService().fetchNotifications();
       final tasks = await InspectionService().getMyTasks();
       if (mounted) {
         setState(() {
-          _items = list;
+          final loadedById = <int, InAppNotification>{
+            for (final item in page.notifications) item.id: item,
+          };
+          for (final item in _items) {
+            loadedById.putIfAbsent(item.id, () => item);
+          }
+          _items = loadedById.values.take(page.total).toList();
+          _notificationTotal = page.total;
+          _unreadCount = page.unreadCount;
           _activeTasks = tasks;
           _loading = false;
-          _isOfflineMode = false;
+          _isOfflineMode = page.isOffline;
           _error = null;
+          _previousError = null;
         });
 
         // Automatically open task modal if arriving via notification deep link
@@ -128,10 +177,14 @@ class _NotificationsPageState extends State<NotificationsPage>
       if (mounted) {
         try {
           final tasks = await InspectionService().getMyTasks();
-          final cachedList =
-              await InAppNotificationsService().loadCachedNotifications();
+          final cachedList = await InAppNotificationsService()
+              .loadCachedNotifications();
           setState(() {
-            _items = cachedList;
+            _items = cachedList
+                .take(InAppNotificationsService.pageSize)
+                .toList();
+            _notificationTotal = cachedList.length;
+            _unreadCount = cachedList.where((item) => item.isUnread).length;
             _activeTasks = tasks;
             _loading = false;
             _isOfflineMode = true;
@@ -189,7 +242,7 @@ class _NotificationsPageState extends State<NotificationsPage>
       }
     }).toList();
 
-    final hasUnread = _items.any((n) => n.isUnread);
+    final hasUnread = _unreadCount > 0;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -234,6 +287,13 @@ class _NotificationsPageState extends State<NotificationsPage>
                         setState(() => _loading = true);
                         await InAppNotificationsService()
                             .deleteAllNotifications();
+                        if (mounted) {
+                          setState(() {
+                            _items.clear();
+                            _notificationTotal = 0;
+                            _unreadCount = 0;
+                          });
+                        }
                         await _load();
                       }
                     },
@@ -250,6 +310,26 @@ class _NotificationsPageState extends State<NotificationsPage>
                     ? null
                     : () async {
                         await InAppNotificationsService().markAllRead();
+                        if (mounted) {
+                          final readAt = DateTime.now().toIso8601String();
+                          setState(() {
+                            _unreadCount = 0;
+                            _items = _items
+                                .map(
+                                  (item) => item.isUnread
+                                      ? InAppNotification(
+                                          id: item.id,
+                                          type: item.type,
+                                          title: item.title,
+                                          body: item.body,
+                                          createdAt: item.createdAt,
+                                          readAt: readAt,
+                                        )
+                                      : item,
+                                )
+                                .toList();
+                          });
+                        }
                         _load(silent: true);
                       },
               ),
@@ -497,9 +577,45 @@ class _NotificationsPageState extends State<NotificationsPage>
 
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
-      itemCount: _items.length,
+      itemCount: _items.length + (_items.length < _notificationTotal ? 1 : 0),
       separatorBuilder: (_, _) => const SizedBox(height: 10),
       itemBuilder: (_, i) {
+        if (i == _items.length) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Column(
+                children: [
+                  if (_previousError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        _previousError!,
+                        style: TextStyle(color: Colors.red[700], fontSize: 12),
+                      ),
+                    ),
+                  TextButton.icon(
+                    onPressed: _loadingPrevious
+                        ? null
+                        : _loadPreviousNotifications,
+                    icon: _loadingPrevious
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.history_rounded),
+                    label: Text(
+                      _loadingPrevious
+                          ? 'Loading...'
+                          : 'See previous notifications',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
         final n = _items[i];
         return Dismissible(
           key: ValueKey(n.id),
@@ -516,6 +632,10 @@ class _NotificationsPageState extends State<NotificationsPage>
           onDismissed: (direction) {
             setState(() {
               _items.removeWhere((item) => item.id == n.id);
+              _notificationTotal = (_notificationTotal - 1).clamp(0, 999999);
+              if (n.isUnread) {
+                _unreadCount = (_unreadCount - 1).clamp(0, 999999);
+              }
             });
             InAppNotificationsService().deleteNotification(n.id);
           },
@@ -534,6 +654,7 @@ class _NotificationsPageState extends State<NotificationsPage>
                         createdAt: n.createdAt,
                         readAt: DateTime.now().toIso8601String(),
                       );
+                      _unreadCount = (_unreadCount - 1).clamp(0, 999999);
                     });
                   }
                 } catch (_) {}
