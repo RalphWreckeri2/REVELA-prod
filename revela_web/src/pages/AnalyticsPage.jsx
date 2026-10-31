@@ -46,8 +46,8 @@ import {
 
 const EMPTY_FILTER_BARANGAYS = Object.freeze([]);
 const ANALYTICS_TABS = [
-  { id: "descriptive", label: "Overview", dot: "var(--color-green)" },
-  { id: "prescriptive", label: "Recommendations", dot: "#6366f1" },
+  { id: "descriptive", label: "Overview", description: "Key numbers and trends" },
+  { id: "prescriptive", label: "Recommendations", description: "Where to focus next" },
 ];
 const ADMIN_PRESCRIPTIVE_DETAILS_ENABLED = false;
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
@@ -1460,25 +1460,42 @@ export default function AnalyticsPage() {
             </p>
           </div>
 
-          <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics sections">
-            {ANALYTICS_TABS.map(tab => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={`analytics-tab-btn ${isActive ? "active" : ""}`}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => setActiveTab(tab.id)}
-                >
-                  <span className="analytics-tab-label">
-                    <span className="analytics-tab-dot" style={{ background: tab.dot }} aria-hidden="true" />
-                    {tab.label}
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
+          <div className="analytics-view-switcher">
+            <p className="analytics-view-switcher-label">Explore analytics</p>
+            <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics views">
+              {ANALYTICS_TABS.map(tab => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`analytics-tab-btn ${isActive ? "active" : ""}`}
+                    aria-current={isActive ? "page" : undefined}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    <span className="analytics-tab-icon" aria-hidden="true">
+                      {tab.id === "descriptive" ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 19V5M4 19h16M8 15l4-4 3 2 5-6" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="9" /><path d="m15 9-2 4-4 2 2-4 4-2Z" />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="analytics-tab-copy">
+                      <span className="analytics-tab-label">{tab.label}</span>
+                      <span className="analytics-tab-description">{tab.description}</span>
+                    </span>
+                    <svg className="analytics-tab-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M5 12h14m-6-6 6 6-6 6" />
+                    </svg>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
         </div>
 
         {/* Hidden trigger for automated fixture query compatibility */}

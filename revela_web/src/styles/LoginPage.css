@@ -355,12 +355,12 @@
 }
 
 .glass-input:focus {
-  border-color: #56ab2f;
-  box-shadow: 0 0 0 4px rgba(86, 171, 47, 0.15);
+  border-color: var(--field-focus-border);
+  box-shadow: 0 0 0 2px var(--field-focus-ring);
 }
 
 .glass-input:focus ~ .input-icon {
-  color: #56ab2f;
+  color: var(--field-focus-border);
 }
 
 .glass-input--pw {
@@ -658,9 +658,9 @@ html.theme-dark .glass-input::placeholder {
 }
 
 html.theme-dark .glass-input:focus {
-  border-color: #10b981;
+  border-color: var(--field-focus-border);
   background: #141414;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  box-shadow: 0 0 0 2px var(--field-focus-ring);
 }
 
 html.theme-dark .signin-btn { background: #059669; color: #fff; }
@@ -899,7 +899,7 @@ html.theme-dark .login-root .glass-input::placeholder { color: var(--login-muted
 .login-root .input-icon, .login-root .pw-toggle,
 html.theme-dark .login-root .input-icon, html.theme-dark .login-root .pw-toggle { color: var(--login-muted); }
 .login-root .glass-input:focus,
-html.theme-dark .login-root .glass-input:focus { border-color: #4e896b; box-shadow: 0 0 0 3px rgba(78, 137, 107, 0.17); }
+html.theme-dark .login-root .glass-input:focus { border-color: var(--field-focus-border); box-shadow: 0 0 0 2px var(--field-focus-ring); }
 .login-root .forgot-btn, html.theme-dark .login-root .forgot-btn { color: var(--login-ink); }
 .login-root .otp-box, html.theme-dark .login-root .otp-box {
   background: var(--login-field);

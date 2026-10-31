@@ -106,6 +106,11 @@ try {
     && document.querySelector(".overview-dashboard-layout > .overview-business-records") != null
     && document.querySelector(".overview-dashboard-layout > .calendar-widget") != null,
   "overview puts actions and map first, with full-width records and deadlines below");
+  if (window.innerWidth > 1050) {
+    const mapHeight = document.querySelector(".overview-feature-grid > .overview-map").getBoundingClientRect().height;
+    const prioritiesHeight = document.querySelector(".overview-feature-grid > .overview-priorities").getBoundingClientRect().height;
+    check(Math.abs(mapHeight - prioritiesHeight) <= 2, "map and inspection priorities cards have matching heights");
+  }
   const recordsBottom = document.querySelector(".overview-business-records").getBoundingClientRect().bottom;
   const deadlinesTop = document.querySelector(".calendar-widget").getBoundingClientRect().top;
   check(deadlinesTop - recordsBottom <= 28, "deadlines follow business records without an empty column gap");

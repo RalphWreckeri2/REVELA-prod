@@ -12,6 +12,17 @@ test("Overview and Recommendations share one centered width and title wrapper", 
   assert.doesNotMatch(stylesheet, /\.analytics-page--prescriptive\s+\.saas-content/);
 });
 
+test("analytics view switch is prominent, descriptive, and responsive in both themes", () => {
+  assert.match(pageSource, /className="analytics-view-switcher"/);
+  assert.match(pageSource, /description: "Key numbers and trends"/);
+  assert.match(pageSource, /description: "Where to focus next"/);
+  assert.match(pageSource, /aria-current=\{isActive \? "page" : undefined\}/);
+  assert.match(stylesheet, /\.analytics-section-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(stylesheet, /\.analytics-tab-btn\.active::before/);
+  assert.match(stylesheet, /html\.theme-dark \.analytics-tab-btn\.active/);
+  assert.match(stylesheet, /@container analytics-content \(max-width: 639px\)\s*\{\s*\.analytics-section-nav\s*\{ grid-template-columns: minmax\(0, 1fr\); \}/);
+});
+
 test("Overview KPI cards share the content width and use balanced sizing", () => {
   assert.match(mapStylesheet, /\.map-overview-topbar\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(mapStylesheet, /\.map-overview-total\s*\{[^}]*box-sizing:\s*border-box;[^}]*min-height:\s*88px;[^}]*padding:\s*14px 16px;/);

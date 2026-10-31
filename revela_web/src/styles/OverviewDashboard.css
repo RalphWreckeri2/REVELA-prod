@@ -31,9 +31,14 @@
 .overview-page .overview-feature-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr);
-  align-items: start;
+  align-items: stretch;
   gap: 20px;
   min-width: 0;
+}
+
+.overview-page .overview-feature-grid > .overview-map {
+  display: flex;
+  flex-direction: column;
 }
 
 .overview-page .overview-business-records { container: overview-main / inline-size; }
@@ -349,7 +354,8 @@
 /* The real map, with its existing markers, camera and full-map destination. */
 .overview-page .overview-map-canvas {
   position: relative;
-  height: 300px;
+  flex: 1 1 300px;
+  min-height: 300px;
   overflow: hidden;
   border-radius: 12px;
   background: var(--color-surface);

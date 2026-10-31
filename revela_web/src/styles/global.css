@@ -35,6 +35,8 @@
   --color-input-bg: #ffffff;
   --color-card-alt: #f8fafc;
   --color-hover: rgba(0, 0, 0, 0.03);
+  --field-focus-border: #669579;
+  --field-focus-ring: rgba(30, 112, 72, 0.12);
 
   /* Glass */
   --glass-bg: rgba(255, 255, 255, 0.7);
@@ -853,7 +855,7 @@ body {
 }
 .search-bar:focus-within {
   background: rgba(255, 255, 255, 0.9);
-  border-color: var(--color-primary);
+  border-color: var(--field-focus-border);
 }
 .search-bar svg {
   width: 16px;
@@ -924,6 +926,9 @@ body {
   padding: 0;
   z-index: 30;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - var(--navbar-height) - 20px);
 }
 
 .notification-popover__header {
@@ -941,7 +946,41 @@ body {
   flex-direction: column;
   padding: 20px 24px;
   gap: 16px;
+  min-height: 0;
+  max-height: 560px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+
+.notification-page-status { padding: 16px 0; color: var(--color-muted); font-size: 13px; }
+.notification-pagination {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--color-border-soft);
+  background: var(--color-modal-bg);
+  color: var(--color-muted);
+  font-size: 12px;
+  flex: none;
+}
+.notification-pagination button {
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-card-alt);
+  color: var(--color-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.notification-pagination button:last-child { justify-self: end; }
+.notification-pagination button:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary-dark); }
+.notification-pagination button:disabled { opacity: .45; cursor: not-allowed; }
+.notification-pagination button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.notification-page-error { grid-column: 1 / -1; color: var(--color-danger); font-size: 12px; }
 
 .notification-item {
   background: transparent;
@@ -1178,7 +1217,7 @@ html.theme-dark .app-sync-now:not(.app-sync-now--error) {
   .app-refresh-controls { gap: 4px; }
   .app-sync-now { width: 36px; padding: 0; gap: 0; }
   .app-sync-now span { display: none; }
-  .notification-popover { right: -108px; width: min(360px, calc(100vw - 24px)); }
+  .notification-popover { right: -68px; width: min(360px, calc(100vw - 24px)); }
   .app-refresh-popover {
     width: min(248px, calc(100vw - 28px));
     max-height: calc(100dvh - var(--navbar-height) - 20px);
@@ -1340,6 +1379,8 @@ html.theme-dark {
   --color-input-bg: #141414;
   --color-card-alt: #141414;
   --color-hover: rgba(255, 255, 255, 0.05);
+  --field-focus-border: #5f7b6d;
+  --field-focus-ring: rgba(52, 211, 153, 0.1);
 
   --glass-bg: rgba(17, 17, 17, 0.75);
   --glass-bg-pill: color-mix(
@@ -1664,10 +1705,44 @@ html.theme-dark textarea::placeholder {
   color: var(--color-subtle);
 }
 html.theme-dark input:focus,
-html.theme-dark select:focus,
 html.theme-dark textarea:focus {
+  border-color: var(--field-focus-border);
+  outline-color: var(--field-focus-border);
+}
+html.theme-dark select:focus {
   border-color: var(--color-primary);
   outline-color: var(--color-primary);
+}
+
+/* One restrained, visible focus treatment for text fields in both themes. */
+:is(input:not([type]), input[type="text"], input[type="search"], input[type="email"],
+  input[type="password"], input[type="tel"], input[type="url"], input[type="number"],
+  input[type="date"], input[type="datetime-local"], input[type="time"], textarea):focus {
+  border-color: var(--field-focus-border);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--field-focus-ring);
+}
+html.theme-dark :is(input[type="checkbox"], input[type="radio"], input[type="range"],
+  input[type="file"], input[type="color"]):focus {
+  border-color: var(--color-primary);
+  outline-color: var(--color-primary);
+}
+
+/* Icon-bearing and grouped inputs use their shell as the only focus boundary. */
+:is(.search-bar, .dispatch-search-input, .um-search, .date-range-pair):focus-within {
+  border-color: var(--field-focus-border);
+  box-shadow: 0 0 0 2px var(--field-focus-ring);
+}
+html.theme-dark :is(.search-bar, .dispatch-search-input, .um-search, .date-range-pair):focus-within {
+  border-color: var(--field-focus-border);
+}
+:is(.search-bar, .dispatch-search-input, .um-search, .date-range-pair) input:focus {
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
+}
+html.theme-dark :is(.search-bar, .dispatch-search-input, .um-search, .date-range-pair) input {
+  background: transparent;
 }
 html.theme-dark option {
   background: var(--color-modal-bg);
@@ -2966,36 +3041,8 @@ html.theme-dark .legal-action-pill-btn:hover {
   animation: spinSync 0.75s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-.quick-refresh-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-soft);
-  background: var(--color-surface);
-  color: var(--color-ink);
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s ease-out;
-}
-
-.quick-refresh-btn:hover:not(:disabled) {
-  background: var(--color-card-alt);
-  border-color: var(--color-border);
-  transform: translateY(-1px);
-}
-
-.quick-refresh-btn:disabled {
-  opacity: 0.7;
-  cursor: not-allowed;
-}
-
-/* Green-accented toolbar navigation (e.g. "Calendar View"). Matches the size and
-   radius of .quick-refresh-btn so it sits naturally in the page toolbar, but is
-   never a <a> styled like body text — it must not inherit link underlines. */
+/* Green-accented toolbar navigation (e.g. "Calendar View") should read as
+   a button, never as an underlined body-text link. */
 .toolbar-nav-btn {
   display: inline-flex;
   align-items: center;

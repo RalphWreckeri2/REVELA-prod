@@ -1035,7 +1035,6 @@ export default function InspectionPage() {
   const filterStatus = searchParams.get("status") || "";
   const [search, setSearch] = useState(() => searchParams.get("search") || "");
   useEffect(() => { setSearch(searchParams.get("search") || ""); }, [searchParams]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const requestKey = `inspections:${isAdmin ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}` : "tasks"}`;
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
   const reports = reportData?.data ?? [];
@@ -1052,7 +1051,6 @@ export default function InspectionPage() {
     const sequence = ++reportRequestSequence.current;
     if (!isSilent) {
       setLoading(!hasReports);
-      setIsRefreshing(true);
     }
     setError("");
     try {
@@ -1079,10 +1077,10 @@ export default function InspectionPage() {
       }
       return false;
     } finally {
-      if (currentRequestKey.current === key && sequence === reportRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
+      if (currentRequestKey.current === key && sequence === reportRequestSequence.current) setLoading(false);
     }
   }, [token, isAdmin, filterStatus, requestKey, hasReports, setReportData, view, page, reportID, deadlineDate]);
-  const refreshView = useAppDataRefresh(requestKey, async reason => {
+  useAppDataRefresh(requestKey, async reason => {
     const ok = await fetchReports(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };
   });
@@ -1138,30 +1136,6 @@ export default function InspectionPage() {
           </p>
         </div>
         <div className="dispatch-header-actions">
-          {/* Quick manual refresh button */}
-          <button
-            className="quick-refresh-btn"
-            type="button"
-            onClick={refreshView}
-            disabled={isRefreshing}
-            title="Refresh inspection list"
-          >
-            <svg
-              className={isRefreshing ? "spin-icon" : ""}
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-            </svg>
-            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
-          </button>
-
           <Link className="toolbar-nav-btn" to="/inspections/calendar"><Icon.Calendar />Calendar View</Link>
         </div>
       </div>

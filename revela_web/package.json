@@ -15,6 +15,8 @@
     "test:analytics:browser": "node scripts/verify-compliance-browser.mjs analytics-smoke",
     "test:overview": "node --test src/pages/overviewPresentation.test.js src/utils/formatElapsedMinutes.test.js",
     "test:overview:browser": "node scripts/verify-compliance-browser.mjs actionable-smoke",
+    "test:notifications:browser": "node scripts/verify-compliance-browser.mjs notification-pagination-smoke",
+    "test:field-focus:browser": "node scripts/verify-compliance-browser.mjs text-field-focus-smoke",
     "test:actionable:browser": "node scripts/verify-compliance-browser.mjs actionable-smoke",
     "test:analytics-layout:browser": "node scripts/verify-layout-browser.mjs --analytics-fixes-only",
     "test:analytics-theme:browser": "node scripts/verify-analytics-theme-browser.mjs",

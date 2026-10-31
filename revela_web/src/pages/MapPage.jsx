@@ -3139,7 +3139,6 @@ export default function MapPage() {
   const [saveAdjustLoading, setSaveAdjustLoading] = useState(false);
   const [locatingAdjustLocation, setLocatingAdjustLocation] = useState(false);
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const flagsRequestSequence = useRef(0);
   const flagsRequestController = useRef(null);
   useEffect(() => () => flagsRequestController.current?.abort(), []);
@@ -3153,7 +3152,6 @@ export default function MapPage() {
     flagsRequestController.current = controller;
     if (!isSilent) {
       setLoadingFlags(!hasFlags);
-      setIsRefreshing(true);
     }
     setFlagsError("");
     try {
@@ -3238,7 +3236,7 @@ export default function MapPage() {
       return false;
     } finally {
       if (flagsRequestController.current === controller) flagsRequestController.current = null;
-      if (sequence === flagsRequestSequence.current) { setLoadingFlags(false); setIsRefreshing(false); }
+      if (sequence === flagsRequestSequence.current) setLoadingFlags(false);
     }
   }, [token, benchmarkTrial, hasFlags, setFlags, setOpsRankings, setBarangayRiskLevels]);
 
@@ -3373,7 +3371,7 @@ export default function MapPage() {
       return true;
     } catch { return false; }
   }, [token, setInspectors]);
-  const refreshView = useAppDataRefresh("map", reason => refreshResults([
+  useAppDataRefresh("map", reason => refreshResults([
     fetchFlags(reason === "scheduled"), loadMapBarangays(), loadMapInspectors(),
     ...(isAdmin ? [fetchDetectionQuota(), fetchPlacesUsage()] : []),
   ]));
@@ -4873,28 +4871,6 @@ export default function MapPage() {
             )}
           </div>
           <div className="map-page-utilities">
-            <button
-              className="quick-refresh-btn"
-              type="button"
-              onClick={refreshView}
-              disabled={isRefreshing}
-              title="Refresh map pins and flags"
-            >
-              <svg
-                className={isRefreshing ? "spin-icon" : ""}
-                viewBox="0 0 24 24"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-              </svg>
-              <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
-            </button>
             <span className="map-inactive-flags" style={styles.livePill}>
               <span style={styles.liveDot} />
               {visibleFlags.filter(f => f.color !== "Green").length} Matching Inactive Flags

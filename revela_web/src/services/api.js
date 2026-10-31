@@ -257,8 +257,12 @@ export async function streamNotificationsRequest(
   if (buffer.trim()) dispatchEvent(buffer);
 }
 
-export async function getNotificationsRequest(token) {
-  const res = await fetch(`${BASE_URL}/notifications`, {
+export async function getNotificationsRequest(token, { limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (limit != null) params.set("limit", String(limit));
+  if (offset != null) params.set("offset", String(offset));
+  const query = params.size ? `?${params}` : "";
+  const res = await fetch(`${BASE_URL}/notifications${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return await handleResponse(res);

@@ -148,18 +148,23 @@ def set_email_inspection_alerts(user_id: int, enabled: bool) -> None:
     cur.close()
 
 
-def list_notifications(user_id: int, limit: int = 50) -> Tuple[Dict[str, Any], None]:
+def list_notifications(user_id: int, limit: int = 50, offset: int = 0) -> Tuple[Dict[str, Any], None]:
     _ensure_tables()
     cur = mysql.connection.cursor()
+    cur.execute(
+        "SELECT COUNT(*) AS n FROM revela_notifications WHERE recipientUserId = %s",
+        (user_id,),
+    )
+    total = cur.fetchone()["n"]
     cur.execute(
         """
         SELECT id, type, title, body, link, readAt, createdAt
         FROM revela_notifications
         WHERE recipientUserId = %s
-        ORDER BY createdAt DESC
-        LIMIT %s
+        ORDER BY createdAt DESC, id DESC
+        LIMIT %s OFFSET %s
         """,
-        (user_id, limit),
+        (user_id, limit, offset),
     )
     rows = cur.fetchall()
     cur.close()
@@ -168,7 +173,7 @@ def list_notifications(user_id: int, limit: int = 50) -> Tuple[Dict[str, Any], N
             r["createdAt"] = str(r["createdAt"])
         if r.get("readAt"):
             r["readAt"] = str(r["readAt"])
-    return {"data": rows}, None
+    return {"data": rows, "total": total}, None
 
 
 def unread_count(user_id: int) -> Tuple[Dict[str, Any], None]:

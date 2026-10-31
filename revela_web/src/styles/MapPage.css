@@ -1381,7 +1381,6 @@ html.theme-dark .map-detection-toggle-action {
 }
 
 .api-usage-modal button:focus-visible,
-.api-usage-modal input:focus-visible,
 .api-usage-modal select:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 3px;
