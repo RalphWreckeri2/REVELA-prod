@@ -585,6 +585,7 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
         ? outstanding.length === 0 ? "Stay on top of inspection due dates." : `${formatOverviewNumber(outstanding.length)} outstanding ${outstanding.length === 1 ? "deadline" : "deadlines"} in the loaded records.`
         : "See when open assignments are due."}</p>
       <RequestFeedback state={state} label="assignment deadlines" />
+      <div className="overview-deadline-content">
       <details className="overview-calendar-details">
         <summary>Browse deadlines by date</summary>
       <div className="calendar-widget-header">
@@ -683,7 +684,13 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
         </div>
         <div className="calendar-widget-task-list" aria-labelledby="overview-selected-deadlines">
           {state.hasResult && displayedTasks.length === 0 ? (
-            <p className="overview-empty">{selectedDate ? "No outstanding deadlines for this date in the loaded records." : "All caught up — no deadlines to review right now."}</p>
+            selectedDate ? <p className="overview-empty">No outstanding deadlines for this date in the loaded records.</p> : (
+              <div className="overview-deadline-empty" role="status">
+                <span className="overview-deadline-empty-icon" aria-hidden="true">✓</span>
+                <strong>All caught up</strong>
+                <p>No assignment deadlines to review right now.</p>
+              </div>
+            )
           ) : displayedTasks.map(task => {
             const isOverdue = new Date(task.deadline) < new Date();
             return (
@@ -707,6 +714,7 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
           })}
         </div>
         {!selectedDate && outstanding.length > 3 && <p className="overview-scope-note">Showing the earliest three deadlines. Select a date to see its assignments.</p>}
+      </div>
       </div>
       <Link className="overview-section-link" to={activityPath} title="Review recorded inspection lifecycle activity">View Inspection Activity <OverviewIcon kind="arrow" /></Link>
     </section>
@@ -1032,14 +1040,12 @@ export default function HomePage() {
           Last computed: {summary.metadata?.computed_at ?? priorities.metadata?.computed_at ?? "unknown"}.
         </p>
       )}
-      {/* Main Layout: 2 Columns */}
+      {/* Overview sections follow reading order; only the map and priorities share a row. */}
       <div className="overview-dashboard-layout">
         <HeroBanner user={user} />
         <NeedsAttention data={workload} state={requestStates.workload} />
 
-        {/* Left Column (Main Content) */}
-        <div className="overview-main-column">
-          {/* Map */}
+        <div className="overview-feature-grid">
           <MiniMapWidget
             flags={allFlags}
             state={requestStates.flags}
@@ -1048,17 +1054,13 @@ export default function HomePage() {
             isLoaded={isLoaded}
             loadError={loadError}
           />
-          <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
-        </div>
-
-        {/* Right Column (Sidebar) */}
-        <div className="overview-side-column">
           <BarangayPrioritiesWidget
             opsRankings={opsRankings}
             state={requestStates.ops}
           />
-          <VisualCalendarWidget inspections={inspections} state={requestStates.inspections} navigate={navigate} />
         </div>
+        <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
+        <VisualCalendarWidget inspections={inspections} state={requestStates.inspections} navigate={navigate} />
       </div>
 
       {/* Footer */}

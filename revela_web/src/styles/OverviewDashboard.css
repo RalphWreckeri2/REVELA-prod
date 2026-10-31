@@ -13,35 +13,30 @@
 }
 
 .overview-page .saas-content {
-  padding: 28px 32px;
+  padding: 28px 48px;
   gap: 24px;
 }
 
 .overview-page .overview-dashboard-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 20px;
   min-width: 0;
   width: 100%;
-  max-width: 1540px;
-  margin: 0 auto;
 }
 
-.overview-page .overview-dashboard-layout > :is(.hero-banner, .overview-attention) { grid-column: 1 / -1; }
-.overview-page .saas-footer { width: 100%; max-width: 1540px; margin-right: auto; margin-left: auto; }
+.overview-page .saas-footer { width: 100%; }
 
-.overview-page .overview-main-column,
-.overview-page .overview-side-column {
-  display: flex;
-  flex-direction: column;
+.overview-page .overview-feature-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr);
+  align-items: start;
   gap: 20px;
   min-width: 0;
 }
 
-.overview-page .overview-main-column {
-  container: overview-main / inline-size;
-}
+.overview-page .overview-business-records { container: overview-main / inline-size; }
 
 .overview-page .overview-surface {
   min-width: 0;
@@ -794,9 +789,56 @@ html.theme-dark .overview-page .overview-action-card.is-warning:focus-visible {
 .overview-page .overview-workload-toggle small { color: var(--overview-muted); font-size: 12px; font-weight: 500; }
 .overview-page .overview-workload-toggle:hover,
 .overview-page .overview-calendar-details > summary:hover { background: var(--overview-item-hover); }
-.overview-page .overview-calendar-details { margin-top: 14px; }
+.overview-page .overview-deadline-content {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 24px;
+  margin-top: 16px;
+}
 .overview-page .overview-calendar-details .calendar-widget-header { margin-top: 18px; }
-.overview-page .calendar-widget-tasks { margin-top: 18px; padding-top: 16px; }
+.overview-page .calendar-widget-tasks {
+  min-width: 0;
+  margin-top: 0;
+  padding: 4px 0 4px 24px;
+  border-top: 0;
+  border-left: 1px solid var(--overview-border);
+}
+.overview-page .overview-deadline-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 130px;
+  padding: 20px;
+  border: 1px solid var(--overview-border);
+  border-radius: 12px;
+  background: var(--overview-item);
+  color: var(--color-ink);
+  text-align: center;
+  font-size: 13px;
+}
+.overview-page .overview-deadline-empty-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-primary-light);
+  color: var(--overview-accent);
+  font-size: 18px;
+  font-weight: 700;
+}
+.overview-page .overview-deadline-empty p { margin: 0; color: var(--overview-muted); }
+@media (min-width: 761px) {
+  .overview-page .overview-deadline-content:has(.overview-calendar-details[open]) .calendar-widget-tasks:has(.overview-deadline-empty) {
+    display: flex;
+    flex-direction: column;
+    min-height: 360px;
+  }
+  .overview-page .overview-deadline-content:has(.overview-calendar-details[open]) .overview-deadline-empty { flex: 1; }
+}
 .overview-page .overview-map-canvas { margin-top: 16px; }
 .overview-page .overview-map-notes { margin-top: 14px; }
 .overview-page .overview-map-key { margin-top: 4px; }
@@ -835,7 +877,7 @@ html.theme-dark .overview-page .overview-action-card.is-warning:focus-visible {
 }
 
 @media (max-width: 1050px) {
-  .overview-page .overview-dashboard-layout { grid-template-columns: minmax(0, 1fr); }
+  .overview-page .overview-feature-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 900px) {
@@ -856,6 +898,13 @@ html.theme-dark .overview-page .overview-action-card.is-warning:focus-visible {
   .overview-page .overview-surface, .overview-page .calendar-widget, .overview-page .overview-priorities { padding: 18px; }
   .overview-page .hero-banner { padding: 22px; }
   .overview-page .overview-dashboard-layout { gap: 16px; }
+  .overview-page .overview-deadline-content { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .overview-page .calendar-widget-tasks {
+    margin-top: 18px;
+    padding: 16px 0 0;
+    border-top: 1px solid var(--overview-border);
+    border-left: 0;
+  }
 }
 
 @media (max-width: 480px) {

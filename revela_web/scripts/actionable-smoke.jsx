@@ -102,7 +102,13 @@ try {
   check(document.querySelector(".hero-greeting")?.textContent.match(/Good (morning|afternoon|evening),\s+Test/), "greeting has readable spacing");
   check(document.querySelector(".overview-dashboard-layout > .overview-attention") != null
     && !document.querySelector(".overview-calendar-details")?.open
-    && document.querySelector(".overview-main-column > .overview-map") != null, "overview puts actions and map first without an expanded calendar");
+    && document.querySelector(".overview-feature-grid > .overview-map") != null
+    && document.querySelector(".overview-dashboard-layout > .overview-business-records") != null
+    && document.querySelector(".overview-dashboard-layout > .calendar-widget") != null,
+  "overview puts actions and map first, with full-width records and deadlines below");
+  const recordsBottom = document.querySelector(".overview-business-records").getBoundingClientRect().bottom;
+  const deadlinesTop = document.querySelector(".calendar-widget").getBoundingClientRect().top;
+  check(deadlinesTop - recordsBottom <= 28, "deadlines follow business records without an empty column gap");
   check(document.querySelector(".overview-updated-at")?.textContent === "Updated Oct 27, 8:00 PM", "updated timestamp is in Manila time");
   check(document.querySelector('a[href="/inspections?view=resolution"] strong')?.textContent === (fixtureParams.has("capture") ? "4d 3h 2 min" : "30 min"), "resolution duration renders without changing the count");
   if (fixtureParams.has("capture")) {
@@ -268,6 +274,8 @@ try {
     await wait(() => document.getElementById("route-probe") == null);
     mount("/home");
     await wait(() => document.querySelector(".overview-workload .overview-action-card strong")?.textContent === (zeroAttention ? "2" : "3"));
+    document.querySelector(".overview-calendar-details").open = true;
+    document.querySelector(".saas-content").scrollTop = document.querySelector(".saas-content").scrollHeight;
   }
   document.getElementById("actionable-smoke-results").textContent = JSON.stringify({ failed: false, checks, layout });
 } catch (error) {
