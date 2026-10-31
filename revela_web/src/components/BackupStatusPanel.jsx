@@ -11,6 +11,9 @@ export default function BackupStatusPanel({
     : error || !data ? "Backup actions are unavailable until the backend status can be verified."
       : data.manualBackupDisabledReason || (data.canManualBackup
         ? "Manual database backup is available." : "Manual database backup is unavailable.");
+  const actionReasonUnavailable = !data?.canManualBackup || loading || error || !data;
+  const actionReasonAlreadyShown = actionReasonUnavailable && !loading && !error
+    && Boolean(data?.reason) && data.reason === actionReason;
   const downloadReason = data?.downloadDisabledReason || "Download is available only for completed backups.";
   const completedBackupsExist = data?.history?.some(backup => backup.status === "completed");
 
@@ -35,9 +38,19 @@ export default function BackupStatusPanel({
       {actionError && <p className="settings-error" role="alert">{actionError}</p>}
       {notice && <p className="database-backup-notice" role="status">{notice}</p>}
       {loading && <p className="database-backup-note" role="status">Loading database backup status…</p>}
-      {!loading && data?.reason && <p className="database-backup-notice" role="status">{data.reason}</p>}
+      {!loading && data?.reason && <p
+        id={actionReasonAlreadyShown ? "database-backup-action-reason" : undefined}
+        className="database-backup-notice"
+        role="status"
+      >{data.reason}</p>}
       {!loading && data?.status === "running" && <p className="database-backup-notice" role="status">A database backup is running. Refresh to check its progress.</p>}
-      {(!data?.canManualBackup || loading || error || !data) && <p id="database-backup-action-reason" className="database-backup-note">{actionReason}</p>}
+      {actionReasonUnavailable && !actionReasonAlreadyShown && <p id="database-backup-action-reason" className="database-backup-note">{actionReason}</p>}
+      {!loading && !data?.configured && data?.configurationIssues?.length > 0 && (
+        <details className="database-backup-setup">
+          <summary>View setup requirements</summary>
+          <ul>{data.configurationIssues.map((issue, index) => <li key={`${issue}-${index}`}>{issue}</li>)}</ul>
+        </details>
+      )}
 
       <dl className="database-backup-metrics">
         <div className="database-backup-metric">

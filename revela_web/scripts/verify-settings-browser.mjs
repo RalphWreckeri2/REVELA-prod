@@ -32,7 +32,7 @@ function installFixtures() {
       historyUnavailableReason: "Backup history is unavailable until backup storage configuration is complete.",
       manualBackupDisabledReason: "Database backup runtime configuration is incomplete.",
       downloadDisabledReason: "Authenticated backup downloads require configured private storage.",
-      canManualBackup: false, canDownload: false, configurationIssues: ["runtime configuration incomplete"],
+      canManualBackup: false, canDownload: false, configurationIssues: ["Missing BACKUP_DB_HOST"],
       automaticExecutionEnabled: false,
       automaticExecutionStatus: "not_ready",
       automaticExecutionReason: "No external scheduled trigger is integrated. The in-process scheduler can stop when the API sleeps.",
@@ -211,6 +211,9 @@ try {
     "Recovery copies of system database records. Inspection photos are managed separately.");
   assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
   assert.ok(await evaluate(`document.querySelector('#database-backup-action-reason').textContent.includes('runtime configuration is incomplete')`));
+  assert.equal(await evaluate(`[...document.querySelectorAll('${backupScope} [role="status"], ${backupScope} .database-backup-note')].filter(node => node.textContent.includes('runtime configuration is incomplete')).length`), 1);
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-setup summary').textContent`), "View setup requirements");
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-setup').open`), false);
   assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody tr').length`), 1);
   assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody button, ${backupScope} a').length`), 0);
   assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.startsWith('Off')`));
