@@ -21,7 +21,7 @@ document.documentElement.classList.toggle("theme-dark", fixtureTheme === "dark")
 const check = (ok, label) => { if (!ok) throw new Error(label); checks.push(label); };
 const wait = async predicate => {
   for (let i = 0; i < 200; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 25)); }
-  throw new Error("Synthetic UI did not become ready");
+  throw new Error(`Synthetic UI did not become ready at ${document.getElementById("route-probe")?.textContent ?? "unknown route"} (${document.querySelector(".map-location-results")?.textContent?.slice(0, 120) ?? "no map results"})`);
 };
 const backTo = async expected => {
   for (let i = 0; i < 8 && document.getElementById("route-probe")?.textContent !== expected; i++) {
@@ -57,8 +57,9 @@ window.fetch = async input => {
   if (path.endsWith("/flags")) return url.searchParams.has("origin") || url.searchParams.get("limit") === "1000"
     ? response({ total: 21, pages: url.searchParams.get("limit") === "1" ? 21 : 2,
         data: Array.from({ length: url.searchParams.get("limit") === "1" || url.searchParams.get("page") === "2" ? 1 : 20 }, (_, index) => ({
-          logID: url.searchParams.get("page") === "2" ? 30 : index + 9, detectedName: "Unlinked test pin",
+         logID: url.searchParams.get("page") === "2" ? 30 : index + 9, detectedName: "Unlinked test pin",
           barangayName: "Barangay Twelve", originSource: url.searchParams.get("origin") || "detection", registryLinked: false,
+          latitude: 13.956, longitude: 121.105,
         })) })
     : response({ total: 0, pages: 1, data: [] });
   if (path.endsWith("/inspections")) return response({ total: 1, data: [{ reportID: 42, verificationStatus: "Assigned", deadline: `${deadlineValue} 08:00:00`, detectedName: "Test shop", inspectorName: "Inspector One" }] });
@@ -85,7 +86,9 @@ try {
   mount("/home");
   await wait(() => document.querySelector(".overview-workload .overview-action-card strong")?.textContent === (zeroAttention ? "2" : "3"));
   check(!document.body.textContent.includes("System Status") && !document.body.textContent.includes("Registry & Flag Summary"), "obsolete panels absent");
-  check(document.querySelector(".overview-attention")?.textContent.includes("Needs Attention") && document.querySelector(".overview-workload")?.textContent.includes("Age unavailable"), "attention precedes secondary inspection snapshot");
+  check(document.querySelector(".overview-attention")?.textContent.includes("Needs your attention")
+    && !document.querySelector(".overview-workload")?.open
+    && document.querySelector(".overview-workload")?.textContent.includes("Age unavailable"), "attention leads with actions and keeps inspection details optional");
   check(document.querySelectorAll(".attention-grid .overview-action-card").length === 3 && document.querySelectorAll(".workload-grid .overview-action-card").length === 3, "each workload measure appears once");
   const attention = document.querySelector(".attention-grid");
   check([...attention.querySelectorAll(".overview-action-card")].map(node => node.getAttribute("href")).join("|") === "/inspections?view=overdue|/inspections?view=awaiting_verification|/inspections?view=age_15%2B", "attention cards retain ordered exact filters");
@@ -97,12 +100,17 @@ try {
     && longPendingCard.querySelector("strong")?.textContent === (zeroAttention ? "0" : "1"), "attention counts are drawn from one summary response");
   check(zeroAttention ? overdueCard.textContent.includes("None overdue") && !attention.querySelector(".is-warning, .is-review") : overdueCard.classList.contains("is-warning"), "zero attention uses a calm state; nonzero overdue is emphasized");
   check(document.querySelector(".hero-greeting")?.textContent.match(/Good (morning|afternoon|evening),\s+Test/), "greeting has readable spacing");
+  check(document.querySelector(".overview-dashboard-layout > .overview-attention") != null
+    && !document.querySelector(".overview-calendar-details")?.open
+    && document.querySelector(".overview-main-column > .overview-map") != null, "overview puts actions and map first without an expanded calendar");
   check(document.querySelector(".overview-updated-at")?.textContent === "Updated Oct 27, 8:00 PM", "updated timestamp is in Manila time");
   check(document.querySelector('a[href="/inspections?view=resolution"] strong')?.textContent === (fixtureParams.has("capture") ? "4d 3h 2 min" : "30 min"), "resolution duration renders without changing the count");
   if (fixtureParams.has("capture")) {
     const value = document.querySelector('a[href="/inspections?view=resolution"] strong');
     check(value.getBoundingClientRect().height <= parseFloat(getComputedStyle(value).lineHeight) * 1.1, "long duration fits on one line at supported widths");
   }
+  const workloadDetails = document.querySelector(".overview-workload");
+  workloadDetails.open = true;
   const timingDetails = document.querySelector(".overview-methodology");
   timingDetails.open = true;
   check(timingDetails.textContent.includes("Sep 27 – Oct 27") && timingDetails.textContent.includes("Updated Oct 27, 8:00 PM")
@@ -111,6 +119,7 @@ try {
   const firstAgeChip = document.querySelector('a[href="/inspections?view=age_0-3"]');
   firstAgeChip.focus();
   check(document.activeElement === firstAgeChip && document.querySelectorAll(".overview-age-chip").length === 3 && !document.querySelector(".overview-age-chip[href*='age_15']"), "remaining age chips retain accessible drill-downs without duplicating 15+");
+  workloadDetails.open = false;
   check(document.querySelector('a[href="/map?source=detection&registryLink=unlinked"]')?.textContent.includes("21"), "detection card uses unlinked source predicate");
   check(document.querySelector('a[href="/analytics?tab=prescriptive&barangay_id=12"]') != null, "priority links to prescriptive barangay");
   check(document.querySelector(".overview-priority-rank")?.textContent === "3", "priority keeps municipal rank without rescoring");
@@ -183,6 +192,7 @@ try {
     await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   }
   check(requests.filter(path => path.includes("/inspections/workload?summary=1")).length === initialSummaries, "attention drill-downs preserve cached Overview without extra summary reads");
+  document.querySelector(".overview-calendar-details").open = true;
   const dateWithAssignment = [...document.querySelectorAll(".calendar-widget-day")].find(node => node.getAttribute("aria-label")?.includes("1 outstanding deadline"));
   check(dateWithAssignment != null, "assignment date is available as a target");
   dateWithAssignment.click();
@@ -226,12 +236,13 @@ try {
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   document.querySelector('a[href="/analytics?tab=prescriptive&barangay_id=12"]').click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/analytics?tab=prescriptive&barangay_id=12");
-  await wait(() => document.querySelector(".analytics-page--prescriptive") != null);
-  check(document.querySelector(".analytics-page--prescriptive") != null, "priority opens actual Prescriptive tab");
+  await wait(() => document.querySelector(".analytics-tab-btn.active")?.textContent.includes("Recommendations"));
+  check(document.querySelector(".analytics-tab-btn.active")?.textContent.includes("Recommendations"), "priority opens actual Prescriptive tab");
   document.getElementById("back-probe").click();
   await wait(() => document.getElementById("route-probe")?.textContent === "/home");
   const content = document.querySelector(".overview-dashboard-layout");
   check(content.scrollWidth <= content.clientWidth + 3, "dashboard stays within viewport");
+  document.querySelector(".overview-workload").open = true;
   const layout = {
     viewport: window.innerWidth, pageWidth: document.documentElement.scrollWidth,
     contentWidth: document.querySelector(".saas-content")?.scrollWidth,
@@ -242,15 +253,15 @@ try {
   root.render(null);
   await wait(() => document.getElementById("route-probe") == null);
   mount("/analytics?tab=prescriptive&barangay_id=12");
-  await wait(() => document.querySelector(".analytics-page--prescriptive") != null);
+  await wait(() => document.querySelector(".analytics-tab-btn.active")?.textContent.includes("Recommendations"));
   await wait(() => requests.some(path => path.includes("/analytics/all?barangay_ids=12")));
   check(document.getElementById("route-probe")?.textContent === "/analytics?tab=prescriptive&barangay_id=12", "fresh mount retains direct Prescriptive URL");
   check(requests.some(path => path.includes("/analytics/all?barangay_ids=12") && !path.includes("application_status")), "prescriptive request only narrows barangay display");
-  const descriptive = [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.includes("Descriptive"));
+  const descriptive = [...document.querySelectorAll(".analytics-tab-btn")].find(node => node.textContent.includes("Overview"));
   descriptive?.click();
   await wait(() => document.getElementById("route-probe")?.textContent.includes("tab=descriptive"));
   document.getElementById("back-probe").click();
-  await wait(() => document.querySelector(".analytics-page--prescriptive") != null);
+  await wait(() => document.querySelector(".analytics-tab-btn.active")?.textContent.includes("Recommendations"));
   check(document.getElementById("route-probe")?.textContent.includes("tab=prescriptive"), "tab state follows browser back");
   if (fixtureParams.has("capture")) {
     root.render(null);
