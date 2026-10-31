@@ -117,12 +117,80 @@ try {
       await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
       await waitFor(`document.querySelector('.print-report-container img[src^="data:image/png"]')`);
       assert.equal(await evaluate("Boolean(document.querySelector('.print-report-container img'))"), true, "PDF includes the chart image");
+      await evaluate("window.dispatchEvent(new Event('afterprint'))");
+      await waitFor("!document.querySelector('.print-report-container')");
     }
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Field reports')).click()");
     await waitFor("document.querySelector('.operational-report-card') && !document.querySelector('#chart-card-size')");
     assert.equal(await evaluate("Boolean(document.querySelector('.export-profile-menu'))"), false);
     assert.equal(await evaluate("document.querySelectorAll('.operational-report-card').length"), 3);
     assert.equal(await evaluate("Boolean(document.querySelector('.operational-report-details:not([open]) > summary'))"), true);
+    if (width === 1440 && theme === "light") {
+      await evaluate(`(() => {
+        const original = window.fetch;
+        window.fetch = (input, options) => {
+          const path = new URL(input, location.href).pathname;
+          if (path.endsWith('/flags/inspection-verified-compliant')) return Promise.resolve(Response.json({
+            data: Array.from({ length: 2 }, (_, i) => ({ detectionReference: i + 1, businessName: 'Verified business ' + i,
+              barangayID: 2, barangayName: 'Barangay II', address: 'Municipal Road, Mataasnakahoy', originSource: 'detection',
+              verifiedOn: '2026-10-25T14:00:00Z', registryLinked: i === 0 })), generatedAt: '2026-10-31T10:00:00Z'
+          }));
+          if (path.endsWith('/flags/') || path.endsWith('/flags')) return Promise.resolve(Response.json({ data: Array.from({ length: 224 }, (_, i) => ({
+            flagColor: i % 10 === 0 ? 'Yellow' : 'Red', detectedName: 'Field candidate ' + (i + 1),
+            barangayName: 'Barangay II', resolvedAddress: 'Municipal Road, Mataasnakahoy, Batangas, Philippines',
+            detectedDate: '2026-10-30T10:00:00Z'
+          })) }));
+          if (path.endsWith('/analytics/all')) return Promise.resolve(Response.json({ prescriptive: {
+            rankings: Array.from({ length: 16 }, (_, i) => ({ rank: i + 1, barangayName: 'Barangay ' + (i + 1),
+              ops_score: 95 - i * 4, risk_level: i < 4 ? 'High' : 'Medium', priority_label: i < 4 ? 'High Priority' : 'Standard',
+              flagged_count: 20 - i, dispatchable_count: 12 - Math.floor(i / 2), registry_active_flag_rate: 0 })),
+            workforce: {}, model: {}
+          } }));
+          return original(input, options);
+        };
+      })()`);
+
+      const checkPdf = async (selector, rows, name) => {
+        await waitFor(`document.querySelector('${selector}')`);
+        assert.equal(await evaluate(`document.querySelectorAll('${selector} .print-table:first-of-type tbody tr').length`), rows);
+        await call("Emulation.setEmulatedMedia", { media: "print" });
+        const printStyle = await evaluate(`(() => ({
+          header: getComputedStyle(document.querySelector('.print-header')).position,
+          footer: getComputedStyle(document.querySelector('.print-footer')).position,
+          colors: [...new Set([...document.querySelectorAll('${selector} .print-table th')]
+            .map(th => getComputedStyle(th).backgroundColor))]
+        }))()`);
+        assert.equal(printStyle.header, "fixed");
+        assert.equal(printStyle.footer, "fixed");
+        assert.deepEqual(printStyle.colors, ["rgb(234, 241, 237)"], `${name} uses the quiet table palette`);
+        const pdf = await call("Page.printToPDF", { printBackground: true, preferCSSPageSize: true });
+        const pdfBuffer = Buffer.from(pdf.data, "base64");
+        const pages = (pdfBuffer.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
+        assert.ok(pages > 0 && pages <= (name === "unregistered" ? 10 : name === "dispatch" ? 2 : 1),
+          `${name} fits within the expected printed pages (${pages})`);
+        if (process.env.REVELA_EXPORT_CAPTURE) {
+          const output = join(tempRoot, `revela-export-${name}.pdf`);
+          await writeFile(output, pdfBuffer);
+          console.log(`Print preview: ${output}`);
+        }
+        await call("Emulation.setEmulatedMedia", { media: "screen" });
+        await evaluate("window.dispatchEvent(new Event('afterprint')); document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto')");
+        await waitFor("!document.querySelector('.print-report-container')");
+      };
+      const download = async label => {
+        const button = label === "Inspection-Verified Compliant Businesses" ? ".compliance-report-download" : ".primary-btn";
+        await evaluate(`(() => { const card = [...document.querySelectorAll('.operational-report-card')].find(el => el.textContent.includes(${JSON.stringify(label)})); card.querySelector(${JSON.stringify(button)}).click(); })()`);
+        await waitFor("document.querySelector('.swal2-radio input[value=pdf]')");
+        await evaluate("document.querySelector('.swal2-radio input[value=pdf]').click(); document.querySelector('.swal2-confirm').click()");
+      };
+
+      await download("List of Unregistered Businesses");
+      await checkPdf(".unregistered-print-body", 224, "unregistered");
+      await download("Inspection-Verified Compliant Businesses");
+      await checkPdf(".inspection-print-body", 2, "inspection-compliant");
+      await download("Field Inspector Dispatch Plan");
+      await checkPdf(".dispatch-print-body", 16, "dispatch");
+    }
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Business profile')).click()");
     await waitFor("document.querySelector('#chart-card-size') && !document.querySelector('.operational-report-card')");
     assert.equal(await evaluate("document.documentElement.scrollWidth <= innerWidth + 2"), true, `${theme} ${width}px has no horizontal overflow`);

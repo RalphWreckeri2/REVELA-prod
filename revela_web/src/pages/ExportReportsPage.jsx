@@ -1929,6 +1929,12 @@ export default function ExportReportsPage() {
                 -webkit-box-decoration-break: clone;
                 box-decoration-break: clone;
               }
+              .print-report-container:has(.operational-print-body) .report-body {
+                margin: 0 !important;
+                padding: 180px 15mm 110px !important;
+                -webkit-box-decoration-break: clone;
+                box-decoration-break: clone;
+              }
 
               .print-report-separate-summary {
                 break-before: page;
@@ -2006,6 +2012,78 @@ export default function ExportReportsPage() {
               }
               .demographic-complete-body .print-table :is(th, td):last-child { text-align: right; }
               .demographic-complete-body .print-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
+
+              /* Operational PDFs share one economical palette and legible table rhythm. */
+              .operational-print-body .print-table {
+                table-layout: fixed;
+                margin: 6px 0 12px;
+              }
+              .operational-print-body .print-table thead { display: table-header-group; }
+              .operational-print-body .print-table th,
+              .operational-print-body .print-table td {
+                padding: 3px 6px;
+                border: 0;
+                border-bottom: 1px solid #e2e8e5;
+                background: #fff !important;
+                color: #243446 !important;
+                font-size: 9px;
+                line-height: 1.3;
+                vertical-align: top;
+                overflow-wrap: anywhere;
+              }
+              .operational-print-body .print-table th {
+                background: #eaf1ed !important;
+                border-bottom-color: #b9d0c3;
+                color: #234535 !important;
+                font-weight: 700;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+              }
+              .operational-print-body .print-table tbody tr:nth-child(even) td {
+                background: #fafbfa !important;
+              }
+              .operational-print-body .print-table td:not(:first-child) { font-variant-numeric: tabular-nums; }
+              .operational-print-body .print-status { color: #243446 !important; font-weight: 600; }
+              .operational-print-body .print-operational-summary {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px 20px;
+                padding: 7px 10px;
+                margin-bottom: 8px;
+                border: 1px solid #e2e8e5;
+                border-radius: 6px;
+                background: #fafbfa;
+                color: #334155;
+                font-size: 9.5px;
+              }
+              .operational-print-body .print-operational-summary strong { color: #243446; }
+              .operational-print-body .print-operational-note {
+                margin: 7px 0;
+                color: #475569;
+                font-size: 9px;
+                line-height: 1.4;
+              }
+              .unregistered-print-body .print-table th:nth-child(1) { width: 21%; }
+              .unregistered-print-body .print-table th:nth-child(2) { width: 13%; }
+              .unregistered-print-body .print-table th:nth-child(3) { width: 43%; }
+              .unregistered-print-body .print-table th:nth-child(4) { width: 13%; }
+              .unregistered-print-body .print-table th:nth-child(5) { width: 10%; }
+              .inspection-print-body .print-table th:nth-child(1) { width: 9%; }
+              .inspection-print-body .print-table th:nth-child(2) { width: 18%; }
+              .inspection-print-body .print-table th:nth-child(3) { width: 12%; }
+              .inspection-print-body .print-table th:nth-child(4) { width: 24%; }
+              .inspection-print-body .print-table th:nth-child(5) { width: 10%; }
+              .inspection-print-body .print-table th:nth-child(6) { width: 17%; }
+              .inspection-print-body .print-table th:nth-child(7) { width: 10%; }
+              .dispatch-print-body .print-table th:nth-child(1) { width: 7%; }
+              .dispatch-print-body .print-table th:nth-child(2) { width: 23%; }
+              .dispatch-print-body .print-table th:nth-child(3) { width: 12%; }
+              .dispatch-print-body .print-table th:nth-child(4) { width: 15%; }
+              .dispatch-print-body .print-table th:nth-child(5) { width: 22%; }
+              .dispatch-print-body .print-table th:nth-child(6) { width: 21%; }
+              .dispatch-print-body .print-table--recommendations th:nth-child(1) { width: 9%; }
+              .dispatch-print-body .print-table--recommendations th:nth-child(2) { width: 25%; }
+              .dispatch-print-body .print-table--recommendations th:nth-child(3) { width: 66%; }
 
               body { counter-reset: page; }
               .print-page-number::after {
@@ -2089,15 +2167,18 @@ export default function ExportReportsPage() {
 
             {/* ── CASE 1: Single Demographic Chart Report ── */}
             {printReport.type === "inspection-compliant" && (
-              <div>
-                <p style={{ fontSize: 11, color: "#334155" }}><strong>Applied filters:</strong> {printReport.data.filtersLabel}</p>
-                <p style={{ fontSize: 11, color: "#334155" }}><strong>Record count:</strong> {printReport.data.count}</p>
-                <p style={{ fontSize: 11, color: "#334155" }}>Pin Reference is the geospatial logID, not an official Business ID. Verified On is the admin verification time in Asia/Manila.</p>
+              <div className="operational-print-body inspection-print-body">
+                <p className="print-operational-note"><strong>Applied filters:</strong> {printReport.data.filtersLabel} · <strong>Record count:</strong> {printReport.data.count}</p>
+                <p className="print-operational-note">Pin Reference is the geospatial logID, not an official Business ID. Verified On is the admin verification time in Asia/Manila.</p>
                 <table className="print-table">
                   <thead><tr>{printReport.data.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
                   <tbody>{printReport.data.rows.length === 0 ? <tr><td colSpan={6}>No matching current-compliance records.</td></tr>
                     : printReport.data.rows.map(row => <tr key={row["Pin Reference"]}>
-                      {printReport.data.columns.map(column => <td key={column}>{row[column] || "—"}</td>)}
+                      {printReport.data.columns.map(column => <td key={column}>
+                        {column === "Registry Link" && row[column] === "Linked to Registry" ? "Linked"
+                          : column === "Registry Link" && row[column] === "Not in Registry" ? "Not linked"
+                            : row[column] == null || row[column] === "" ? "—" : row[column]}
+                      </td>)}
                     </tr>)}</tbody>
                 </table>
               </div>
@@ -2435,42 +2516,21 @@ export default function ExportReportsPage() {
 
             {/* ── CASE 3: List of Unregistered Businesses ── */}
             {printReport.type === "unregistered" && (
-              <div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginBottom: "16px" }}>
-                  <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "10px" }}>
-                    <div style={{ fontSize: "9px", fontWeight: "bold", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                      Total Flagged Locations
-                    </div>
-                    <div style={{ fontSize: "13px", fontWeight: "bold", color: "#0f172a", marginTop: "4px" }}>
-                      {printReport.data.summary.total} Suspected Entities
-                    </div>
-                  </div>
-                  <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "10px" }}>
-                    <div style={{ fontSize: "9px", fontWeight: "bold", color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                      Unregistered Commercial (Red)
-                    </div>
-                    <div style={{ fontSize: "13px", fontWeight: "bold", color: "#7f1d1d", marginTop: "4px" }}>
-                      {printReport.data.summary.red} Confirmed Locations
-                    </div>
-                  </div>
-                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", padding: "10px" }}>
-                    <div style={{ fontSize: "9px", fontWeight: "bold", color: "#d97706", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-                      Suspected Compliance Gap (Yellow)
-                    </div>
-                    <div style={{ fontSize: "13px", fontWeight: "bold", color: "#92400e", marginTop: "4px" }}>
-                      {printReport.data.summary.yellow} Potential Violations
-                    </div>
-                  </div>
+              <div className="operational-print-body unregistered-print-body">
+                <div className="print-operational-summary">
+                  <span><strong>{printReport.data.summary.total}</strong> flagged locations</span>
+                  <span><strong>{printReport.data.summary.red}</strong> unregistered (Red)</span>
+                  <span><strong>{printReport.data.summary.yellow}</strong> suspected gap (Yellow)</span>
                 </div>
 
                 <table className="print-table">
                   <thead>
                     <tr>
-                      <th style={{ background: "#ef4444", color: "#fff" }}>Establishment Name</th>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "130px" }}>Barangay</th>
-                      <th style={{ background: "#ef4444", color: "#fff" }}>Resolved Address / Nearest Landmark</th>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "100px" }}>Flag Status</th>
-                      <th style={{ background: "#ef4444", color: "#fff", width: "95px" }}>Date Detected</th>
+                      <th>Establishment Name</th>
+                      <th>Barangay</th>
+                      <th>Resolved Address / Nearest Landmark</th>
+                      <th>Flag Status</th>
+                      <th>Date Detected</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2485,20 +2545,9 @@ export default function ExportReportsPage() {
                         <tr key={idx}>
                           <td style={{ fontWeight: "600", color: "#111827" }}>{f.Name}</td>
                           <td>{f.Barangay}</td>
-                          <td style={{ fontSize: "10.5px" }}>{f.Address}</td>
+                          <td>{f.Address}</td>
                           <td>
-                            <span
-                              style={{
-                                padding: "2px 6px",
-                                borderRadius: "4px",
-                                fontSize: "10px",
-                                fontWeight: "bold",
-                                background: f.Status === "Unregistered" ? "#fee2e2" : "#fef3c7",
-                                color: f.Status === "Unregistered" ? "#b91c1c" : "#b45309"
-                              }}
-                            >
-                              {f.Status}
-                            </span>
+                            <span className="print-status">{f.Status}</span>
                           </td>
                           <td>{f.DetectedDate}</td>
                         </tr>
@@ -2511,19 +2560,19 @@ export default function ExportReportsPage() {
 
             {/* ── CASE 4: Field Inspector Dispatch Plan ── */}
             {printReport.type === "dispatch" && (
-              <div>
+              <div className="operational-print-body dispatch-print-body">
                 <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                   Barangay Priority Rankings (WLC Score Model)
                 </h3>
                 <table className="print-table">
                   <thead>
                     <tr>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "48px" }}>Rank</th>
-                      <th style={{ background: "#3b82f6", color: "#fff" }}>Barangay Name</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "100px" }}>WLC OPS Score</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "90px" }}>Priority</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "90px" }}>Flags / Eligible Targets</th>
-                      <th style={{ background: "#3b82f6", color: "#fff", width: "110px" }}>Registry Active-Flag Rate</th>
+                      <th>Rank</th>
+                      <th>Barangay Name</th>
+                      <th>WLC OPS Score</th>
+                      <th>Priority</th>
+                      <th>Flags / Eligible Targets</th>
+                      <th>Registry Active-Flag Rate</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2536,22 +2585,11 @@ export default function ExportReportsPage() {
                     ) : (
                       printReport.data.rankings.map((r, idx) => (
                         <tr key={idx}>
-                          <td style={{ fontWeight: "bold", color: "#111827" }}>Rank {r.Rank}</td>
+                          <td style={{ fontWeight: "bold", color: "#111827" }}>{r.Rank}</td>
                           <td style={{ fontWeight: "600", color: "#111827" }}>{r.Barangay}</td>
                           <td>{r.PriorityScore}</td>
                           <td>
-                            <span
-                              style={{
-                                padding: "2px 6px",
-                                borderRadius: "4px",
-                                fontSize: "10px",
-                                fontWeight: "bold",
-                                background: r.RiskLevel === "High" ? "#fee2e2" : r.RiskLevel === "Medium" ? "#fef3c7" : "#dcfce7",
-                                color: r.RiskLevel === "High" ? "#b91c1c" : r.RiskLevel === "Medium" ? "#b45309" : "#166534"
-                              }}
-                            >
-                              {r.PriorityLabel || r.RiskLevel}
-                            </span>
+                            <span className="print-status">{r.PriorityLabel || r.RiskLevel}</span>
                           </td>
                           <td>{r.TotalFlagged} / {r.EligibleForNewDispatch ?? "N/A"}</td>
                           <td style={{ fontWeight: "600", color: "#111827" }}>{r.RegistryActiveFlagRate}</td>
@@ -2561,26 +2599,26 @@ export default function ExportReportsPage() {
                   </tbody>
                 </table>
 
-                <p style={{ fontSize: 10, color: "#475569" }}>OPS = W1×Risk + W2×Sector + W3×Proximity; current municipal relative inspection priority, not violation probability. Registry rates use unique registry businesses and are not confirmed-violation rates; N/A means no denominator. Available inspectors: {printReport.data.workforce?.available_inspectors ?? "unavailable"}; one inspector maximum per eligible business. Recommended: {printReport.data.workforce?.allocated_inspectors ?? "unavailable"}; unallocated: {printReport.data.workforce?.unallocated_inspectors ?? "unavailable"}. Deferred plans do not authorize deployment.</p>
-                {printReport.data.model?.weights && <p style={{ fontSize: 10, color: "#475569" }}>Model version: {printReport.data.model.version || "unavailable"}; Sector policy version: {printReport.data.model.sector_policy?.version ?? "unavailable"}. Effective weights: {(printReport.data.model.weights.w1 * 100).toFixed(1)}% Risk / {(printReport.data.model.weights.w2 * 100).toFixed(1)}% Sector / {(printReport.data.model.weights.w3 * 100).toFixed(1)}% Proximity. Computed: {printReport.data.computedAt || "unavailable"}. {printReport.data.model.eligibility_note}</p>}
+                <p className="print-operational-note">OPS = W1×Risk + W2×Sector + W3×Proximity; current municipal relative inspection priority, not violation probability. Registry rates use unique registry businesses and are not confirmed-violation rates; N/A means no denominator. Available inspectors: {printReport.data.workforce?.available_inspectors ?? "unavailable"}; one inspector maximum per eligible business. Recommended: {printReport.data.workforce?.allocated_inspectors ?? "unavailable"}; unallocated: {printReport.data.workforce?.unallocated_inspectors ?? "unavailable"}. Deferred plans do not authorize deployment.</p>
+                {printReport.data.model?.weights && <p className="print-operational-note">Model version: {printReport.data.model.version || "unavailable"}; Sector policy version: {printReport.data.model.sector_policy?.version ?? "unavailable"}. Effective weights: {(printReport.data.model.weights.w1 * 100).toFixed(1)}% Risk / {(printReport.data.model.weights.w2 * 100).toFixed(1)}% Sector / {(printReport.data.model.weights.w3 * 100).toFixed(1)}% Proximity. Computed: {printReport.data.computedAt || "unavailable"}. {printReport.data.model.eligibility_note}</p>}
 
                 {printReport.data.recommendations?.length > 0 && (
                   <div className="page-break-avoid">
                     <h3 style={{ fontSize: "11px", fontWeight: "bold", color: "#111827", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                       Actionable Dispatch Recommendations &amp; Inspector Allocations
                     </h3>
-                    <table className="print-table">
+                    <table className="print-table print-table--recommendations">
                       <thead>
                         <tr>
-                          <th style={{ background: "#3b82f6", color: "#fff", width: "60px" }}>Rank</th>
-                          <th style={{ background: "#3b82f6", color: "#fff", width: "150px" }}>Priority Barangay</th>
-                          <th style={{ background: "#3b82f6", color: "#fff" }}>Actionable Recommendation Plan</th>
+                          <th>Rank</th>
+                          <th>Priority Barangay</th>
+                          <th>Actionable Recommendation Plan</th>
                         </tr>
                       </thead>
                       <tbody>
                         {printReport.data.recommendations.map((rec, idx) => (
                           <tr key={idx}>
-                            <td style={{ fontWeight: "bold", color: "#111827" }}>Rank {rec.rank}</td>
+                            <td style={{ fontWeight: "bold", color: "#111827" }}>{rec.rank}</td>
                             <td style={{ fontWeight: "600", color: "#111827" }}>{rec.barangayName}</td>
                             <td>{rec.recommendation}</td>
                           </tr>
