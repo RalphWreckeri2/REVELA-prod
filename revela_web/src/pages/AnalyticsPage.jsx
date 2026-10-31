@@ -46,8 +46,8 @@ import {
 
 const EMPTY_FILTER_BARANGAYS = Object.freeze([]);
 const ANALYTICS_TABS = [
-  { id: "descriptive", label: "Overview", description: "Key numbers and trends" },
-  { id: "prescriptive", label: "Recommendations", description: "Where to focus next" },
+  { id: "descriptive", label: "Overview" },
+  { id: "prescriptive", label: "Recommendations" },
 ];
 const ADMIN_PRESCRIPTIVE_DETAILS_ENABLED = false;
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
@@ -1461,7 +1461,6 @@ export default function AnalyticsPage() {
           </div>
 
           <div className="analytics-view-switcher">
-            <p className="analytics-view-switcher-label">Explore analytics</p>
             <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics views">
               {ANALYTICS_TABS.map(tab => {
                 const isActive = activeTab === tab.id;
@@ -1484,13 +1483,7 @@ export default function AnalyticsPage() {
                         </svg>
                       )}
                     </span>
-                    <span className="analytics-tab-copy">
-                      <span className="analytics-tab-label">{tab.label}</span>
-                      <span className="analytics-tab-description">{tab.description}</span>
-                    </span>
-                    <svg className="analytics-tab-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M5 12h14m-6-6 6 6-6 6" />
-                    </svg>
+                    <span className="analytics-tab-label">{tab.label}</span>
                   </button>
                 );
               })}

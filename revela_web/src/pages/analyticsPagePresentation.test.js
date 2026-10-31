@@ -12,15 +12,16 @@ test("Overview and Recommendations share one centered width and title wrapper", 
   assert.doesNotMatch(stylesheet, /\.analytics-page--prescriptive\s+\.saas-content/);
 });
 
-test("analytics view switch is prominent, descriptive, and responsive in both themes", () => {
+test("analytics switch spans one compact row with two clear active states", () => {
   assert.match(pageSource, /className="analytics-view-switcher"/);
-  assert.match(pageSource, /description: "Key numbers and trends"/);
-  assert.match(pageSource, /description: "Where to focus next"/);
   assert.match(pageSource, /aria-current=\{isActive \? "page" : undefined\}/);
+  assert.doesNotMatch(pageSource, /analytics-tab-description|analytics-tab-arrow/);
+  assert.match(stylesheet, /\.analytics-view-switcher\s*\{ width: 100%; \}/);
   assert.match(stylesheet, /\.analytics-section-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
-  assert.match(stylesheet, /\.analytics-tab-btn\.active::before/);
+  assert.match(stylesheet, /\.analytics-tab-btn\s*\{[^}]*min-height:\s*42px/);
+  assert.match(stylesheet, /\.analytics-tab-btn\.active\s*\{[^}]*border-bottom-color:\s*var\(--color-primary\)/);
   assert.match(stylesheet, /html\.theme-dark \.analytics-tab-btn\.active/);
-  assert.match(stylesheet, /@container analytics-content \(max-width: 639px\)\s*\{\s*\.analytics-section-nav\s*\{ grid-template-columns: minmax\(0, 1fr\); \}/);
+  assert.match(stylesheet, /@container analytics-content \(max-width: 479px\)\s*\{\s*\.analytics-tab-btn\s*\{ padding-inline: 6px; \}/);
 });
 
 test("Overview KPI cards share the content width and use balanced sizing", () => {
