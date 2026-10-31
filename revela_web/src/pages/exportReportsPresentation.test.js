@@ -36,10 +36,16 @@ test("each chart keeps its PNG and PDF handlers behind one export menu", () => {
 });
 
 test("PDF exports download directly instead of opening the browser print dialog", () => {
-  assert.match(page, /downloadCanvasAsPdf\(canvas/);
+  assert.match(page, /downloadCanvasAsPdf\(cropRegion\(reportRegionBounds\["\.report-body"\]\)/);
+  assert.match(page, /headerCanvas:\s*cropRegion\(reportRegionBounds\["\.print-header"\]\)/);
+  assert.match(page, /footerCanvas:\s*cropRegion\(reportRegionBounds\["\.print-footer"\]\)/);
+  assert.match(page, /pageBreaks:\s*safePageBreaks/);
   assert.match(pdfDownload, /pdf\.save\(filename\)/);
   assert.doesNotMatch(page, /window\.print\(\)/);
   assert.match(page, /await downloadReportPdf\(\{/);
+  assert.match(page, /visibility:\s*"hidden"/);
+  assert.match(page, /clonedDoc\.getElementById\("pdf-report-render-root"\)/);
+  assert.match(page, /visibility:\s*"visible"/);
   assert.match(compliance, /PDF downloads directly as a file/);
 });
 

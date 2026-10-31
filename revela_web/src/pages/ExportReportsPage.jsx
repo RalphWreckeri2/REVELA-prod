@@ -426,6 +426,20 @@ export default function ExportReportsPage() {
       if (!element) throw new Error("The report could not be prepared for download.");
       const images = [...element.querySelectorAll("img")];
       await Promise.all(images.map(image => image.decode()));
+      const reportRect = element.getBoundingClientRect();
+      const reportElements = Object.fromEntries(
+        [".print-header", ".report-body", ".print-footer"].map(selector => {
+          const region = element.querySelector(selector);
+          if (!region) throw new Error(`The report is missing its ${selector.slice(1)} section.`);
+          return [selector, region];
+        }),
+      );
+      const reportRegionBounds = Object.fromEntries(
+        Object.entries(reportElements).map(([selector, region]) => {
+          const rect = region.getBoundingClientRect();
+          return [selector, { top: rect.top - reportRect.top, height: rect.height }];
+        }),
+      );
       const canvas = await html2canvas(element, {
         scale: Math.min(
           2,
@@ -439,10 +453,51 @@ export default function ExportReportsPage() {
         height: element.scrollHeight,
         windowWidth: element.scrollWidth,
         windowHeight: element.scrollHeight,
+        onclone: clonedDoc => {
+          const clonedReport = clonedDoc.getElementById("pdf-report-render-root");
+          if (clonedReport) {
+            Object.assign(clonedReport.style, {
+              display: "block",
+              position: "fixed",
+              inset: "0 auto auto 0",
+              zIndex: "12000",
+              visibility: "visible",
+            });
+          }
+        },
       });
-      await downloadCanvasAsPdf(canvas, {
+      const captureScale = canvas.width / reportRect.width;
+      const cropRegion = ({ top, height }) => {
+        const cropped = document.createElement("canvas");
+        cropped.width = canvas.width;
+        cropped.height = Math.max(1, Math.round(height * captureScale));
+        const context = cropped.getContext("2d");
+        if (!context) throw new Error("Could not prepare the report page sections.");
+        context.drawImage(
+          canvas,
+          0,
+          Math.round(top * captureScale),
+          canvas.width,
+          cropped.height,
+          0,
+          0,
+          cropped.width,
+          cropped.height,
+        );
+        return cropped;
+      };
+      const bodyRect = reportElements[".report-body"].getBoundingClientRect();
+      const safePageBreaks = [
+        ...reportElements[".report-body"].querySelectorAll("tr, .dossier-section, .page-break-avoid"),
+      ].map(region => Math.round(
+        (region.getBoundingClientRect().bottom - bodyRect.top) * captureScale,
+      ));
+      await downloadCanvasAsPdf(cropRegion(reportRegionBounds[".report-body"]), {
         filename,
         orientation: report.isLandscape ? "landscape" : "portrait",
+        headerCanvas: cropRegion(reportRegionBounds[".print-header"]),
+        footerCanvas: cropRegion(reportRegionBounds[".print-footer"]),
+        pageBreaks: safePageBreaks,
       });
     } finally {
       flushSync(() => {
@@ -1855,16 +1910,18 @@ export default function ExportReportsPage() {
       {printReport && (
         <div
           ref={printReportRef}
+          id="pdf-report-render-root"
           className={`print-report-container hidden print:block bg-white text-black font-sans w-full${pdfRendering ? " pdf-export-render" : ""}`}
           style={pdfRendering ? {
             display: "block",
             position: "fixed",
-            inset: "0 auto auto 0",
-            zIndex: 12000,
+            inset: "0 auto auto -10000px",
+            zIndex: -1,
             width: printReport.isLandscape ? "297mm" : "210mm",
             minHeight: printReport.isLandscape ? "210mm" : "297mm",
             overflow: "visible",
             background: "#ffffff",
+            visibility: "hidden",
           } : undefined}
         >
           {/* Custom Print CSS */}

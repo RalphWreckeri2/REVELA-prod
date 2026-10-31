@@ -200,15 +200,14 @@ try {
 
   const backupPath = "/admin-settings/database-backup/status";
   const backupScope = "#settings-database-backup-body";
-  await wait(`document.querySelector('#settings-database-backup-summary')?.textContent === 'Recovery copies of system database records' && document.querySelector('#settings-database-backup-state')?.textContent === 'Not configured'`, "unconfigured backend status");
+  await wait(`document.querySelector('#settings-database-backup-summary')?.textContent === 'Recovery copies of system database records. Inspection photos are managed separately under Inspection Evidence Storage & Archival.' && document.querySelector('#settings-database-backup-state')?.textContent === 'Not configured'`, "unconfigured backend status");
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.settings-section')].map(e => e.getAttribute('aria-labelledby')).filter(id => /evidence|database-backup|manual/.test(id))`),
     ["settings-evidence-title", "settings-database-backup-title", "settings-manual-title"]);
   assert.equal(await evaluate(`document.querySelector('${backupScope}').hidden`), true);
   await evaluate(`document.querySelector('#settings-database-backup-title').closest('button').focus()`);
   await key("Enter", "Enter", 13);
   assert.equal(await evaluate(`document.querySelector('${backupScope}').hidden`), false);
-  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-description').textContent.trim()`),
-    "Recovery copies of system database records. Inspection photos are managed separately.");
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-description')`), null);
   assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
   assert.ok(await evaluate(`document.querySelector('#database-backup-action-reason').textContent.includes('runtime configuration is incomplete')`));
   assert.equal(await evaluate(`[...document.querySelectorAll('${backupScope} [role="status"], ${backupScope} .database-backup-note')].filter(node => node.textContent.includes('runtime configuration is incomplete')).length`), 1);

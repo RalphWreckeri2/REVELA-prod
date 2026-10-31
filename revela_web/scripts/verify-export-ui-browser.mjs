@@ -115,6 +115,8 @@ try {
     if (width === 1440 && theme === "light") {
       await evaluate("document.querySelector('.export-profile-menu > summary').click(); document.querySelector('.export-profile-menu button:last-child').click()");
       await waitFor("document.querySelectorAll('.demographic-complete-body .dossier-section').length === 8");
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('.print-report-container')).visibility"), "hidden",
+        "temporary PDF report stays out of the visible page");
       await waitFor("window.__pdfDownloads.length === 1");
       assert.match(await evaluate("window.__pdfDownloads[0].filename"), /\.pdf$/i);
       assert.equal(await evaluate("window.__printCount"), 0, "PDF download does not open the print dialog");
@@ -127,6 +129,9 @@ try {
       await waitFor("document.body.textContent.includes('Chart Exported!') || document.body.textContent.includes('Export Failed')");
       assert.equal(await evaluate("document.body.textContent.includes('Chart Exported!')"), true, "PNG export still works from the menu");
       await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
+      await waitFor("document.querySelector('.print-report-container')");
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('.print-report-container')).visibility"), "hidden",
+        "chart PDF rendering stays out of the visible page");
       await waitFor("window.__pdfDownloads.length === 2");
       assert.match(await evaluate("window.__pdfDownloads[1].filename"), /\.pdf$/i);
       assert.equal(await evaluate("window.__printCount"), 0, "chart PDF downloads without printing");

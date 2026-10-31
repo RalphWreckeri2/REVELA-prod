@@ -52,3 +52,44 @@ test("canvas PDF downloads are split into page-sized image slices", async () => 
   assert.equal(drawCalls.length, 3);
   assert.deepEqual(drawCalls.map(call => call[4]), [297, 297, 6]);
 });
+
+test("PDF content reserves room for the official header and footer on every page", async () => {
+  const operations = [];
+  class FakePdf {
+    internal = { pageSize: { getWidth: () => 210, getHeight: () => 297 } };
+    addPage() {
+      operations.push({ type: "page" });
+    }
+    addImage(image, _format, x, y, width, height) {
+      operations.push({ type: image, x, y, width, height });
+    }
+    save() {}
+  }
+  const createCanvas = () => ({
+    width: 0,
+    height: 0,
+    getContext: () => ({ drawImage: () => {} }),
+    toDataURL: () => "body",
+  });
+  const namedCanvas = (name, width, height) => ({
+    width,
+    height,
+    toDataURL: () => name,
+  });
+
+  const pageCount = await downloadCanvasAsPdf(namedCanvas("source", 210, 600), {
+    filename: "report.pdf",
+    Pdf: FakePdf,
+    createCanvas,
+    headerCanvas: namedCanvas("header", 210, 20),
+    footerCanvas: namedCanvas("footer", 210, 10),
+    pageBreaks: [250, 500],
+  });
+
+  assert.equal(pageCount, 3);
+  const bodyPages = operations.filter(operation => operation.type === "body");
+  assert.deepEqual(bodyPages.map(({ y, height }) => [y, height]), [[24, 250], [24, 250], [24, 100]]);
+  assert.equal(operations.filter(operation => operation.type === "header").length, 3);
+  assert.equal(operations.filter(operation => operation.type === "footer").length, 3);
+  assert.ok(bodyPages.every(({ y, height }) => y + height <= 283));
+});

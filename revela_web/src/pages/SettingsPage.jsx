@@ -1606,7 +1606,8 @@ export default function SettingsPage() {
         </SettingsSection>
 
         {canEditPolicy && <SettingsSection id="settings-database-backup" title="Database Backup"
-          summary="Recovery copies of system database records" status={backupView}>
+          summary="Recovery copies of system database records. Inspection photos are managed separately under Inspection Evidence Storage & Archival."
+          status={backupView}>
           <BackupStatusPanel
             data={backupStatus}
             loading={backupLoading}

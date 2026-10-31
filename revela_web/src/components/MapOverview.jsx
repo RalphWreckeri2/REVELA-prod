@@ -1384,26 +1384,28 @@ export default function MapOverview({ token, filters }) {
               )}
             </div>
           </div>
-          <p className="map-overview-map-hint">
-            Zoom in or use the Barangay filter above to pick small barangays.
-          </p>
-          {!showHotspots && (
-            <div
-              className="map-overview-density-indicator"
-              role="img"
-              aria-label={`Fewer to more ${mapView === "inspections" ? "inspections" : "businesses"} per barangay`}
-            >
-              <span>Fewer</span>
-              <span
-                className="map-overview-density-ramp"
-                aria-hidden="true"
-                style={{
-                  background: `linear-gradient(90deg, ${(isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView].join(", ")})`,
-                }}
-              />
-              <span>More {mapView === "inspections" ? "inspections" : "businesses"}</span>
-            </div>
-          )}
+          <div className="map-overview-map-footer">
+            <p className="map-overview-map-hint">
+              Zoom in or use the Barangay filter above to pick small barangays.
+            </p>
+            {!showHotspots && (
+              <div
+                className="map-overview-density-indicator"
+                role="img"
+                aria-label={`Fewer to more ${mapView === "inspections" ? "inspections" : "businesses"} per barangay`}
+              >
+                <span>Fewer</span>
+                <span
+                  className="map-overview-density-ramp"
+                  aria-hidden="true"
+                  style={{
+                    background: `linear-gradient(90deg, ${(isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView].join(", ")})`,
+                  }}
+                />
+                <span>More {mapView === "inspections" ? "inspections" : "businesses"}</span>
+              </div>
+            )}
+          </div>
         </section>
 
         <aside className="map-overview-panel" aria-label="Barangay details">

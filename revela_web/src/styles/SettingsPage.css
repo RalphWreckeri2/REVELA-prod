@@ -209,17 +209,18 @@
 .settings-cutoff-card:disabled { cursor: not-allowed !important; opacity: 0.65; }
 .settings-page .saas-content button:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 3px; }
 .settings-section-state.is-ready { background: var(--color-primary-light); color: var(--color-primary-dark); }
-.database-backup-panel { display: grid; gap: 20px; min-width: 0; }
+.database-backup-panel { display: grid; gap: 14px; min-width: 0; }
 .database-backup-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-.database-backup-description, .database-backup-note { margin: 0; color: var(--color-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.database-backup-note { margin: 0; color: var(--color-muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .database-backup-panel .settings-error { margin: 0; }
 .database-backup-notice { margin: 0; padding: 14px 16px; border: 1px solid var(--color-border-soft); border-radius: 12px; background: var(--color-hover); color: var(--color-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
-.database-backup-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; margin: 0; }
-.database-backup-automatic-status { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: start; gap: 0 12px; }
-.database-backup-automatic-status .database-backup-detail { margin-top: 0; }
-.database-backup-metric { min-width: 0; padding: 14px 16px; border-radius: 12px; background: var(--color-hover); border: 1px solid var(--color-border-soft); }
-.database-backup-metric dt { margin-bottom: 8px; color: var(--color-muted); font-size: 12px; font-weight: 600; text-transform: uppercase; }
-.database-backup-metric dd { margin: 0; color: var(--color-ink); font-size: 13px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.database-backup-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0; overflow: hidden; border: 1px solid var(--color-border-soft); border-radius: 10px; background: var(--color-hover); }
+.database-backup-automatic-status { display: flex; flex-direction: column; align-items: flex-start; }
+.database-backup-automatic-label { line-height: 1.45; }
+.database-backup-metric { min-width: 0; padding: 12px 14px; }
+.database-backup-metric + .database-backup-metric { border-left: 1px solid var(--color-border-soft); }
+.database-backup-metric dt { margin-bottom: 4px; color: var(--color-muted); font-size: 10px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.database-backup-metric dd { margin: 0; color: var(--color-ink); font-size: 13px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
 .database-backup-detail { display: block; margin-top: 4px; color: var(--color-muted); font-size: 12px; font-weight: 400; }
 .database-backup-warning { color: #a16207; }
 .database-backup-panel h3 { margin: 0; color: var(--color-ink); font-size: 14px; font-weight: 700; line-height: 1.5; }
@@ -231,22 +232,26 @@
 .database-backup-policy > div { margin-top: 8px; color: var(--color-muted); font-size: 12px; font-weight: 400; }
 .database-backup-policy p { margin: 6px 0 0; }
 .database-backup-history { min-width: 0; }
+.database-backup-history-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.database-backup-history-heading > span { color: var(--color-muted); font-size: 10px; }
 .database-backup-history > .database-backup-note { margin-top: 10px; font-size: 12px; }
-.database-backup-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--color-border-soft); border-radius: 10px; }
+.database-backup-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--color-border-soft); border-radius: 9px; }
 .database-backup-table-wrap:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 3px; }
-.database-backup-table { width: 100%; border-collapse: collapse; color: var(--color-ink); font-size: 13px; text-align: left; }
-.database-backup-table th { padding: 12px 14px; background: var(--color-hover); color: var(--color-muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
-.database-backup-table td { padding: 12px 14px; border-top: 1px solid var(--color-border-soft); line-height: 1.6; }
+.database-backup-table { width: 100%; border-collapse: collapse; color: var(--color-ink); font-size: 11px; text-align: left; }
+.database-backup-table th { padding: 8px 12px; background: var(--color-hover); color: var(--color-muted); font-size: 9px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.database-backup-table td { padding: 8px 12px; border-top: 1px solid var(--color-border-soft); line-height: 1.4; }
 .database-backup-table .database-backup-empty { padding: 24px 16px; color: var(--color-muted); text-align: center; overflow-wrap: anywhere; }
 .database-backup-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
-.database-backup-panel button { padding: 10px 16px; font-size: 13px; }
+.database-backup-panel button { padding: 8px 12px; font-size: 11px; }
 .database-backup-panel button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+html.theme-dark .database-backup-metrics { background: var(--color-card-alt); }
+html.theme-dark .database-backup-warning { color: #fbbf24; }
 @media (max-width: 600px) {
   .database-backup-header { flex-direction: column; }
   .database-backup-buttons { width: 100%; }
   .database-backup-buttons button { flex: 1 1 140px; }
-  .database-backup-automatic-status { grid-template-columns: 1fr; }
-  .database-backup-automatic-status .database-backup-detail { margin-top: 4px; }
+  .database-backup-metrics { grid-template-columns: minmax(0, 1fr); }
+  .database-backup-metric + .database-backup-metric { border-top: 1px solid var(--color-border-soft); border-left: 0; }
 }
 @media (max-width: 900px) {
   .settings-section-toggle { flex-wrap: wrap; gap: 8px; }

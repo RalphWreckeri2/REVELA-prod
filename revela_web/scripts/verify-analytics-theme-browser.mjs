@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createServer } from "vite";
 
 const edge = process.env.EDGE_BINARY || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const profile = mkdtempSync(join("C:\\Users\\Mateo\\AppData\\Local\\Temp\\opencode", "analytics-theme-"));
+const tempRoot = process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Temp", "opencode");
+if (!existsSync(edge) || !tempRoot || !existsSync(tempRoot)) {
+  throw new Error("This browser check requires Edge and the approved temporary directory.");
+}
+const profile = mkdtempSync(join(tempRoot, "analytics-theme-"));
 const server = await createServer({ logLevel: "silent", server: { host: "127.0.0.1", port: 0 } });
 let browser;
 let socket;
@@ -80,7 +84,7 @@ try {
     return {
       dark: document.documentElement.classList.contains('theme-dark'),
       kpi: style('.kpi-card'), kpiLabel: style('.kpi-card .kpi-info p'),
-      filter: style('.map-overview-filter-card'), select: style('.map-overview select'),
+      filter: style('.map-overview-filter-card'), select: style('.map-overview-filter-card select'),
       mapCard: style('.map-overview-layout'), mapControl: style('.map-overview-legend-toggle'),
       chartCard: style('.analytics-inspector-operations-card'),
       axis: style('.analytics-inspector-operations-card .recharts-cartesian-axis-tick-value'),
@@ -107,6 +111,19 @@ try {
     for (const key of ["kpi", "kpiLabel", "filter", "select", "mapCard", "mapControl", "chartCard", "axis"]) {
       assert.ok(page[key], `${theme}: ${key} rendered`);
     }
+    const mapFooter = await evaluate(`(() => {
+      const footer = document.querySelector('.map-overview-map-footer');
+      const hint = footer.querySelector('.map-overview-map-hint').getBoundingClientRect();
+      const density = footer.querySelector('.map-overview-density-indicator').getBoundingClientRect();
+      return { display: getComputedStyle(footer).display,
+        hintCenter: hint.top + hint.height / 2, densityCenter: density.top + density.height / 2,
+        footerWidth: footer.getBoundingClientRect().width, densityWidth: density.width };
+    })()`);
+    assert.equal(mapFooter.display, "flex", `${theme}: map hint and density legend share a row`);
+    assert.ok(Math.abs(mapFooter.hintCenter - mapFooter.densityCenter) < 2,
+      `${theme}: hint and density legend align vertically`);
+    assert.ok(mapFooter.densityWidth > 200 && mapFooter.densityWidth < mapFooter.footerWidth,
+      `${theme}: density ramp has readable horizontal space`);
     assert.ok(page.grid?.includes("--analytics-grid-color"), `${theme}: chart uses theme grid token`);
     if (theme === "dark") {
       for (const key of ["kpi", "filter", "select", "mapCard", "mapControl", "chartCard"]) {

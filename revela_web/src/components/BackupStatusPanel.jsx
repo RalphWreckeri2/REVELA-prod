@@ -29,9 +29,6 @@ export default function BackupStatusPanel({
   return (
     <div className="database-backup-panel" aria-busy={loading}>
       <div className="database-backup-header">
-        <p className="database-backup-description">
-          Recovery copies of system database records. Inspection photos are managed separately.
-        </p>
         <div className="database-backup-buttons">
           <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
           <button
@@ -72,7 +69,7 @@ export default function BackupStatusPanel({
         <div className="database-backup-metric">
           <dt>Automatic backup</dt>
           <dd className="database-backup-automatic-status">
-            <span>{automaticBackupStatus}</span>
+            <span className="database-backup-automatic-label">{automaticBackupStatus}</span>
             {!loading && data && automaticBackupStatus !== "On" && (
               <span className="database-backup-detail database-backup-warning">{automaticBackupReason}</span>
             )}
@@ -95,7 +92,10 @@ export default function BackupStatusPanel({
       </dl>
 
       <div className="database-backup-history">
-        <h3 id="database-backup-history-title">Backup history</h3>
+        <div className="database-backup-history-heading">
+          <h3 id="database-backup-history-title">Backup history</h3>
+          <span>Times in Asia/Manila</span>
+        </div>
         <div className="database-backup-table-wrap" role="region" aria-labelledby="database-backup-history-title" tabIndex={0}>
           <table className="database-backup-table">
             <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Type</th><th scope="col">Result</th><th scope="col">Size</th><th scope="col" aria-label="Actions"></th></tr></thead>

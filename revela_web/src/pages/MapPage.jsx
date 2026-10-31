@@ -1069,9 +1069,9 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
               <span className="flag-location-fact-label">Detected</span>
               <strong>{formatDetectedDate(flag.detectedDate)}</strong>
             </div>
-            <div>
+            <div className="flag-location-source">
               <span className="flag-location-fact-label">Source</span>
-              <strong>{information.source}</strong>
+              <strong className="flag-location-source-value">{information.source}</strong>
               {information.compliance && (
                 <span className="business-compliance-info">{information.compliance}</span>
               )}

@@ -670,28 +670,51 @@
     1px 1px 2px #fff;
 }
 
+.map-overview-map-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 8px;
+}
+
 .map-overview-map-hint {
+  flex: 1 1 auto;
   margin: 0;
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.4;
 }
 
 .map-overview-density-indicator {
   display: grid;
+  flex: 0 1 34%;
   grid-template-columns: auto minmax(64px, 1fr) auto;
   align-items: center;
-  gap: 9px;
+  gap: 12px;
   color: var(--color-muted);
-  font-size: 11px;
+  font-size: 14px;
   line-height: 1.3;
 }
 
 .map-overview-density-ramp {
   display: block;
-  height: 10px;
+  height: 16px;
   min-width: 0;
   border-radius: 999px;
+}
+
+@container analytics-content (max-width: 639px) {
+  .map-overview-map-footer {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .map-overview-density-indicator {
+    width: 100%;
+    flex-basis: auto;
+  }
 }
 
 .map-overview-legend-control {

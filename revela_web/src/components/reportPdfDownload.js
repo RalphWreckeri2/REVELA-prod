@@ -26,6 +26,10 @@ export async function downloadCanvasAsPdf(
     orientation = "portrait",
     Pdf,
     createCanvas = () => document.createElement("canvas"),
+    headerCanvas,
+    footerCanvas,
+    pageGap = 4,
+    pageBreaks = [],
   },
 ) {
   if (!canvas?.width || !canvas?.height) {
@@ -41,7 +45,12 @@ export async function downloadCanvasAsPdf(
   });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const sourcePageHeight = Math.floor(canvas.width * pageHeight / pageWidth);
+  const headerHeight = headerCanvas ? pageWidth * headerCanvas.height / headerCanvas.width : 0;
+  const footerHeight = footerCanvas ? pageWidth * footerCanvas.height / footerCanvas.width : 0;
+  const contentTop = headerHeight ? headerHeight + pageGap : 0;
+  const contentBottom = pageHeight - footerHeight - (footerHeight ? pageGap : 0);
+  const contentHeight = contentBottom - contentTop;
+  const sourcePageHeight = Math.floor(canvas.width * contentHeight / pageWidth);
   if (sourcePageHeight < 1) {
     throw new Error("The report image is too narrow to create a PDF.");
   }
@@ -52,8 +61,12 @@ export async function downloadCanvasAsPdf(
   if (!context) throw new Error("Could not prepare the PDF page image.");
 
   let page = 0;
-  for (let sourceY = 0; sourceY < canvas.height; sourceY += sourcePageHeight) {
-    const sliceHeight = Math.min(sourcePageHeight, canvas.height - sourceY);
+  for (let sourceY = 0; sourceY < canvas.height;) {
+    const maxSourceY = Math.min(sourceY + sourcePageHeight, canvas.height);
+    const safeBreak = pageBreaks
+      .filter(position => position > sourceY && position <= maxSourceY)
+      .sort((a, b) => b - a)[0];
+    const sliceHeight = (safeBreak ?? maxSourceY) - sourceY;
     pageCanvas.height = sliceHeight;
     context.drawImage(
       canvas,
@@ -67,18 +80,27 @@ export async function downloadCanvasAsPdf(
       sliceHeight,
     );
     if (page > 0) pdf.addPage();
-    const imageHeight = pageWidth * sliceHeight / canvas.width;
+    const bodyHeight = pageWidth * sliceHeight / canvas.width;
     pdf.addImage(
       pageCanvas.toDataURL("image/jpeg", 0.92),
       "JPEG",
       0,
-      0,
+      contentTop,
       pageWidth,
-      imageHeight,
+      bodyHeight,
       undefined,
       "FAST",
     );
+    if (headerCanvas) {
+      pdf.addImage(headerCanvas.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0,
+        pageWidth, headerHeight, undefined, "FAST");
+    }
+    if (footerCanvas) {
+      pdf.addImage(footerCanvas.toDataURL("image/jpeg", 0.92), "JPEG", 0,
+        pageHeight - footerHeight, pageWidth, footerHeight, undefined, "FAST");
+    }
     page += 1;
+    sourceY += sliceHeight;
   }
 
   pdf.save(filename);
