@@ -1160,6 +1160,11 @@ def test_in_process_scheduler_is_not_reported_ready_for_automatic_backups(setup,
         assert report["external_trigger_configured"] is False
         assert report["automatic_execution_ready"] is False
         assert report["operational"] is False
+        monkeypatch.setenv("DB_BACKUP_EXTERNAL_TRIGGER_ENABLED", "1")
+        monkeypatch.setenv("DB_BACKUP_TRIGGER_TOKEN", "trigger-token-fixture-" + ("x" * 24))
+        pending = status.report()
+        assert pending["automatic_execution_ready"] is False
+        assert "A scheduled run may still be attempted" in pending["automatic_execution_reason"]
         committed = store.records()[0]
         store.s3.delete_object(Key=committed["object"]["key"], VersionId=committed["object"]["version_id"])
         store.s3.delete_object(

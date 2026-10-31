@@ -154,7 +154,7 @@ def report():
         "automatic_execution_reason": (
             "The external scheduler is not configured with its protected API trigger."
             if not external_trigger_configured else
-            "Automatic execution remains disabled until runtime, restore, retention, and cost gates are approved."
+            "Automatic backup readiness is pending runtime, restore, retention, and cost verification. A scheduled run may still be attempted if the GitHub Actions workflow is enabled."
         ),
         "scheduler_running": running, "scheduler_mode": mode,
         "scheduler_configured": scheduler_configured, "storage_verified": storage_verified,
