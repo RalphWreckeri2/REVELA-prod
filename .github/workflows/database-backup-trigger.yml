@@ -3,6 +3,7 @@ name: Database backup trigger
 on:
   schedule:
     - cron: "0 11 * * 5"
+      workflow_dispatch:
 
 permissions:
   contents: read
