@@ -210,31 +210,34 @@
 .settings-page .saas-content button:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 3px; }
 .settings-section-state.is-ready { background: var(--color-primary-light); color: var(--color-primary-dark); }
 .database-backup-panel { display: grid; gap: 20px; min-width: 0; }
+.database-backup-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .database-backup-description, .database-backup-note { margin: 0; color: var(--color-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .database-backup-panel .settings-error { margin: 0; }
-.database-backup-notice, .database-backup-policy { margin: 0; padding: 14px 16px; border: 1px solid var(--color-border-soft); border-radius: 12px; background: var(--color-hover); color: var(--color-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.database-backup-notice { margin: 0; padding: 14px 16px; border: 1px solid var(--color-border-soft); border-radius: 12px; background: var(--color-hover); color: var(--color-muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .database-backup-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; margin: 0; }
 .database-backup-metric { min-width: 0; padding: 14px 16px; border-radius: 12px; background: var(--color-hover); border: 1px solid var(--color-border-soft); }
 .database-backup-metric dt { margin-bottom: 8px; color: var(--color-muted); font-size: 12px; font-weight: 600; text-transform: uppercase; }
 .database-backup-metric dd { margin: 0; color: var(--color-ink); font-size: 13px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
 .database-backup-detail { display: block; margin-top: 4px; color: var(--color-muted); font-size: 12px; font-weight: 400; }
+.database-backup-warning { color: #a16207; }
 .database-backup-panel h3 { margin: 0; color: var(--color-ink); font-size: 14px; font-weight: 700; line-height: 1.5; }
-.database-backup-policy h3 { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.database-backup-policy p { margin: 8px 0 0; }
+.database-backup-policy { margin-top: 6px; color: var(--color-primary-dark); font-size: 12px; font-weight: 600; }
+.database-backup-policy summary { cursor: pointer; }
+.database-backup-policy > div { margin-top: 8px; color: var(--color-muted); font-size: 12px; font-weight: 400; }
+.database-backup-policy p { margin: 6px 0 0; }
 .database-backup-history { min-width: 0; }
-.database-backup-history > .database-backup-note { margin: 6px 0 12px; font-size: 12px; }
+.database-backup-history > .database-backup-note { margin-top: 10px; font-size: 12px; }
 .database-backup-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--color-border-soft); border-radius: 10px; }
 .database-backup-table-wrap:focus-visible { outline: 2px solid var(--color-primary-dark); outline-offset: 3px; }
 .database-backup-table { width: 100%; border-collapse: collapse; color: var(--color-ink); font-size: 13px; text-align: left; }
 .database-backup-table th { padding: 12px 14px; background: var(--color-hover); color: var(--color-muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .database-backup-table td { padding: 12px 14px; border-top: 1px solid var(--color-border-soft); line-height: 1.6; }
 .database-backup-table .database-backup-empty { padding: 24px 16px; color: var(--color-muted); text-align: center; overflow-wrap: anywhere; }
-.database-backup-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; padding-top: 16px; border-top: 1px solid var(--color-border-soft); }
-.database-backup-actions > p { flex: 1 1 300px; font-size: 12px; }
 .database-backup-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
 .database-backup-panel button { padding: 10px 16px; font-size: 13px; }
 .database-backup-panel button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
 @media (max-width: 600px) {
+  .database-backup-header { flex-direction: column; }
   .database-backup-buttons { width: 100%; }
   .database-backup-buttons button { flex: 1 1 140px; }
 }

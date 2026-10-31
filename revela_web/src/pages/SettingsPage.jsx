@@ -1606,7 +1606,7 @@ export default function SettingsPage() {
         </SettingsSection>
 
         {canEditPolicy && <SettingsSection id="settings-database-backup" title="Database Backup"
-          summary={backupView.summary} status={backupView}>
+          summary="Recovery copies of system database records" status={backupView}>
           <BackupStatusPanel
             data={backupStatus}
             loading={backupLoading}

@@ -195,12 +195,12 @@ try {
   };
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   await call("Page.navigate", { url: `${origin}/settings` });
-  await wait(`document.querySelector('#settings-preferences-body') && !document.querySelector('#settings-policy-state')`, "Settings ready");
+  await wait(`document.querySelector('#settings-preferences-body') && document.querySelector('#settings-database-backup-summary')`, "Settings ready");
   for (const section of ["security", "evidence", "manual"]) await evaluate(`document.querySelector('#settings-${section}-title').closest('button').click()`);
 
   const backupPath = "/admin-settings/database-backup/status";
   const backupScope = "#settings-database-backup-body";
-  await wait(`document.querySelector('#settings-database-backup-summary')?.textContent === 'Not configured · No successful backup yet'`, "unconfigured backend status");
+  await wait(`document.querySelector('#settings-database-backup-summary')?.textContent === 'Recovery copies of system database records' && document.querySelector('#settings-database-backup-state')?.textContent === 'Not configured'`, "unconfigured backend status");
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('.settings-section')].map(e => e.getAttribute('aria-labelledby')).filter(id => /evidence|database-backup|manual/.test(id))`),
     ["settings-evidence-title", "settings-database-backup-title", "settings-manual-title"]);
   assert.equal(await evaluate(`document.querySelector('${backupScope}').hidden`), true);
@@ -208,13 +208,15 @@ try {
   await key("Enter", "Enter", 13);
   assert.equal(await evaluate(`document.querySelector('${backupScope}').hidden`), false);
   assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-description').textContent.trim()`),
-    "Create and download recovery copies of system database records. Inspection photo files are managed separately under Inspection Evidence Storage & Archival.");
+    "Recovery copies of system database records. Inspection photos are managed separately.");
   assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
   assert.ok(await evaluate(`document.querySelector('#database-backup-action-reason').textContent.includes('runtime configuration is incomplete')`));
   assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody tr').length`), 1);
   assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody button, ${backupScope} a').length`), 0);
-  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Not scheduled");
-  assert.ok(await evaluate(`document.querySelector('.database-backup-policy').textContent.includes('Proposal only')`));
+  assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.startsWith('Off')`));
+  assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-warning').textContent.includes('Scheduler not configured yet')`));
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-policy').open`), false);
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-policy summary').textContent`), "View proposed policy");
   assert.ok(await evaluate(`__settings.requests.filter(r => r.path.endsWith('${backupPath}')).every(r => r.authorization === 'Bearer settings-synthetic-token')`));
   record("Database Backup is a native collapsible card in the requested order with honest unconfigured status and inactive proposal");
 
@@ -228,14 +230,14 @@ try {
   await wait(`!document.querySelector('${backupScope} .ghost-btn').disabled`, "status refresh finished");
   for (const [mode, expected] of [["failure", "Synthetic backup status outage"], ["missing", "GET /api/admin-settings/database-backup/status"], ["incomplete", "incomplete database backup status"]]) {
     await evaluate(`__settings.modes.backup = '${mode}'`);
-    await click(`${backupScope} button`, "Refresh Status");
+    await click(`${backupScope} button`, "Refresh");
     await wait(`document.querySelector('${backupScope} [role="alert"]')?.textContent.includes(${JSON.stringify(expected)})`, `${mode} status response`);
     assert.equal(await evaluate(`document.querySelector('#settings-database-backup-state').textContent`), "Status unavailable");
     assert.equal(await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`), true);
-    assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Unavailable");
+    assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.trim()`), "Unavailable");
   }
   await evaluate(`__settings.modes.backup = 'unconfigured'`);
-  await click(`${backupScope} button`, "Refresh Status");
+  await click(`${backupScope} button`, "Refresh");
   await wait(`!document.querySelector('${backupScope} [role="alert"]')`, "status retry succeeds");
   record("Status refresh uses Bearer auth, deduplicates concurrent clicks, and handles loading/outage/missing/invalid responses without fake backup failures");
 
@@ -253,13 +255,15 @@ try {
       automaticExecutionReason: 'No external scheduled trigger is integrated. The in-process scheduler can stop when the API sleeps.',
       externalTriggerConfigured: false };
   })()`);
-  await click(`${backupScope} button`, "Refresh Status");
+  await click(`${backupScope} button`, "Refresh");
   await wait(`document.querySelector('#settings-database-backup-state').textContent === 'Ready'`, "backend supplied completed history");
-  assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.includes('7:00 PM') && document.querySelectorAll('${backupScope} dd')[1].textContent.includes('1 MB')`));
-  assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Not scheduled");
+  assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[0].textContent.includes('7:00 PM') && document.querySelectorAll('${backupScope} dd')[0].textContent.includes('1 MB')`));
+  assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.startsWith('Off')`));
+  assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent.startsWith('Not active')`));
+  assert.equal(await evaluate(`document.querySelector('${backupScope} .database-backup-policy').open`), false);
   assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-policy').textContent.includes('30 days')`));
   assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-policy').textContent.includes('Cleanup is disabled')`));
-  assert.ok(await evaluate(`[...document.querySelectorAll('${backupScope} [role="status"]')].some(node => node.textContent.includes('Automatic backup is not ready'))`));
+  assert.ok(await evaluate(`document.querySelector('${backupScope} .database-backup-warning').textContent.includes('Scheduler not configured yet')`));
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('${backupScope} tbody tr')].map(r => r.cells[1].textContent)`), ["Manual", "Monthly archive", "Automatic"]);
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('${backupScope} tbody tr')].map(r => r.cells[3].textContent)`), ["1 MB", "2 KB", "—"]);
   assert.equal(await evaluate(`document.querySelectorAll('${backupScope} tbody button').length`), 2);
@@ -271,19 +275,19 @@ try {
   assert.equal(await evaluate(`__settings.requests.find(r => r.path.endsWith('/admin-settings/backups/run'))?.method`), "POST");
   for (const state of ["running", "failed"]) {
     await evaluate(`__settings.backup.status = '${state}'; __settings.backup.schedule.enabled = false`);
-    await click(`${backupScope} button`, "Refresh Status");
+    await click(`${backupScope} button`, "Refresh");
     await wait(`document.querySelector('#settings-database-backup-state').textContent === '${state === "running" ? "Running" : "Failed"}'`, `${state} backup response`);
-    assert.equal(await evaluate(`document.querySelectorAll('${backupScope} dd')[2].textContent`), "Not scheduled");
+    assert.ok(await evaluate(`document.querySelectorAll('${backupScope} dd')[1].textContent.startsWith('Off')`));
     assert.equal(
       await evaluate(`document.querySelector('${backupScope} .primary-btn').disabled`),
       state === "running",
     );
   }
   await evaluate(`__settings.backup = { ...__settings.originalBackup, history: [] }`);
-  await click(`${backupScope} button`, "Refresh Status");
+  await click(`${backupScope} button`, "Refresh");
   await wait(`document.querySelector('${backupScope} tbody').textContent.includes('No backup runs have been reported')`, "actual empty ledger");
   await evaluate(`__settings.backup = structuredClone(__settings.originalBackup)`);
-  await click(`${backupScope} button`, "Refresh Status");
+  await click(`${backupScope} button`, "Refresh");
   await wait(`document.querySelector('#settings-database-backup-state').textContent === 'Not configured'`, "unconfigured status restored");
   assert.ok(await evaluate(`__settings.requests.filter(r => r.path.includes('database-backup')).every(r => r.method === 'GET')`));
   record("Backend-supplied Ready/Running/Failed, Manila timestamps, sizes, monthly history, authenticated actions, and the disabled schedule render accurately");
