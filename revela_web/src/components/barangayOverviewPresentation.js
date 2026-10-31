@@ -37,6 +37,24 @@ export function buildBarangayOverviewFilters(filters, preset, now = new Date()) 
   return result;
 }
 
+export function lineOfBusinessOptionsForSector(options = [], sectorKey = "") {
+  return options.filter((option) => (
+    !sectorKey || option.sector_key === sectorKey
+  ));
+}
+
+export function lineOfBusinessKeyAfterSectorChange(
+  selectedKey,
+  options = [],
+  nextSectorKey = "",
+) {
+  if (!selectedKey || !nextSectorKey) return selectedKey;
+  const selectedOption = options.find((option) => option.value === selectedKey);
+  return selectedOption && selectedOption.sector_key !== nextSectorKey
+    ? ""
+    : selectedKey;
+}
+
 export function visibleRegistryDimensions(registry = {}) {
   return [
     { key: "business_size", label: "By size" },
@@ -178,10 +196,50 @@ const BUSINESS_SIZE_COLORS = Object.freeze({
   large: "#f59e0b",
 });
 
+// Stable colors for the registry's named dimensions. Hashing into the small
+// fallback palette makes New/Renewal and Sole Proprietorship/Cooperative collide.
+const REGISTRATION_TYPE_COLORS = Object.freeze({
+  new: "#2563eb",
+  renewal: "#0f9f8f",
+});
+
+const BUSINESS_TYPE_COLORS = Object.freeze({
+  "sole proprietorship": "#7c3aed",
+  corporation: "#2563eb",
+  partnership: "#f59e0b",
+  cooperative: "#0f9f8f",
+  "one person corporation": "#e11d48",
+});
+
+export const DISPLAY_SECTOR_COLORS = Object.freeze({
+  retail: "#8b5cf6",
+  wholesale_vehicles: "#be123c",
+  food_drink: "#a16207",
+  real_estate: "#0891b2",
+  manufacturing: "#7f1d1d",
+  agriculture_mining: "#6b21a8",
+  construction_utilities: "#c026d3",
+  transport_storage: "#0f766e",
+  finance_professional: "#a21caf",
+  information_communication: "#854d0e",
+  hospitality_arts_recreation: "#e11d48",
+  education_health_other_services: "#475569",
+  unmapped: "#6b7280",
+});
+
 export function registryCategoryColor(dimension, value) {
   const normalizedValue = String(value ?? "Unknown").trim().toLowerCase();
+  if (dimension === "display_sector" && DISPLAY_SECTOR_COLORS[normalizedValue]) {
+    return DISPLAY_SECTOR_COLORS[normalizedValue];
+  }
   if (dimension === "business_size" && BUSINESS_SIZE_COLORS[normalizedValue]) {
     return BUSINESS_SIZE_COLORS[normalizedValue];
+  }
+  if (dimension === "registration_type" && REGISTRATION_TYPE_COLORS[normalizedValue]) {
+    return REGISTRATION_TYPE_COLORS[normalizedValue];
+  }
+  if (dimension === "business_type" && BUSINESS_TYPE_COLORS[normalizedValue]) {
+    return BUSINESS_TYPE_COLORS[normalizedValue];
   }
   const colorKey = `${dimension}:${normalizedValue}`;
   let hash = 0;
@@ -189,4 +247,31 @@ export function registryCategoryColor(dimension, value) {
     hash = (hash * 31 + colorKey.charCodeAt(index)) >>> 0;
   }
   return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
+}
+
+/** Resolve palette collisions within a breakdown without changing its data or order. */
+export function registryCategoryColorsForRows(dimension, rows) {
+  const values = [...new Set(rows.map(row => String(row.value ?? "Unknown")))].sort();
+  const fixed = dimension === "business_size" ? BUSINESS_SIZE_COLORS
+    : dimension === "business_type" ? BUSINESS_TYPE_COLORS
+      : dimension === "registration_type" ? REGISTRATION_TYPE_COLORS
+        : dimension === "display_sector" ? DISPLAY_SECTOR_COLORS : {};
+  const assigned = new Map();
+  const used = new Set();
+  values.forEach(value => {
+    const color = fixed[value.trim().toLowerCase()];
+    if (color) { assigned.set(value, color); used.add(color); }
+  });
+  values.forEach(value => {
+    if (assigned.has(value)) return;
+    let color = registryCategoryColor(dimension, value);
+    if (used.has(color)) color = CATEGORY_PALETTE.find(candidate => !used.has(candidate));
+    let hue = 0;
+    while (!color || used.has(color)) {
+      color = `hsl(${Math.round((hue++ * 137.5) % 360)} 70% 55%)`;
+    }
+    assigned.set(value, color);
+    used.add(color);
+  });
+  return assigned;
 }

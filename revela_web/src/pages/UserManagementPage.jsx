@@ -488,7 +488,6 @@ export default function UserManagementPage() {
   const [userToReset,    setUserToReset]    = useState(null);
   const [search,         setSearch]         = useState("");
   const [roleFilter,     setRoleFilter]     = useState("all");
-  const [isRefreshing,   setIsRefreshing]   = useState(false);
   const userRequestSequence = useRef(0);
 
   const fetchUsers = useCallback(async (isSilent = false) => {
@@ -496,7 +495,6 @@ export default function UserManagementPage() {
     const sequence = ++userRequestSequence.current;
     if (!isSilent) {
       setLoading(!hasUsers);
-      setIsRefreshing(true);
     }
     try {
       const data = await getUsersRequest(token);
@@ -513,10 +511,10 @@ export default function UserManagementPage() {
       }
       return false;
     } finally {
-      if (sequence === userRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
+      if (sequence === userRequestSequence.current) setLoading(false);
     }
   }, [token, hasUsers, setUsers]);
-  const refreshView = useAppDataRefresh(user?.role === "SUPER_ADMIN" ? "users" : null, async reason => {
+  useAppDataRefresh(user?.role === "SUPER_ADMIN" ? "users" : null, async reason => {
     const ok = await fetchUsers(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };
   });
@@ -568,28 +566,6 @@ export default function UserManagementPage() {
           <p className="page-subtitle">Manage system access, roles, and administrator accounts.</p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <button
-            className="quick-refresh-btn"
-            type="button"
-            onClick={refreshView}
-            disabled={isRefreshing}
-            title="Refresh user list"
-          >
-            <svg
-              className={isRefreshing ? "spin-icon" : ""}
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-            </svg>
-            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
-          </button>
           <button className="primary-btn" type="button" onClick={() => setShowCreate(true)}>
             {Icons.plus} Create User
           </button>

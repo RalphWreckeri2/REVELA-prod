@@ -502,18 +502,18 @@
 }
 .inspection-dispatch-page
   .saas-content
-  :is(button, a, input, select, [tabindex]):focus-visible {
+  :is(button, a, select, [tabindex]):focus-visible {
   outline: 2px solid var(--color-primary-dark);
   outline-offset: 3px;
 }
 .dispatch-search-input:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px
-    color-mix(in srgb, var(--color-primary) 18%, transparent);
+  border-color: var(--field-focus-border);
+  box-shadow: 0 0 0 2px var(--field-focus-ring);
 }
-.inspection-dispatch-page .dispatch-search-input input:focus-visible,
-.dispatch-dialog .dispatch-search-input input:focus-visible {
+.inspection-dispatch-page .dispatch-search-input input:focus,
+.dispatch-dialog .dispatch-search-input input:focus {
   outline: none;
+  box-shadow: none;
 }
 html.theme-dark .inspection-dispatch-page,
 html.theme-dark .dispatch-dialog {

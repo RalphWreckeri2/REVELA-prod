@@ -4,12 +4,13 @@ import { useSearchParams } from "react-router-dom";
 import { analyticsRoute } from "./analyticsNavigation";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  Cell, RadarChart, Radar, PolarGrid,
-  PolarAngleAxis, PolarRadiusAxis, LabelList,
-  ScatterChart, Scatter, ZAxis, ReferenceLine
+  RadarChart, Radar, PolarGrid,
+  PolarAngleAxis, PolarRadiusAxis
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
+import { OverviewMapSkeleton, InspectorOperationsSkeleton, RecommendationsSkeleton } from "../components/AnalyticsLoadingLayouts";
+import { scheduleAnalyticsSkeleton } from "../components/analyticsLoadingPolicy";
 import "../styles/AnalyticsPage.css";
 import KpiCard from "../components/KpiCard";
 import PinMonitoringPanel from "../components/PinMonitoringPanel";
@@ -19,12 +20,17 @@ import AnalyticsInfoTip from "../components/AnalyticsInfoTip";
 import ResponsiveChart from "../components/ResponsiveChart";
 import {
   activeInspectorWorkload,
+  activeFlagRecommendations,
   completeInspectionTimeline,
   groupOperationsStatusBreakdown,
   groupInspectionStatuses,
+  INSPECTION_STATUS_STACKS,
   pivotCategoryCounts,
+  recommendationAllocationLabel,
+  recommendationReason,
+  rankedRecommendationRows,
 } from "../components/analyticsPresentation";
-import { formatScanHistoryTimestamp } from "../components/scanHistory";
+import { analyticsDetectionScanSummary } from "../components/hotspotPresentation";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useSessionDataset } from "../components/useAppDataRefresh";
 import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
@@ -34,16 +40,16 @@ import {
   updateWlcConfigRequest,
   getAnalyticsFilterMetadataRequest,
   getBarangaysRequest,
+  getAnalyticsHotspotsRequest,
   sendAnalyticsChatRequest,
 } from "../services/api";
 
 const EMPTY_FILTER_BARANGAYS = Object.freeze([]);
 const ANALYTICS_TABS = [
-  { id: "descriptive", label: "Overview", dot: "var(--color-green)" },
-  { id: "diagnostic", label: "Why it happens", dot: "var(--color-yellow)" },
-  { id: "prescriptive", label: "Recommendations", dot: "#6366f1" },
-  { id: "operations", label: "Inspector activity", dot: "var(--color-blue, #3b82f6)" },
+  { id: "descriptive", label: "Overview" },
+  { id: "prescriptive", label: "Recommendations" },
 ];
+const ADMIN_PRESCRIPTIVE_DETAILS_ENABLED = false;
 // ── Palette — matches REVELA's premium styling ────────────────────────────────
 const COLOR = {
   green: "#10b981", // elegant emerald
@@ -69,20 +75,10 @@ const REGISTRY_STATUS_STACKS = [
   { key: "pending", label: "Pending", color: "#f59e0b" },
   { key: "expired", label: "Expired", color: "#f43f5e" },
   { key: "closed", label: "Closed", color: "#7c3aed" },
-  { key: "revoked", label: "Revoked", color: "#334155" },
+  { key: "revoked", label: "Revoked", color: "var(--analytics-revoked)" },
 ];
 
-const INSPECTION_STATUS_STACKS = [
-  { key: "pending", label: "Pending", color: "#f97316" },
-  { key: "awaiting_review", label: "Awaiting review", color: "#3b82f6" },
-  { key: "verified", label: "Verified", color: "#10b981" },
-];
-
-const OPERATIONS_STATUS_STACKS = [
-  { key: "pending", label: "Pending", color: "#f97316" },
-  { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
-  { key: "verified", label: "Verified", color: "#10b981" },
-];
+const OPERATIONS_STATUS_STACKS = INSPECTION_STATUS_STACKS;
 
 const OUTCOME_STACKS = [
   { key: "Green", label: "Green", color: COLOR.green },
@@ -98,44 +94,14 @@ const BUSINESS_SIZE_COLORS = {
   Unknown: "#64748b",
 };
 
-// ── Detection scan outcomes ───────────────────────────────────────────────────
-// `completed_with_gaps` processed every cell and recorded bounded saturated
-// cells as coverage gaps. It consumed a monthly scan and a real POI set, so
-// it renders as a finished scan (amber) rather than an interruption.
-const SCAN_STATUS_LABEL = {
-  completed: "Completed",
-  completed_with_gaps: "Completed w/ Gaps",
-  partial: "Partial",
-  cancelled: "Cancelled",
-  failed: "Failed",
-  reset: "Reset",
-  running: "Running",
-};
-
-const SCAN_STATUS_COLOR = {
-  completed: COLOR.green,
-  completed_with_gaps: COLOR.yellow,
-  partial: COLOR.orange,
-  cancelled: COLOR.slate,
-  failed: COLOR.red,
-  reset: COLOR.slate,
-  running: COLOR.blue,
-};
-
-// Runs that consumed a monthly scan and therefore have a comparable yield rate.
-const SCAN_STATUS_COMPARABLE_YIELD = new Set([
-  "completed",
-  "completed_with_gaps",
-]);
-
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 const shortBarangay = (name = "") =>
   name.replace("Barangay ", "Brgy. ").replace("San Sebastian", "San Seb.");
 
 const riskBadgeStyle = (level) => ({
   High: { background: COLOR.redLight, color: COLOR.red, border: `1px solid ${COLOR.red}` },
-  Medium: { background: COLOR.yellowLight, color: "#b45309", border: "1px solid #f59e0b" },
-  Low: { background: COLOR.greenLight, color: "#166534", border: `1px solid ${COLOR.green}` },
+  Medium: { background: COLOR.yellowLight, color: "var(--analytics-risk-medium)", border: "1px solid #f59e0b" },
+  Low: { background: COLOR.greenLight, color: "var(--analytics-risk-low)", border: `1px solid ${COLOR.green}` },
 }[level] || {});
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -159,12 +125,12 @@ const CustomTooltip = ({ active, payload, label }) => {
 const SectionHeader = ({ tier, title, subtitle }) => {
   const tierColors = {
     descriptive: { bg: COLOR.greenLight, color: COLOR.green, label: "Descriptive" },
-    diagnostic: { bg: COLOR.yellowLight, color: "#b45309", label: "Diagnostic" },
-    prescriptive: { bg: "rgba(99,102,241,0.1)", color: "#6366f1", label: "Prescriptive" },
+    diagnostic: { bg: COLOR.yellowLight, color: "var(--analytics-risk-medium)", label: "Diagnostic" },
+    prescriptive: { bg: "rgba(99,102,241,0.1)", color: "var(--analytics-indigo)", label: "Prescriptive" },
     operations: { bg: COLOR.blueLight, color: COLOR.blue, label: "Operations" },
   }[tier];
   return (
-    <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid rgba(226,232,240,0.6)" }}>
+    <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid var(--color-border-soft)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
         <span style={{
           padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
@@ -181,38 +147,107 @@ const SectionHeader = ({ tier, title, subtitle }) => {
 };
 
 // ── Loading skeleton ──────────────────────────────────────────────────────────
-const Skeleton = ({ h = 200 }) => (
-  <SkeletonBlock className="analytics-skeleton" style={{ height: h }} />
-);
-
-function AnalyticsSkeleton({ tab }) {
+const Skeleton = ({ h = 200, variant = "chart", rows = 8, columns = 8 }) => {
+  const bars = [42, 65, 52, 82, 60, 93, 72, 58];
   return (
-    <section role="status" aria-label={`Loading ${tab} analytics`} aria-busy="true" className="analytics-loading-layout">
-      <span className="analytics-sr-only">Loading analytics…</span>
-      <SkeletonBlock className="analytics-skeleton-title analytics-skeleton" />
-      {tab === "descriptive" && (
-        <div className="analytics-skeleton-kpis">
-          {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className="saas-card analytics-skeleton-kpi" aria-hidden="true">
-              <SkeletonBlock className="analytics-skeleton-icon" />
-              <div><SkeletonBlock className="analytics-skeleton-value" /><SkeletonBlock className="analytics-skeleton-label" /></div>
+    <div
+      className={`analytics-skeleton-frame analytics-skeleton-frame--${variant}`}
+      style={{ height: h }}
+      aria-hidden="true"
+    >
+      {variant === "table" ? (
+        <div
+          className="analytics-skeleton-table"
+          style={{ "--skeleton-table-columns": `1.4fr repeat(${columns - 1}, minmax(0, 1fr))` }}
+        >
+          <div className="analytics-skeleton-table-header">
+            {Array.from({ length: columns }, (_, index) => (
+              <SkeletonBlock key={index} />
+            ))}
+          </div>
+          {Array.from({ length: 6 }, (_, row) => (
+            <div className="analytics-skeleton-table-row" key={row}>
+              {Array.from({ length: columns }, (_, column) => (
+                <SkeletonBlock key={column} />
+              ))}
             </div>
           ))}
         </div>
-      )}
-      <div className="analytics-skeleton-charts">
-        {(tab === "descriptive" ? [520, 520] : [280, 240, 240]).map((h, i) => (
-          <div key={i} className={`saas-card analytics-skeleton-chart${tab === "descriptive" || i === 0 ? " analytics-skeleton-chart--wide" : ""}`} aria-hidden="true">
-            <SkeletonBlock className="analytics-skeleton-label" />
-            <div className="analytics-skeleton-plot" style={{ height: h }}>
-              {[42, 65, 52, 82, 60, 93, 72, 58].map((height, j) => <SkeletonBlock key={j} className="analytics-skeleton-bar" style={{ height: `${height}%` }} />)}
+      ) : variant === "list" ? (
+        <div className="analytics-skeleton-list">
+          {Array.from({ length: 5 }, (_, index) => (
+            <div className="analytics-skeleton-list-row" key={index}>
+              <SkeletonBlock className="analytics-skeleton-list-rank" />
+              <div className="analytics-skeleton-list-copy">
+                <SkeletonBlock />
+                <SkeletonBlock />
+              </div>
+              <SkeletonBlock className="analytics-skeleton-list-badge" />
+              <SkeletonBlock className="analytics-skeleton-list-status" />
+            </div>
+          ))}
+        </div>
+      ) : variant === "stacked" || variant === "operations" ? (
+        <div className={`analytics-skeleton-stacked${variant === "operations" ? " analytics-skeleton-operations" : ""}`}>
+          <div className="analytics-skeleton-stacked-legend">
+            {Array.from({ length: variant === "operations" ? 3 : 4 }, (_, index) => <SkeletonBlock key={index} />)}
+          </div>
+          <div className="analytics-skeleton-stacked-rows">
+            {Array.from({ length: rows }, (_, index) => (
+              <div className="analytics-skeleton-stacked-row-wrap" key={index}>
+                {variant === "operations" && <SkeletonBlock className="analytics-skeleton-operations-label" />}
+                <SkeletonBlock className="analytics-skeleton-stacked-row" style={{ width: `${bars[index % bars.length]}%` }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : variant === "radar" ? (
+        <div className="analytics-skeleton-radar">
+          {[0, 1, 2, 3].map(level => <span key={level} />)}
+        </div>
+      ) : variant === "map" ? (
+        <div className="analytics-skeleton-map">
+          <SkeletonBlock className="analytics-skeleton-map-toolbar" />
+          <div className="analytics-skeleton-map-body">
+            <SkeletonBlock className="analytics-skeleton-map-canvas" />
+            <div className="analytics-skeleton-map-panel">
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
             </div>
           </div>
-        ))}
-      </div>
-    </section>
+        </div>
+      ) : (
+        <>
+          <div className="analytics-skeleton-chart-heading">
+            <SkeletonBlock />
+            <SkeletonBlock />
+          </div>
+          <div className="analytics-skeleton-chart-plot">
+            <div className="analytics-skeleton-chart-grid" />
+            <div className="analytics-skeleton-chart-bars">
+              {bars.map((height, index) => (
+                <SkeletonBlock key={index} style={{ height: `${height}%` }} />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
-}
+};
+
+const getStackedChartLayout = (data, statuses) => {
+  const rows = data.filter(row => statuses.some(status => Number(row[status.key] || 0) > 0)).length;
+  return { rows, height: rows > 0 ? Math.max(280, rows * 40 + 70) + 30 : 220 };
+};
+
+const AnalyticsMetricValue = ({ value, loading, variant = "standard" }) => (
+  loading
+    ? <SkeletonBlock className={`analytics-kpi-value-skeleton analytics-kpi-value-skeleton--${variant}`} />
+    : value
+);
 
 // ── Empty State ──────────────────────────────────────────────────────────────
 const EmptyState = ({ title = "No Data", message = "", h = 220, icon }) => (
@@ -536,7 +571,7 @@ const GlobalAIAssistant = memo(({ globalData }) => {
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{
                 width: 40, height: 40, borderRadius: "50%",
-                background: "linear-gradient(135deg, var(--color-surface), #f1f5f9)",
+                background: "linear-gradient(135deg, var(--color-surface), var(--color-card-alt))",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 border: "2px solid var(--color-primary)", overflow: "hidden"
               }}>
@@ -650,9 +685,6 @@ export default function AnalyticsPage() {
   });
   const [showFloatingNav, setShowFloatingNav] = useState(false);
   const sectionNavRef = useRef(null);
-  const [hoveredDbscanCluster, setHoveredDbscanCluster] = useState(null);
-  const [selectedDbscanCluster, setSelectedDbscanCluster] = useState(null);
-
   const [draftFilters, setDraftFilters] = useState(() => ({ ...createEmptyFilters(), barangay_ids: route.barangayId ? [route.barangayId] : [] }));
   const [appliedFilters, setAppliedFilters] = useState(() => ({ ...createEmptyFilters(), barangay_ids: route.barangayId ? [route.barangayId] : [] }));
   const routeBarangay = route.barangayId;
@@ -673,6 +705,9 @@ export default function AnalyticsPage() {
   const [wlcConfigReady, setWlcConfigReady] = useState(() => Boolean(wlcSnapshot));
   const wlcValidationError = wlcPolicyError(wlcConfig);
   const [expandedDispatch, setExpandedDispatch] = useState({});
+  const [showAllRecommendations, setShowAllRecommendations] = useState(false);
+  const [lastDetectionRun, setLastDetectionRun] = useState(null);
+  const [lastDetectionRunError, setLastDetectionRunError] = useState("");
   const [filterOptions, setFilterOptions] = useSessionDataset("analytics:options", "filters", null,
     `analytics:${JSON.stringify(effectiveFilters)}`);
   const filterMeta = filterOptions?.meta ?? null;
@@ -699,11 +734,23 @@ export default function AnalyticsPage() {
     } finally { window.clearTimeout(timer); }
   }, [token, setFilterOptions]);
   const { sections, offline, refresh: fetchAnalytics } = useAnalyticsData(token, effectiveFilters, undefined, "analytics", () => loadFilterOptions());
+  const [rememberedSections, setRememberedSections] = useState({ source: sections, data: {} });
+  if (rememberedSections.source !== sections) {
+    setRememberedSections({ source: sections, data: Object.fromEntries(
+      Object.entries(sections).map(([name, section]) => [name, section.data || rememberedSections.data[name]]),
+    ) });
+  }
   const currentSection = sections[activeTab];
+  const hasVisibleData = Boolean(currentSection.data || rememberedSections.data[activeTab]);
   const data = useMemo(() => Object.fromEntries(
-    Object.entries(sections).map(([name, section]) => [name, section.data]),
-  ), [sections]);
-  const loading = !currentSection.data && currentSection.status === "loading";
+    Object.entries(sections).map(([name, section]) => [name, section.data || rememberedSections.data[name]]),
+  ), [sections, rememberedSections.data]);
+  const loading = !hasVisibleData && currentSection.status === "loading";
+  const [skeletonTab, setSkeletonTab] = useState(null);
+  useEffect(() => {
+    if (!loading) return undefined;
+    return scheduleAnalyticsSkeleton(() => setSkeletonTab(activeTab));
+  }, [activeTab, loading]);
   const error = currentSection.error;
   const expiredSection = Object.values(sections).find(section => section.status === "expired");
   const snapshotIsExpired = Boolean(expiredSection);
@@ -797,9 +844,27 @@ export default function AnalyticsPage() {
     if (filterRetry) void loadFilterOptions();
   }, [filterRetry, loadFilterOptions]);
 
+  useEffect(() => {
+    if (!token || activeTab !== "prescriptive") return undefined;
+    const controller = new AbortController();
+    getAnalyticsHotspotsRequest(token, "all", { signal: controller.signal })
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        setLastDetectionRun(response?.last_detection_run ?? null);
+        setLastDetectionRunError("");
+      })
+      .catch((requestError) => {
+        if (controller.signal.aborted || requestError.name === "AbortError") return;
+        setLastDetectionRun(null);
+        setLastDetectionRunError(
+          requestError.message || "Detection scan status could not be loaded.",
+        );
+      });
+    return () => controller.abort();
+  }, [activeTab, token]);
+
   // ── Derived shorthand references ──────────────────────────────────────────
   const desc = data?.descriptive;
-  const diag = data?.diagnostic;
   const presc = data?.prescriptive;
   const prescWorkforce = presc?.workforce;
   const prescModel = presc?.model;
@@ -864,22 +929,6 @@ export default function AnalyticsPage() {
     desc?.audit_summary?.verified_reports_without_outcome ?? 0,
   );
 
-  const categoryLinkageSummary = diag?.category_linkage_summary || {};
-  const categoryData = (diag?.category_risk_drivers || []).map((row) => {
-    const flaggedCount = Number(row.flagged_count || 0);
-    const totalRegistered = Number(row.total_registered || 0);
-    const nonGreenRate = Number(row.non_green_rate || 0);
-    return {
-      name: row.category,
-      flagged_count: flaggedCount,
-      total_registered: totalRegistered,
-      non_green_rate: nonGreenRate,
-      label: `${flaggedCount} / ${totalRegistered} (${nonGreenRate.toFixed(1)}%)`,
-    };
-  });
-
-  const scanHistory = diag?.scan_history || [];
-
   // ── Prescriptive: WLC radar (top 8) ──────────────────────────────────────
   const radarData = opsRadarData(presc?.rankings, shortBarangay);
 
@@ -911,6 +960,14 @@ export default function AnalyticsPage() {
       0,
     ),
   }));
+  const recommendationRows = rankedRecommendationRows(
+    presc?.rankings || [],
+    presc?.dispatch_recommendations || [],
+  );
+  const activeRecommendations = activeFlagRecommendations(recommendationRows);
+  const visibleRecommendations = showAllRecommendations
+    ? activeRecommendations.rows
+    : activeRecommendations.rows.slice(0, 5);
 
 
   const activeFilterCount = countActiveBackendFilters(appliedFilters);
@@ -1038,6 +1095,8 @@ export default function AnalyticsPage() {
       spatialDiagnostics: data?.diagnostic ? {
         nearbyFlaggedGroups: {
           analysisAvailable: dbscanEntries.length > 0,
+          population: data?.diagnostic?.dbscan_population || {},
+          parametersUsed: data?.diagnostic?.parameters_used || {},
           eligibleRecordCount: dbscanEntries.length,
           ungroupedRecordCount: dbscanEntries.filter((entry) => entry.cluster === -1).length,
           groupCount: groupedRecords.size,
@@ -1075,7 +1134,7 @@ export default function AnalyticsPage() {
   }, [data]);
 
   return (
-    <DashboardLayout className={`analytics-page${activeTab === "prescriptive" ? " analytics-page--prescriptive" : ""}`} bottomBar={(
+    <DashboardLayout className="analytics-page" bottomBar={(
       <div className="analytics-tools">
         {showFloatingNav && !snapshotIsExpired && (
           <nav className="analytics-quick-nav" aria-label="Analytics quick navigation">
@@ -1117,11 +1176,11 @@ export default function AnalyticsPage() {
           box-shadow: none;
         }
 
-        .ops-row:hover { background: "var(--color-modal-bg)" !important; }
+        .ops-row:hover { background: var(--color-hover) !important; }
         .ops-score-bar {
           height: 6px;
           border-radius: 3px;
-          background: rgba(226,232,240,0.6);
+          background: var(--color-border-soft);
           overflow: hidden;
           width: 80px;
         }
@@ -1390,8 +1449,7 @@ export default function AnalyticsPage() {
         }
       `}</style>
 
-      {/* PAGE WRAPPER */}
-      <div style={{ width: "100%", minWidth: 0 }}>
+      <div className="analytics-page-shell">
 
         {/* PAGE HEADER */}
         <div className="analytics-page-heading">
@@ -1402,25 +1460,35 @@ export default function AnalyticsPage() {
             </p>
           </div>
 
-          <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics sections">
-            {ANALYTICS_TABS.map(tab => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={`analytics-tab-btn ${isActive ? "active" : ""}`}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={() => setActiveTab(tab.id)}
-                >
-                  <span className="analytics-tab-label">
-                    <span className="analytics-tab-dot" style={{ background: tab.dot }} aria-hidden="true" />
-                    {tab.label}
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
+          <div className="analytics-view-switcher">
+            <nav ref={sectionNavRef} className="analytics-section-nav" aria-label="Analytics views">
+              {ANALYTICS_TABS.map(tab => {
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    className={`analytics-tab-btn ${isActive ? "active" : ""}`}
+                    aria-current={isActive ? "page" : undefined}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    <span className="analytics-tab-icon" aria-hidden="true">
+                      {tab.id === "descriptive" ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 19V5M4 19h16M8 15l4-4 3 2 5-6" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="9" /><path d="m15 9-2 4-4 2 2-4 4-2Z" />
+                        </svg>
+                      )}
+                    </span>
+                    <span className="analytics-tab-label">{tab.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
         </div>
 
         {/* Hidden trigger for automated fixture query compatibility */}
@@ -1847,11 +1915,14 @@ export default function AnalyticsPage() {
             {!offline && <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()}>Retry analytics</button>}
           </div>
         )}
-        {currentSection.data && currentSection.updating && (
-          <p role="status" className="analytics-updating">Updating analytics… Showing the last available data.</p>
-        )}
-        {loading && <AnalyticsSkeleton tab={activeTab} />}
-        {!loading && !currentSection.data && !snapshotIsExpired && (
+        <div className="analytics-update-slot" role="status" aria-live="polite">
+          {hasVisibleData && (currentSection.updating || !currentSection.data)
+            ? "Updating analytics… Showing the last available data." : ""}
+        </div>
+        <span className="analytics-sr-only" role="status" aria-live="polite">
+          {loading ? `Loading ${activeTab === "descriptive" ? "Overview" : "Recommendations"} analytics…` : ""}
+        </span>
+        {!loading && !hasVisibleData && !snapshotIsExpired && (
           <div className="saas-card analytics-section-state">
             <h3>{offline ? "Analytics unavailable offline" : "Analytics could not be loaded"}</h3>
             <p>{offline ? "Reconnect to load this section automatically." : "Please retry to load this section."}</p>
@@ -1863,26 +1934,114 @@ export default function AnalyticsPage() {
           OVERVIEW SUMMARY
       ══════════════════════════════════════════════════════════════════════ */}
         {snapshotIsExpired && (
-          <div role="alert" className="saas-card" style={{ padding: 20, marginBottom: 24, color: COLOR.red }}>
-            <strong>Stale analytics — historical snapshot, not current rankings.</strong>
-            <p>The server's maximum fresh age is 15 minutes. Last successfully loaded results remain visible
-              for reference only; do not use them as current dispatch priorities.</p>
-            <p>Last computed: {cacheMetadata?.computed_at || "Unavailable"}.</p>
-            <p>{cacheMetadata?.refresh_failed
-              ? "The refresh failed. The next request will retry after the backoff."
-              : backgroundRefreshing ? "Waiting for the background refresh."
-                  : "Refresh Analytics to request an updated snapshot."}</p>
-            <button type="button" className="ghost-btn" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
+          <div role="alert" className="saas-card analytics-stale-alert">
+            <svg className="analytics-stale-alert-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3.5 22 20.5H2L12 3.5Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+              <path d="M12 9v5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              <circle cx="12" cy="17" r="1" fill="currentColor" />
+            </svg>
+            <div className="analytics-stale-alert-copy">
+              <strong className="analytics-stale-alert-title">Stale analytics — historical snapshot, not current rankings.</strong>
+              <p className="analytics-stale-alert-description">
+                The server's maximum fresh age is 15 minutes. Last successfully loaded results remain visible
+                for reference only; do not use them as current dispatch priorities.
+              </p>
+              <p className="analytics-stale-alert-meta">
+                Last computed: {cacheMetadata?.computed_at || "Unavailable"}.{" "}
+                {cacheMetadata?.refresh_failed
+                  ? "The refresh failed. The next request will retry after the backoff."
+                  : backgroundRefreshing ? "Waiting for the background refresh."
+                    : "Refresh Analytics to request an updated snapshot."}
+              </p>
+            </div>
+            <button type="button" className="ghost-btn analytics-stale-alert-action" onClick={() => fetchAnalytics()} disabled={offline}>Retry</button>
           </div>
         )}
-        {activeTab === "descriptive" && (
+        <div className="analytics-loading-region" aria-busy={loading}>
+        {activeTab === "descriptive" && loading && (
+          <section className="analytics-loading-section" style={{ visibility: skeletonTab === activeTab ? "visible" : "hidden", marginBottom: 52 }}>
+            <OverviewMapSkeleton />
+            <InspectorOperationsSkeleton />
+          </section>
+        )}
+        {activeTab === "descriptive" && !loading && (
           <section style={{ marginBottom: 52 }}>
-            <Suspense fallback={<Skeleton h={560} />}>
+            <Suspense fallback={<OverviewMapSkeleton />}>
               <MapOverview
                 token={token}
                 filters={appliedFilters}
               />
             </Suspense>
+            <section className="saas-card frosted-glass analytics-inspector-operations-card"
+              aria-labelledby="inspector-operations-heading">
+              <div className="analytics-card-heading">
+                <div>
+                  <h3 id="inspector-operations-heading">C. Inspector Operations · All barangays</h3>
+                  <p className="analytics-chart-caption">
+                    Municipality-wide workload; this chart does not change with the selected barangay.
+                  </p>
+                </div>
+                <AnalyticsInfoTip label="About inspector workload">
+                  Pending includes Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review means Submitted. Verified reports are complete. Inspectors with no current work remain visible.
+                </AnalyticsInfoTip>
+              </div>
+              {loading ? <Skeleton h={Math.max(260, operationsStatusRows.length * 40 + 80) + 40} variant="operations" rows={operationsStatusRows.length} /> : operationsStatusRows.length === 0 ? (
+                <EmptyState h={260} title="No inspector data" message="No active inspectors are available for this view." />
+              ) : (
+                <>
+                  <div className="analytics-operations-legend">
+                    {INSPECTION_STATUS_STACKS.map(status => (
+                      <span key={status.key}>
+                        <i style={{ background: status.color }} />
+                        {status.label}
+                      </span>
+                    ))}
+                  </div>
+                  <ResponsiveChart height={Math.max(260, operationsStatusRows.length * 40 + 80)}>
+                    {({ width }) => (
+                      <BarChart data={operationsStatusRows} layout="vertical"
+                        barSize={24} barCategoryGap="22%"
+                        margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                         <CartesianGrid strokeDasharray="3 3" horizontal={false}
+                           stroke="var(--analytics-grid-color)" />
+                        <XAxis type="number" domain={[0, "dataMax"]} allowDecimals={false}
+                          tick={{ fontSize: 10, fill: "var(--color-muted)" }}
+                          axisLine={false} tickLine={false} />
+                        <YAxis type="category" dataKey="fullName"
+                          width={Math.min(210, Math.max(128, width * 0.28))}
+                          interval={0} tick={{ fontSize: 11, fill: "var(--color-muted)" }}
+                          axisLine={false} tickLine={false} />
+                         <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--analytics-operations-hover)" }} />
+                        {INSPECTION_STATUS_STACKS.map(status => (
+                          <Bar key={status.key} dataKey={status.key}
+                            name={status.label} stackId="inspector-work"
+                            fill={status.color} isAnimationActive={false} />
+                        ))}
+                      </BarChart>
+                    )}
+                  </ResponsiveChart>
+                </>
+              )}
+              <details className="analytics-profile-disclosure analytics-inspector-detail">
+                <summary>Details: average days and pins flagged yellow</summary>
+                <div className="presc-priority-scroll">
+                  <table className="analytics-operations-table">
+                    <thead>
+                      <tr><th>Name</th><th>Avg days</th><th>Pins flagged yellow</th></tr>
+                    </thead>
+                    <tbody>
+                      {operationsStatusRows.map(row => (
+                        <tr key={row.userID}>
+                          <td>{row.fullName}</td>
+                          <td>{row.avg_resolution_time ? (row.avg_resolution_time / 1440).toFixed(1) : "—"}</td>
+                          <td>{Number(row.yellow_flags_reported || 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
             {mapOverviewExpanded && (
               <>
             <SectionHeader
@@ -1893,7 +2052,7 @@ export default function AnalyticsPage() {
 
             {/* SECTION A: Official Registry Demographics */}
             <div style={{ marginBottom: 40 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>
+               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>
                 <h3 style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)", margin: 0 }}>A. Official Registry Demographics</h3>
                 <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(59, 130, 246, 0.1)", color: "var(--color-blue, #3b82f6)", borderRadius: 12 }}>
                   Data Source: BPLO Registry
@@ -1911,7 +2070,7 @@ export default function AnalyticsPage() {
                   Select a barangay to see its registry, map-pin, and inspection totals. The date range changes pin and inspection counts, not registry counts.
                 </AnalyticsInfoTip>
                 {mapOverviewExpanded && (
-                  <Suspense fallback={<Skeleton h={360} />}>
+                  <Suspense fallback={<Skeleton h={560} variant="map" />}>
                     <MapOverview
                       token={token}
                       filters={appliedFilters}
@@ -1922,9 +2081,9 @@ export default function AnalyticsPage() {
 
               <h4 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 16px 0" }}>Business Census & Registration Metrics</h4>
               <div className="analytics-census-grid">
-                <KpiCard iconVariant="plain" value={kpis?.total_businesses ?? "?"} label="Businesses in scope" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="green" value={kpis?.active_count ?? "?"} label="Active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
-                <KpiCard iconVariant="red" value={Number(kpis?.total_businesses ?? 0) - Number(kpis?.active_count ?? 0)} label="Non-active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="plain" value={<AnalyticsMetricValue loading={loading} variant="compact" value={kpis?.total_businesses ?? "?"} />} label="Businesses in scope" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M3 21h18"></path><path d="M5 21V7l8-4v18"></path><path d="M19 21V11l-6-4"></path></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} variant="compact" value={kpis?.active_count ?? "?"} />} label="Active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>} style={{ padding: "12px 10px" }} />
+                <KpiCard iconVariant="red" value={<AnalyticsMetricValue loading={loading} variant="compact" value={Number(kpis?.total_businesses ?? 0) - Number(kpis?.active_count ?? 0)} />} label="Non-active permits" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>} style={{ padding: "12px 10px" }} />
               </div>
 
               <div className="tier-2-card saas-card frosted-glass analytics-feature-card" style={{ marginTop: 24 }}>
@@ -1938,7 +2097,7 @@ export default function AnalyticsPage() {
                     Uses the selected registry filters and groups businesses by their barangay and recorded business size. Empty sizes are shown as Unknown.
                   </AnalyticsInfoTip>
                 </div>
-                {loading ? <Skeleton h={480} /> : (
+                {loading ? <Skeleton h={getStackedChartLayout(registrySizeChartData, businessSizeStacks).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(registrySizeChartData, businessSizeStacks).rows)} /> : (
                   <StackedBarangayChart data={registrySizeChartData} statuses={businessSizeStacks}
                     emptyMessage="No businesses match the selected filters." />
                 )}
@@ -1977,7 +2136,7 @@ export default function AnalyticsPage() {
                         Uses the selected registry filters. Permit status filters limit the chart to the selected status; map and inspection filters do not affect it.
                       </AnalyticsInfoTip>
                     </div>
-                    {loading ? <Skeleton h={480} /> : (
+                    {loading ? <Skeleton h={getStackedChartLayout(registryChartData, REGISTRY_STATUS_STACKS).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(registryChartData, REGISTRY_STATUS_STACKS).rows)} /> : (
                       <StackedBarangayChart data={registryChartData} statuses={REGISTRY_STATUS_STACKS}
                         emptyMessage="No businesses match the selected filters." />
                     )}
@@ -1993,7 +2152,7 @@ export default function AnalyticsPage() {
             </div>
             {/* SECTION B: Field Inspections Demographics */}
             <div style={{ marginBottom: 40 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>
+               <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 24, borderBottom: "2px solid var(--color-border-soft)", paddingBottom: 8 }}>
                 <h3 style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)", margin: 0 }}>B. Field Inspections Demographics</h3>
                 <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", padding: "4px 8px", background: "rgba(245, 158, 11, 0.1)", color: "var(--color-orange, #f59e0b)", borderRadius: 12 }}>
                   Data Source: Field Inspections
@@ -2005,9 +2164,9 @@ export default function AnalyticsPage() {
                   <h4>Report status</h4>
                 </div>
                 <div className="analytics-field-kpi-grid analytics-field-kpi-grid--activity">
-                  <KpiCard iconVariant="plain" value={linkedReportCount} label="Total reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
-                  <KpiCard iconVariant="gold" value={awaitingCount} label="Awaiting review" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
-                  <KpiCard iconVariant="green" value={verifiedReportCount} label="Verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="plain" value={<AnalyticsMetricValue loading={loading} value={linkedReportCount} />} label="Total reports" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
+                  <KpiCard iconVariant="gold" value={<AnalyticsMetricValue loading={loading} value={awaitingCount} />} label="Awaiting review" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>} />
+                  <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={verifiedReportCount} />} label="Verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>} />
                 </div>
               </div>
 
@@ -2020,9 +2179,9 @@ export default function AnalyticsPage() {
                     Pending combines Assigned, Reassigned, In Progress, and Unassigned reports. This chart includes reports that can be placed in a barangay.
                   </AnalyticsInfoTip>
                 </div>
-                {loading ? <Skeleton h={480} /> : (
+                {loading ? <Skeleton h={getStackedChartLayout(inspectionChartData, INSPECTION_STATUS_STACKS).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(inspectionChartData, INSPECTION_STATUS_STACKS).rows)} /> : (
                   <StackedBarangayChart data={inspectionChartData} statuses={INSPECTION_STATUS_STACKS}
-                    emptyMessage="No reports match the selected filters." />
+                emptyMessage="No reports match the selected filters." />
                 )}
                 <p className="analytics-chart-caption">
                   {inspectionNoReportBarangays} {inspectionNoReportBarangays === 1 ? "barangay has" : "barangays have"} no reports.
@@ -2038,7 +2197,7 @@ export default function AnalyticsPage() {
                     Shows Green, Yellow, and Red outcomes for verified reports. Other outcome values are not included in the bars.
                   </AnalyticsInfoTip>
                 </div>
-                {loading ? <Skeleton h={480} /> : (
+                {loading ? <Skeleton h={getStackedChartLayout(inspectionOutcomeChartData, OUTCOME_STACKS).height} variant="stacked" rows={Math.max(1, getStackedChartLayout(inspectionOutcomeChartData, OUTCOME_STACKS).rows)} /> : (
                   <StackedBarangayChart data={inspectionOutcomeChartData} statuses={OUTCOME_STACKS}
                     emptyMessage="No verified outcomes match the selected filters." />
                 )}
@@ -2058,9 +2217,9 @@ export default function AnalyticsPage() {
                       </AnalyticsInfoTip>
                     </div>
                     <div className="analytics-field-kpi-grid analytics-field-kpi-grid--compliance">
-                      <KpiCard iconVariant="green" value={confirmedCompliance?.office_confirmed ?? 0} label="Office-confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M4 21h16"></path><path d="M6 21V5l6-2 6 2v16"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="m9 15 2 2 4-4"></path></svg>} />
-                      <KpiCard iconVariant="green" value={confirmedCompliance?.inspection_verified ?? 0} label="Inspection-verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M8 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-3"></path><path d="M8 2h8v4H8z"></path><path d="m8 13 2.5 2.5L16 10"></path></svg>} />
-                      <KpiCard iconVariant="green" value={confirmedCompliance?.total_confirmed ?? 0} label="Total confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="9" cy="8" r="4"></circle><path d="M2 21v-2a7 7 0 0 1 14 0v2"></path><path d="m16 11 2 2 4-4"></path></svg>} />
+                      <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={confirmedCompliance?.office_confirmed ?? 0} />} label="Office-confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M4 21h16"></path><path d="M6 21V5l6-2 6 2v16"></path><path d="M9 9h1"></path><path d="M14 9h1"></path><path d="m9 15 2 2 4-4"></path></svg>} />
+                      <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={confirmedCompliance?.inspection_verified ?? 0} />} label="Inspection-verified" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><path d="M8 4H5a2 2 0 0 0-2 2v14h18V6a2 2 0 0 0-2-2h-3"></path><path d="M8 2h8v4H8z"></path><path d="m8 13 2.5 2.5L16 10"></path></svg>} />
+                      <KpiCard iconVariant="green" value={<AnalyticsMetricValue loading={loading} value={confirmedCompliance?.total_confirmed ?? 0} />} label="Total confirmed" icon={<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="20" height="20"><circle cx="9" cy="8" r="4"></circle><path d="M2 21v-2a7 7 0 0 1 14 0v2"></path><path d="m16 11 2 2 4-4"></path></svg>} />
                     </div>
                   </div>
                   <PinMonitoringPanel nonRegistry={desc?.non_registry_monitoring}
@@ -2073,392 +2232,129 @@ export default function AnalyticsPage() {
           </section>
         )}
 
-        {/* ══════════════════════════════════════════════════════════════════════
-          TIER 2 — DIAGNOSTIC ANALYTICS
-      ══════════════════════════════════════════════════════════════════════ */}
-        {data.diagnostic && activeTab === "diagnostic" && (
-          <section style={{ marginBottom: 52 }}>
-            <SectionHeader
-              tier="diagnostic"
-              title="Diagnostic Analysis"
-              subtitle="Automated risk intelligence, historical trends, and sector-level risk drivers"
-            />
-
-            {/* D1. NARRATIVES */}
-            <div style={{ marginBottom: 40 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D1. Location Patterns</h3>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-                    <div style={{ color: "#8b5cf6" }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <line x1="12" y1="8" x2="12" y2="12" />
-                        <line x1="12" y1="16" x2="12.01" y2="16" />
-                      </svg>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Nearby flagged records</h3>
-                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.5 }}>
-                        Groups geolocated flagged records by proximity, regardless of barangay totals.
-                      </p>
-                      <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
-                        <p style={{ margin: "6px 0 0" }}>
-                          Each dot is one geospatial log record (not necessarily a distinct business) with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report. DBSCAN uses Haversine distance, a 20 m neighborhood, and min_samples=3 (including each record itself); linked neighborhoods can form a group, and groups can cross barangay boundaries. Records outside a group are still shown as ungrouped. This chart and the barangay chart use the selected barangay, effective flag-color, and detection-date filters; a selected flag-color further narrows the Red/Black records. Registry/business and inspection filters do not apply. Proximity alone does not prove a violation or its cause.
-                        </p>
-                      </details>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
-                        {loading ? "Analyzing nearby records..." : diag?.dbscan_insight || "Hotspot analysis is temporarily unavailable."}
-                      </p>
-
-                      {diag?.dbscan_clusters && diag.dbscan_clusters.length > 0 && (
-                        (() => {
-                          const displayClusters = [];
-                          const seenClusters = new Set();
-                          const clusterSizes = new Map();
-                          diag.dbscan_clusters.forEach(entry => {
-                            clusterSizes.set(entry.cluster, (clusterSizes.get(entry.cluster) || 0) + 1);
-                          });
-                          diag.dbscan_clusters.forEach(entry => {
-                            if (entry.cluster === -1) {
-                              displayClusters.push({ ...entry, renderType: 'noise' });
-                            } else {
-                              // 1. Render the centroid as a large hollow ring (only once per cluster)
-                              if (!seenClusters.has(entry.cluster)) {
-                                seenClusters.add(entry.cluster);
-                                displayClusters.push({ ...entry, renderType: 'centroid' });
-                              }
-                              displayClusters.push({ ...entry, renderType: 'point' });
-                            }
-                          });
-                          const selectedEntries = selectedDbscanCluster === null
-                            ? []
-                            : diag.dbscan_clusters.filter(entry => entry.cluster === selectedDbscanCluster);
-                          const selectedIsPrimary = selectedEntries.some(entry => entry.is_primary);
-
-                          return (
-                            <>
-                              <div style={{ height: 260, width: "100%", marginTop: 16 }}>
-                                <ResponsiveChart>
-                                  <ScatterChart margin={{ top: 10, right: 10, bottom: 18, left: -10 }}>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
-                                    <XAxis type="number" dataKey="lng" name="Longitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Longitude", position: "insideBottom", offset: -12, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
-                                    <YAxis type="number" dataKey="lat" name="Latitude" domain={['auto', 'auto']} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={(v) => v.toFixed(3)} label={{ value: "Latitude", angle: -90, position: "insideLeft", offset: 10, fontSize: 10, fill: "var(--color-muted)", fontWeight: 600 }} />
-                                    <ZAxis type="category" dataKey="barangay" name="Barangay" />
-                                    <Tooltip
-                                      cursor={{ strokeDasharray: '3 3' }}
-                                      contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
-                                      content={({ active, payload }) => {
-                                        if (!active || !payload?.length) return null;
-                                        const d = payload[0]?.payload;
-                                        if (!d) return null;
-                                        const groupLabel = d.cluster === -1
-                                          ? "No nearby group"
-                                          : `${clusterSizes.get(d.cluster)} records in the ${d.is_primary ? "largest" : "nearby"} group`;
-                                        return (
-                                          <div style={{ background: "#111827", border: "1px solid #374151", color: "#ffffff", borderRadius: 8, padding: "8px 12px", boxShadow: "0 4px 12px rgba(0,0,0,0.3)", fontSize: 12, lineHeight: 1.6 }}>
-                                            <div style={{ fontWeight: 700, color: "#ffffff", marginBottom: 2 }}>{d.detected_name || "Unnamed record"}</div>
-                                            <div style={{ color: "#e5e7eb" }}>{d.barangay || "Unknown area"} · {d.flag_color || "No flag status"} flag · Record ID {d.log_id}</div>
-                                            <div style={{ color: "#e5e7eb" }}>{groupLabel}</div>
-                                            <div style={{ color: "#e5e7eb", fontSize: 11 }}>Flagged: {d.detected_date || "Unknown date"}</div>
-                                            <div style={{ color: "#e5e7eb", fontSize: 11, marginTop: 2 }}>Click to view records in this group</div>
-                                          </div>
-                                        );
-                                      }}
-                                    />
-                                    <Scatter
-                                      name="Clusters"
-                                      data={displayClusters}
-                                      shape={(props) => {
-                                        const { cx, cy, payload } = props;
-                                        const isPrimary = payload.is_primary;
-                                        const baseColor = isPrimary ? "#6366f1" : COLOR.orange;
-                                        const focusCluster = hoveredDbscanCluster ?? selectedDbscanCluster;
-                                        const isDimmed = focusCluster !== null && focusCluster !== payload.cluster;
-                                        const isFocused = focusCluster === payload.cluster;
-                                        const selectCluster = (event) => {
-                                          event.stopPropagation();
-                                          setSelectedDbscanCluster(current => current === payload.cluster ? null : payload.cluster);
-                                        };
-                                        const markerLabel = payload.cluster === -1
-                                          ? "View records without a nearby group"
-                                          : `View ${clusterSizes.get(payload.cluster)} records in ${isPrimary ? "the largest" : "a nearby"} group`;
-                                        const markerKeyboardProps = payload.renderType === 'centroid' ? {
-                                          role: "button",
-                                          tabIndex: 0,
-                                          "aria-label": markerLabel,
-                                          onKeyDown: (event) => {
-                                            if (event.key === "Enter" || event.key === " ") selectCluster(event);
-                                          },
-                                        } : {};
-                                        const interactionProps = {
-                                          ...markerKeyboardProps,
-                                          onClick: selectCluster,
-                                          onMouseEnter: () => setHoveredDbscanCluster(payload.cluster),
-                                          onMouseLeave: () => setHoveredDbscanCluster(null),
-                                          style: { cursor: "pointer" },
-                                        };
-
-                                        if (payload.renderType === 'noise') {
-                                          return <circle {...interactionProps} cx={cx} cy={cy} r={isFocused ? 5 : 4} fill={COLOR.slate} opacity={isDimmed ? 0.12 : 0.75} />;
-                                        }
-
-                                        if (payload.renderType === 'centroid') {
-                                          const radius = isPrimary ? 14 : 10;
-                                          return (
-                                            <circle
-                                              {...interactionProps}
-                                              cx={cx} cy={cy} r={isFocused ? radius + 2 : radius}
-                                              fill={baseColor} fillOpacity={isDimmed ? 0.03 : 0.1}
-                                              stroke={baseColor} strokeWidth={isFocused ? 3 : 2} strokeOpacity={isDimmed ? 0.2 : 1}
-                                            />
-                                          );
-                                        }
-
-                                        return <circle {...interactionProps} cx={cx} cy={cy} r={isFocused ? 5 : 3} fill={baseColor} opacity={isDimmed ? 0.12 : 0.8} />;
-                                      }}
-                                    />
-                                  </ScatterChart>
-                                </ResponsiveChart>
-                              </div>
-
-                              {selectedDbscanCluster === null ? (
-                                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--color-muted)" }}>
-                                  Hover over a dot to highlight its group. Click a dot or ring to view the records in that group.
-                                </p>
-                              ) : (
-                                <div style={{ marginTop: 12 }}>
-                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 8 }}>
-                                    <div>
-                                      <h4 style={{ margin: 0, fontSize: 14, color: "var(--color-ink)" }}>
-                                        {selectedDbscanCluster === -1
-                                          ? "Records without a nearby group"
-                                          : `${selectedIsPrimary ? "Largest nearby group" : "Nearby group"} · ${selectedEntries.length} records`}
-                                      </h4>
-                                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>
-                                        One row per flagged record. The ID helps locate it in REVELA; the flag is its current status.
-                                      </p>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSelectedDbscanCluster(null)}
-                                      aria-label="Hide selected group records"
-                                      style={{ border: "1px solid var(--color-border)", background: "var(--color-surface)", color: "var(--color-ink)", borderRadius: 6, padding: "5px 9px", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
-                                    >
-                                      Hide records
-                                    </button>
-                                  </div>
-                                  <div style={{ maxHeight: 220, overflow: "auto", border: "1px solid var(--color-border)", borderRadius: 8 }}>
-                                    <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                                      <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
-                                        <tr style={{ color: "var(--color-muted)", fontSize: 10, textTransform: "uppercase" }}>
-                                          <th style={{ padding: "7px 8px" }}>Business / record ID</th>
-                                          <th style={{ padding: "7px 8px" }}>Barangay</th>
-                                          <th style={{ padding: "7px 8px" }}>Current flag</th>
-                                          <th style={{ padding: "7px 8px" }}>Date flagged</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {selectedEntries.map((entry) => (
-                                          <tr key={entry.log_id} style={{ borderTop: "1px solid var(--color-border)" }}>
-                                            <td style={{ padding: "7px 8px", fontSize: 11, color: "var(--color-ink)" }}>
-                                              {entry.detected_name || "Unnamed record"} <span style={{ color: "var(--color-muted)" }}>#{entry.log_id}</span>
-                                            </td>
-                                            <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.barangay || "Unknown area"}</td>
-                                            <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.flag_color || "Unknown"}</td>
-                                            <td style={{ padding: "7px 8px", fontSize: 11 }}>{entry.detected_date || "Unknown date"}</td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* ── DBSCAN Legend ─────────────────────── */}
-                              <div style={{
-                                display: "flex", flexWrap: "wrap", gap: "12px 20px",
-                                marginTop: 10, padding: "8px 12px",
-                                background: "rgba(255,255,255,0.05)", border: "1px solid rgba(229,231,235,0.16)", borderRadius: 8,
-                                fontSize: 11, color: "var(--color-muted)", lineHeight: 1.4
-                              }}>
-                                {/* Primary hotspot */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#6366f1" fillOpacity="0.15" stroke="#6366f1" strokeWidth="2" /></svg>
-                                  <span><b style={{ color: "#6366f1" }}>Largest group</b> — most nearby flagged records</span>
-                                </span>
-                                {/* Secondary cluster */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill={COLOR.orange} fillOpacity="0.15" stroke={COLOR.orange} strokeWidth="2" /></svg>
-                                  <span><b style={{ color: COLOR.orange }}>Other groups</b> — smaller nearby groups</span>
-                                </span>
-                                {/* Flagged businesses */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3.5" fill="#6366f1" opacity="0.7" /><circle cx="13" cy="12" r="2.5" fill={COLOR.orange} opacity="0.7" /></svg>
-                                  <span>Flagged records belonging to a group</span>
-                                </span>
-                                {/* Isolated / noise */}
-                                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                                  <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill={COLOR.slate} opacity="0.3" /></svg>
-                                  <span>Flagged records with no nearby group</span>
-                                </span>
-                              </div>
-                            </>
-                          );
-                        })()
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: "24px", borderRadius: 12 }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
-                    <div style={{ color: "#7c3aed" }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="5" r="3" />
-                        <circle cx="6" cy="12" r="3" />
-                        <circle cx="18" cy="19" r="3" />
-                        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-                        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-                      </svg>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontSize: 16, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 8px 0" }}>Severe flags by barangay</h3>
-                      <p style={{ fontSize: 14, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.5 }}>
-                        Compares Red and Black geospatial-record totals within barangay boundaries.
-                      </p>
-                      <details style={{ fontSize: 12, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        <summary style={{ cursor: "pointer", fontWeight: 700 }}>How this differs · methodology</summary>
-                        <p style={{ margin: "6px 0 0" }}>
-                          Each bar counts distinct eligible geospatial record IDs with an effective Red or Black flag, coordinates, and a place ID, reporter, stored Orange flag, or linked inspection report—not distinct businesses. The dashed benchmark is NumPy's 75th percentile of those counts across geolocated barangays, using its default linear interpolation; a barangay is highlighted only when its count is strictly above that benchmark. At least 4 geolocated barangays are needed to calculate the comparison. This chart uses the selected barangay, effective flag-color, and detection-date filters; a selected flag-color further narrows the Red/Black records. Registry/business and inspection filters do not apply. A high total does not mean records are near one another and does not prove a violation or its cause.
-                        </p>
-                      </details>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: "8px 0 0", lineHeight: 1.5 }} role="status">
-                        <strong>Regional spacing note (barangay centers, not business clusters):</strong>{" "}
-                        {loading ? "Comparing barangays..." : diag?.morans_insight || "Regional comparison is temporarily unavailable."}
-                      </p>
-
-                      {diag?.morans_data?.points && diag.morans_data.points.length > 0 && (
-                        <div style={{ height: 260, width: "100%", marginTop: 16 }}>
-                          <ResponsiveChart>
-                            <BarChart data={diag.morans_data.points} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.4)" />
-                              <XAxis dataKey="barangay" interval={0} angle={-35} textAnchor="end" height={58} tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} tickFormatter={shortBarangay} />
-                              <YAxis tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                              <Tooltip
-                                cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                                contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)", fontSize: 12 }}
-                                formatter={(value) => [`${value} distinct geospatial records`, "Red/Black flagged records"]}
-                              />
-                              <ReferenceLine y={diag.morans_data.threshold} stroke="#6366f1" strokeDasharray="3 3" label={{ position: 'top', value: 'Upper-quartile benchmark', fill: "#6366f1", fontSize: 9 }} />
-                              <Bar dataKey="risk" name="Red/black flagged records" radius={[2, 2, 0, 0]}>
-                                {diag.morans_data.points.map((entry, index) => (
-                                  <Cell key={`cell-${index}`} fill={entry.is_high_risk ? "#6366f1" : "#8b5cf6"} opacity={entry.is_high_risk ? 0.9 : 0.4} />
-                                ))}
-                              </Bar>
-                            </BarChart>
-                          </ResponsiveChart>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                    <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Registry-Linked Status by Sector</h3>
-                      <p style={{ fontSize: 13, color: "var(--color-muted)", margin: 0 }}>Unique registry businesses with a current non-Green flag</p>
-                    </div>
-                  </div>
-                  {loading ? <Skeleton h={220} /> : categoryData.length === 0 ? (
-                    <EmptyState h={220} title="No Linked Status Data" />
-                  ) : (
-                    <div style={{ height: 280, width: "100%" }}>
-                      <ResponsiveChart>
-                        <BarChart data={categoryData.slice(0, 7)} layout="vertical" margin={{ top: 0, right: 120, left: 10, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="rgba(226,232,240,0.4)" />
-                          <XAxis type="number" allowDecimals={false} domain={[0, (dataMax) => Math.max(5, dataMax + 1)]} tick={{ fontSize: 11, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
-                          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "var(--color-ink)", fontWeight: 500 }} width={120} axisLine={false} tickLine={false} tickFormatter={(val) => typeof val === 'string' && val.length > 18 ? val.substring(0, 18) + '…' : val} />
-                          <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} contentStyle={{ borderRadius: 8, border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.15)", background: "var(--color-surface)" }} />
-                          <Bar dataKey="flagged_count" fill={COLOR.orange} radius={[0, 4, 4, 0]} name="Registry-linked businesses">
-                            <LabelList dataKey="label" position="right" fill="var(--color-ink)" fontSize={10} fontWeight={600} />
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveChart>
-                    </div>
-                  )}
-                  {!loading && categoryData.length > 0 && (
-                    <p style={{ margin: "12px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                      Bars show unique linked businesses / registry businesses in the sector and their non-Green status rate, not confirmed violations. Record linkage: {categoryLinkageSummary.linked_records ?? 0} of {categoryLinkageSummary.total_flagged_records ?? 0} flagged records ({categoryLinkageSummary.linkage_rate ?? 0}%); {categoryLinkageSummary.unlinked_records ?? 0} unlinked and {categoryLinkageSummary.ambiguous_records ?? 0} ambiguous records are excluded from sector rates.
-                    </p>
-                  )}
-                </div>
-              </div>
+        {activeTab === "prescriptive" && loading && (
+          <div style={{ visibility: skeletonTab === activeTab ? "visible" : "hidden" }}><RecommendationsSkeleton /></div>
+        )}
+        {data.prescriptive && activeTab === "prescriptive" && !loading && (
+          <section className="analytics-recommendation-list" aria-labelledby="recommendations-heading">
+            <div className="analytics-recommendation-heading">
+              <h2 id="recommendations-heading">Where should inspectors go first?</h2>
+              <p>
+                {Number(prescWorkforce?.available_inspectors ?? 0)} inspector{Number(prescWorkforce?.available_inspectors ?? 0) === 1 ? "" : "s"} available. Dispatch recommendations cover up to 3 barangays; others wait for a free inspector.
+              </p>
             </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))", gap: 24 }}>
-              {/* D2. TREND ANALYSIS */}
-              <div>
-                <h3 style={{ fontSize: 18, fontWeight: 800, color: "var(--color-ink)", margin: "0 0 16px 0", borderBottom: "2px solid rgba(226,232,240,0.6)", paddingBottom: 8 }}>D2. Trend Analysis</h3>
-                <div className="tier-2-card saas-card frosted-glass" style={{ padding: 24, borderRadius: 12, height: "calc(100% - 46px)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-                    <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--color-ink)", margin: "0 0 4px 0" }}>Detection Scan History</h3>
-                      <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>Municipality-wide scan attempts; not affected by the dashboard filters.</p>
-                    </div>
+            {(
+              <>
+                <div className="analytics-recommendation-table">
+                  <div className="analytics-recommendation-columns">
+                    <span aria-hidden="true" />
+                    <span>Barangay</span>
+                    <span className="analytics-recommendation-priority-label">
+                      Priority
+                      <AnalyticsInfoTip label="About priority">
+                        Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
+                      </AnalyticsInfoTip>
+                    </span>
+                    <span className="analytics-recommendation-dispatch-label">Dispatch</span>
                   </div>
-                  {loading ? <Skeleton h={220} /> : scanHistory.length === 0 ? (
-                    <EmptyState h={220} title="No Scan History" message="Completed and partial detection scans will appear here." />
-                  ) : (
-                    <div style={{ maxHeight: 280, overflowY: "auto" }}>
-                      <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-                        <thead style={{ position: "sticky", top: 0, background: "var(--color-surface)", zIndex: 1 }}>
-                          <tr style={{ borderBottom: "2px solid rgba(226,232,240,0.6)", color: "var(--color-muted)", fontSize: 11, textTransform: "uppercase" }}>
-                            <th style={{ padding: "9px 8px" }}>Started</th>
-                            <th style={{ padding: "9px 8px" }}>Status</th>
-                            <th style={{ padding: "9px 8px", textAlign: "right" }}>Places results</th>
-                            <th style={{ padding: "9px 8px", textAlign: "right" }}>New candidates</th>
-                            <th style={{ padding: "9px 8px", textAlign: "right" }}>Yield</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {scanHistory.map((run) => {
-                            const checked = Number(run.total_checked || 0);
-                            const newFlags = Number(run.new_flags || 0);
-                            const yieldRate = SCAN_STATUS_COMPARABLE_YIELD.has(run.status) && checked > 0
-                              ? `${((newFlags / checked) * 100).toFixed(1)}%`
-                              : "—";
-                            return (
-                              <tr key={run.run_id} style={{ borderBottom: "1px solid rgba(226,232,240,0.35)" }}>
-                                <td style={{ padding: "10px 8px", fontSize: 12, color: "var(--color-ink)" }}>{formatScanHistoryTimestamp(run.started_at)}</td>
-                                <td style={{ padding: "10px 8px", fontSize: 12, fontWeight: 700, color: SCAN_STATUS_COLOR[run.status] || COLOR.orange, whiteSpace: "nowrap" }}>{SCAN_STATUS_LABEL[run.status] || run.status}</td>
-                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{checked}</td>
-                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12 }}>{newFlags}</td>
-                                <td style={{ padding: "10px 8px", textAlign: "right", fontSize: 12, fontWeight: 700 }}>{yieldRate}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      <p style={{ margin: "10px 0 0", fontSize: 11, color: "var(--color-muted)", lineHeight: 1.5 }}>
-                        Completed-scan yield = new candidate flags / Places results processed. The denominator includes out-of-area and non-business results. Interrupted runs (partial, cancelled, failed) have no comparable yield; completed-with-gaps runs do, but some dense grid cells stayed saturated.
-                      </p>
+                  {activeRecommendations.rows.length > 0 ? (
+                    <div className="analytics-recommendation-rows">
+                {visibleRecommendations.map(row => {
+                  const dispatch = row.dispatch;
+                  return (
+                    <details key={row.barangayID} className="analytics-recommendation-row">
+                      <summary>
+                        <span className="analytics-recommendation-rank">#{row.rank}</span>
+                        <span className="analytics-recommendation-place">
+                          <strong>{row.barangayName}</strong>
+                          <span className="analytics-recommendation-reason">
+                            {recommendationReason(row)}
+                          </span>
+                        </span>
+                        <span className="analytics-recommendation-priority"
+                          style={{ color: row.priority_color || "var(--color-muted)" }}
+                          aria-label={`Priority: ${row.priority_label || row.risk_level || "No priority"}`}>
+                          {row.priority_label || row.risk_level || "No priority"}
+                        </span>
+                        <span className="analytics-recommendation-assignment">
+                          {recommendationAllocationLabel(dispatch)}
+                        </span>
+                      </summary>
+                      <div className="analytics-recommendation-detail">
+                        {dispatch ? (
+                          <>
+                            <dl className="analytics-recommendation-executive-metrics">
+                              <div>
+                                <dt>Priority level</dt>
+                                <dd>{row.priority_label || row.risk_level || "No priority"}</dd>
+                              </div>
+                              <div>
+                                <dt>Unregistered flags</dt>
+                                <dd>{Number(row.unregistered_candidate_count || 0).toLocaleString()}</dd>
+                              </div>
+                              <div>
+                                <dt>Distance from BPLO</dt>
+                                <dd>
+                                  {row.distance_km != null && Number.isFinite(Number(row.distance_km))
+                                    ? `${Number(row.distance_km).toFixed(1)} km`
+                                    : "Unavailable"}
+                                </dd>
+                              </div>
+                              <div>
+                                <dt>Sector policy version</dt>
+                                <dd>{prescModel?.sector_policy?.version ?? "Unavailable"}</dd>
+                              </div>
+                            </dl>
+                            <p>{dispatch.recommendation}</p>
+                            <h4>Action steps</h4>
+                            {dispatch.actionSteps?.length > 0 ? (
+                              <ol>
+                                {dispatch.actionSteps.map((step, index) => <li key={`${row.barangayID}-${index}`}>{step}</li>)}
+                              </ol>
+                            ) : (
+                              <p>No additional action steps listed.</p>
+                            )}
+                          </>
+                        ) : (
+                          <p>No dispatch allocation is available for this barangay.</p>
+                        )}
+                      </div>
+                    </details>
+                  );
+                })}
                     </div>
+                  ) : (
+                    <EmptyState h={180} title="No active flags" message="No barangays currently have active flags." />
                   )}
                 </div>
-              </div>
-            </div>
+                {activeRecommendations.rows.length > 5 && (
+                  <button
+                    type="button"
+                    className="analytics-recommendation-toggle"
+                    onClick={() => setShowAllRecommendations(value => !value)}
+                  >
+                    {showAllRecommendations ? "Show top 5" : `Show all ${activeRecommendations.rows.length}`}
+                  </button>
+                )}
+                <p className="analytics-no-active-flags">
+                  {activeRecommendations.noActiveFlagsCount} {activeRecommendations.noActiveFlagsCount === 1 ? "barangay has" : "barangays have"} no active flags.
+                </p>
+                <p className="analytics-scan-summary" role="status">
+                  {analyticsDetectionScanSummary(lastDetectionRun)}
+                  {lastDetectionRunError ? ` · ${lastDetectionRunError}` : ""}
+                </p>
+              </>
+            )}
           </section>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════
           TIER 3 — PRESCRIPTIVE ANALYTICS (WLC / OPS)
       ══════════════════════════════════════════════════════════════════════ */}
-        {data.prescriptive && activeTab === "prescriptive" && (
-          <section style={{ marginBottom: 32 }}>
+        {ADMIN_PRESCRIPTIVE_DETAILS_ENABLED && data.prescriptive && activeTab === "prescriptive" && (
+          <details className="analytics-calculation-disclosure">
+            <summary>How this is calculated: scoring, charts, and full ranking table</summary>
+            <section style={{ marginBottom: 32 }}>
             <SectionHeader
               tier="prescriptive"
               title="Prescriptive Analytics — Action Plan"
@@ -2700,9 +2596,9 @@ export default function AnalyticsPage() {
                           <div style={{ padding: "0 20px 20px 20px", borderTop: "1px solid rgba(99,102,241,0.08)" }}>
                             {/* Flag Badges */}
                             <div style={{ display: "flex", gap: 8, marginTop: 14, marginBottom: 14, flexWrap: "wrap" }}>
-                              {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Registration / renewal checks</span>}
-                              {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Suspicious</span>}
-                              {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "rgba(100,116,139,0.08)", color: "#475569" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black-flagged records</span>}
+                               {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Registration / renewal checks</span>}
+                               {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Suspicious</span>}
+                               {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black-flagged records</span>}
                             </div>
 
                             {/* Score Breakdown */}
@@ -2802,7 +2698,11 @@ export default function AnalyticsPage() {
                           <span style={{ color: "var(--color-primary)", fontWeight: 700 }}>{wlcConfig.w2_sector}%</span>
                         </label>
                         <input type="range" min="0" max="100" value={wlcConfig.w2_sector} onChange={e => setWlcConfig({ ...wlcConfig, w2_sector: Number(e.target.value) })} style={{ width: "100%", accentColor: "var(--color-primary)" }} />
-                        {!presc?.model?.sector_scores_ready && <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>Missing sector overrides use the existing neutral score of 50. The configured sector weight is retained; weights are not redistributed.</p>}
+                        {presc?.model && <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--color-muted)" }}>
+                          Active-flag entities use matched PSIC category scores; unmatched or unregistered entities use neutral 50
+                          {" "}{Number(presc.model.sector_fallback_entity_count || 0).toLocaleString()} of {Number(presc.model.sector_entity_count || 0).toLocaleString()} entities are unclassified and use neutral 50 unless an explicit barangay override is configured.
+                          The configured sector weight is retained; weights are not redistributed.
+                        </p>}
                       </div>
                       <div>
                         <label style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600, color: "var(--color-muted)", marginBottom: 6 }}>
@@ -2846,18 +2746,18 @@ export default function AnalyticsPage() {
                   </div>
                 )}
 
-                {loading ? <Skeleton h={280} /> : radarData.length === 0 ? (
+                {loading ? <Skeleton h={280} variant="radar" /> : radarData.length === 0 ? (
                   <EmptyState h={280} title="Insufficient Data" message="Not enough data to compute OPS rankings." />
                 ) : (
                   <ResponsiveChart height={280}>
                     <RadarChart data={radarData}>
-                      <PolarGrid stroke="rgba(226,232,240,0.6)" />
+                       <PolarGrid stroke="var(--analytics-grid-color)" />
                       <PolarAngleAxis dataKey="barangay" tick={{ fontSize: 10, fill: "var(--color-muted)" }} />
-                      <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 9 }} />
+                       <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 9, fill: "var(--color-muted)" }} axisLine={{ stroke: "var(--analytics-grid-color)" }} />
                       <Radar name="OPS Score" dataKey="OPS" stroke="#6366f1" fill="#6366f1" fillOpacity={0.18} strokeWidth={2} />
                       <Radar name="Relative flag burden" dataKey="Risk" stroke={COLOR.yellow} fill={COLOR.yellow} fillOpacity={0.12} strokeWidth={2} />
                       <Radar name="Proximity" dataKey="Proximity" stroke={COLOR.blue} fill={COLOR.blue} fillOpacity={0.06} strokeWidth={1} />
-                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                       <Legend wrapperStyle={{ fontSize: 12, color: "var(--color-ink)" }} />
                       <Tooltip content={<CustomTooltip />} />
                     </RadarChart>
                   </ResponsiveChart>
@@ -2875,7 +2775,7 @@ export default function AnalyticsPage() {
                   </p>
                 </div>
 
-                {loading ? <Skeleton h={380} /> : (
+                {loading ? <Skeleton h={480} variant="table" /> : (
                   <div className="presc-priority-scroll" role="region" aria-label="Inspector deployment priorities" tabIndex={0}>
                     <table className="presc-priority-table">
                       <colgroup>
@@ -2959,7 +2859,8 @@ export default function AnalyticsPage() {
                 <p className="presc-priority-note">Registry flag rate counts unique current Red/Yellow/Black registry businesses, including those without mapped records, against the same registry population; N/A means no denominator. It is not a confirmed-violation rate. Unregistered candidates are Red records with no registry match.</p>
               </div>
             </div>
-          </section>
+            </section>
+          </details>
         )}
 
         {/* ══════════════════════════════════════════════════════════════════════
@@ -3018,8 +2919,8 @@ export default function AnalyticsPage() {
                               <BarChart data={operationsStatusRows} layout="vertical"
                                 barSize={24} barCategoryGap="22%"
                                 margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-                                <CartesianGrid strokeDasharray="3 3" horizontal={false}
-                                  stroke="rgba(226,232,240,0.4)" />
+                         <CartesianGrid strokeDasharray="3 3" horizontal={false}
+                           stroke="var(--analytics-grid-color)" />
                                 <XAxis type="number" domain={[0, "dataMax"]}
                                   allowDecimals={false}
                                   tick={{ fontSize: 10, fill: "var(--color-muted)" }}
@@ -3028,7 +2929,7 @@ export default function AnalyticsPage() {
                                   interval={0}
                                   tick={{ fontSize: 11, fill: "var(--color-muted)" }}
                                   axisLine={false} tickLine={false} />
-                                <Tooltip content={<CustomTooltip />} />
+                                <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--analytics-operations-hover)" }} />
                                 {OPERATIONS_STATUS_STACKS.map(status => (
                                   <Bar key={status.key} dataKey={status.key}
                                     name={status.label} stackId="inspector-work"
@@ -3104,7 +3005,7 @@ export default function AnalyticsPage() {
                   <div style={{ height: 320, width: "100%" }}>
                     <ResponsiveChart>
                       <BarChart data={operationsTimelineChartRows} margin={{ top: 10, right: 20, left: 0, bottom: 30 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226,232,240,0.6)" />
+                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--analytics-grid-color)" />
                         <XAxis dataKey="date" axisLine={false} tickLine={false}
                           tick={{ fontSize: 10, fill: "var(--color-muted)" }} tickMargin={10} minTickGap={20}
                           angle={-30} textAnchor="end" />
@@ -3133,7 +3034,7 @@ export default function AnalyticsPage() {
             )}
           </section>
         )}
-      </div>
+        </div>
 
       {/* Footer */}
       <footer className="saas-footer frosted-glass">
@@ -3149,6 +3050,7 @@ export default function AnalyticsPage() {
           </button>
         </p>
       </footer>
+      </div>
     </DashboardLayout>
   );
 }

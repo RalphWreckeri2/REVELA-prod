@@ -1,5 +1,11 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+export const INSPECTION_STATUS_STACKS = [
+  { key: "pending", label: "Pending", color: "#f97316" },
+  { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
+  { key: "verified", label: "Verified", color: "#10b981" },
+];
+
 function parseDate(value) {
   if (!value) return null;
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -69,6 +75,46 @@ export function activeInspectorWorkload(inspectorStats = [], statusRows = []) {
   }).sort((first, second) => (
     second.total - first.total || String(first.fullName).localeCompare(String(second.fullName))
   ));
+}
+
+export function rankedRecommendationRows(rankings = [], dispatchRecommendations = []) {
+  const dispatchByBarangay = new Map(
+    dispatchRecommendations.map(row => [String(row.barangayID), row]),
+  );
+  return rankings.map(row => ({
+    ...row,
+    dispatch: dispatchByBarangay.get(String(row.barangayID)) || null,
+  }));
+}
+
+export function activeFlagRecommendations(rows = []) {
+  const activeRows = rows.filter(row => Number(row.flagged_count || 0) > 0);
+  return {
+    rows: activeRows,
+    noActiveFlagsCount: rows.length - activeRows.length,
+  };
+}
+
+export function recommendationReason(row) {
+  const red = Number(row.red_count || 0);
+  const unregistered = Number(row.unregistered_candidate_count || 0);
+  const yellow = Number(row.yellow_count || 0);
+  const distance = Number(row.distance_km);
+  const distanceLabel = row.distance_km !== null
+    && row.distance_km !== undefined
+    && Number.isFinite(distance)
+    ? `${distance.toFixed(1)} km from BPLO`
+    : "Distance unavailable";
+  return `Red ${red} (${unregistered} not in registry) · Yellow ${yellow} · ${distanceLabel}`;
+}
+
+export function recommendationAllocationLabel(dispatch) {
+  if (dispatch?.allocation_status === "deferred") return "Waiting for a free inspector";
+  const inspectorCount = Number(dispatch?.inspectors || 0);
+  if (dispatch && inspectorCount > 0) {
+    return `${inspectorCount} inspector${inspectorCount === 1 ? "" : "s"} allocated`;
+  }
+  return "Not scheduled yet";
 }
 
 export function pivotCategoryCounts(rows = [], labelKey, countKey = "count") {

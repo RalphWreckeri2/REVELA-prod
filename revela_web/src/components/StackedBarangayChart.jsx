@@ -86,7 +86,7 @@ export default function StackedBarangayChart({
           return (
             <BarChart data={rows} layout="vertical" barSize={24} barCategoryGap="22%"
               margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="rgba(226,232,240,0.4)" />
+               <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--analytics-grid-color)" />
               <XAxis type="number" domain={[0, maxTotal]} allowDecimals={false}
                 tickFormatter={value => Number(value).toLocaleString()}
                 tick={{ fontSize: 10, fill: "var(--color-muted)" }} axisLine={false} tickLine={false} />
@@ -95,7 +95,7 @@ export default function StackedBarangayChart({
                   format={categoryKey === "barangayName" ? SHORT_BARANGAY : undefined} />}
                 axisLine={false} tickLine={false} />
               <Tooltip content={<StackedTooltip statuses={nonzeroStatuses} categoryKey={categoryKey} />}
-                cursor={{ fill: "rgba(255,255,255,0.05)" }} />
+                 cursor={{ fill: "var(--analytics-chart-hover)" }} />
               {nonzeroStatuses.map(status => (
                 <Bar key={status.key} dataKey={status.key} stackId="count" name={status.label}
                   fill={status.color} isAnimationActive={false} />

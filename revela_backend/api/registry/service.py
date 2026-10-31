@@ -45,6 +45,7 @@ from api.utils import quota_settings
 from api.registry.inspection_link import (
     GreenRegistryLinkError, confirmed_pin_column_available, normalize_business_id,
 )
+from api.analytics.sector_mapping import sync_imported_registry_sector_values
 
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -1507,6 +1508,9 @@ def upload_registry(file, ext: str):
             return None, "Import cancelled by user — no data was saved."
 
         cursor.close()
+        sync_imported_registry_sector_values(
+            mysql.connection, df.get("lineOfBusiness", ())
+        )
         _log_registry_places_summary(
             "registry import",
             {
@@ -3365,6 +3369,9 @@ def sync_registry(file, ext: str):
             return None, "Sync cancelled by user — no data was saved."
 
         cursor.close()
+        sync_imported_registry_sector_values(
+            mysql.connection, df.get("lineOfBusiness", ())
+        )
         _log_registry_places_summary(
             "registry sync",
             {
@@ -4015,6 +4022,10 @@ def update_business(business_id, data: dict):
             mysql.connection.commit()
 
         cursor.close()
+        if "lineOfBusiness" in data:
+            sync_imported_registry_sector_values(
+                mysql.connection, [data.get("lineOfBusiness")]
+            )
 
         try:
             from api.notifications import hub

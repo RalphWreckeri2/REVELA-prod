@@ -10,9 +10,9 @@ const page = params.get("page") || "analytics";
 const state = params.get("state") || "populated";
 localStorage.clear();
 localStorage.setItem("revela_sidebar_collapsed", String(params.get("sidebar") === "collapsed"));
-localStorage.setItem("revela_theme", "light");
+localStorage.setItem("revela-theme", params.get("theme") === "dark" ? "dark" : "light");
 if (page !== "access") localStorage.setItem("revela_token", "dev-admin-token");
-history.replaceState(null, "", page === "reports" ? "/reports" : "/analytics");
+history.replaceState(null, "", page === "reports" ? "/reports" : `/analytics${params.get("tab") === "prescriptive" ? "?tab=prescriptive" : ""}`);
 
 const barangays = ["Barangay I", "Barangay II", "Barangay II-A", "Barangay III", "Barangay IV", "Barangay Bayorbor", "Barangay Bubuyan", "Barangay Calingatan", "Barangay Kinalaglagan", "Barangay Loob", "Barangay Lumang Lipa", "Barangay Manggahan", "Barangay Nangkaan", "Barangay San Sebastian", "Barangay Santol", "Barangay Upa"];
 const sectors = ["Retail Sale in Non-Specialized Stores with Food, Beverages or Tobacco Predominating", "Food and Beverage Service Activities — Restaurants and Mobile Food Services", "Wholesale and Retail Trade; Repair of Motor Vehicles and Motorcycles", "Manufacture of Other Food Products and Prepared Meals", "Other Community, Social and Personal Service Activities", "Transportation and Storage"];
@@ -74,7 +74,30 @@ const sections = {
   })), category_linkage_summary: { linked_records: 44, total_flagged_records: 52, linkage_rate: 84.6, unlinked_records: 6, ambiguous_records: 2 },
   dbscan_clusters: [], morans_data: { points: [] } },
   prescriptive: { rankings: [], dispatch_recommendations: [], wlc_config: {} },
-  operations: { inspector_stats: [], status_breakdown: [{ status: "Assigned", count: 28 }, { status: "Submitted", count: 32 }, { status: "Verified", count: 64 }], inspection_timeline: [{ date: "2026-09-01", count: 12 }, { date: "2026-09-08", count: 24 }, { date: "2026-09-15", count: 19 }, { date: "2026-09-22", count: 32 }] },
+  operations: { inspector_stats: [{ userID: 1, fullName: "Inspector A" }, { userID: 2, fullName: "Inspector B" }], inspector_status_counts: [{ userID: 1, pending: 3, awaiting_review: 1, verified: 4 }, { userID: 2, pending: 2, awaiting_review: 2, verified: 5 }], status_breakdown: [{ status: "Assigned", count: 28 }, { status: "Submitted", count: 32 }, { status: "Verified", count: 64 }], inspection_timeline: [{ date: "2026-09-01", count: 12 }, { date: "2026-09-08", count: 24 }, { date: "2026-09-15", count: 19 }, { date: "2026-09-22", count: 32 }] },
+};
+if (params.get("recommendations") === "ranked") {
+  sections.prescriptive.rankings = barangays.slice(0, 6).map((barangayName, index) => ({
+    barangayID: index + 1, barangayName, rank: index + 1, flagged_count: 8 - index,
+    red_count: 4, yellow_count: 2, distance_km: 2.4, priority_label: "High",
+  }));
+}
+const registryBreakdown = {
+  business_type: [
+    { value: "Sole Proprietorship", count: 600 }, { value: "Corporation", count: 160 },
+    { value: "Partnership", count: 80 }, { value: "Cooperative", count: 60 },
+    { value: "One Person Corporation", count: 20 },
+  ],
+  registration_type: [{ value: "Renewal", count: 720 }, { value: "New", count: 200 }],
+};
+for (const rows of Object.values(registryBreakdown)) rows.forEach(row => { row.label = row.value; });
+const barangayOverview = {
+  barangays: barangays.map((barangayName, i) => ({
+    barangayID: i + 1, barangayName, registry_total: 20 + i * 5,
+    inspections: { total: 4 + i, pending: 2, waiting_for_review: 1, verified: 1 },
+    pins: { total: 5, detected_not_in_registry: 2 }, registry: registryBreakdown,
+  })),
+  overall: { registry_total: 920, inspections: { total: 180, pending: 42, waiting_for_review: 12, verified: 126 }, pins: { total: 90, detected_not_in_registry: 22 }, registry: registryBreakdown },
 };
 const held = [];
 window.__releaseLayout = () => held.splice(0).forEach(resolve => resolve());
@@ -113,6 +136,8 @@ window.fetch = async (url, options = {}) => {
     const section = parsed.searchParams.get("section");
     return Response.json({ ...(section ? { [section]: sections[section] } : sections), analytics_cache: { age_seconds: 0, computed_at: new Date().toISOString() } });
   }
+  if (parsed.pathname.endsWith("/analytics/barangay-overview")) return Response.json(barangayOverview);
+  if (parsed.pathname.endsWith("/analytics/hotspots")) return Response.json({ clusters: [] });
   if (parsed.pathname.endsWith("/barangays")) return Response.json(barangays.map((barangayName, i) => ({ barangayID: i + 1, barangayName })));
   if (parsed.pathname.endsWith("/filter-metadata")) return Response.json({ lines_of_business: sectors, business_types: [], business_sizes: [] });
   if (parsed.pathname.endsWith("/wlc-config")) return Response.json({ w1_risk: 68, w2_sector: 7, w3_distance: 25 });

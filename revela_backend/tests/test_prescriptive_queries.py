@@ -4,7 +4,8 @@ import sys
 import unittest
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+import json
 
 from flask import Flask
 
@@ -12,13 +13,38 @@ sys.path.insert(0, os.path.dirname(__file__))
 from registry_sqlite import RegistryDB
 from api.analytics import routes
 from api.analytics.service import DEFAULT_CONFIG
+from api.analytics.sector_risk import DEFAULT_SECTOR_RISK_POLICY
 from api.registry.colors import _effective_flag_color_sql
 
 
 class PrescriptiveQueryTests(unittest.TestCase):
+    def test_assistant_sector_guidance_describes_policy_fallback_and_coverage(self):
+        guidance = routes.SECTOR_RISK_ASSISTANT_GUIDANCE
+        self.assertIn("Matched PSIC categories use their sector-policy score", guidance)
+        self.assertIn("without a matched sector use the unclassified fallback of 50", guidance)
+        self.assertIn("explicit barangay overrides take precedence", guidance)
+        self.assertIn("known and total sector entity counts when available", guidance)
+        self.assertIn("not measured industry risk", guidance)
+        self.assertNotIn("neutral fallback of 50 when an override is missing", guidance)
+
     def setUp(self):
         self.db = RegistryDB()
         self.addCleanup(self.db.close)
+        self.db.db.execute("""
+            CREATE TABLE sector_risk_policy (
+                policy_id INTEGER PRIMARY KEY,
+                version INTEGER NOT NULL,
+                fallback_score INTEGER NOT NULL,
+                categories TEXT NOT NULL,
+                updated_by INTEGER NULL
+            )
+        """)
+        self.db.db.execute(
+            """INSERT INTO sector_risk_policy
+               (policy_id, version, fallback_score, categories)
+               VALUES (1, 1, 50, ?)""",
+            (json.dumps(DEFAULT_SECTOR_RISK_POLICY["categories"]),),
+        )
         self.config = deepcopy(DEFAULT_CONFIG)
         self.color = _effective_flag_color_sql("g", ladder=True)
         self.db.db.executescript("""
@@ -31,6 +57,13 @@ class PrescriptiveQueryTests(unittest.TestCase):
                 ('B4', 'Closed shop', 1, 'Closed', 'P4'),
                 ('B5', 'Pending shop', 2, 'Pending', 'P5'),
                 ('B6', 'Revoked shop', 2, 'Revoked', 'P6');
+            UPDATE official_registry SET lineOfBusiness = 'Make stuff' WHERE businessID = 'B1';
+            INSERT INTO registry_sector_map
+                (normalized_line_of_business, display_sector_key, display_sector_label, match_status)
+            VALUES
+                ('makestuff', 'manufacturing', 'Manufacturing', 'matched'),
+                ('shopretail', 'retail', 'Retail', 'matched');
+            UPDATE official_registry SET lineOfBusiness = 'Shop retail' WHERE businessID = 'B2';
             INSERT INTO enforcement_state (subjectType, subjectID, warningLevel) VALUES ('business', 'B3', 1);
             INSERT INTO geospatial_logs (logID, businessID, barangayID, detectedName, flagColor, latitude, longitude, placeID) VALUES
                 (1, 'B1', 1, 'Expired shop', 'Green', 13.96, 121.11, 'P1'),
@@ -73,6 +106,27 @@ class PrescriptiveQueryTests(unittest.TestCase):
         self.assertEqual(rows[1]["unregistered_candidate_count"], 2, "A placeID match is a registry match even when businessID is null")
         self.assertEqual(rows[2]["registry_active_flag_rate"], 100)
         self.assertIsNone(rows[3]["registry_active_flag_rate"])
+
+    def test_sector_risk_uses_distinct_active_flag_entities_and_neutral_fallback(self):
+        rows = {row["barangayID"]: row for row in self.section()["rankings"]}
+        first = rows[1]
+        self.assertEqual(first["sector_entity_count"], 3)
+        self.assertEqual(first["sector_known_entity_count"], 1)
+        self.assertEqual(first["sector_fallback_entity_count"], 2)
+        self.assertAlmostEqual(first["sector_score"], 190 / 3)
+        self.assertEqual(first["sector_score_source"], "psic_weighted")
+        self.assertEqual(rows[2]["sector_score_source"], "neutral_fallback")
+
+    def test_sector_risk_deduplicates_unregistered_entities_by_place_id(self):
+        self.db.db.execute("""
+            INSERT INTO geospatial_logs
+                (logID, businessID, barangayID, detectedName, flagColor, latitude, longitude, placeID)
+            VALUES (11, NULL, 1, 'Second pin for same unknown place', 'Red', 13.96, 121.11, 'PX')
+        """)
+        self.db.commit()
+        first = next(row for row in self.section()["rankings"] if row["barangayID"] == 1)
+        self.assertEqual(first["sector_entity_count"], 3)
+        self.assertEqual(first["sector_fallback_entity_count"], 2)
 
     def test_dispatch_capacity_deduplicates_registry_and_place_matched_businesses(self):
         before = next(row for row in self.section()["rankings"] if row["barangayID"] == 1)
@@ -212,7 +266,7 @@ class PrescriptiveQueryTests(unittest.TestCase):
             response, status = routes.get_ops_rankings_only.__wrapped__()
         self.assertEqual(status, 200)
         self.assertEqual(response.get_json()["data"], expected)
-        self.assertEqual(response.get_json()["model"]["version"], "wlc-v2")
+        self.assertEqual(response.get_json()["model"]["version"], "wlc-v3")
 
     def test_invalid_policy_payloads_return_400_not_500(self):
         app = Flask(__name__)
@@ -223,6 +277,47 @@ class PrescriptiveQueryTests(unittest.TestCase):
                 response, status = routes.update_config.__wrapped__()
                 self.assertEqual(status, 400)
                 self.assertIn("error", response.get_json())
+
+    def test_sector_policy_routes_validate_update_and_reset(self):
+        app = Flask(__name__)
+        payload = {
+            "categories": {
+                **DEFAULT_SECTOR_RISK_POLICY["categories"],
+                "Retail": 96,
+            },
+        }
+        updated = {
+            "version": 2,
+            "categories": payload["categories"],
+            "fallback_score": 50,
+        }
+        connection = MagicMock()
+        connection.cursor.return_value = MagicMock()
+        with app.test_request_context("/api/analytics/sector-policy", method="PUT", json=payload), \
+                patch.object(routes, "mysql", SimpleNamespace(connection=connection)), \
+                patch.object(routes, "get_jwt_identity", return_value=10), \
+                patch.object(routes, "save_persisted_sector_risk_policy", return_value=updated):
+            response, status = routes.update_sector_policy.__wrapped__()
+        self.assertEqual(status, 200)
+        self.assertEqual(response.get_json()["data"], updated)
+        connection.commit.assert_called_once()
+
+        with app.test_request_context(
+            "/api/analytics/sector-policy", method="PUT", json={"categories": {}}
+        ):
+            response, status = routes.update_sector_policy.__wrapped__()
+        self.assertEqual(status, 400)
+        self.assertIn("12 known", response.get_json()["error"])
+
+        connection.reset_mock()
+        with app.test_request_context("/api/analytics/sector-policy/reset", method="POST"), \
+                patch.object(routes, "mysql", SimpleNamespace(connection=connection)), \
+                patch.object(routes, "get_jwt_identity", return_value=10), \
+                patch.object(routes, "save_persisted_sector_risk_policy", return_value=updated):
+            response, status = routes.reset_sector_policy.__wrapped__()
+        self.assertEqual(status, 200)
+        self.assertEqual(response.get_json()["data"], updated)
+        connection.commit.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ import { readDeviceAccessHints } from "../components/mobileDetection.js";
 import { validateBackupStatus } from "../components/backupStatusView.js";
 
 export const API_ORIGIN =
-  import.meta.env.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
+  import.meta.env?.VITE_API_ORIGIN ?? "http://127.0.0.1:5000";
 const BASE_URL = `${API_ORIGIN}/api`;
 
 /** Shown when the backend refuses a session for inactivity. */
@@ -258,8 +258,12 @@ export async function streamNotificationsRequest(
   if (buffer.trim()) dispatchEvent(buffer);
 }
 
-export async function getNotificationsRequest(token) {
-  const res = await fetch(`${BASE_URL}/notifications`, {
+export async function getNotificationsRequest(token, { limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (limit != null) params.set("limit", String(limit));
+  if (offset != null) params.set("offset", String(offset));
+  const query = params.size ? `?${params}` : "";
+  const res = await fetch(`${BASE_URL}/notifications${query}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   return await handleResponse(res);
@@ -399,14 +403,15 @@ export async function syncRegistryFile(file, token, signal) {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
-export async function getDiagnosticClustersRequest(token) {
+export async function getDiagnosticClustersRequest(token, population = "objective") {
   try {
-    const res = await fetch(`${BASE_URL}/geospatial/diagnostics/clusters`, {
+    const query = new URLSearchParams({ population });
+    const res = await fetch(`${BASE_URL}/geospatial/diagnostics/clusters?${query}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await handleResponse(res);
-    return data.clusters ?? data;
+    return data;
   } catch (err) {
     connectionGuard(err);
   }
@@ -1263,6 +1268,77 @@ export async function resetWlcConfigRequest(token) {
   }
 }
 
+export async function getSectorRiskPolicyRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + token },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getSectorRiskPolicyAuditRequest(token, limit = 50) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy/audit?limit=${encodeURIComponent(limit)}`, {
+      method: "GET",
+      headers: { Authorization: "Bearer " + token },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function updateSectorRiskPolicyRequest(payload, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function previewSectorRiskPolicyRequest(payload, token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy/preview`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+      body: JSON.stringify(payload),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function resetSectorRiskPolicyRequest(token) {
+  try {
+    const res = await fetch(`${BASE_URL}/analytics/sector-policy/reset`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + token,
+      },
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 /**
  * Normalize (token, filters?) vs (filters, token) — same ambiguity as getFlagsRequest(params, token).
  * JWT heuristic: long dotted string (typical access_token shape).
@@ -1318,6 +1394,8 @@ function analyticsFiltersToSearchParams(filters = {}) {
   set("barangay_id", filters.barangay_id);
   set("application_status", filters.application_status);
   set("line_of_business", filters.line_of_business);
+  set("line_of_business_key", filters.line_of_business_key);
+  set("display_sector", filters.display_sector);
   set("business_type", filters.business_type);
   set("business_size", filters.business_size);
   set("registration_type", filters.registration_type);
@@ -1326,6 +1404,7 @@ function analyticsFiltersToSearchParams(filters = {}) {
   set("flag_color", filters.flag_color);
   set("detected_from", filters.detected_from);
   set("detected_to", filters.detected_to);
+  set("population", filters.population);
   set("inspection_result", filters.inspection_result);
   set("verification_status", filters.verification_status);
   set("inspection_from", filters.inspection_from);
@@ -1371,6 +1450,57 @@ export async function getBarangayOverviewRequest(token, filters = {}, { signal }
       ? `${BASE_URL}/analytics/barangay-overview?${query}`
       : `${BASE_URL}/analytics/barangay-overview`;
     const res = await fetch(url, {
+      method: "GET",
+      headers: authHeaders(token),
+      signal,
+      cache: "no-store",
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getRegistryStatusBySizeRequest(
+  token,
+  filters = {},
+  { signal } = {},
+) {
+  try {
+    if (!token) {
+      throw new Error("Missing authentication token.");
+    }
+    const qs = analyticsFiltersToSearchParams(filters);
+    const query = qs.toString();
+    const url = query
+      ? `${BASE_URL}/analytics/registry-status-by-size?${query}`
+      : `${BASE_URL}/analytics/registry-status-by-size`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: authHeaders(token),
+      signal,
+      cache: "no-store",
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getAnalyticsHotspotsRequest(
+  token,
+  datePreset = "all",
+  { signal, population = "objective" } = {},
+) {
+  try {
+    if (!token) {
+      throw new Error("Missing authentication token.");
+    }
+    const query = new URLSearchParams({
+      date_preset: datePreset || "all",
+      population,
+    });
+    const res = await fetch(`${BASE_URL}/analytics/hotspots?${query}`, {
       method: "GET",
       headers: authHeaders(token),
       signal,

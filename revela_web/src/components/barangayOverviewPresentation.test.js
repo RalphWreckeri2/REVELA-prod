@@ -2,16 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildBarangayOverviewFilters,
+  DISPLAY_SECTOR_COLORS,
   getBarangayTopTotals,
   getMapPinBuckets,
   getNotInRegistryPinTotal,
+  lineOfBusinessKeyAfterSectorChange,
+  lineOfBusinessOptionsForSector,
   quantileBreaks,
   quantileClass,
   quantileRangeLabels,
   registryCategoryColor,
+  registryCategoryColorsForRows,
   sortRegistryBreakdownRows,
   visibleRegistryDimensions,
 } from "./barangayOverviewPresentation.js";
+import { readFileSync } from "node:fs";
+
+const mapOverviewSource = readFileSync(
+  new URL("./MapOverview.jsx", import.meta.url),
+  "utf8",
+);
+const mapOverviewStyles = readFileSync(
+  new URL("../styles/MapOverview.css", import.meta.url),
+  "utf8",
+);
 
 test("date presets apply to pin and inspection dates while preserving stricter filters", () => {
   const filters = {
@@ -32,6 +46,93 @@ test("date presets apply to pin and inspection dates while preserving stricter f
     inspection_to: "2026-10-27",
   });
   assert.deepEqual(buildBarangayOverviewFilters(filters, "all"), filters);
+});
+
+test("line-of-business options follow the selected sector and sector changes clear incompatible keys", () => {
+  const options = [
+    { value: "groceries", sector_key: "retail", count: 45 },
+    { value: "real-estate", sector_key: "real_estate", count: 54 },
+  ];
+  assert.deepEqual(lineOfBusinessOptionsForSector(options), options);
+  assert.deepEqual(
+    lineOfBusinessOptionsForSector(options, "retail"),
+    [options[0]],
+  );
+  assert.equal(
+    lineOfBusinessKeyAfterSectorChange("groceries", options, "retail"),
+    "groceries",
+  );
+  assert.equal(
+    lineOfBusinessKeyAfterSectorChange("groceries", options, "real_estate"),
+    "",
+  );
+  assert.equal(
+    lineOfBusinessKeyAfterSectorChange("groceries", options, ""),
+    "groceries",
+  );
+  assert.match(mapOverviewSource, /line_of_business_key:\s*selectedLineOfBusinessKey/);
+  assert.match(mapOverviewSource, /const requestKey = `\$\{token\}:\$\{filterKey\}:/);
+  assert.match(mapOverviewSource, /const topTotals = getBarangayTopTotals\(panelData\)/);
+  assert.match(mapOverviewSource, /mapCounts = useMemo[\s\S]*row\.registry_total/);
+  assert.match(mapOverviewSource, /A\. Official Registry · \{Number\(panelData\?\.registry_total/);
+  assert.match(mapOverviewSource, /<optgroup[^>]*label=\{sector\.label\}/);
+  assert.match(mapOverviewSource, /aria-label="Filter registered businesses by line of business"/);
+  assert.match(mapOverviewSource, /Filters registered businesses only\./);
+  assert.match(mapOverviewSource, /first-listed PSIC activity[\s\S]*Secondary activities are not counted/);
+  assert.match(mapOverviewSource, /aria-label="Remove sector filter"/);
+  assert.match(mapOverviewSource, /aria-label="Remove line-of-business filter"/);
+  assert.match(mapOverviewSource, /No registered businesses match this filter\./);
+  assert.match(mapOverviewSource, /setSelectedLineOfBusinessKey\(""\)/);
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-control-group\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/,
+  );
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-filter-label-heading\s*\{[^}]*height:\s*16px/,
+  );
+  assert.match(
+    mapOverviewStyles,
+    /\.map-overview-filter-label-heading \.analytics-info-tip-trigger\s*\{[^}]*height:\s*20px/,
+  );
+});
+
+test("filtered Overview response drives registry totals and choropleth breaks; clearing restores all businesses", () => {
+  const filtered = {
+    overall: {
+      registry_total: 8,
+      pins: { detected_not_in_registry: 221 },
+      inspections: { pending: 6 },
+    },
+    barangays: Array.from({ length: 16 }, (_, index) => ({
+      barangayID: index + 1,
+      registry_total: index === 0 ? 8 : 0,
+    })),
+  };
+  const cleared = {
+    overall: {
+      registry_total: 602,
+      pins: filtered.overall.pins,
+      inspections: filtered.overall.inspections,
+    },
+    barangays: Array.from({ length: 16 }, (_, index) => ({
+      barangayID: index + 1,
+      registry_total: index === 0 ? 80 : 30,
+    })),
+  };
+
+  assert.equal(getBarangayTopTotals(filtered.overall).registered, 8);
+  assert.deepEqual(
+    filtered.barangays.map((row) => row.registry_total),
+    [8, ...Array(15).fill(0)],
+  );
+  assert.notDeepEqual(
+    quantileBreaks(filtered.barangays.map((row) => row.registry_total)),
+    quantileBreaks(cleared.barangays.map((row) => row.registry_total)),
+  );
+  assert.equal(getBarangayTopTotals(cleared.overall).registered, 602);
+  assert.equal(getBarangayTopTotals(filtered.overall).notInRegistry, 221);
+  assert.equal(getBarangayTopTotals(filtered.overall).beingInspected, 6);
 });
 
 test("single-value registry dimensions are hidden", () => {
@@ -147,6 +248,61 @@ test("registry category colors stay fixed across scopes and row order", () => {
   assert.notEqual(
     registryCategoryColor("business_type", "Corporation"),
     registryCategoryColor("business_type", "Sole Proprietorship"),
+  );
+});
+
+test("registration and business-type breakdowns have distinct, stable segment and legend colors", () => {
+  const registration = ["Renewal", "New"];
+  const types = ["Sole Proprietorship", "Cooperative", "Corporation", "Partnership", "One Person Corporation"];
+  for (const [dimension, names] of [["registration_type", registration], ["business_type", types]]) {
+    const colors = registryCategoryColorsForRows(dimension, names.map(value => ({ value, count: 1 })));
+    assert.equal(colors.size, names.length);
+    assert.equal(new Set(colors.values()).size, names.length);
+    names.forEach(name => assert.equal(colors.get(name), registryCategoryColor(dimension, name)));
+    assert.deepEqual(colors, registryCategoryColorsForRows(dimension, [...names].reverse().map(value => ({ value }))));
+  }
+  const extras = registryCategoryColorsForRows("business_type", [
+    ...types, "Unspecified", "Other", "Other legal form", "Community association",
+  ].map(value => ({ value })));
+  assert.equal(new Set(extras.values()).size, extras.size, "unknown categories must not reuse a visible color");
+});
+
+test("display sectors use twelve distinct fixed colors and a separate unmapped gray", () => {
+  const sectorKeys = [
+    "retail",
+    "wholesale_vehicles",
+    "food_drink",
+    "real_estate",
+    "manufacturing",
+    "agriculture_mining",
+    "construction_utilities",
+    "transport_storage",
+    "finance_professional",
+    "information_communication",
+    "hospitality_arts_recreation",
+    "education_health_other_services",
+  ];
+  const sectorColors = sectorKeys.map((key) => (
+    registryCategoryColor("display_sector", key)
+  ));
+
+  assert.equal(sectorColors.length, 12);
+  assert.equal(new Set(sectorColors).size, 12);
+  assert.deepEqual(
+    sectorColors,
+    sectorKeys.map((key) => DISPLAY_SECTOR_COLORS[key]),
+  );
+  assert.equal(
+    registryCategoryColor("display_sector", "unmapped"),
+    DISPLAY_SECTOR_COLORS.unmapped,
+  );
+  assert.ok(!sectorColors.includes(DISPLAY_SECTOR_COLORS.unmapped));
+  assert.ok(!sectorColors.includes("#f97316"));
+  assert.ok(!sectorColors.includes("#3b82f6"));
+  assert.ok(!sectorColors.includes("#10b981"));
+  assert.equal(
+    registryCategoryColor("display_sector", "retail"),
+    registryCategoryColor("display_sector", "retail"),
   );
 });
 

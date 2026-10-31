@@ -15,9 +15,9 @@ BARANGAY_NAMES = {
     6: "Barangay Bayorbor",
     7: "Barangay Bubuyan",
     8: "Barangay Calingatan",
-    9: "Barangay Kinalaglagan",
+    9: "Barangay Loob",
     10: "Barangay Lumanglipa",
-    11: "Barangay Loob",
+    11: "Barangay Kinalaglagan",
     12: "Barangay Manggahan",
     13: "Barangay Nangkaan",
     14: "Barangay San Sebastian",
@@ -33,15 +33,58 @@ class BarangayOverviewCursor:
 
     def execute(self, sql, params=()):
         self.sql_calls.append((sql, params))
+        is_barber_filter = "barbershopactivities" in params
         if "SELECT barangayID, barangayName FROM barangays" in sql:
             self.rows = [
                 {"barangayID": key, "barangayName": value}
                 for key, value in BARANGAY_NAMES.items()
             ]
         elif "SELECT COUNT(*) AS total FROM official_registry" in sql:
-            self.rows = [{"total": 602}]
+            total = (
+                8 if is_barber_filter
+                else 170 if "display_sector_key = %s" in sql
+                else 602
+            )
+            self.rows = [{"total": total}]
         elif "SELECT o.barangayID, COUNT(*) AS total" in sql:
-            self.rows = [{"barangayID": 1, "total": 602}]
+            total = (
+                8 if is_barber_filter
+                else 170 if "display_sector_key = %s" in sql
+                else 602
+            )
+            self.rows = [{
+                "barangayID": 1,
+                "total": total,
+            }]
+        elif "FROM display_sector" in sql and "GROUP BY display_sector_key" in sql:
+            self.rows = [
+                {"display_sector_key": "retail", "display_sector_label": "Retail"},
+                {"display_sector_key": "food_drink", "display_sector_label": "Food and drink"},
+            ]
+        elif "JOIN registry_sector_map sector_map" in sql:
+            self.rows = [{
+                "value": "retailsellinggroceries",
+                "description": "retail selling in groceries",
+                "sector_key": "retail",
+                "count": 45,
+            }]
+            if "display_sector_key = %s" not in sql:
+                self.rows.append({
+                    "value": "realestatebuyingselling",
+                    "description": "real estate buying, selling",
+                    "sector_key": "real_estate",
+                    "count": 54,
+                })
+        elif "LEFT JOIN registry_sector_map" in sql:
+            count = 170 if "display_sector_key = %s" in sql else 602
+            category = "retail" if "display_sector_key = %s" in sql else "unmapped"
+            label = "Retail" if category == "retail" else "Needs classification"
+            self.rows = [{
+                "barangayID": 1,
+                "category": category,
+                "label": label,
+                "count": count,
+            }]
         elif "AS registered_on_map" in sql:
             self.rows = [{
                 "barangayID": 1,
@@ -70,11 +113,6 @@ class BarangayOverviewCursor:
             self.rows = [{"barangayID": 1, "category": "SOLE PROPRIETORSHIP", "count": 602}]
         elif "o.registrationType" in sql:
             self.rows = [{"barangayID": 1, "category": "NEW", "count": 602}]
-        elif "o.lineOfBusiness" in sql:
-            self.rows = [
-                {"barangayID": 1, "category": f"SECTOR {index}", "count": 10 - index}
-                for index in range(1, 8)
-            ]
         else:
             raise AssertionError(f"Unexpected read query: {sql}")
 
@@ -112,6 +150,10 @@ class BarangayOverviewTests(unittest.TestCase):
             list(range(1, 17)),
         )
         self.assertEqual(data["overall"]["registry_total"], 602)
+        self.assertEqual(
+            {option["sector_key"] for option in data["line_of_business_options"]},
+            {"retail", "real_estate"},
+        )
         self.assertEqual(data["overall"]["pins"]["total"], 495)
         self.assertEqual(data["overall"]["inspections"]["total"], 9)
         self.assertEqual(
@@ -183,15 +225,141 @@ class BarangayOverviewTests(unittest.TestCase):
         self.assertIn("ir.verificationStatus = 'Submitted'", inspection_sql)
         self.assertIn("ir.verificationStatus = 'Verified'", inspection_sql)
 
-    def test_line_of_business_keeps_top_five_and_combines_the_rest(self):
-        data, _, _ = self.run_endpoint("")
-        rows = data["barangays"][0]["registry"]["line_of_business"]
+    def test_sector_filter_changes_registry_only(self):
+        data, status, cursor = self.run_endpoint("display_sector=retail")
 
-        self.assertEqual(len(rows), 6)
-        self.assertEqual(rows[-1]["label"], "Others")
-        self.assertEqual(rows[-1]["count"], 7)
-        self.assertTrue(all("short_label" in row for row in rows))
-        self.assertTrue(all(len(row["short_label"]) <= 32 for row in rows))
+        self.assertEqual(status, 200)
+        self.assertEqual(data["overall"]["registry_total"], 170)
+        self.assertEqual(data["overall"]["registry"]["display_sector"], [{
+            "value": "retail",
+            "label": "Retail",
+            "short_label": "Retail",
+            "count": 170,
+        }])
+        self.assertEqual(data["overall"]["pins"]["total"], 495)
+        self.assertEqual(data["overall"]["inspections"]["total"], 9)
+        self.assertEqual(data["display_sectors"][0]["value"], "retail")
+
+        registry_queries = [
+            sql for sql, _ in cursor.sql_calls if "FROM official_registry" in sql
+        ]
+        self.assertTrue(registry_queries)
+        self.assertTrue(all("registry_sector_map" in sql for sql in registry_queries))
+        pin_sql = next(sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql)
+        inspection_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS waiting_for_review" in sql
+        )
+        self.assertNotIn("registry_sector_map", pin_sql)
+        self.assertNotIn("registry_sector_map", inspection_sql)
+
+    def test_primary_line_filter_changes_registry_only_and_uses_full_normalized_key(self):
+        data, status, cursor = self.run_endpoint(
+            "display_sector=retail&line_of_business_key=retailsellinggroceries"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(data["overall"]["registry_total"], 170)
+        self.assertEqual(data["overall"]["pins"]["total"], 495)
+        self.assertEqual(data["overall"]["inspections"]["total"], 9)
+        self.assertEqual(data["line_of_business_options"][0], {
+            "value": "retailsellinggroceries",
+            "label": "Retail Selling In Groceries (45)",
+            "sector_key": "retail",
+            "count": 45,
+        })
+        self.assertEqual(
+            {option["sector_key"] for option in data["line_of_business_options"]},
+            {"retail"},
+        )
+
+        registry_queries = [
+            (sql, params) for sql, params in cursor.sql_calls
+            if "FROM official_registry o" in sql
+        ]
+        self.assertTrue(registry_queries)
+        filtered_registry_queries = [
+            (sql, params) for sql, params in registry_queries
+            if "primary_line.normalized_line_of_business" in sql
+        ]
+        self.assertTrue(filtered_registry_queries)
+        self.assertTrue(all(
+            "line_of_business_key" not in sql for sql, _ in registry_queries
+        ))
+        self.assertTrue(any(
+            "retailsellinggroceries" in params
+            for _, params in filtered_registry_queries
+        ))
+        self.assertTrue(all(
+            "COLLATE utf8mb4_unicode_ci" in sql
+            for sql, _ in filtered_registry_queries
+        ))
+        self.assertTrue(any(
+            "CONVERT( primary_line.normalized_line_of_business USING utf8mb4 ) "
+            "COLLATE utf8mb4_unicode_ci = CONVERT(%s USING utf8mb4) "
+            "COLLATE utf8mb4_unicode_ci" in " ".join(sql.split())
+            for sql, _ in filtered_registry_queries
+        ))
+        self.assertTrue(all(
+            "CONVERT(LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness" in sql
+            and "USING utf8mb4" in sql
+            for sql, _ in filtered_registry_queries
+        ))
+        pin_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql
+        )
+        inspection_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS waiting_for_review" in sql
+        )
+        self.assertNotIn("registry_sector_map", pin_sql)
+        self.assertNotIn("primary_line", pin_sql)
+        self.assertNotIn("registry_sector_map", inspection_sql)
+        self.assertNotIn("primary_line", inspection_sql)
+
+    def test_barber_primary_line_filter_keeps_map_and_inspection_totals(self):
+        data, status, cursor = self.run_endpoint(
+            "line_of_business_key=barbershopactivities"
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(data["overall"]["registry_total"], 8)
+        self.assertEqual(data["overall"]["pins"]["total"], 495)
+        self.assertEqual(data["overall"]["inspections"]["total"], 9)
+        registry_queries = [
+            (sql, params) for sql, params in cursor.sql_calls
+            if "FROM official_registry o" in sql
+        ]
+        filtered_registry_queries = [
+            (sql, params) for sql, params in registry_queries
+            if "AND EXISTS (" in sql
+        ]
+        self.assertTrue(filtered_registry_queries)
+        self.assertTrue(all(
+            "barbershopactivities" in params
+            for _, params in filtered_registry_queries
+        ))
+        self.assertTrue(all(
+            "COLLATE utf8mb4_unicode_ci" in sql
+            for sql, _ in filtered_registry_queries
+        ))
+        self.assertTrue(any(
+            "CONVERT( primary_line.normalized_line_of_business USING utf8mb4 ) "
+            "COLLATE utf8mb4_unicode_ci = CONVERT(%s USING utf8mb4) "
+            "COLLATE utf8mb4_unicode_ci" in " ".join(sql.split())
+            for sql, _ in filtered_registry_queries
+        ))
+        self.assertTrue(all(
+            "CONVERT(LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness" in sql
+            and "USING utf8mb4" in sql
+            for sql, _ in filtered_registry_queries
+        ))
+        pin_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS registered_on_map" in sql
+        )
+        inspection_sql = next(
+            sql for sql, _ in cursor.sql_calls if "AS waiting_for_review" in sql
+        )
+        self.assertNotIn("AND EXISTS (", pin_sql)
+        self.assertNotIn("AND EXISTS (", inspection_sql)
 
 
 if __name__ == "__main__":

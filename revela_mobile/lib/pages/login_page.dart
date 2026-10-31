@@ -121,155 +121,252 @@ class _LoginPageState extends State<LoginPage> {
     showDialog(
       context: context,
       barrierDismissible: false,
+      barrierColor: const Color(0xE600100A),
       builder: (ctx) {
         return PopScope(
           canPop: false, // Block back-button/gesture dismissal
           child: StatefulBuilder(
             builder: (context, setDialogState) {
-              final policyLinkColor = Theme.of(context).colorScheme.primary;
-              return AlertDialog(
+              final width = MediaQuery.sizeOf(context).width;
+              final screenHeight = MediaQuery.sizeOf(context).height;
+              final horizontalPadding = width < 380 ? 18.0 : 24.0;
+              const cardColor = Color(0xFFF1F4EB);
+              const forestGreen = Color(0xFF176B36);
+              const rowColor = Color(0xFFF8FAF5);
+              const borderColor = Color(0xFFDCE4D7);
+              return Dialog(
+                backgroundColor: cardColor,
+                surfaceTintColor: Colors.transparent,
+                insetPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 24,
+                ),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(32),
                 ),
-                title: Row(
-                  children: [
-                    Icon(
-                      Icons.privacy_tip_rounded,
-                      color: AppColors.darkGreen,
-                      size: 28,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        isUpdate
-                            ? 'Our Privacy Policy Has Been Updated'
-                            : 'Your Privacy Matters',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                content: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        isUpdate
-                            ? 'We\'ve made changes to our Privacy Policy. Please review them before continuing to use the app.'
-                            : 'Before you get started, please take a moment to review how we collect, use, and protect your data.',
-                        style: const TextStyle(fontSize: 14, height: 1.4),
-                      ),
-                      const SizedBox(height: 16),
-                      InkWell(
-                        onTap: () => showLegalPolicy(
-                          context,
-                          LegalPolicyDocument.privacy,
-                        ),
-                        child: Text(
-                          'Read the full Privacy Policy',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: policyLinkColor,
-                            fontWeight: FontWeight.bold,
-                            decoration: TextDecoration.underline,
+                child: ConstrainedBox(
+                  key: const Key('privacy-policy-dialog-card'),
+                  constraints: BoxConstraints(
+                    maxWidth: 680,
+                    maxHeight: screenHeight * 0.82,
+                  ),
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.all(horizontalPadding),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 56,
+                          height: 56,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCE9D6),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: const Icon(
+                            Icons.verified_user_outlined,
+                            color: forestGreen,
+                            size: 29,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      InkWell(
-                        onTap: () =>
-                            showLegalPolicy(context, LegalPolicyDocument.terms),
-                        child: Text(
-                          'Read the Terms & Conditions',
+                        const SizedBox(height: 14),
+                        Text(
+                          isUpdate
+                              ? 'Our Privacy Policy Has Been Updated'
+                              : 'Your Privacy Matters',
                           style: TextStyle(
-                            fontSize: 14,
-                            color: policyLinkColor,
-                            fontWeight: FontWeight.bold,
-                            decoration: TextDecoration.underline,
+                            fontSize: width < 380 ? 22 : 26,
+                            height: 1.15,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF111A14),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      InkWell(
-                        onTap: () => showLegalPolicy(
-                          context,
-                          LegalPolicyDocument.cookies,
-                        ),
-                        child: Text(
-                          'Read Cookie & Storage Policy',
-                          style: TextStyle(
+                        const SizedBox(height: 8),
+                        Text(
+                          isUpdate
+                              ? 'We\'ve made changes to our Privacy Policy. Please review them before continuing to use the app.'
+                              : 'Before you get started, please take a moment to review how we collect, use, and protect your data.',
+                          style: const TextStyle(
                             fontSize: 14,
-                            color: policyLinkColor,
-                            fontWeight: FontWeight.bold,
-                            decoration: TextDecoration.underline,
+                            height: 1.45,
+                            color: Color(0xFF3F5145),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 20),
-                      InkWell(
-                        onTap: () => setDialogState(() {
-                          isChecked = !isChecked;
-                        }),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Checkbox(
-                              value: isChecked,
-                              activeColor: AppColors.darkGreen,
-                              onChanged: (value) => setDialogState(() {
-                                isChecked = value ?? false;
-                              }),
-                            ),
-                            const Expanded(
-                              child: Padding(
-                                padding: EdgeInsets.only(top: 12),
-                                child: Text(
-                                  'I have read and agree to the Privacy '
-                                  'Policy and Terms & Conditions.',
-                                  style: TextStyle(fontSize: 13, height: 1.3),
+                        const SizedBox(height: 16),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: rowColor,
+                            border: Border.all(color: borderColor),
+                            borderRadius: BorderRadius.circular(22),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            children: [
+                              _privacyPolicyLink(
+                                context: context,
+                                key: const Key(
+                                  'privacy-policy-acknowledgment-link',
+                                ),
+                                icon: Icons.lock_outline_rounded,
+                                label: 'Privacy Policy',
+                                onTap: () => showLegalPolicy(
+                                  context,
+                                  LegalPolicyDocument.privacy,
+                                ),
+                                showDivider: true,
+                              ),
+                              _privacyPolicyLink(
+                                context: context,
+                                key: const Key(
+                                  'terms-policy-acknowledgment-link',
+                                ),
+                                icon: Icons.description_outlined,
+                                label: 'Terms & Conditions',
+                                onTap: () => showLegalPolicy(
+                                  context,
+                                  LegalPolicyDocument.terms,
+                                ),
+                                showDivider: true,
+                              ),
+                              _privacyPolicyLink(
+                                context: context,
+                                key: const Key(
+                                  'cookies-policy-acknowledgment-link',
+                                ),
+                                icon: Icons.storage_outlined,
+                                label: 'Cookie & Storage Policy',
+                                onTap: () => showLegalPolicy(
+                                  context,
+                                  LegalPolicyDocument.cookies,
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: isChecked
-                          ? () => _acceptPrivacyPolicy(ctx)
-                          : null,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.darkGreen,
-                        disabledBackgroundColor: Colors.grey[300],
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
+                        const SizedBox(height: 14),
+                        InkWell(
+                          key: const Key('privacy-policy-consent-toggle'),
                           borderRadius: BorderRadius.circular(12),
+                          onTap: () => setDialogState(() {
+                            isChecked = !isChecked;
+                          }),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Checkbox(
+                                value: isChecked,
+                                activeColor: forestGreen,
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                onChanged: (value) => setDialogState(() {
+                                  isChecked = value ?? false;
+                                }),
+                              ),
+                              const SizedBox(width: 4),
+                              const Expanded(
+                                child: Padding(
+                                  padding: EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    'I have read and agree to the Privacy Policy and Terms & Conditions.',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      height: 1.35,
+                                      color: Color(0xFF26362B),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      child: const Text(
-                        'Continue',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: isChecked
+                                ? () => _acceptPrivacyPolicy(ctx)
+                                : null,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: forestGreen,
+                              disabledBackgroundColor: const Color(0xFFDDE2D7),
+                              disabledForegroundColor: const Color(0xFF5C6B60),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            child: const Text(
+                              'Continue',
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               );
             },
           ),
         );
       },
+    );
+  }
+
+  Widget _privacyPolicyLink({
+    required BuildContext context,
+    required Key key,
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool showDivider = false,
+  }) {
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        key: key,
+        onTap: onTap,
+        child: Column(
+          children: [
+            SizedBox(
+              height: 52,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Icon(icon, size: 22, color: const Color(0xFF176B36)),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF183D27),
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right_rounded,
+                      size: 22,
+                      color: Color(0xFF617268),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (showDivider)
+              const Divider(height: 1, thickness: 1, color: Color(0xFFE1E7DE)),
+          ],
+        ),
+      ),
     );
   }
 

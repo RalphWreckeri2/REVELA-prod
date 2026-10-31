@@ -7,8 +7,6 @@ from api.models.detection_runs import (
 import difflib
 import hashlib
 import math
-import numpy as np
-from sklearn.cluster import DBSCAN
 import os
 import random
 import time
@@ -21,6 +19,17 @@ from app import mysql
 from api.registry.service import _flag_source_sql, _has_enforcement_columns
 from api.flags.compliance import (
     decorate_compliance, origin_source_sql, registry_link_sql, verified_green_at_sql,
+)
+from api.analytics.hotspots import (
+    HOTSPOT_POPULATION_OBJECTIVE,
+    build_hotspot_population_sql,
+    cluster_hotspot_rows,
+    count_hotspot_dispositions,
+    hotspot_population_flags,
+    load_barangay_polygons,
+    read_hotspot_settings,
+    resolve_hotspot_parameters,
+    serialize_map_hotspot_clusters,
 )
 from api.models.geospatial import (
     SOURCE_DETECTION,
@@ -58,6 +67,10 @@ from api.utils.places_rate_limit import (
     LEGACY_NEARBY_LIMITER,
 )
 from api.utils import quota_settings, test_mode
+from api.utils.barangay_points import (
+    BARANGAY_POINTS_BY_ID,
+    MUNICIPALITY_CENTROID,
+)
 from api.utils.barangay_scope import validate_barangay_scope
 
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
@@ -1376,25 +1389,17 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
         ]
 
     candidates = []
-    for idx, row in enumerate(barangay_rows):
-        name = (row.get("barangayName") if isinstance(
-            row, dict) else row[1]) or ""
-        matched = None
-        normalized_name = _normalize_barangay_name(name)
-        for poly_name, poly in _BARANGAY_POLYGONS.items():
-            if normalized_name and (
-                normalized_name in _normalize_barangay_name(poly_name)
-                or _normalize_barangay_name(poly_name) in normalized_name
-            ):
-                matched = poly.centroid
-                break
-
-        if matched is None:
-            lat = 13.9667 + ((idx % 4) - 1.5) * 0.0035
-            lng = 121.1167 + ((idx % 3) - 1) * 0.0038
-            matched = Point(lng, lat)
-
-        base_lat, base_lng = matched.y, matched.x
+    for row in barangay_rows:
+        barangay_id = (
+            row.get("barangayID") if isinstance(row, dict) else row[0]
+        )
+        point_data = BARANGAY_POINTS_BY_ID.get(int(barangay_id))
+        if point_data is None:
+            raise ValueError(
+                f"No generated point for barangayID {barangay_id!r}."
+            )
+        base_lat = point_data["representativePoint"]["lat"]
+        base_lng = point_data["representativePoint"]["lng"]
         offsets = [
             (0.0000, 0.0000),
             (0.0018, 0.0025),
@@ -1407,21 +1412,10 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
             if _within_municipality(lat, lng):
                 candidates.append((lat, lng))
 
-    anchor_points = [
-        (13.9490, 121.1040),
-        (13.9498, 121.1188),
-        (13.9595, 121.0900),
-        (13.9595, 121.1248),
-        (13.9705, 121.0925),
-        (13.9746, 121.1240),
-        (13.9832, 121.0998),
-        (13.9860, 121.1185),
-        (13.9988, 121.1090),
-        (13.9667, 121.1167),
-    ]
-    for lat, lng in anchor_points:
-        if _within_municipality(lat, lng):
-            candidates.append((lat, lng))
+    for point_data in BARANGAY_POINTS_BY_ID.values():
+        point = point_data["representativePoint"]
+        if _within_municipality(point["lat"], point["lng"]):
+            candidates.append((point["lat"], point["lng"]))
 
     seen = set()
     distinct = []
@@ -1432,7 +1426,12 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
         if key in seen:
             continue
         seen.add(key)
-        score = history.get(key, 0) + abs(lat - 13.9667) + abs(lng - 121.1167)
+        center = MUNICIPALITY_CENTROID
+        score = (
+            history.get(key, 0)
+            + abs(lat - center["lat"])
+            + abs(lng - center["lng"])
+        )
         scored.append((score, lat, lng))
 
     point_limit = max(1, min(24, int(max_points)))
@@ -1440,7 +1439,7 @@ def _quick_discovery_points(barangay_rows=None, max_points=24):
         distinct.append((lat, lng))
 
     if not distinct:
-        return [(13.9667, 121.1167)]
+        return [(MUNICIPALITY_CENTROID["lat"], MUNICIPALITY_CENTROID["lng"])]
 
     return distinct
 
@@ -1623,6 +1622,21 @@ def _detection_work_limit_metrics():
         "work_budget_max_requests": (
             max_requests if recorded_requests is None else recorded_requests
         ),
+    }
+
+
+def _detection_requests_used():
+    calls = getattr(_places_run_state, "calls", {})
+    return int(calls.get("legacy_nearby", 0) + calls.get("new_nearby", 0))
+
+
+def _detection_stop_metadata(stop_reason):
+    limits = _detection_work_limit_metrics()
+    return {
+        "stop_reason": stop_reason,
+        "requests_used": _detection_requests_used(),
+        "max_requests": limits["work_budget_max_requests"],
+        "max_seconds": limits["work_budget_max_seconds"],
     }
 
 
@@ -2830,7 +2844,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         if terminal_gaps:
             update_detection_run_status(
                 run_id, "completed_with_gaps",
-                new_flags=new_flags, total_checked=total_checked)
+                new_flags=new_flags, total_checked=total_checked,
+                **_detection_stop_metadata("completed"))
             msg = (
                 f"Scan reached all {state['total_points']} grid points, but "
                 f"{state['incomplete_points']} dense cells remained saturated. "
@@ -2842,8 +2857,22 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "percentage": 100, "status": msg
             })
         elif not scan_terminal:
+            work_budget_reason = getattr(
+                _places_run_state, "work_budget_reason", None
+            )
+            if state["api_error_stop"]:
+                stop_reason = "api_error"
+            elif (
+                state.get("work_budget_stop")
+                and work_budget_reason == "request_limit"
+            ):
+                stop_reason = "request_limit"
+            else:
+                stop_reason = "work_budget"
             update_detection_run_status(
-                run_id, "partial", new_flags=new_flags, total_checked=total_checked)
+                run_id, "partial", new_flags=new_flags,
+                total_checked=total_checked,
+                **_detection_stop_metadata(stop_reason))
             msg = (
                 f"Scan partial: {done_total} of {state['total_points']} grid points completed. "
                 f"{new_flags} new flags recorded. "
@@ -2866,7 +2895,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             })
         else:
             update_detection_run_status(
-                run_id, "completed", new_flags=new_flags, total_checked=total_checked)
+                run_id, "completed", new_flags=new_flags,
+                total_checked=total_checked,
+                **_detection_stop_metadata("completed"))
             hub.publish_to_admins({
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
@@ -2935,7 +2966,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         )
         update_detection_run_status(
             run_id, "partial",
-            new_flags=counters["new_flags"], total_checked=counters["total_checked"])
+            new_flags=counters["new_flags"],
+            total_checked=counters["total_checked"],
+            **_detection_stop_metadata("places_quota"))
         msg = (f"{be} Progress is saved: {done_total} of {state['total_points']} grid points are done, "
                f"{counters['new_flags']} new flag(s) recorded in this run. Run Detection again later to continue "
                "where it stopped. This did not use one of your monthly scans.")
@@ -3067,6 +3100,22 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
         effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
         registry_flag_color = _registry_row_flag_color_sql("r", ladder=ladder)
         unlock = "0"
+        registry_match_lateral = """
+            LEFT JOIN LATERAL (
+                SELECT businessID, barangayID, businessSize, businessAddress, latitude,
+                       longitude, applicationStatus, matchStatus, coordSource, matchScore
+                FROM official_registry
+                WHERE (businessID IS NOT NULL AND g.businessID IS NOT NULL
+                       AND businessID = g.businessID)
+                   OR (g.placeID IS NOT NULL AND placeID = g.placeID
+                       AND (g.businessID IS NULL OR businessID = g.businessID))
+                   OR (g.businessID IS NULL AND barangayID = g.barangayID
+                       AND businessName = g.detectedName)
+                ORDER BY (g.businessID IS NOT NULL AND businessID = g.businessID) DESC,
+                         (g.placeID IS NOT NULL AND placeID = g.placeID) DESC
+                LIMIT 1
+            ) r ON TRUE
+        """
 
         # ── Build per-source WHERE fragments ────────────────────────────────────
         # Filters that apply to the geospatial_logs branch
@@ -3129,7 +3178,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             reg_params.append(color)
 
         if barangay_id:
-            geo_conditions.append("g.barangayID = %s")
+            geo_conditions.append("COALESCE(r.barangayID, g.barangayID) = %s")
             geo_params.append(barangay_id)
             reg_conditions.append("r.barangayID = %s")
             reg_params.append(barangay_id)
@@ -3146,6 +3195,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
             SELECT COUNT(*) AS total FROM (
                 SELECT g.logID
                 FROM geospatial_logs g
+                {registry_match_lateral}
                 {geo_where}
 
                 UNION ALL
@@ -3184,6 +3234,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     b.barangayID,
                     b.barangayName,
                     r.businessSize,
+                    (r.businessID IS NOT NULL) AS registryMatched,
                     COALESCE(g.nearestLandmark, r.businessAddress) AS resolvedAddress,
                     {_flag_source_sql("g", _OLD_MAP_FLAG_SOURCE, cursor)}
                         AS flagSource,
@@ -3200,21 +3251,12 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     ) AS verificationStatus,
                     r.matchStatus,
                     r.coordSource,
-                    r.matchScore
+                    r.matchScore,
+                    g.barangayID AS recordedBarangayID
                 FROM geospatial_logs g
-                LEFT JOIN barangays b ON g.barangayID = b.barangayID
-                LEFT JOIN LATERAL (
-                    SELECT businessID, businessSize, businessAddress, latitude, longitude, applicationStatus,
-                           matchStatus, coordSource, matchScore
-                    FROM official_registry
-                    WHERE (g.businessID IS NOT NULL AND businessID = g.businessID)
-                       OR (g.placeID IS NOT NULL AND placeID = g.placeID
-                           AND (g.businessID IS NULL OR businessID = g.businessID))
-                       OR (g.businessID IS NULL AND barangayID = g.barangayID AND businessName = g.detectedName)
-                    ORDER BY (g.businessID IS NOT NULL AND businessID = g.businessID) DESC,
-                             (g.placeID IS NOT NULL AND placeID = g.placeID) DESC
-                    LIMIT 1
-                ) r ON TRUE
+                {registry_match_lateral}
+                LEFT JOIN barangays b
+                  ON COALESCE(r.barangayID, g.barangayID) = b.barangayID
                 {geo_where}
 
                 UNION ALL
@@ -3237,6 +3279,7 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     b.barangayID               AS barangayID,
                     b.barangayName             AS barangayName,
                     r.businessSize             AS businessSize,
+                    1                          AS registryMatched,
                     r.businessAddress          AS resolvedAddress,
                     '{SOURCE_REGISTRY}'        AS flagSource,
                     '{SOURCE_REGISTRY}'        AS originSource,
@@ -3245,7 +3288,8 @@ def get_flags(color=None, barangay_id=None, page=1, per_page=50, reported_by_use
                     NULL                       AS verificationStatus,
                     r.matchStatus              AS matchStatus,
                     r.coordSource              AS coordSource,
-                    r.matchScore               AS matchScore
+                    r.matchScore               AS matchScore,
+                    r.barangayID               AS recordedBarangayID
                 FROM (
                     SELECT official_registry.*,
                            ROW_NUMBER() OVER (ORDER BY businessID) AS registryOrdinal
@@ -4302,139 +4346,57 @@ def delete_flag(log_id, actor_role=None):
             cursor.close()
 
 
-# ── DBSCAN parameters (recalibrate during testing if over/under-clustering) ───
-#
-# DBSCAN_EPS_RAD   — neighbourhood search radius expressed in radians.
-#                    20 m is chosen to match the ~8–15 m commercial lot
-#                    frontage typical of a rural Filipino municipality;
-#                    two adjacent flagged venues will therefore be pulled
-#                    into the same cluster only if they are genuinely
-#                    co-located, not merely on the same street block.
-#
-# DBSCAN_MIN_SAMPLES — minimum flags required to form a dense cluster.
-#                    Set to 3 so that a pair of adjacent detections does
-#                    NOT qualify as a systemic hotspot; at least three
-#                    co-located Red Flags must exist. Isolated detections
-#                    (label == -1) are treated as statistical anomalies
-#                    and are discarded before the result is returned.
-#
-# To recalibrate: adjust DBSCAN_EPS_M (converted automatically) and/or
-# DBSCAN_MIN_SAMPLES, then re-run and inspect cluster counts vs map.
-EARTH_RADIUS_M = 6_371_000
-DBSCAN_EPS_M = 20                            # metres  ← change this to retune
-DBSCAN_EPS_RAD = DBSCAN_EPS_M / EARTH_RADIUS_M  # radians fed to sklearn
-# MinPts  ← change this to retune
-DBSCAN_MIN_SAMPLES = 3
-
-
-def get_red_flag_clusters():
-    """
-    Barangay Risk Heatmap — geographic hotspot detection for Red Flags.
-
-    Implements the second analytic level described in the system design:
-    DBSCAN is used to collate neighbouring Red Flags into dense clusters
-    while discarding single detections as statistical anomalies (noise).
-
-    Algorithm
-    ---------
-    1. Pull every Red Flag coordinate from geospatial_logs.
-    2. Run DBSCAN (haversine metric, eps = DBSCAN_EPS_M metres,
-       min_samples = DBSCAN_MIN_SAMPLES) to identify spatially dense
-       groups without requiring a pre-specified cluster count.
-    3. Discard noise points (label == -1) — isolated flags are treated
-       as anomalies, not hotspots.
-    4. For each true cluster compute:
-         • centroid  – mean lat/lng of member flags
-         • size      – number of Red Flags in the cluster
-         • logIDs    – contributing log IDs (for drill-down)
-         • radius_m  – max geodesic distance from centroid to any member
-           (used by the front end to size the circle overlay)
-    5. Return clusters sorted largest-first.
-
-    Returns
-    -------
-    (list[dict], None)   on success
-    (None, str)          on error
-    """
+def get_hotspot_cluster_payload(population=HOTSPOT_POPULATION_OBJECTIVE):
+    """Return canonical cluster results and provenance for a named population."""
+    cursor = None
     try:
         cursor = mysql.connection.cursor()
-        cursor.execute("""
-            SELECT logID, latitude, longitude
-            FROM   geospatial_logs
-            WHERE  flagColor = 'Red'
-              AND  latitude  IS NOT NULL
-              AND  longitude IS NOT NULL
-        """)
-        rows = cursor.fetchall()
-        cursor.close()
+        ladder = ladder_columns_available(cursor)
+        parameters, fallbacks = resolve_hotspot_parameters(
+            read_hotspot_settings(cursor)
+        )
+        flags = hotspot_population_flags(population, parameters["flags"])
+        population_sql, population_params = build_hotspot_population_sql(
+            _effective_flag_color_sql("g", ladder=ladder),
+            registry_link_sql("g"),
+            None,
+            None,
+            population=population,
+            flags=flags,
+        )
+        cursor.execute(population_sql, population_params)
+        population_rows = list(cursor.fetchall() or [])
 
-        if not rows:
-            return [], None
-
-        # ── Build coordinate matrix in radians ──────────────────────────────
-        log_ids = [r["logID"] for r in rows]
-        lats = [float(r["latitude"]) for r in rows]
-        lngs = [float(r["longitude"]) for r in rows]
-
-        coords_rad = np.radians(np.column_stack([lats, lngs]))   # (N, 2)
-
-        # ── DBSCAN ──────────────────────────────────────────────────────────
-        db = DBSCAN(
-            eps=DBSCAN_EPS_RAD,
-            min_samples=DBSCAN_MIN_SAMPLES,
-            algorithm="ball_tree",
-            metric="haversine",
-        ).fit(coords_rad)
-
-        labels = db.labels_   # -1 = noise (isolated flag)
-
-        # ── Aggregate per cluster ────────────────────────────────────────────
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for idx, label in enumerate(labels):
-            groups[label].append(idx)
-
-        clusters = []
-        for label, indices in groups.items():
-
-            # label == -1 → DBSCAN noise: isolated flags that do not share a
-            # 20-m neighbourhood with ≥ 2 others.  Per the system design these
-            # are statistical anomalies and are intentionally discarded here.
-            if label == -1:
-                continue
-
-            member_lats = [lats[i] for i in indices]
-            member_lngs = [lngs[i] for i in indices]
-            member_ids = [log_ids[i] for i in indices]
-
-            centroid_lat = sum(member_lats) / len(member_lats)
-            centroid_lng = sum(member_lngs) / len(member_lngs)
-
-            # Radius = max geodesic distance from centroid to any member flag.
-            # A minimum of DBSCAN_EPS_M is enforced so that very tight clusters
-            # (e.g. two flags at nearly identical coordinates) are still visible
-            # as a circle on the map at town-level zoom.
-            radius_m = 0.0
-            for mlat, mlng in zip(member_lats, member_lngs):
-                from geopy.distance import geodesic
-                d = geodesic((centroid_lat, centroid_lng), (mlat, mlng)).meters
-                if d > radius_m:
-                    radius_m = d
-
-            radius_m = max(radius_m, DBSCAN_EPS_M)
-
-            clusters.append({
-                "clusterID":   int(label),
-                "centroidLat": round(centroid_lat, 7),
-                "centroidLng": round(centroid_lng, 7),
-                "size":        len(indices),
-                "radius_m":    round(radius_m, 1),
-                "logIDs":      member_ids,
-            })
-
-        # Largest hotspots first
-        clusters.sort(key=lambda c: c["size"], reverse=True)
-        return clusters, None
+        cursor.execute(
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID"
+        )
+        barangay_rows = list(cursor.fetchall() or [])
+        clusters, _ = cluster_hotspot_rows(
+            population_rows,
+            parameters,
+            load_barangay_polygons(barangay_rows),
+        )
+        return {
+            "clusters": serialize_map_hotspot_clusters(clusters, parameters),
+            "population": count_hotspot_dispositions(
+                population_rows,
+                population=population,
+                flags=flags,
+            ),
+            "parameters_used": parameters,
+            "parameter_fallbacks": fallbacks,
+        }, None
 
     except Exception as e:
         return None, str(e)
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+
+def get_red_flag_clusters(population=HOTSPOT_POPULATION_OBJECTIVE):
+    """Compatibility wrapper returning only the historical cluster list."""
+    payload, error = get_hotspot_cluster_payload(population)
+    if error:
+        return None, error
+    return payload["clusters"], None

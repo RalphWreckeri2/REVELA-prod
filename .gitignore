@@ -32,3 +32,4 @@ Thumbs.db
 
 # Analytics and Colab Exports
 revela_backend/colab_export/
+.mcp.json

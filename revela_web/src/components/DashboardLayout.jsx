@@ -296,6 +296,8 @@ function formatTimeAgo(iso) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+const NOTIFICATIONS_PER_PAGE = 3;
+
 function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileClick }) {
   const { token, user: authUser, refreshUser } = useAuth();
   const [showNotifications, setShowNotifications] = useState(false);
@@ -314,11 +316,20 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   const isAdmin = authUser?.role === "Admin" || authUser?.role === "SUPER_ADMIN" || authUser?.role === "System Administrator";
   const [notifications, setNotifications] = useState([]);
+  const [recentNotifications, setRecentNotifications] = useState([]);
+  const [notificationPage, setNotificationPage] = useState(0);
+  const notificationPageRef = useRef(0);
+  const notificationPageRequestRef = useRef(0);
+  const notificationRefreshRequestRef = useRef(0);
+  const [notificationTotal, setNotificationTotal] = useState(0);
+  const [notificationPageLoading, setNotificationPageLoading] = useState(false);
+  const [notificationPageError, setNotificationPageError] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
   const [manualNotificationPending, setManualNotificationPending] = useState(false);
   const [dismissedAlertId, setDismissedAlertId] = useState(null);
-  const latestAlert = notifications[0];
+  const latestAlert = recentNotifications[0];
+  const notificationPageCount = Math.max(1, Math.ceil(notificationTotal / NOTIFICATIONS_PER_PAGE));
   const showSnippet = Boolean(
     isAdmin && unreadCount > 0 && latestAlert && !latestAlert.readAt &&
     latestAlert.id !== dismissedAlertId
@@ -326,17 +337,58 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   const refreshNotifications = useCallback(async () => {
     if (!token || !isAdmin) return;
+    const requestId = ++notificationRefreshRequestRef.current;
     try {
       const [listRes, countRes] = await Promise.all([
-        getNotificationsRequest(token),
+        getNotificationsRequest(token, { limit: NOTIFICATIONS_PER_PAGE, offset: 0 }),
         getNotificationsUnreadCountRequest(token),
       ]);
-      setNotifications(listRes?.data ?? []);
+      if (requestId !== notificationRefreshRequestRef.current) return;
+      const recent = listRes?.data ?? [];
+      const total = listRes?.total ?? recent.length;
+      setRecentNotifications(recent);
+      setNotificationTotal(total);
+      if (notificationPageRef.current >= Math.max(1, Math.ceil(total / NOTIFICATIONS_PER_PAGE))) {
+        notificationPageRequestRef.current += 1;
+        notificationPageRef.current = 0;
+        setNotificationPage(0);
+        setNotificationPageLoading(false);
+      }
+      if (notificationPageRef.current === 0) setNotifications(recent);
       setUnreadCount(countRes?.count ?? 0);
     } catch {
       /* ignore */
     }
   }, [token, isAdmin]);
+
+  const showNotificationPage = async (page) => {
+    if (!token || notificationPageLoading || page < 0 || page >= notificationPageCount) return;
+    const requestId = ++notificationPageRequestRef.current;
+    setNotificationPageLoading(true);
+    setNotificationPageError("");
+    try {
+      const result = await getNotificationsRequest(token, {
+        limit: NOTIFICATIONS_PER_PAGE,
+        offset: page * NOTIFICATIONS_PER_PAGE,
+      });
+      if (requestId !== notificationPageRequestRef.current) return;
+      const list = result?.data ?? [];
+      setNotificationTotal(result?.total ?? list.length);
+      if (page > 0 && !list.length) {
+        notificationPageRef.current = 0;
+        setNotificationPage(0);
+        setNotifications(result?.total ? recentNotifications : []);
+      } else {
+        notificationPageRef.current = page;
+        setNotificationPage(page);
+        setNotifications(list);
+      }
+    } catch {
+      if (requestId === notificationPageRequestRef.current) setNotificationPageError("Could not load notifications. Try again.");
+    } finally {
+      if (requestId === notificationPageRequestRef.current) setNotificationPageLoading(false);
+    }
+  };
 
   const refreshNotificationsOnEffect = useEffectEvent(() => {
     refreshNotifications();
@@ -513,14 +565,24 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
     setShowNotifications(next);
     setDismissedAlertId(latestAlert?.id ?? null);
     if (next && isAdmin && token) {
+      notificationPageRequestRef.current += 1;
+      notificationPageRef.current = 0;
+      setNotificationPage(0);
+      setNotificationPageLoading(false);
+      setNotificationPageError("");
+      setNotifications(recentNotifications);
       await refreshNotifications();
     }
   };
 
   const handleMarkAllAsRead = async (e) => {
     if (e) e.stopPropagation();
+    notificationRefreshRequestRef.current += 1;
     setUnreadCount(0);
     setNotifications((prev) =>
+      prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
+    );
+    setRecentNotifications((prev) =>
       prev.map((n) => ({ ...n, readAt: n.readAt || new Date().toISOString() }))
     );
     if (token) {
@@ -534,7 +596,15 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   const handleClearAll = async (e) => {
     if (e) e.stopPropagation();
+    notificationRefreshRequestRef.current += 1;
+    notificationPageRequestRef.current += 1;
+    notificationPageRef.current = 0;
+    setNotificationPage(0);
+    setNotificationPageLoading(false);
+    setNotificationPageError("");
     setNotifications([]);
+    setRecentNotifications([]);
+    setNotificationTotal(0);
     setUnreadCount(0);
     if (token) {
       try {
@@ -547,9 +617,13 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
 
   const handleNotificationClick = async (note) => {
     if (!note.readAt && token) {
+      notificationRefreshRequestRef.current += 1;
       try {
         markNotificationsReadRequest(token, [note.id]).catch(() => {});
         setNotifications((prev) =>
+          prev.map((n) => (n.id === note.id ? { ...n, readAt: new Date().toISOString() } : n))
+        );
+        setRecentNotifications((prev) =>
           prev.map((n) => (n.id === note.id ? { ...n, readAt: new Date().toISOString() } : n))
         );
         setUnreadCount((c) => Math.max(0, c - 1));
@@ -605,6 +679,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
         <span className="top-nav-separator" aria-hidden="true" />
 
         <div className="top-nav-account" role="group" aria-label="Account and notifications">
+        <div className="top-nav-notifications">
         <div className="notification-wrapper" style={{ position: "relative" }}>
           <button
             ref={notificationButtonRef}
@@ -692,7 +767,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
                 <span className={`notification-connection-dot${isLiveConnected ? "" : " notification-connection-dot--offline"}`} aria-hidden="true" />
                 {isAdmin ? isLiveConnected ? "Notification stream connected" : "Notification stream reconnecting · alerts checked periodically" : "Notification stream unavailable for this account"}
               </div>
-              <div className="notification-list" style={{ maxHeight: "560px", overflowY: "auto", overscrollBehavior: "contain" }}>
+              <div className="notification-list" aria-busy={notificationPageLoading}>
                 {!isAdmin && (
                   <div className="notification-item">
                     <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13 }}>
@@ -700,7 +775,10 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
                     </p>
                   </div>
                 )}
-                {isAdmin && notifications.length === 0 && (
+                {isAdmin && notificationPageLoading && (
+                  <p className="notification-page-status" role="status">Loading notifications…</p>
+                )}
+                {isAdmin && !notificationPageLoading && notifications.length === 0 && (
                   <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 16 }}>
                     <img src="/searching.png" alt="No notifications" style={{ height: 100, objectFit: "contain", opacity: 0.9 }} />
                     <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13, maxWidth: 220 }}>
@@ -708,7 +786,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
                     </p>
                   </div>
                 )}
-                {isAdmin &&
+                {isAdmin && !notificationPageLoading &&
                   notifications.map((note) => {
                     const isUnread = !note.readAt;
                     return (
@@ -763,8 +841,23 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
                     );
                   })}
               </div>
+              {isAdmin && (notificationTotal > NOTIFICATIONS_PER_PAGE || notificationPage > 0) && (
+                <nav className="notification-pagination" aria-label="Notification pages">
+                  {notificationPageError && <p role="alert" className="notification-page-error">{notificationPageError}</p>}
+                  <button type="button" disabled={notificationPage === 0 || notificationPageLoading}
+                    onClick={() => showNotificationPage(notificationPage - 1)} aria-label="See newer notifications">
+                    ← Newer
+                  </button>
+                  <span aria-live="polite">{notificationPage + 1} / {notificationPageCount}</span>
+                  <button type="button" disabled={notificationPage + 1 >= notificationPageCount || notificationPageLoading}
+                    onClick={() => showNotificationPage(notificationPage + 1)} aria-label="See previous notifications">
+                    See previous →
+                  </button>
+                </nav>
+              )}
             </div>
           )}
+        </div>
         </div>
 
         <button
@@ -774,12 +867,7 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
           aria-label={`Open profile for ${user.name}`}
           title="View profile"
         >
-          <div className="nav-avatar">{user.initials}</div>
-          <div className="nav-user-info">
-            <span className="user-name">{user.name}</span>
-            <span className="nav-account-caption">Account</span>
-          </div>
-          <span className="nav-profile-chevron" aria-hidden="true">⌄</span>
+          <div className="nav-avatar">B</div>
         </button>
         </div>
       </div>

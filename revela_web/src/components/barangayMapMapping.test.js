@@ -20,9 +20,9 @@ test("GeoJSON barangay names map to all 16 numeric barangay IDs", () => {
     Bayorbor: 6,
     Bubuyan: 7,
     Calingatan: 8,
-    Kinalaglagan: 9,
+    Loob: 9,
     "Lumang Lipa": 10,
-    Loob: 11,
+    Kinalaglagan: 11,
     Manggahan: 12,
     Nangkaan: 13,
     "San Sebastian": 14,
@@ -32,8 +32,49 @@ test("GeoJSON barangay names map to all 16 numeric barangay IDs", () => {
   assert.equal(getBarangayIdForGeoJsonName("District I (Pob.)"), 1);
   assert.equal(getBarangayIdForGeoJsonName("District II (Pob.)"), 2);
   assert.equal(getBarangayIdForGeoJsonName("Barangay II-A (Pob.)"), 3);
+  assert.equal(getBarangayIdForGeoJsonName("Loob"), 9);
   assert.equal(getBarangayIdForGeoJsonName("Lumang Lipa"), 10);
+  assert.equal(getBarangayIdForGeoJsonName("Kinalaglagan"), 11);
   assert.equal(getBarangayIdForGeoJsonName("Unmapped barangay"), null);
+});
+
+test("every ADM4_EN mapping matches the exported live Railway barangay table", async () => {
+  const fixturePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "fixtures/railwayBarangays.json",
+  );
+  const { rows } = JSON.parse(await readFile(fixturePath, "utf8"));
+  const liveById = new Map(rows.map((row) => [row.barangayID, row]));
+  const sharedMappingPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../revela_backend/api/utils/adm4_en_barangay_ids.json",
+  );
+  const sharedMapping = JSON.parse(await readFile(sharedMappingPath, "utf8"));
+  const geoJsonPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../public/data/mataasnakahoy.json",
+  );
+  const geoJson = JSON.parse(await readFile(geoJsonPath, "utf8"));
+  const featureNames = geoJson.features.map((feature) => feature.properties.ADM4_EN);
+
+  assert.equal(rows.length, 16);
+  assert.equal(new Set(rows.map((row) => row.barangayID)).size, 16);
+  assert.equal(featureNames.length, 16);
+  assert.deepEqual(ADM4_EN_TO_BARANGAY_ID, sharedMapping);
+  assert.equal(ADM4_EN_TO_BARANGAY_ID.Loob, 9);
+  assert.equal(ADM4_EN_TO_BARANGAY_ID.Kinalaglagan, 11);
+
+  for (const geoJsonName of featureNames) {
+    const barangayId = sharedMapping[geoJsonName];
+    assert.ok(barangayId, `Missing shared mapping for ${geoJsonName}`);
+    const liveRow = liveById.get(barangayId);
+    assert.ok(liveRow, `Missing Railway fixture row for barangayID ${barangayId}`);
+    assert.equal(
+      getBarangayIdForGeoJsonName(geoJsonName),
+      barangayId,
+      `${geoJsonName} should map to barangayID ${liveRow.barangayID}`,
+    );
+  }
 });
 
 test("canonical GeoJSON features map one-to-one and exterior rings are normalized", async () => {

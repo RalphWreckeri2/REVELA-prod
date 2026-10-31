@@ -30,6 +30,7 @@ Scheduled maintenance (cron / task scheduler), inside an app context:
     purge_expired_coords(dry_run=False)   # safety net; clears Google coords older than 28 days
 """
 import hashlib
+import logging
 import math
 import os
 import random
@@ -47,6 +48,7 @@ from api.utils.places_quota import (
 )
 from api.utils.quota_config import API_QUOTA_CONFIG
 from api.utils import quota_settings
+from api.utils.barangay_points import MUNICIPALITY_CENTROID
 
 PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 PLACE_DETAILS_URL = "https://places.googleapis.com/v1/places/{pid}"
@@ -54,7 +56,10 @@ GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 MUNICIPALITY = os.getenv("GEO_MUNICIPALITY", "Mataasnakahoy")
 PROVINCE = os.getenv("GEO_PROVINCE", "Batangas")
-DEFAULT_CENTER = (13.9667, 121.1167)
+DEFAULT_CENTER = (
+    MUNICIPALITY_CENTROID["lat"],
+    MUNICIPALITY_CENTROID["lng"],
+)
 DEFAULT_BIAS_RADIUS_M = 8000.0
 BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
@@ -166,7 +171,7 @@ def _is_within_municipal_bounds(lat, lng):
     """
     Screens candidate coordinates against Mataasnakahoy geographic bounds.
     Replaces unconstrained bounding box with Mataasnakahoy municipal polygon boundary screening
-    and center bias radius (8,000m from center: 13.9667, 121.1167).
+    and center bias radius (8,000m from the generated municipality centroid).
     """
     if lat is None or lng is None:
         return False
@@ -781,17 +786,51 @@ def record_coord_meta(cursor, business_id, meta):
 
 
 # ------------------------------ pins (geospatial_logs) -----------------------
-def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, business_id=None):
-    """Update the map pin only if it is still a copy of the registry coordinate being replaced."""
+def _update_pin(
+    cursor,
+    barangay_id,
+    name,
+    old_lat,
+    old_lng,
+    new_lat,
+    new_lng,
+    business_id=None,
+    force_linked=False,
+    place_id=None,
+    new_place_id=None,
+):
+    """Sync registry coordinates without moving a confirmed pin automatically."""
     if old_lat is None or old_lng is None:
         return
+    confirmed_log_id = None
     from api.registry.inspection_link import confirmed_pin_column_available
     if business_id and confirmed_pin_column_available(cursor):
         cursor.execute("SELECT confirmedLogID FROM official_registry WHERE businessID = %s FOR UPDATE", (business_id,))
         confirmed = cursor.fetchone()
-        if confirmed and confirmed.get("confirmedLogID") is not None:
+        confirmed_log_id = _g(confirmed, "confirmedLogID", 0)
+        if confirmed_log_id is not None and not force_linked:
             return
     if business_id:
+        if force_linked:
+            if confirmed_log_id is not None:
+                cursor.execute(
+                    """UPDATE geospatial_logs
+                       SET latitude=%s, longitude=%s, placeID=%s
+                       WHERE logID=%s AND businessID=%s""",
+                    (new_lat, new_lng, new_place_id, confirmed_log_id,
+                     business_id),
+                )
+                return
+            cursor.execute(
+                """UPDATE geospatial_logs SET latitude=%s, longitude=%s, placeID=%s
+                   WHERE businessID = %s
+                     AND (placeID <=> %s OR placeID IS NULL OR %s IS NULL)
+                     AND ABS(latitude-%s) < 0.000001
+                     AND ABS(longitude-%s) < 0.000001""",
+                (new_lat, new_lng, new_place_id, business_id, place_id, place_id,
+                 float(old_lat), float(old_lng)),
+            )
+            return
         cursor.execute(
             """UPDATE geospatial_logs SET latitude=%s, longitude=%s
                WHERE businessID = %s
@@ -808,6 +847,8 @@ def _update_pin(cursor, barangay_id, name, old_lat, old_lng, new_lat, new_lng, b
 def _g(row, key, idx):
     if isinstance(row, dict):
         return row.get(key)
+    if row is None:
+        return None
     return row[idx] if len(row) > idx else None
 
 
@@ -1012,6 +1053,14 @@ def list_review_queue(page=1, per_page=20, search=""):
                 "matchScore", "candidateScore",
             ):
                 d[k] = float(d[k]) if d.get(k) is not None else None
+            review_score = d.get("candidateScore")
+            if review_score is None:
+                review_score = d.get("matchScore")
+            d["lowMatchScore"] = (
+                d.get("matchStatus") == "review"
+                and review_score is not None
+                and review_score < AUTO_ACCEPT
+            )
             d.setdefault("reviewHistoryID", None)
             candidate_has_coordinates = (
                 d.get("candidateLatitude") is not None
@@ -1056,6 +1105,9 @@ def list_review_queue(page=1, per_page=20, search=""):
             items.append(d)
         return {"data": items, "total": total, "page": page, "limit": per_page}, None
     except Exception as e:
+        logging.getLogger(__name__).exception(
+            "Failed to load registry pin suggestions"
+        )
         return None, str(e)
     finally:
         cur.close()
@@ -1286,6 +1338,19 @@ def decide_review(
                 if cur.rowcount == 0:
                     mysql.connection.rollback()
                     return False, "Business address changed while confirming the location"
+                _update_pin(
+                    cur,
+                    _g(r, "barangayID", 1),
+                    _g(r, "businessName", 2),
+                    _g(r, "latitude", 4),
+                    _g(r, "longitude", 5),
+                    _g(r, "latitude", 4),
+                    _g(r, "longitude", 5),
+                    business_id=business_id,
+                    force_linked=True,
+                    place_id=_g(r, "placeID", 6),
+                    new_place_id=_g(r, "placeID", 6),
+                )
                 from api.registry.reverify import record_location_history
                 record_location_history(
                     cur, business_id, "location_kept",
@@ -1393,6 +1458,9 @@ def decide_review(
                     cur, _g(r, "barangayID", 1), _g(r, "businessName", 2),
                     old_lat, old_lng, candidate_lat, candidate_lng,
                     business_id=business_id,
+                    force_linked=True,
+                    place_id=_g(r, "placeID", 6),
+                    new_place_id=candidate_place_id,
                 )
             cur.execute(
                 """UPDATE registry_pin_history
@@ -1497,6 +1565,9 @@ def decide_review(
                     proposal_lat,
                     proposal_lng,
                     business_id=business_id,
+                    force_linked=True,
+                    place_id=_g(r, "placeID", 6),
+                    new_place_id=proposal_place_id,
                 )
                 cur.execute(
                     """UPDATE registry_pin_history

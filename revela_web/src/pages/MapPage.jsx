@@ -13,6 +13,7 @@ import { MarkerClusterer, SuperClusterAlgorithm } from "@googlemaps/markercluste
 import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock, SkeletonList } from "../components/LoadingSkeleton";
 import "../styles/MapPage.css";
+import "../styles/barangayMapPopup.css";
 import InspectorReportsModal from "../components/InspectorReportsModal";
 import BusinessIDReview from "../components/BusinessIDReview";
 import { confirmBusinessID } from "../components/businessIDReviewFlow";
@@ -23,12 +24,38 @@ import {
   PREVIOUS_LOCATION,
   canConfirmLocationChoice,
   confirmLocationChoice,
+  formatPinMoveDistance,
+  isSamePinCandidate,
+  pinMoveDistanceMeters,
   resetLocationChoices,
+  reviewApprovalConfirmation,
   selectLocationChoice,
   selectedLocationChoice,
 } from "../components/locationReviewPolicy";
 import { activeInspectorsForDispatch, canDispatchFlag, dispatchButtonLabel } from "../components/dispatchEligibility";
 import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
+import { hotspotCircleSummary } from "../components/mapRiskPresentation";
+import {
+  APPROXIMATE_LOCATION_LABEL,
+  createApproximateMarkerContent,
+  createApproximateMarkerIcon,
+} from "../components/approximateMapMarker";
+import { FLAG_COLORS, defaultColor } from "../components/flagColors";
+import {
+  matchesHotspotGroup,
+  parseHotspotGroupParams,
+} from "../components/hotspotPresentation";
+import { createBarangayMapPopup } from "../components/barangayMapPopup";
+import {
+  MAP_LOCATION_METRIC_DEFINITIONS,
+  aggregateMapLocationMetrics,
+  createCentroidPreviewFlags,
+  formatBarangayLocationMismatch,
+  findStoredBarangayLocationMismatches,
+  getMapPositionBarangayIDs,
+  hasMapCoordinates,
+  matchesMapBarangayFilter,
+} from "../components/mapLocationMetrics";
 import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
@@ -40,9 +67,10 @@ import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark, mapReady } from "../services/responsivenessBenchmark";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import { getBarangayIdForGeoJsonName, normalizeGeoJsonWinding } from "../components/barangayMapMapping";
 import {
-  BARANGAY_CENTROIDS,
   DEFAULT_MAP_CENTER,
+  getApproximateBarangayDisplayPoint,
   getBarangayCentroid,
 } from "../utils/barangayCentroids";
 import {
@@ -418,9 +446,8 @@ const REVIEW_QUEUE_PAGE_SIZE = 20;
 const MUNICIPAL_MAP_PADDING = 28;
 const MUNICIPAL_PAN_ALLOWANCE_RATIO = 0.03;
 
-// `public/data/mataasnakahoy.json` is a single outer boundary for the whole
-// municipality. Feature names must be listed here so the heatmap sums all
-// per-barangay Red Flag counts instead of matching barangay names to "Mataasnakahoy".
+// The current GeoJSON has 16 ADM4_EN barangay features. Retain this fallback
+// for any older municipal-only boundary used with the risk heatmap.
 const MUNICIPAL_BOUNDARY_NAMES = new Set(["mataasnakahoy", "mataas na kahoy"]);
 // const MAP_OPTIONS        = {
 //  disableDefaultUI: true,
@@ -434,23 +461,10 @@ const LAYER_OPTIONS = [
   { id: "base", label: "Base Map" },
   { id: "flags", label: "Flag Markers" },
   { id: "barangay", label: "Barangay Boundaries" },
-  { id: "diagnostics", label: "Risk Heatmap" },
+  { id: "diagnostics", label: "OPS Priority Tiers" },
 ];
 
 // Flag color â†’ UI color mapping
-const FLAG_COLORS = {
-  Red: { marker: "#ef4444", bg: "var(--flag-red-bg)", text: "var(--flag-red-text)", label: "Detected Unregistered" },
-  Yellow: { marker: "#f59e0b", bg: "var(--flag-yellow-bg)", text: "var(--flag-yellow-text)", label: "Suspected Unregistered" },
-  Yellow_Inspector: { marker: "#f59e0b", bg: "var(--flag-yellow-bg)", text: "var(--flag-yellow-text)", label: "Suspected Unregistered from Inspectors" },
-  Orange: { marker: "#e65100", bg: "var(--flag-orange-bg)", text: "var(--flag-orange-text)", label: "1st/2nd Warning / 3rd Notice Closure" },
-  Black: { marker: "#000000", bg: "var(--flag-black-bg)", text: "var(--flag-black-text)", label: "Blacklisted / Non-Responsive" },
-  Purple: { marker: "#7c3aed", bg: "var(--flag-purple-bg)", text: "var(--flag-purple-text)", label: "Closed / Abandoned" },
-  Green: { marker: "#22c55e", bg: "var(--flag-green-bg)", text: "var(--flag-green-text)", label: "Active Business" },
-  in_inspection: { marker: "#0284c7", bg: "rgba(2, 132, 199, 0.12)", text: "#0284c7", label: "Currently Being Inspected / Dispatched" },
-};
-
-const defaultColor = { marker: "var(--color-muted)", bg: "var(--flag-default-bg)", text: "var(--flag-default-text)", label: "Unknown" };
-
 /** Discrete barangay risk fills (HRI-style). Keys align with analytics `risk_level` + edge cases. */
 const HEATMAP_RISK_STYLE = {
   High: {
@@ -688,8 +702,14 @@ function computeMunicipalOutline(features) {
   }
 
   if (rings.length === 0) return null;
+  // The outer perimeter encloses the greatest area; an interior hole or a
+  // detailed fragment can have more vertices without being the municipality.
+  const area = (ring) => Math.abs(ring.reduce((sum, [x, y], i) => {
+    const [nextX, nextY] = ring[(i + 1) % ring.length];
+    return sum + x * nextY - nextX * y;
+  }, 0));
   let largest = rings[0];
-  for (const r of rings) if (r.length > largest.length) largest = r;
+  for (const r of rings) if (area(r) > area(largest)) largest = r;
   return largest;
 }
 
@@ -826,13 +846,12 @@ function normalizeFlag(flag) {
   const color = canonicalFlagColor(flag.flagColor);
   const rawLat = flag.latitude != null ? Number(flag.latitude) : null;
   const rawLng = flag.longitude != null ? Number(flag.longitude) : null;
-  const hasExactCoords = rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
-
-  const centroid = !hasExactCoords ? getBarangayCentroid(flag.barangayName || flag.barangay) : null;
-  const lat = hasExactCoords ? rawLat : (centroid?.lat ?? DEFAULT_MAP_CENTER.lat);
-  const lng = hasExactCoords ? rawLng : (centroid?.lng ?? DEFAULT_MAP_CENTER.lng);
-
-  const coords = `${Number(lat).toFixed(6)}°N, ${Number(lng).toFixed(6)}°E`;
+  const hasExactCoords = hasMapCoordinates({ latitude: rawLat, longitude: rawLng });
+  const lat = hasExactCoords ? rawLat : null;
+  const lng = hasExactCoords ? rawLng : null;
+  const coords = hasExactCoords
+    ? `${lat.toFixed(6)}°N, ${lng.toFixed(6)}°E`
+    : "Coordinates unavailable";
 
   const hasActiveInspection = (flag.verificationStatus != null && flag.verificationStatus !== 'Verified') ||
     flag.hasActiveInspection === true;
@@ -842,6 +861,8 @@ function normalizeFlag(flag) {
     id: flag.logID ?? flag.id,
     name: flag.detectedName ?? "Unknown Establishment",
     barangay: flag.barangayName ?? "Unknown Barangay",
+    recordedBarangayID: flag.recordedBarangayID ?? flag.barangayID ?? null,
+    recordedBarangayName: flag.recordedBarangayName ?? flag.barangayName ?? null,
     address: flag.resolvedAddress ?? flag.nearestLandmark ?? "",
     notes: flag.notes || "",
     source: flag.originSource ?? "unknown",
@@ -914,7 +935,14 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
   const [showMoreActions, setShowMoreActions] = useState(false);
   const fc = getFlagColor(flag.color);
 
-  const canShowDispatchButton = canDispatchFlag(flag, { isAdmin });
+  const noExactLocation = flag.isCentroidPreview || flag.hasExactCoords === false;
+  const dispatchStatusEligible = canDispatchFlag({
+    ...flag,
+    isCentroidPreview: false,
+    hasExactCoords: true,
+  }, { isAdmin });
+  const canShowDispatchButton = canDispatchFlag(flag, { isAdmin }) ||
+    (noExactLocation && dispatchStatusEligible);
   const dispatchButtonText = dispatchButtonLabel(flag);
   const information = businessDetailsInfo(flag);
 
@@ -947,8 +975,21 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
             <h2 style={{ fontSize: 24, color: "var(--color-ink)", fontWeight: 800, margin: "0 0 12px 0", lineHeight: 1.2 }}>
               {flag.name}
             </h2>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 8, background: fc.bg, border: `1px solid ${fc.marker}33`, fontSize: 12, fontWeight: 600, color: fc.marker }}>
-              {fc.label}
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 10px",
+              borderRadius: 8,
+              background: flag.isCentroidPreview ? "var(--color-surface)" : fc.bg,
+              border: `1px ${flag.isCentroidPreview ? "dashed" : "solid"} ${flag.isCentroidPreview ? "#64748b" : `${fc.marker}33`}`,
+              fontSize: 12,
+              fontWeight: 600,
+              color: flag.isCentroidPreview ? "#64748b" : fc.marker,
+            }}>
+              {flag.isCentroidPreview
+                ? "Approximate location: barangay center"
+                : fc.label}
             </div>
           </div>
           <button
@@ -968,6 +1009,26 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
               {flag.size && flag.size !== "—" && flag.size !== "â€”" && <span style={{ color: "var(--color-muted)" }}> &bull; {flag.size} Size</span>}
             </div>
           </div>
+          {flag.locationReview?.kind === "mismatch" && (
+            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+              {formatBarangayLocationMismatch(flag.locationReview.storedName, flag.locationReview.polygonName)}. Review only; the recorded and map-position barangays remain distinct.
+            </p>
+          )}
+          {flag.locationReview?.kind === "inferred" && (
+            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+              No saved barangay ID. Inferred as {flag.locationReview.polygonName} from the map position.
+            </p>
+          )}
+          {flag.locationReview?.kind === "unassigned" && (
+            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+              No stored barangay ID. This record remains unassigned; its map position does not change its grouping.
+            </p>
+          )}
+          {flag.isCentroidPreview && (
+            <p role="note" style={{ margin: 0, color: "var(--color-muted)", fontSize: 12 }}>
+              This approximate marker is for display only. It is not an exact business location and does not affect counts or dispatch eligibility.
+            </p>
+          )}
           {flag.address && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 12, color: "var(--color-ink)", fontSize: 14, fontWeight: 500 }}>
               <div style={{ color: "var(--color-muted)", marginTop: 2 }}><Icon.Search size={16} /></div>
@@ -1025,13 +1086,13 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
               borderRadius: 10,
               fontWeight: 600,
               fontSize: 15,
-              cursor: flag.hasActiveInspection ? "not-allowed" : "pointer",
-              background: flag.hasActiveInspection ? "var(--color-border)" : "#16a34a",
-              color: flag.hasActiveInspection ? "var(--color-muted)" : "#ffffff",
+              cursor: flag.hasActiveInspection || noExactLocation ? "not-allowed" : "pointer",
+              background: flag.hasActiveInspection || noExactLocation ? "var(--color-border)" : "#16a34a",
+              color: flag.hasActiveInspection || noExactLocation ? "var(--color-muted)" : "#ffffff",
               border: "none",
               transition: "all 0.2s"
             }}
-            disabled={actionLoading || flag.hasActiveInspection}
+            disabled={actionLoading || flag.hasActiveInspection || noExactLocation}
             onClick={() => onDispatch(flag)}
           >
             <Icon.Send size={18} /> {dispatchButtonText}
@@ -1150,8 +1211,15 @@ function MapCanvas({
   mapRef,
   layers,
   flags,
+  boundaryFeatures,
+  barangays,
+  selectedBarangayId,
   barangayRiskLevels,
+  opsRankings,
   selectedFlagId,
+  hotspotGroupActive,
+  hotspotGroupKey,
+  hotspotGroupMemberIds,
   onMarkerClick,
   onMapClick,
   onDataClick,
@@ -1182,10 +1250,45 @@ function MapCanvas({
   const diagnosticCircleRefs = useRef([]);
   const geoJsonDataRef = useRef(null);
   const municipalOutlineRef = useRef(null);
+  const hoverInfoWindowRef = useRef(null);
+  const [hoveredBarangayId, setHoveredBarangayId] = useState(null);
   const mapContainerRef = useRef(null);
   const minZoomRef = useRef(null);
   const restrictionBoundsRef = useRef(null);
   const initialMunicipalFitRef = useRef(false);
+  const hotspotFitKeyRef = useRef("");
+
+  useEffect(() => {
+    if (!hotspotGroupActive) {
+      hotspotFitKeyRef.current = "";
+      return;
+    }
+    if (!mapInstance || !hotspotGroupKey || !window.google?.maps?.LatLngBounds) return;
+
+    const locatedFlags = flags.filter((flag) => (
+      Number.isFinite(Number(flag.latitude))
+      && Number.isFinite(Number(flag.longitude))
+    ));
+    if (!locatedFlags.length) return;
+    const fitKey = `${hotspotGroupKey}:${locatedFlags.map((flag) => flag.id).join(",")}`;
+    if (hotspotFitKeyRef.current === fitKey) return;
+
+    if (locatedFlags.length === 1) {
+      mapInstance.panTo({
+        lat: Number(locatedFlags[0].latitude),
+        lng: Number(locatedFlags[0].longitude),
+      });
+      mapInstance.setZoom(18);
+    } else {
+      const bounds = new window.google.maps.LatLngBounds();
+      locatedFlags.forEach((flag) => bounds.extend({
+        lat: Number(flag.latitude),
+        lng: Number(flag.longitude),
+      }));
+      mapInstance.fitBounds(bounds, { top: 80, right: 80, bottom: 80, left: 80 });
+    }
+    hotspotFitKeyRef.current = fitKey;
+  }, [flags, hotspotGroupActive, hotspotGroupKey, mapInstance]);
 
   // Sync zoom prop if parent changes it
   useEffect(() => {
@@ -1253,19 +1356,20 @@ function MapCanvas({
         clickable: true,
       });
 
+      const summary = hotspotCircleSummary(cl);
       const infoWindow = new window.google.maps.InfoWindow({
         content: `
-          <div style="font-family:sans-serif;font-size:13px;line-height:1.6;padding:4px 6px;">
-            <strong style="color:#b91c1c;">
-              Risk Heatmap Cluster #${cl.clusterID}
-            </strong><br/>
-            <span style="color:#475569;">
-              ${cl.size} Red Flag${cl.size !== 1 ? "s" : ""} within ${cl.radius_m} m
-            </span><br/>
-            <span style="color:#94a3b8;font-size:11px;">
-              eps = 20 m · MinPts = 3  · 
+          <div class="map-hotspot-info-window">
+            <div class="map-hotspot-info-window__header">
+              <strong>${summary.title}</strong>
+            </div>
+            <div class="map-hotspot-info-window__body">
+              ${summary.members}; radius ${summary.radius}
+            </div>
+            <div class="map-hotspot-info-window__footer">
+              ${summary.parameters} ·
               IDs: ${cl.logIDs.slice(0, 6).map(id => `#${id}`).join(", ")}${cl.logIDs.length > 6 ? "…" : ""}
-            </span>
+            </div>
           </div>
         `,
       });
@@ -1362,6 +1466,10 @@ function MapCanvas({
 
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
+    hoverInfoWindowRef.current = new window.google.maps.InfoWindow({
+      disableAutoPan: true,
+      headerDisabled: true,
+    });
     setMapInstance(map);
     setCurrentZoom(map.getZoom() || zoom || 13);
     if (mapRef) mapRef.current = map;
@@ -1409,13 +1517,20 @@ function MapCanvas({
       const map = internalMapRef.current;
       if (!map) return;
       window.google?.maps?.event?.trigger(map, "resize");
-      const needsFit = !initialMunicipalFitRef.current;
+      const needsFit = !initialMunicipalFitRef.current && !hotspotGroupActive;
       const applied = applyMunicipalViewLimits({ fit: needsFit });
       if (applied && needsFit) benchmarkStage(benchmarkTrial, "fit");
       if (applied) initialMunicipalFitRef.current = true;
     });
     return () => cancelAnimationFrame(frameId);
-  }, [isLoaded, mapInstance, municipalBounds, applyMunicipalViewLimits, benchmarkTrial]);
+  }, [
+    isLoaded,
+    mapInstance,
+    municipalBounds,
+    applyMunicipalViewLimits,
+    benchmarkTrial,
+    hotspotGroupActive,
+  ]);
 
   // Keep the map layout in sync with its container (desktop/mobile layout
   // changes, sidebar collapse, window resize). Google Maps needs an explicit
@@ -1445,6 +1560,8 @@ function MapCanvas({
   }, [isLoaded, mapInstance, applyMunicipalViewLimits]);
 
   const handleMapUnmount = useCallback(() => {
+    hoverInfoWindowRef.current?.close();
+    hoverInfoWindowRef.current = null;
     streetViewCoverageLayerRef.current?.setMap(null);
     streetViewCoverageLayerRef.current = null;
     markerRefs.current.forEach(m => {
@@ -1462,9 +1579,23 @@ function MapCanvas({
 
   // google.maps.Data does not re-apply the react-google-maps <Data> `options`
   // prop after mount — we keep a ref and call data.setStyle() imperatively.
+  const showBoundaries = layers.barangay || layers.diagnostics || isPickingLocation;
+  const municipalOutline = useMemo(() => computeMunicipalOutline(boundaryFeatures), [boundaryFeatures]);
   const geoJsonFeatureStyle = useMemo(
     () => (feature) => {
-      if (!layers.barangay && !layers.diagnostics && !isPickingLocation) return { visible: false };
+      if (!showBoundaries) return { visible: false };
+      const id = getBarangayIdForGeoJsonName(feature.getProperty("ADM4_EN"));
+      const selected = id != null && String(id) === selectedBarangayId;
+      const hovered = id != null && id === hoveredBarangayId && !selected;
+      const border = {
+        strokeColor: selected ? (isDark || satellite ? "#fbbf24" : "#b45309")
+          : hovered ? (isDark || satellite ? "#a7f3d0" : "#047857")
+            : satellite ? "#f8fafc" : isDark ? "#d1fae5" : "#166534",
+        strokeWeight: selected ? 2.5 : hovered ? 2 : 1.4,
+        strokeOpacity: selected ? 1 : hovered ? 0.95 : 0.78,
+        zIndex: selected ? 8 : hovered ? 6 : 1,
+        cursor: isPickingLocation ? "crosshair" : "pointer",
+      };
 
       if (layers.diagnostics) {
         const rawName = (
@@ -1525,20 +1656,51 @@ function MapCanvas({
 
         const tier = heatmapTierKey(riskLevel, count);
         const s = HEATMAP_RISK_STYLE[tier];
-        return { ...s, visible: true };
+        return { ...s, ...border, fillOpacity: selected ? 0.82 : s.fillOpacity, visible: true };
       }
 
       // Base barangay boundaries style
       return {
-        fillColor: "#1f7a1f",
-        fillOpacity: 0.1,
-        strokeColor: isDark ? "#86efac" : "#15803d",
-        strokeWeight: 2,
+        ...border,
+        fillColor: selected ? (isDark || satellite ? "#fbbf24" : "#f59e0b") : "#10b981",
+        fillOpacity: selected ? 0.25 : hovered ? 0.16 : 0.05,
         visible: true,
       };
     },
-    [layers.barangay, layers.diagnostics, barangayRiskLevels, barangayRedFlagCounts, isPickingLocation, isDark],
+    [showBoundaries, layers.diagnostics, barangayRiskLevels, barangayRedFlagCounts, isPickingLocation, isDark, satellite, selectedBarangayId, hoveredBarangayId],
   );
+
+  const handleBoundaryMouseOver = useCallback((event) => {
+    if (isPickingLocation) return;
+    const name = event.feature?.getProperty("ADM4_EN");
+    const id = getBarangayIdForGeoJsonName(name);
+    if (id == null) return;
+    setHoveredBarangayId(id);
+    const label = barangays.find(b => Number(b.barangayID) === id)?.barangayName || name;
+    const ranking = opsRankings.find((entry) => Number(entry?.barangayID) === id)
+      || Object.values(barangayRiskLevels || {}).find(
+        (entry) => Number(entry?.barangayID) === id,
+      );
+    const content = createBarangayMapPopup({
+      name: label,
+      count: ranking?.total_registered,
+      countLabel: "total businesses",
+    });
+    hoverInfoWindowRef.current?.setContent(content);
+    if (event.latLng) {
+      hoverInfoWindowRef.current?.setPosition(event.latLng);
+      hoverInfoWindowRef.current?.open({ map: internalMapRef.current });
+    }
+  }, [barangays, barangayRiskLevels, isPickingLocation, opsRankings]);
+
+  const handleBoundaryMouseOut = useCallback(() => {
+    setHoveredBarangayId(null);
+    hoverInfoWindowRef.current?.close();
+  }, []);
+
+  useEffect(() => {
+    if (!showBoundaries || isPickingLocation) hoverInfoWindowRef.current?.close();
+  }, [showBoundaries, isPickingLocation]);
 
   useEffect(() => {
     const dl = geoJsonDataRef.current;
@@ -1546,61 +1708,62 @@ function MapCanvas({
     dl.setStyle(geoJsonFeatureStyle);
   }, [geoJsonFeatureStyle]);
 
-  // Render Mataasnakahoy's municipal outline as a thicker overlay so it is
-  // easy to distinguish from the internal barangay boundaries.
+  // Draw exactly one outer perimeter, above the thinner Data borders. It is
+  // non-clickable so the polygon beneath remains the interaction target.
   useEffect(() => {
     if (municipalOutlineRef.current) {
       municipalOutlineRef.current.setMap(null);
       municipalOutlineRef.current = null;
     }
-    if (!isLoaded || !mapInstance || !window.google?.maps) return;
-    const show = Boolean(layers.barangay || layers.diagnostics || isPickingLocation);
-    if (!show) return;
-    let cancelled = false;
-    fetch("/data/mataasnakahoy.json")
-      .then((r) => r.json())
-      .then((json) => {
-        if (cancelled || !mapInstance) return;
-        const features = Array.isArray(json?.features) ? json.features : [];
-        const ring = computeMunicipalOutline(features);
-        if (!ring || ring.length < 3) return;
-        const path = ring.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
-        const poly = new window.google.maps.Polygon({
-          paths: path,
-          strokeColor: isDark ? "#fcd34d" : "#14532d",
-          strokeWeight: 5,
-          strokeOpacity: 1,
-          fillColor: isDark ? "#14532d" : "#166534",
-          fillOpacity: 0,
-          clickable: false,
-          zIndex: 10,
-        });
-        poly.setMap(mapInstance);
-        municipalOutlineRef.current = poly;
-      })
-      .catch(() => {});
+    if (!isLoaded || !mapInstance || !window.google?.maps || !showBoundaries || !municipalOutline) return;
+    const path = municipalOutline.map(([lng, lat]) => ({ lat: Number(lat), lng: Number(lng) }));
+    const poly = new window.google.maps.Polygon({
+      paths: path,
+      strokeColor: isDark || satellite ? "#fcd34d" : "#14532d",
+      strokeWeight: 3,
+      strokeOpacity: 1,
+      fillOpacity: 0,
+      clickable: false,
+      zIndex: 10,
+    });
+    poly.setMap(mapInstance);
+    municipalOutlineRef.current = poly;
     return () => {
-      cancelled = true;
-      if (municipalOutlineRef.current) {
-        municipalOutlineRef.current.setMap(null);
-        municipalOutlineRef.current = null;
-      }
+      poly.setMap(null);
+      if (municipalOutlineRef.current === poly) municipalOutlineRef.current = null;
     };
-  }, [isLoaded, mapInstance, layers.barangay, layers.diagnostics, isPickingLocation, isDark]);
+  }, [isLoaded, mapInstance, showBoundaries, municipalOutline, isDark, satellite]);
 
   // Build a proper pin-shaped SVG marker element for AdvancedMarkerElement
-  const buildMarkerContent = useCallback((flag, selected, isAdjusting = false) => {
-    const fc = getFlagColor(flag.color);
-    const color = selected ? "#2563eb" : fc.marker;
+  const buildMarkerContent = useCallback((
+    flag,
+    selected,
+    isAdjusting = false,
+    isHotspotGroupMember = false,
+    isCentroidPreview = false,
+  ) => {
     const w = (selected || isAdjusting) ? 34 : 26;
     const h = (selected || isAdjusting) ? 44 : 34;
+    const fc = getFlagColor(flag.color);
+    if (isCentroidPreview) {
+      return createApproximateMarkerContent(
+        w,
+        h,
+        selected,
+        isAdjusting,
+        isAdjusting ? "#2563eb" : fc.marker,
+      );
+    }
+
+    const color = isAdjusting || (selected && !isHotspotGroupMember)
+      ? "#2563eb"
+      : fc.marker;
 
     const el = document.createElement("div");
     el.style.cssText = `
       width: ${w}px;
       height: ${h}px;
       cursor: ${isAdjusting ? 'grab' : 'pointer'};
-      filter: drop-shadow(0 ${isAdjusting ? 4 : 2}px ${isAdjusting ? 8 : 5}px rgba(0,0,0,${isAdjusting ? 0.5 : 0.35}));
       ${isAdjusting ? '' : 'transition: transform 0.15s ease;'}
       position: relative;
       user-select: none;
@@ -1642,6 +1805,8 @@ function MapCanvas({
     el.title = flag.matchStatus === "review"
       ? `${flag.name} — Pin suggestion needs review`
       : flag.name;
+    el.setAttribute("aria-label", el.title);
+    el.setAttribute("role", "img");
     return el;
   }, []);
 
@@ -1664,9 +1829,11 @@ function MapCanvas({
 
     if (!layers.flags) return;
 
-    const visibleFlags = flags.filter(
-      f => f.latitude != null && f.longitude != null && !isNaN(Number(f.latitude)) && !isNaN(Number(f.longitude))
-    );
+    const visibleFlags = flags.filter((flag) => {
+      if (flag.isCentroidPreview && flag.mapPreviewPosition) return true;
+      return flag.latitude != null && flag.longitude != null &&
+        Number.isFinite(Number(flag.latitude)) && Number.isFinite(Number(flag.longitude));
+    });
 
     const coordCounts = {};
     const markers = [];
@@ -1677,13 +1844,14 @@ function MapCanvas({
 
     visibleFlags.forEach(flag => {
       const isAdjusting = String(flag.id) === String(adjustingFlagId);
-      let lat = Number(flag.latitude);
-      let lng = Number(flag.longitude);
+      const isHotspotGroupMember = hotspotGroupMemberIds.has(Number(flag.id));
+      let lat = Number(flag.mapPreviewPosition?.lat ?? flag.latitude);
+      let lng = Number(flag.mapPreviewPosition?.lng ?? flag.longitude);
 
       if (isAdjusting && adjustingLatLng) {
         lat = adjustingLatLng.lat;
         lng = adjustingLatLng.lng;
-      } else if (!isAdjusting) {
+      } else if (!isAdjusting && !flag.isCentroidPreview) {
         const coordKey = `${lat.toFixed(4)}_${lng.toFixed(4)}`;
         const countIndex = coordCounts[coordKey] || 0;
         coordCounts[coordKey] = countIndex + 1;
@@ -1704,10 +1872,12 @@ function MapCanvas({
         try {
           marker = new window.google.maps.marker.AdvancedMarkerElement({
             position: { lat, lng },
-            content: buildMarkerContent(flag, isSelected, isAdjusting),
+            content: buildMarkerContent(
+              flag, isSelected, isAdjusting, isHotspotGroupMember, flag.isCentroidPreview,
+            ),
             gmpDraggable: isAdjusting,
-            title: flag.name,
-            zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
+            title: flag.isCentroidPreview ? APPROXIMATE_LOCATION_LABEL : flag.name,
+            zIndex: isAdjusting ? 999999 : (isHotspotGroupMember ? 5000 : isSelected ? 9999 : 100),
           });
 
           marker.gmpDraggable = Boolean(isAdjusting);
@@ -1734,8 +1904,9 @@ function MapCanvas({
               marker.addEventListener("gmp-dragend", handleDragEnd);
             }
           } else {
-            marker.addListener("gmp-click", () => onMarkerClick(flag.id));
-            markers.push(marker);
+            marker.addListener("gmp-click", () => onMarkerClick(flag.id, flag));
+            if (flag.isCentroidPreview) marker.map = activeMap;
+            else markers.push(marker);
           }
         } catch {
           marker = null;
@@ -1744,21 +1915,29 @@ function MapCanvas({
 
       if (!marker) {
         const fc = getFlagColor(flag.color);
-        const color = isSelected ? "#2563eb" : fc.marker;
+        const color = isAdjusting || (isSelected && !isHotspotGroupMember)
+          ? "#2563eb"
+          : fc.marker;
         marker = new window.google.maps.Marker({
           position: { lat, lng },
           draggable: isAdjusting,
-          title: flag.name,
+            title: flag.isCentroidPreview ? APPROXIMATE_LOCATION_LABEL : flag.name,
           zIndex: isAdjusting ? 999999 : (isSelected ? 9999 : 100),
-          icon: {
-            path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
-            fillColor: color,
-            fillOpacity: 1,
-            strokeColor: flag.matchStatus === "review" ? "#facc15" : "#ffffff",
-            strokeWeight: flag.matchStatus === "review" ? 4 : (isAdjusting ? 2.5 : 1.5),
-            scale: (isSelected || isAdjusting) ? 1.4 : 1.0,
-            anchor: new window.google.maps.Point(12, 32),
-          }
+            icon: flag.isCentroidPreview
+              ? createApproximateMarkerIcon(
+                window.google.maps,
+                (isSelected || isAdjusting) ? 1.4 : 1,
+                isAdjusting ? "#2563eb" : fc.marker,
+              )
+              : {
+                path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+                fillColor: color,
+                fillOpacity: 1,
+                strokeColor: flag.matchStatus === "review" ? "#facc15" : "#ffffff",
+                strokeWeight: flag.matchStatus === "review" ? 4 : (isAdjusting ? 2.5 : 1.5),
+                scale: (isSelected || isAdjusting) ? 1.4 : 1.0,
+                anchor: new window.google.maps.Point(12, 32),
+              },
         });
 
         marker._revelaFlagColor = flag.color;
@@ -1774,8 +1953,9 @@ function MapCanvas({
             }
           });
         } else {
-          marker.addListener("click", () => onMarkerClick(flag.id));
-          markers.push(marker);
+          marker.addListener("click", () => onMarkerClick(flag.id, flag));
+          if (flag.isCentroidPreview) marker.setMap(activeMap);
+          else markers.push(marker);
         }
       }
 
@@ -1899,7 +2079,7 @@ function MapCanvas({
       });
       effectMarkerRefs.clear();
     };
-  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd, benchmarkTrial]);
+  }, [isLoaded, mapInstance, layers.flags, flags, selectedFlagId, onMarkerClick, buildMarkerContent, adjustingFlagId, adjustingLatLng, onAdjustDragEnd, benchmarkTrial, hotspotGroupMemberIds]);
 
   // Update cursor dynamically if picking state changes
   useEffect(() => {
@@ -1978,17 +2158,18 @@ function MapCanvas({
         onUnmount={handleMapUnmount}
         onClick={onMapClick}
       >
-        {(layers.barangay || layers.diagnostics || isPickingLocation) && (
+        {showBoundaries && boundaryFeatures?.length > 0 && (
           <Data
             onClick={onDataClick}
+            onMouseOver={handleBoundaryMouseOver}
+            onMouseOut={handleBoundaryMouseOut}
             onLoad={(dataLayer) => {
               geoJsonDataRef.current = dataLayer;
               dataLayer.setStyle(geoJsonFeatureStyle);
-              Promise.resolve(dataLayer.loadGeoJson("/data/mataasnakahoy.json")).then(() => {
-                dataLayer.setStyle(geoJsonFeatureStyle);
-              });
+              dataLayer.addGeoJson(normalizeGeoJsonWinding({ type: "FeatureCollection", features: boundaryFeatures }));
             }}
             onUnmount={(dataLayer) => {
+              handleBoundaryMouseOut();
               geoJsonDataRef.current = null;
               dataLayer.setMap(null);
             }}
@@ -2706,6 +2887,7 @@ export default function MapPage() {
 
   const [flags, setFlags, hasFlags] = useSessionDataset("map", "flags", []);
   const [municipalBounds, setMunicipalBounds] = useState(null);
+  const [boundaryFeatures, setBoundaryFeatures] = useState(null);
   const [barangayRiskLevels, setBarangayRiskLevels] = useSessionDataset("map", "riskLevels", {});
   const [loadingFlags, setLoadingFlags] = useState(() => !hasFlags);
   const [flagsError, setFlagsError] = useState("");
@@ -2724,6 +2906,7 @@ export default function MapPage() {
   const snapRunModeRef = useRef("snap");
   const [showReviewQueue, setShowReviewQueue] = useState(false);
   const [reviewQueue, setReviewQueue] = useState(null);
+  const reviewQueueRequestSequence = useRef(0);
   const [reviewQueuePage, setReviewQueuePage] = useState(1);
   const [reviewQueueSearch, setReviewQueueSearch] = useState("");
   const [reviewQueueLoading, setReviewQueueLoading] = useState(false);
@@ -2856,10 +3039,20 @@ export default function MapPage() {
   }, [token]);
 
   const [layers, setLayers] = useState({ base: true, flags: true, barangay: false, diagnostics: false });
+  const [showCentroidOnlyPins, setShowCentroidOnlyPins] = useState(false);
   const [selectedFlag, setSelectedFlag] = useState(null);   // logID of selected flag
   const [modalFlag, setModalFlag] = useState(null);   // flag object shown in detail modal
   const [complianceFlag, setComplianceFlag] = useState(null);
   const location = useLocation();
+  const hotspotGroup = useMemo(
+    () => parseHotspotGroupParams(location.search),
+    [location.search],
+  );
+  const hotspotGroupKey = hotspotGroup.active
+    ? hotspotGroup.logIds.length
+      ? `ids:${hotspotGroup.logIds.join(",")}`
+      : `radius:${hotspotGroup.center.lat},${hotspotGroup.center.lng},${hotspotGroup.radiusMeters}`
+    : "";
   const handledUrlFlagRef = useRef(null);
 
   const rememberMapCamera = useCallback(() => {
@@ -2946,7 +3139,6 @@ export default function MapPage() {
   const [saveAdjustLoading, setSaveAdjustLoading] = useState(false);
   const [locatingAdjustLocation, setLocatingAdjustLocation] = useState(false);
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const flagsRequestSequence = useRef(0);
   const flagsRequestController = useRef(null);
   useEffect(() => () => flagsRequestController.current?.abort(), []);
@@ -2960,7 +3152,6 @@ export default function MapPage() {
     flagsRequestController.current = controller;
     if (!isSilent) {
       setLoadingFlags(!hasFlags);
-      setIsRefreshing(true);
     }
     setFlagsError("");
     try {
@@ -3024,8 +3215,11 @@ export default function MapPage() {
             .replace("barangay ", "").replace("brgy. ", "")
             .replace("san sebastian", "san seb.").trim();
           riskMap[bName] = {
-            risk_level: r.risk_level,             // "High" | "Medium" | "Low"
-            redFlagCount: r.flagged_count ?? 0,
+            barangayID: r.barangayID,
+            risk_level: r.risk_level,
+            ops_score: r.ops_score,
+            risk_score: r.risk_score,
+            total_registered: r.total_registered,
           };
         });
         setBarangayRiskLevels(riskMap);
@@ -3042,7 +3236,7 @@ export default function MapPage() {
       return false;
     } finally {
       if (flagsRequestController.current === controller) flagsRequestController.current = null;
-      if (sequence === flagsRequestSequence.current) { setLoadingFlags(false); setIsRefreshing(false); }
+      if (sequence === flagsRequestSequence.current) setLoadingFlags(false);
     }
   }, [token, benchmarkTrial, hasFlags, setFlags, setOpsRankings, setBarangayRiskLevels]);
 
@@ -3100,7 +3294,9 @@ export default function MapPage() {
 
   const loadRegistryReviewQueue = async (page = 1, search = reviewQueueSearch) => {
     if (!token || !isAdmin) return;
+    const requestSequence = ++reviewQueueRequestSequence.current;
     setReviewQueueLoading(true);
+    setReviewQueue(null);
     setReviewQueueError("");
     setReviewLocationChoices(resetLocationChoices());
     try {
@@ -3110,12 +3306,22 @@ export default function MapPage() {
         REVIEW_QUEUE_PAGE_SIZE,
         search,
       );
+      if (requestSequence !== reviewQueueRequestSequence.current) return;
       setReviewQueue(result);
       setReviewQueuePage(result?.page ?? page);
     } catch (err) {
-      setReviewQueueError(err.message || "Unable to load pin review suggestions.");
+      if (requestSequence !== reviewQueueRequestSequence.current) return;
+      setReviewQueue(null);
+      const requestId = err.responseData?.request_id;
+      setReviewQueueError(
+        `Could not load pin suggestions. Please try again.${
+          requestId ? ` Request ID: ${requestId}` : ""
+        }`,
+      );
     } finally {
-      setReviewQueueLoading(false);
+      if (requestSequence === reviewQueueRequestSequence.current) {
+        setReviewQueueLoading(false);
+      }
     }
   };
 
@@ -3150,6 +3356,7 @@ export default function MapPage() {
         const features = Array.isArray(json.features) ? json.features : [];
         geoJsonFeaturesRef.current = features;
         setMunicipalBounds(computeGeoJsonBounds(features));
+        setBoundaryFeatures(features);
       })
       .catch(err => console.warn("Could not pre-load GeoJSON for PiP checks", err));
     return () => { cancelled = true; };
@@ -3164,7 +3371,7 @@ export default function MapPage() {
       return true;
     } catch { return false; }
   }, [token, setInspectors]);
-  const refreshView = useAppDataRefresh("map", reason => refreshResults([
+  useAppDataRefresh("map", reason => refreshResults([
     fetchFlags(reason === "scheduled"), loadMapBarangays(), loadMapInspectors(),
     ...(isAdmin ? [fetchDetectionQuota(), fetchPlacesUsage()] : []),
   ]));
@@ -3887,9 +4094,11 @@ export default function MapPage() {
       icon: "warning",
       title: isApprove ? "Confirm selected location?" : "Reject location candidate?",
       text: isApprove
-        ? locationChoice === "previous"
-          ? `Keep the previously approved coordinates for ${candidate.businessName} and approve them for the updated address?`
-          : `Replace ${candidate.businessName}'s previous coordinates with the current imported/resolved candidate?`
+        ? !candidate.locationReapproval
+          ? reviewApprovalConfirmation(candidate)
+          : locationChoice === "previous"
+            ? `Keep the previously approved coordinates for ${candidate.businessName} and approve them for the updated address?`
+            : `Replace ${candidate.businessName}'s previous coordinates with the current imported/resolved candidate?`
         : `Reject this location candidate and keep the previous pin pending review?`,
       showCancelButton: true,
       confirmButtonText: isApprove ? "Confirm location" : "Reject candidate",
@@ -4100,11 +4309,15 @@ export default function MapPage() {
   // â”€â”€ Drag & Drop Adjust Location â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const handleStartAdjustLocation = (flag) => {
     handleCloseDetailModal();
-    const lat = Number(flag.latitude);
-    const lng = Number(flag.longitude);
+    const initialPosition = flag.mapPreviewPosition || {
+      lat: Number(flag.latitude),
+      lng: Number(flag.longitude),
+    };
+    const lat = Number(initialPosition.lat);
+    const lng = Number(initialPosition.lng);
     setAdjustingFlagId(flag.id);
     setAdjustingLatLng({ lat, lng });
-    if (mapRef.current && !isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+    if (mapRef.current && Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) {
       mapRef.current.panTo({ lat, lng });
       mapRef.current.setZoom(18);
     }
@@ -4255,7 +4468,7 @@ export default function MapPage() {
   };
 
   // â”€â”€ Marker click â†’ pan map + open detail modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const handleMarkerClick = useCallback((id) => {
+  const handleMarkerClick = useCallback((id, clickedMapFlag = null) => {
     const flag = flags.find(f => f.id === id);
     if (!flag) return;
     rememberMapCamera();
@@ -4265,11 +4478,16 @@ export default function MapPage() {
     }
 
     setSelectedFlag(id);
-    setModalFlag(flag);
+    const selectedMapFlag = clickedMapFlag || flag;
+    setModalFlag(selectedMapFlag);
 
     // Pan map to marker
-    if (mapRef.current && flag.latitude && flag.longitude) {
-      mapRef.current.panTo({ lat: Number(flag.latitude), lng: Number(flag.longitude) });
+    const position = selectedMapFlag.mapPreviewPosition || {
+      lat: Number(flag.latitude),
+      lng: Number(flag.longitude),
+    };
+    if (mapRef.current && Number.isFinite(position.lat) && Number.isFinite(position.lng)) {
+      mapRef.current.panTo(position);
       mapRef.current.setZoom(18);
     }
   }, [flags, location.search, location.pathname, navigate, rememberMapCamera]);
@@ -4302,30 +4520,14 @@ export default function MapPage() {
 
     const features = geoJsonFeaturesRef.current;
 
-    // If GeoJSON isn't loaded yet, fall back to a tight centroid-distance check
-    // (handles the rare race where the fetch hasn't resolved).
+    // Never infer a stored barangay from an approximate display point.
     if (!features || features.length === 0) {
-      let matchedId = "";
-      let bestDist = Infinity;
-      for (const b of barangays) {
-        const nameKey = b.barangayName.toLowerCase()
-          .replace(/barangay/g, "").replace(/brgy\.?/g, "")
-          .replace(/district/g, "").replace(/\(pob\.\)/g, "")
-          .trim();
-        const centroid = BARANGAY_CENTROIDS[nameKey] ||
-          Object.entries(BARANGAY_CENTROIDS).find(([k]) => k.includes(nameKey) || nameKey.includes(k))?.[1];
-        if (!centroid) continue;
-        const dist = Math.hypot(lat - centroid.lat, lng - centroid.lng);
-        if (dist < bestDist) { bestDist = dist; matchedId = String(b.barangayID); }
-      }
-      // 0.04° ≈ ~4 km — tight enough to reject clearly out-of-bounds clicks
-      if (bestDist > 0.04) {
-        Swal.fire({ icon: 'error', title: 'Out of Bounds', text: 'You can only plot flags within the boundaries of Mataasnakahoy.', confirmButtonColor: 'var(--color-primary)' });
-        return;
-      }
-      setYellowDraft(prev => ({ ...prev, lat: lat.toFixed(6), lng: lng.toFixed(6), barangayID: matchedId }));
-      setIsPickingYellowLocation(false);
-      setShowYellowModal(true);
+      Swal.fire({
+        icon: "info",
+        title: "Barangay boundaries are loading",
+        text: "Please wait for the boundary map and try placing the pin again.",
+        confirmButtonColor: "var(--color-primary)",
+      });
       return;
     }
 
@@ -4366,9 +4568,9 @@ export default function MapPage() {
   }, [adjustingFlagId, isPickingYellowLocation, barangays]);
 
   const handleDataClick = useCallback((e) => {
+    e.stop(); // Do not forward a polygon click to the map or a marker behind it.
     if (adjustingFlagId) {
       if (e && e.latLng) {
-        if (typeof e.stop === 'function') e.stop();
         const lat = typeof e.latLng.lat === 'function' ? e.latLng.lat() : e.latLng.lat;
         const lng = typeof e.latLng.lng === 'function' ? e.latLng.lng() : e.latLng.lng;
         setAdjustingLatLng({ lat: Number(lat), lng: Number(lng) });
@@ -4377,7 +4579,6 @@ export default function MapPage() {
     }
 
     if (isPickingYellowLocation) {
-      e.stop(); // Prevent base map click
       const lat = e.latLng.lat();
       const lng = e.latLng.lng();
 
@@ -4395,14 +4596,145 @@ export default function MapPage() {
       }));
       setIsPickingYellowLocation(false);
       setShowYellowModal(true);
+      return;
     }
-  }, [adjustingFlagId, isPickingYellowLocation, barangays]);
+
+    if (!layers.barangay && !layers.diagnostics) return;
+    const id = getBarangayIdForGeoJsonName(e.feature?.getProperty("ADM4_EN"));
+    if (id == null) return;
+    setFilterBarangay(String(id));
+    setLocationsPage(1);
+  }, [adjustingFlagId, isPickingYellowLocation, barangays, layers.barangay, layers.diagnostics]);
 
   // â”€â”€ Filters â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-  const visibleFlags = flags.filter(flag => matchesMapFilters(flag, {
+  const mapFilteredFlags = useMemo(() => flags.filter(flag => matchesMapFilters(flag, {
     status: filterColor, source: filterSource, registryLink: filterRegistryLink,
-    search, barangayID: filterBarangay,
-  }));
+    search, barangayID: "all",
+  }) && matchesMapBarangayFilter(flag, filterBarangay, boundaryFeatures)),
+  [boundaryFeatures, filterColor, filterRegistryLink, filterSource, filterBarangay, flags, search]);
+  const scopedFilteredFlags = useMemo(() => hotspotGroup.active
+    ? mapFilteredFlags.filter((flag) => matchesHotspotGroup(flag, hotspotGroup))
+    : mapFilteredFlags, [hotspotGroup, mapFilteredFlags]);
+  const filteredMapMetrics = useMemo(
+    () => aggregateMapLocationMetrics(scopedFilteredFlags, boundaryFeatures),
+    [boundaryFeatures, scopedFilteredFlags],
+  );
+  const barangayLocationMismatches = useMemo(
+    () => findStoredBarangayLocationMismatches(
+      scopedFilteredFlags,
+      boundaryFeatures,
+    ),
+    [boundaryFeatures, scopedFilteredFlags],
+  );
+  const barangayLocationMismatchesByFlagId = useMemo(
+    () => new Map(barangayLocationMismatches.map((mismatch) => [
+      String(mismatch.flagId),
+      mismatch,
+    ])),
+    [barangayLocationMismatches],
+  );
+  const visibleFlags = useMemo(
+    () => scopedFilteredFlags.filter(hasMapCoordinates),
+    [scopedFilteredFlags],
+  );
+  const allCentroidPreviewFlags = useMemo(
+    () => createCentroidPreviewFlags(
+      flags,
+      getApproximateBarangayDisplayPoint,
+    ),
+    [flags],
+  );
+  const centroidPreviewFlags = useMemo(
+    () => {
+      const scopedIds = new Set(scopedFilteredFlags
+        .filter((flag) => !hasMapCoordinates(flag))
+        .map((flag) => String(flag.id)));
+      return allCentroidPreviewFlags.filter((flag) => (
+        scopedIds.has(String(flag.id))
+      ));
+    },
+    [allCentroidPreviewFlags, scopedFilteredFlags],
+  );
+  const mapDisplayFlags = useMemo(
+    () => showCentroidOnlyPins
+      ? [...visibleFlags, ...centroidPreviewFlags]
+      : visibleFlags,
+    [centroidPreviewFlags, showCentroidOnlyPins, visibleFlags],
+  );
+  const mapDisplayFlagsWithReview = useMemo(
+    () => mapDisplayFlags.map((flag) => {
+      if (flag.isCentroidPreview) {
+        return {
+          ...flag,
+          mapPositionBarangayID: null,
+          locationReview: { kind: "approximate" },
+        };
+      }
+      const polygonIDs = getMapPositionBarangayIDs(flag, boundaryFeatures);
+      const mapPositionBarangayID = polygonIDs.length === 1
+        ? polygonIDs[0]
+        : null;
+      const mismatch = barangayLocationMismatchesByFlagId.get(String(flag.id));
+      if (mismatch) {
+        const storedName = barangays.find((item) => (
+          Number(item.barangayID) === mismatch.storedBarangayID
+        ))?.barangayName || `Barangay ID ${mismatch.storedBarangayID}`;
+        const polygonName = barangays.find((item) => (
+          Number(item.barangayID) === mismatch.polygonBarangayID
+        ))?.barangayName || `Barangay ID ${mismatch.polygonBarangayID}`;
+        return {
+          ...flag,
+          mapPositionBarangayID,
+          locationReview: {
+            kind: "mismatch",
+            storedName,
+            polygonName,
+            recordedBarangayID: mismatch.storedBarangayID,
+            mapPositionBarangayID: mismatch.polygonBarangayID,
+          },
+        };
+      }
+      const storedID = Number(flag.recordedBarangayID ?? flag.barangayID);
+      if (polygonIDs.length > 1) {
+        return {
+          ...flag,
+          mapPositionBarangayID: null,
+          locationReview: { kind: "ambiguous" },
+        };
+      }
+      if (polygonIDs.length === 0) {
+        return {
+          ...flag,
+          mapPositionBarangayID: null,
+          locationReview: Number.isInteger(storedID) && storedID > 0
+            ? { kind: "outside" }
+            : { kind: "unassigned" },
+        };
+      }
+      if (!Number.isInteger(storedID) || storedID <= 0) {
+        const polygonName = barangays.find((item) => (
+          Number(item.barangayID) === mapPositionBarangayID
+        ))?.barangayName || `Barangay ID ${mapPositionBarangayID}`;
+        return {
+          ...flag,
+          mapPositionBarangayID,
+          locationReview: { kind: "inferred", polygonName },
+        };
+      }
+      return { ...flag, mapPositionBarangayID };
+    }),
+    [barangays, barangayLocationMismatchesByFlagId, boundaryFeatures, mapDisplayFlags],
+  );
+  const hotspotGroupMemberIds = useMemo(
+    () => new Set(visibleFlags.map((flag) => Number(flag.id))),
+    [visibleFlags],
+  );
+  const clearHotspotGroup = useCallback(() => {
+    const params = new URLSearchParams(location.search);
+    ["hotspot_ids", "hotspot_lat", "hotspot_lng", "hotspot_radius_m"]
+      .forEach((key) => params.delete(key));
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
   const locations = paginateRecords(visibleFlags, locationsPage, 8);
   const barangayFilterOptions = [
     { value: "all", label: "All Barangays" },
@@ -4411,8 +4743,7 @@ export default function MapPage() {
       label: barangay.barangayName,
     })),
   ];
-  const filteredCounts = Object.fromEntries(["Green", "Orange", "Red", "Yellow", "Purple", "Black"]
-    .map(color => [color, visibleFlags.filter(flag => flag.color === color).length]));
+  const filteredCounts = filteredMapMetrics.colors;
   const clearViewFilters = () => {
     setFilterBarangay("all"); setFilterColor("all");
     setSearch(""); setLocationsPage(1);
@@ -4540,28 +4871,6 @@ export default function MapPage() {
             )}
           </div>
           <div className="map-page-utilities">
-            <button
-              className="quick-refresh-btn"
-              type="button"
-              onClick={refreshView}
-              disabled={isRefreshing}
-              title="Refresh map pins and flags"
-            >
-              <svg
-                className={isRefreshing ? "spin-icon" : ""}
-                viewBox="0 0 24 24"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-              </svg>
-              <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
-            </button>
             <span className="map-inactive-flags" style={styles.livePill}>
               <span style={styles.liveDot} />
               {visibleFlags.filter(f => f.color !== "Green").length} Matching Inactive Flags
@@ -4922,6 +5231,27 @@ export default function MapPage() {
                   </button>
                 );
               })}
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="map-centroid-preview-toggle"
+                  aria-pressed={showCentroidOnlyPins}
+                  aria-label={`${showCentroidOnlyPins ? "Hide" : "Show"} ${centroidPreviewFlags.length} approximate centroid pins`}
+                  title={`${showCentroidOnlyPins ? "Hide" : "Show"} businesses with no exact location at a deterministic approximate point near their stored barangay center. These points are display-only and do not affect counts or dispatch.`}
+                  onClick={() => setShowCentroidOnlyPins((visible) => !visible)}
+                  style={{
+                    ...styles.layerToggle,
+                    background: showCentroidOnlyPins ? "var(--color-primary)" : "var(--color-input-bg)",
+                    color: showCentroidOnlyPins ? (isDark ? "#042f2e" : "#ffffff") : "var(--color-ink)",
+                    borderColor: showCentroidOnlyPins ? "var(--color-primary)" : "var(--color-border)",
+                    fontWeight: showCentroidOnlyPins ? 700 : 600,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  Approx. ({centroidPreviewFlags.length})
+                </button>
+              )}
             </div>
             <div className="map-layer-search" style={styles.layerSearch}>
               <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--color-muted)", display: "flex", pointerEvents: "none" }}>
@@ -4949,6 +5279,14 @@ export default function MapPage() {
             </div>
           </div>
 
+          {hotspotGroup.active && (
+            <div className="map-hotspot-group-chip" role="status">
+              <span>Showing {visibleFlags.length.toLocaleString()} locations from a hotspot group</span>
+              <span aria-hidden="true">·</span>
+              <button type="button" onClick={clearHotspotGroup}>Clear</button>
+            </div>
+          )}
+
           {/* Map */}
           <div className="frosted-glass map-canvas-container" style={styles.mapWrapper}>
             <MapCanvas
@@ -4961,8 +5299,15 @@ export default function MapPage() {
               municipalBounds={municipalBounds}
               mapRef={mapRef}
               layers={layers}
-              flags={visibleFlags}
+              flags={mapDisplayFlagsWithReview}
+              hotspotGroupActive={hotspotGroup.active}
+              hotspotGroupKey={hotspotGroupKey}
+              hotspotGroupMemberIds={hotspotGroupMemberIds}
+              boundaryFeatures={boundaryFeatures}
+              barangays={barangays}
+              selectedBarangayId={filterBarangay}
               barangayRiskLevels={barangayRiskLevels}
+              opsRankings={opsRankings}
               selectedFlagId={selectedFlag}
               onMarkerClick={handleMarkerClick}
               onMapClick={handleMapClick}
@@ -4989,7 +5334,7 @@ export default function MapPage() {
               handleCancelDetection={handleCancelDetection}
               loadingFlags={loadingFlags}
             />
-            {/* Discrete risk legend â€” matches HEATMAP_RISK_STYLE on the Data layer */}
+            {/* Polygon fills show OPS tiers; DBSCAN circles are a separate detection hotspot layer. */}
             {layers.diagnostics && (
               <div style={{
                 position: "absolute",
@@ -5004,15 +5349,18 @@ export default function MapPage() {
                 minWidth: 168,
               }}>
                 <p style={{ fontSize: 10, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>
-                  Barangay risk index
+                  OPS priority tiers
+                </p>
+                <p style={{ fontSize: 10, color: "var(--color-muted)", margin: "0 0 8px", lineHeight: 1.4 }}>
+                  Polygon colors use OPS = W1*Risk + W2*Sector + W3*Proximity, not DBSCAN cluster density.
                 </p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {[
-                    { tier: "High", label: "High risk" },
-                    { tier: "Medium", label: "Moderate risk" },
-                    { tier: "Low", label: "Low risk" },
-                    { tier: "unranked", label: "Red flags (unranked)" },
-                    { tier: "none", label: "No red flags" },
+                    { tier: "High", label: "High OPS priority (>=60)" },
+                    { tier: "Medium", label: "Medium OPS priority (>=30)" },
+                    { tier: "Low", label: "Low OPS priority (<30)" },
+                    { tier: "unranked", label: "Red pins (unranked)" },
+                    { tier: "none", label: "No Red pins shown" },
                   ].map(({ tier, label }) => {
                     const row = HEATMAP_RISK_STYLE[tier];
                     return (
@@ -5040,15 +5388,16 @@ export default function MapPage() {
           {/* Stats strip */}
           <div className="map-stats-strip" style={styles.statsStrip}>
             {[
-              { label: "Matching Locations", value: visibleFlags.length, color: "var(--color-ink)" },
-              { label: "Active Businesses", value: filteredCounts.Green, color: isDark ? "#4ade80" : "#22c55e" },
-              { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100" },
-              { label: "Detected Unregistered", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444" },
-              { label: "Suspected Unregistered", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b" },
-              { label: "Closed / Abandoned", value: filteredCounts.Purple, color: isDark ? "#c084fc" : "#7c3aed" },
-              { label: "Critical Violations", value: filteredCounts.Black, color: "var(--color-ink)" },
+              { label: "Matching Locations", value: filteredMapMetrics.matchingLocations, color: "var(--color-ink)" },
+              { label: "Active Businesses", value: filteredMapMetrics.activeBusinesses, color: isDark ? "#4ade80" : "#22c55e", title: MAP_LOCATION_METRIC_DEFINITIONS.activeBusinesses },
+              { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Expired / Unregistered (Red)", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Suspected Unregistered", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Closed / Abandoned", value: filteredCounts.Purple, color: isDark ? "#c084fc" : "#7c3aed", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Critical Violations", value: filteredCounts.Black, color: "var(--color-ink)", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
             ].map(s => (
-              <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}>
+              <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}
+                title={s.title || MAP_LOCATION_METRIC_DEFINITIONS.matchingLocations}>
                 <span style={{ fontSize: "clamp(15px, 1.4vw, 22px)", fontWeight: 800, color: s.color, lineHeight: 1, textAlign: "left" }}>{s.value}</span>
                 <span style={{
                   fontSize: "clamp(9.5px, 0.85vw, 11.5px)",
@@ -5062,6 +5411,21 @@ export default function MapPage() {
               </div>
             ))}
           </div>
+          {(filteredMapMetrics.unassignedLocations > 0 ||
+            filteredMapMetrics.ambiguousBoundaryLocations > 0) && (
+            <div role="note" style={{ margin: "8px 0 0", color: "var(--color-muted)", fontSize: 11 }}>
+              {filteredMapMetrics.unassignedLocations > 0 && (
+                <p style={{ margin: "2px 0" }}>
+                  {filteredMapMetrics.unassignedLocations.toLocaleString()} records have no stored barangay ID; uniquely assigned exact pins use the polygon position without rewriting that ID.
+                </p>
+              )}
+              {filteredMapMetrics.ambiguousBoundaryLocations > 0 && (
+                <p style={{ margin: "2px 0" }}>
+                  {filteredMapMetrics.ambiguousBoundaryLocations.toLocaleString()} exact pins touch multiple barangay polygons; polygon attribution is unclear.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Right: side panel */}
@@ -5115,12 +5479,29 @@ export default function MapPage() {
             ) : visibleFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
               <p className="map-location-count" role="status">{visibleFlags.length} matching {visibleFlags.length === 1 ? "location" : "locations"}</p>
               <div className="map-location-list">
-                {locations.data.map(flag => <button key={flag.id} type="button" className="map-location-card"
+                {locations.data.map(flag => {
+                  const mismatch = barangayLocationMismatchesByFlagId.get(String(flag.id));
+                  const recordedBarangayID = flag.recordedBarangayID ?? flag.barangayID;
+                  const storedBarangay = barangays.find((item) => (
+                    Number(item.barangayID) === Number(recordedBarangayID)
+                  ));
+                  return <button key={flag.id} type="button" className="map-location-card"
                   onClick={() => handleMarkerClick(flag.id)}>
                   <span className="map-location-color" style={{ background: getFlagColor(flag.color).marker }} aria-hidden="true" />
-                  <span><strong>{flag.name}</strong><small>{flag.barangay} · {getFlagColor(flag.color).label}</small>
+                  <span><strong>{flag.name}</strong><small>{storedBarangay?.barangayName || "Unassigned"} · {getFlagColor(flag.color).label}</small>
                     <small>{businessSourceLabel(flag.source)} · {flag.registryLinked ? "Linked to Registry" : "Not in Registry"}</small></span>
-                </button>)}
+                    {mismatch && (
+                      <small className="map-location-review-note">
+                        {formatBarangayLocationMismatch(
+                          mismatch.storedBarangayID == null
+                            ? null
+                            : storedBarangay?.barangayName || `ID ${mismatch.storedBarangayID}`,
+                          barangays.find((item) => Number(item.barangayID) === mismatch.polygonBarangayID)?.barangayName || `ID ${mismatch.polygonBarangayID}`,
+                        )}
+                      </small>
+                    )}
+                  </button>;
+                })}
               </div>
               <div className="map-location-pagination">
                 <button type="button" className="ghost-btn" disabled={locations.page === 1} onClick={() => setLocationsPage(locations.page - 1)}>Previous</button>
@@ -5158,7 +5539,7 @@ export default function MapPage() {
       {/* Flag detail modal â€” opens on marker or side panel click */}
       <AnimatePresence isVisible={!!modalFlag}>
         <FlagDetailModal
-          flag={flags.find(flag => flag.id === modalFlag?.id) ?? modalFlag}
+          flag={mapDisplayFlagsWithReview.find(flag => flag.id === modalFlag?.id) ?? modalFlag}
           onClose={handleCloseDetailModal}
           onEscalate={handleEscalate}
           onAdjustLocation={handleStartAdjustLocation}
@@ -5378,7 +5759,11 @@ export default function MapPage() {
                 <SkeletonList rows={4} />
               ) : reviewQueue?.data?.length ? (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {reviewQueue.data.map((candidate) => (
+                  {reviewQueue.data.map((candidate) => {
+                    const moveDistance = pinMoveDistanceMeters(candidate);
+                    const samePin = !candidate.locationReapproval
+                      && isSamePinCandidate(candidate);
+                    return (
                     <article
                       key={candidate.businessID}
                       style={{
@@ -5392,13 +5777,14 @@ export default function MapPage() {
                         <div style={{ minWidth: 0 }}>
                           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{candidate.businessName}</h3>
                           <p style={{ margin: "4px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
-                            {candidate.businessID} · {candidate.barangayName || "Barangay not listed"}
+                            Barangay {String(candidate.barangayName || "not listed").replace(/^Barangay\s+/i, "")}
                           </p>
-                          {candidate.businessAddress && (
-                            <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
-                              {candidate.businessAddress}
-                            </p>
-                          )}
+                          <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 12 }}>
+                            Address: {candidate.businessAddress || "Not recorded"}
+                          </p>
+                          <p style={{ margin: "5px 0 0", color: "var(--color-muted)", fontSize: 11 }}>
+                            {candidate.businessID}
+                          </p>
                         </div>
                         {candidate.mapsUrl && (
                           <a
@@ -5525,8 +5911,31 @@ export default function MapPage() {
                               : `${Number(candidate.latitude).toFixed(6)}, ${Number(candidate.longitude).toFixed(6)}`}
                             {candidate.matchScore != null && ` · Match score ${Number(candidate.matchScore).toFixed(2)}`}
                           </div>
+                          <div style={{ color: "var(--color-muted)", marginTop: 3 }}>
+                            Distance to move: {moveDistance == null
+                              ? "Unavailable"
+                              : formatPinMoveDistance(moveDistance)}
+                          </div>
                         </div>
                       </div>
+                      {candidate.lowMatchScore && (
+                        <p role="note" style={{
+                          margin: "10px 0 0",
+                          color: "var(--color-warning, #b45309)",
+                          fontSize: 12,
+                        }}>
+                          Low match score. Check the Google place before approving.
+                        </p>
+                      )}
+                      {samePin && (
+                        <p role="status" style={{
+                          margin: "10px 0 0",
+                          color: "var(--color-muted)",
+                          fontSize: 12,
+                        }}>
+                          Proposed coordinates match the current record. Approval will sync the map pin to this location.
+                        </p>
+                      )}
                       {candidate.candidateOutsideMunicipality && (
                         <p role="alert" style={{
                           margin: "10px 0 0",
@@ -5556,11 +5965,12 @@ export default function MapPage() {
                             ? selectedLocationChoice(reviewLocationChoices, candidate) === PREVIOUS_LOCATION
                               ? "Confirm previous location"
                               : "Use imported location"
-                            : "Approve pin move"}
+                            : samePin ? "Approve & sync pin" : "Approve pin move"}
                         </button>
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : !reviewQueueLoading && !reviewQueueError ? (
                 <div style={{ padding: 32, textAlign: "center", color: "var(--color-muted)" }}>

@@ -45,6 +45,17 @@ test("an unknown colour is not dispatchable", () => {
   assert.equal(canDispatchFlag(null, { isAdmin: true }), false);
 });
 
+test("records without exact coordinates cannot be dispatched", () => {
+  for (const extra of [
+    { hasExactCoords: false },
+    { isCentroidPreview: true },
+  ]) {
+    const record = flag("Red", extra);
+    assert.equal(canDispatchFlag(record, { isAdmin: true }), false);
+    assert.equal(dispatchButtonLabel(record), "No exact location");
+  }
+});
+
 test("dispatch color normalization preserves compliant and blocked colors", () => {
   assert.equal(normalizeDispatchColor("Green"), "Green");
   assert.equal(normalizeDispatchColor("Black"), "Black");

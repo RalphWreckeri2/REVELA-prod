@@ -1,41 +1,93 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Data, GoogleMap } from "@react-google-maps/api";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Circle, Data, GoogleMap, Marker, Polyline } from "@react-google-maps/api";
+import { useNavigate } from "react-router-dom";
 import AnalyticsInfoTip from "./AnalyticsInfoTip";
-import { getBarangayOverviewRequest } from "../services/api";
+import {
+  getFlagsRequest,
+  getAnalyticsHotspotsRequest,
+  getBarangayOverviewRequest,
+  getRegistryStatusBySizeRequest,
+} from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
+import { OverviewMapSkeleton } from "./AnalyticsLoadingLayouts";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import { useTheme } from "../context/themeContext";
+import { FLAG_COLORS } from "./flagColors";
 import {
   getBarangayIdForGeoJsonName,
-  getGeoJsonCentroid,
   getShortBarangayLabel,
   normalizeGeoJsonWinding,
 } from "./barangayMapMapping";
+import { createBarangayMapPopup } from "./barangayMapPopup";
+import {
+  BARANGAY_MAP_INTERACTION_EVENTS,
+  fitMapToGeoJsonFeatures,
+  MIN_BARANGAY_MAP_ZOOM,
+  shouldFitBarangayMap,
+} from "./barangayMapFit";
 import {
   buildBarangayOverviewFilters,
   getBarangayTopTotals,
   getMapPinBuckets,
+  lineOfBusinessKeyAfterSectorChange,
+  lineOfBusinessOptionsForSector,
   quantileBreaks,
   quantileClass,
   quantileRangeLabels,
   registryCategoryColor,
+  registryCategoryColorsForRows,
   sortRegistryBreakdownRows,
 } from "./barangayOverviewPresentation";
+import {
+  hotspotOverlayRadius,
+  hotspotBadgeTier,
+  hotspotCirclePath,
+  hotspotGroupLocation,
+  hotspotGroupMapPath,
+  hotspotMethodNote,
+  fetchHotspotClusterPins,
+  hotspotClusterDetails,
+  hotspotTooltipLabel,
+  hotspotViewTransition,
+  hotspotRequestParams,
+  hotspotPeriodLabel,
+  hotspotResponseMatchesPeriod,
+  hotspotScanNote,
+  hotspotSummary,
+} from "./hotspotPresentation";
 import "../styles/MapOverview.css";
+import "../styles/barangayMapPopup.css";
 
-const MAP_CENTER = { lat: 13.9667, lng: 121.1167 };
+import {
+  BARANGAY_POINT_DATA,
+  DEFAULT_MAP_CENTER,
+} from "../utils/barangayCentroids.js";
+const MAP_CENTER = DEFAULT_MAP_CENTER;
+const BARANGAY_POINTS_BY_ID = new Map(
+  BARANGAY_POINT_DATA.barangays.map((row) => [
+    Number(row.barangayID),
+    row.representativePoint,
+  ]),
+);
 const MAP_MIN_ZOOM = 12;
 const MAP_MAX_ZOOM = 20;
-const MAP_BOUNDS_PADDING_RATIO = 0.5;
 const MAX_SELECTED_BARANGAY_ZOOM = 16;
 const CHOROPLETH_COLORS = {
   registered: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"],
   inspections: ["#eff3ff", "#bdd7e7", "#6baed6", "#3182bd", "#08519c"],
 };
+const DARK_CHOROPLETH_COLORS = {
+  registered: ["#174036", "#1c6952", "#258c65", "#39ae7b", "#6dd6a1"],
+  inspections: ["#172d4b", "#1d4772", "#286395", "#377fb7", "#68a8da"],
+};
 const EMPTY_BARANGAY_ROWS = Object.freeze([]);
+const EMPTY_OVERVIEW_OPTIONS = Object.freeze([]);
 const REGISTRY_DIMENSIONS = [
   { key: "business_size", label: "By size" },
   { key: "business_type", label: "By type" },
   { key: "registration_type", label: "By registration type" },
+  { key: "display_sector", label: "By sector" },
+  { key: "status_size", label: "Status × size" },
 ];
 const STATUS_COLORS = {
   registered_on_map: "#2563eb",
@@ -59,29 +111,6 @@ function shortBarangay(name = "") {
 
 function totalOf(rows = []) {
   return rows.reduce((total, row) => total + Number(row.count || 0), 0);
-}
-
-function getMunicipalityRestriction(features) {
-  const bounds = new window.google.maps.LatLngBounds();
-  features.forEach((feature) => {
-    feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
-  });
-  if (bounds.isEmpty()) return null;
-
-  const southWest = bounds.getSouthWest();
-  const northEast = bounds.getNorthEast();
-  const latitudePadding = (northEast.lat() - southWest.lat()) * MAP_BOUNDS_PADDING_RATIO;
-  const longitudePadding = (northEast.lng() - southWest.lng()) * MAP_BOUNDS_PADDING_RATIO;
-  return new window.google.maps.LatLngBounds(
-    new window.google.maps.LatLng(
-      southWest.lat() - latitudePadding,
-      southWest.lng() - longitudePadding,
-    ),
-    new window.google.maps.LatLng(
-      northEast.lat() + latitudePadding,
-      northEast.lng() + longitudePadding,
-    ),
-  ).toJSON();
 }
 
 function CountsBar({ rows, emptyMessage }) {
@@ -145,11 +174,11 @@ function useBarangayOverview(token, filters, datePreset) {
       })
       .catch((requestError) => {
         if (requestError.name !== "AbortError") {
-          setSnapshot({
+          setSnapshot(previous => ({
             key: requestKey,
-            overview: null,
+            overview: previous.overview,
             error: requestError.message || "The barangay overview could not be loaded.",
-          });
+          }));
         }
       });
     return () => controller.abort();
@@ -163,10 +192,167 @@ function useBarangayOverview(token, filters, datePreset) {
   };
 }
 
+function useRegistryStatusBySize(token, filters, enabled) {
+  const [retry, setRetry] = useState(0);
+  const filterKey = JSON.stringify(filters || {});
+  const requestKey = `${token}:${filterKey}:${retry}`;
+  const [snapshot, setSnapshot] = useState({
+    key: null,
+    data: null,
+    error: "",
+  });
+  const loading = enabled && Boolean(token) && snapshot.key !== requestKey;
+  const data = snapshot.key === requestKey ? snapshot.data : null;
+  const error = enabled && !token
+    ? "Registry status breakdown requires an authenticated session."
+    : snapshot.key === requestKey ? snapshot.error : "";
+
+  useEffect(() => {
+    if (!enabled || !token) return undefined;
+
+    const controller = new AbortController();
+    getRegistryStatusBySizeRequest(token, JSON.parse(filterKey), {
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        if (!Array.isArray(result?.statuses)
+          || !Array.isArray(result?.barangays)
+          || !result?.municipality
+          || !result?.as_of) {
+          throw new Error("The registry status-by-size response is incomplete.");
+        }
+        setSnapshot({ key: requestKey, data: result, error: "" });
+      })
+      .catch((requestError) => {
+        if (requestError.name !== "AbortError") {
+          setSnapshot({
+            key: requestKey,
+            data: null,
+            error: requestError.message
+              || "Registry status breakdown could not be loaded.",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [enabled, filterKey, requestKey, token]);
+
+  return {
+    data,
+    loading,
+    error,
+    retry: () => setRetry((previous) => previous + 1),
+  };
+}
+
+function RegistryStatusTable({ aggregate, statuses, totalLabel }) {
+  const rows = [
+    ...(aggregate?.business_sizes || []),
+    {
+      business_size: totalLabel,
+      total: aggregate?.total || 0,
+      status_counts: aggregate?.status_counts || {},
+      status_percentages: aggregate?.status_percentages || {},
+      isTotal: true,
+    },
+  ];
+
+  return (
+    <div className="map-overview-registry-status-table-wrap">
+      <table className="map-overview-registry-status-table">
+        <thead>
+          <tr>
+            <th scope="col">Business size</th>
+            <th scope="col">Total businesses</th>
+            {statuses.map((status) => (
+              <th scope="col" key={status}>{status}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.business_size} className={row.isTotal ? "is-total" : ""}>
+              <th scope="row">{row.business_size}</th>
+              <td>{Number(row.total || 0).toLocaleString()}</td>
+              {statuses.map((status) => {
+                const count = Number(row.status_counts?.[status] || 0);
+                const percentage = row.status_percentages?.[status];
+                return (
+                  <td key={status}>
+                    {row.total && percentage != null
+                      ? `${count.toLocaleString()} (${Number(percentage).toFixed(1)}%)`
+                      : "N/A"}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function registryStatusScopeLabel(data) {
+  const filters = data?.filters_applied || {};
+  const barangays = data?.barangays || [];
+  const parts = [];
+  const selectedBarangayIds = filters.barangay_ids;
+  if (Array.isArray(selectedBarangayIds) && selectedBarangayIds.length) {
+    const names = selectedBarangayIds.map((id) => (
+      barangays.find((row) => Number(row.barangayID) === Number(id))?.barangayName
+      || `Barangay ${id}`
+    ));
+    parts.push(`Barangay: ${names.join(", ")}`);
+  } else {
+    parts.push("All barangays");
+  }
+
+  const filterLabels = [
+    ["application_status", "Application status"],
+    ["line_of_business", "Line of business"],
+    ["business_size", "Business size"],
+    ["business_type", "Business type"],
+    ["registration_type", "Registration type"],
+    ["line_of_business_key", "Line of business"],
+    ["display_sector", "Sector"],
+    ["renewal_from", "Renewal from"],
+    ["renewal_to", "Renewal to"],
+  ];
+  filterLabels.forEach(([key, label]) => {
+    const value = filters[key];
+    if (value !== undefined && value !== null && value !== "") {
+      parts.push(`${label}: ${Array.isArray(value) ? value.join(", ") : value}`);
+    }
+  });
+  return parts.join(" · ");
+}
+
 export default function MapOverview({ token, filters }) {
+  const navigate = useNavigate();
+  const { isDark } = useTheme();
   const [datePreset, setDatePreset] = useState("all");
   const [mapView, setMapView] = useState("registered");
+  const [showHotspots, setShowHotspots] = useState(false);
+  const [selectedClusterId, setSelectedClusterId] = useState(null);
+  const [selectedClusterRequestKey, setSelectedClusterRequestKey] = useState("");
+  const [clusterDetailRetry, setClusterDetailRetry] = useState(0);
+  const [hotspotRetry, setHotspotRetry] = useState(0);
+  const [mapZoom, setMapZoom] = useState(13);
+  const [clusterPinsState, setClusterPinsState] = useState({
+    key: "",
+    pins: [],
+    loading: false,
+    error: "",
+  });
+  const [hotspotState, setHotspotState] = useState({
+    requestKey: "",
+    data: null,
+    error: "",
+  });
   const [selectedBarangayId, setSelectedBarangayId] = useState(null);
+  const [selectedSectorKey, setSelectedSectorKey] = useState("");
+  const [selectedLineOfBusinessKey, setSelectedLineOfBusinessKey] = useState("");
   const [legendOpen, setLegendOpen] = useState(false);
   const [hoveredBarangayId, setHoveredBarangayId] = useState(null);
   const [activeDimension, setActiveDimension] = useState("business_size");
@@ -178,24 +364,111 @@ export default function MapOverview({ token, filters }) {
   const hoverInfoWindowRef = useRef(null);
   const styleFeatureRef = useRef(null);
   const mapRef = useRef(null);
-  const municipalityRestrictionRef = useRef(null);
   const boundaryFeaturesRef = useRef([]);
   const sourceGeoJsonFeaturesRef = useRef([]);
   const labelMarkersRef = useRef([]);
   const mapIdleRef = useRef(false);
   const mapIdleListenerRef = useRef(null);
   const resizeObserverRef = useRef(null);
+  const mapInteractionListenersRef = useRef([]);
   const fitFrameRef = useRef(null);
   const pendingSelectionFitRef = useRef(false);
+  const userMapInteractedRef = useRef(false);
+  const programmaticMapChangeRef = useRef(false);
+  const initialFitCompletedRef = useRef(false);
+  const containerSizeObservedRef = useRef(false);
   const lastFitSignatureRef = useRef("");
   const lastMapSizeRef = useRef("");
   const fitBarangayBoundsRef = useRef(null);
   const updateLabelVisibilityRef = useRef(null);
   const { isLoaded, loadError } = useGoogleMapsScript();
+  const overviewFilters = useMemo(
+    () => ({
+      ...filters,
+      display_sector: selectedSectorKey,
+      line_of_business_key: selectedLineOfBusinessKey,
+    }),
+    [filters, selectedLineOfBusinessKey, selectedSectorKey],
+  );
   const { overview, loading, error, retry } = useBarangayOverview(
     token,
-    filters,
+    overviewFilters,
     datePreset,
+  );
+  const registryStatusFilters = useMemo(() => ({
+    ...overviewFilters,
+    ...(selectedBarangayId == null
+      ? {}
+      : {
+        barangay_id: selectedBarangayId,
+        barangay_ids: [selectedBarangayId],
+      }),
+  }), [overviewFilters, selectedBarangayId]);
+  const registryStatusViewActive = !showHotspots
+    && activeDimension === "status_size";
+  const {
+    data: registryStatusData,
+    loading: registryStatusLoading,
+    error: registryStatusError,
+    retry: retryRegistryStatus,
+  } = useRegistryStatusBySize(
+    token,
+    registryStatusFilters,
+    registryStatusViewActive,
+  );
+  const hotspotRequest = useMemo(
+    () => hotspotRequestParams(datePreset),
+    [datePreset],
+  );
+  const hotspotRequestKey = `${token ? "authenticated" : "anonymous"}:${hotspotRequest.date_preset}:${hotspotRetry}`;
+  useEffect(() => {
+    if (!token) return undefined;
+    const controller = new AbortController();
+    getAnalyticsHotspotsRequest(token, hotspotRequest.date_preset, {
+      signal: controller.signal,
+      population: "unregistered_candidates",
+    })
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        if (!hotspotResponseMatchesPeriod(data, hotspotRequest.date_preset)) {
+          throw new Error(
+            `Hotspot response period did not match ${hotspotPeriodLabel(hotspotRequest.date_preset)}.`,
+          );
+        }
+        setHotspotState({ requestKey: hotspotRequestKey, data, error: "" });
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted && requestError.name !== "AbortError") {
+          setHotspotState({
+            requestKey: hotspotRequestKey,
+            data: null,
+            error: requestError.message || "Hotspot data could not be loaded.",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [hotspotRequest.date_preset, hotspotRequestKey, hotspotRetry, token]);
+  const displaySectorOptions = overview?.display_sectors || EMPTY_OVERVIEW_OPTIONS;
+  const allLineOfBusinessOptions = (
+    overview?.line_of_business_options || EMPTY_OVERVIEW_OPTIONS
+  );
+  const lineOfBusinessOptions = useMemo(
+    () => lineOfBusinessOptionsForSector(
+      allLineOfBusinessOptions,
+      selectedSectorKey,
+    ),
+    [allLineOfBusinessOptions, selectedSectorKey],
+  );
+  const lineOfBusinessOptionsBySector = useMemo(() => (
+    displaySectorOptions.map((sector) => ({
+      ...sector,
+      options: lineOfBusinessOptions.filter(
+        (option) => option.sector_key === sector.value,
+      ),
+    })).filter((sector) => sector.options.length > 0)
+  ), [displaySectorOptions, lineOfBusinessOptions]);
+  const selectedLineOfBusinessOption = allLineOfBusinessOptions.find(
+    (option) => option.value === selectedLineOfBusinessKey,
   );
 
   const barangayRows = overview?.barangays || EMPTY_BARANGAY_ROWS;
@@ -220,15 +493,149 @@ export default function MapOverview({ token, filters }) {
   const dimensionRows = selectedDimension
     ? panelData?.registry?.[selectedDimension.key] || []
     : [];
+  const dimensionColors = registryCategoryColorsForRows(activeDimension, dimensionRows);
   const coloredDimensionRows = sortRegistryBreakdownRows(
     activeDimension,
     dimensionRows,
   ).map((row) => ({
     ...row,
-    color: registryCategoryColor(activeDimension, row.value),
+    color: dimensionColors.get(String(row.value ?? "Unknown")),
   }));
   const topTotals = getBarangayTopTotals(panelData);
   const mapRowsById = rowsById;
+  const hotspotIsCurrent = hotspotState.requestKey === hotspotRequestKey;
+  const hotspotData = hotspotIsCurrent ? hotspotState.data : null;
+  const hotspotLoading = Boolean(token && !hotspotIsCurrent);
+  const hotspotError = token
+    ? hotspotIsCurrent ? hotspotState.error : ""
+    : "Hotspot data requires an authenticated session.";
+  const hotspotStats = hotspotSummary(hotspotData);
+  const hotspotClusters = useMemo(
+    () => [...(hotspotData?.clusters || [])].sort(
+      (first, second) => Number(second.size) - Number(first.size),
+    ),
+    [hotspotData?.clusters],
+  );
+  const selectedCluster = showHotspots && selectedClusterRequestKey === hotspotRequestKey
+    ? hotspotClusters.find(
+      (cluster) => Number(cluster.cluster_id) === Number(selectedClusterId),
+    ) || null
+    : null;
+  const hasSelectedCluster = Boolean(
+    showHotspots
+    && selectedClusterId != null
+    && selectedClusterRequestKey === hotspotRequestKey,
+  );
+  const selectedClusterKey = selectedCluster
+    ? `${hotspotRequestKey}:${selectedCluster.cluster_id}:${JSON.stringify(selectedCluster.log_ids || [])}`
+    : "";
+  const clusterPinsRequestKey = selectedClusterKey
+    ? `${selectedClusterKey}:${clusterDetailRetry}`
+    : "";
+  const clusterPinsAreCurrent = clusterPinsState.key === clusterPinsRequestKey;
+  const clusterDetail = selectedCluster
+    ? hotspotClusterDetails(
+      selectedCluster,
+      clusterPinsAreCurrent ? clusterPinsState.pins : [],
+    )
+    : null;
+  const selectedClusterMapPath = selectedCluster
+    ? hotspotGroupMapPath(selectedCluster)
+    : null;
+  const scanNote = hotspotScanNote(
+    hotspotData?.last_detection_run,
+  );
+
+  const fitHotspotCluster = useCallback((cluster, pins = []) => {
+    const map = mapRef.current;
+    const maps = window.google?.maps;
+    if (!map || !maps?.LatLngBounds) return;
+
+    const bounds = new maps.LatLngBounds();
+    const locatedPins = pins.filter((pin) => (
+      Number.isFinite(Number(pin.latitude))
+      && Number.isFinite(Number(pin.longitude))
+    ));
+    if (locatedPins.length > 1) {
+      locatedPins.forEach((pin) => bounds.extend({
+        lat: Number(pin.latitude),
+        lng: Number(pin.longitude),
+      }));
+    } else {
+      const lat = Number(cluster?.centroid?.lat);
+      const lng = Number(cluster?.centroid?.lng);
+      const radius = Math.max(8, Number(cluster?.radius_m) || 0);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const latDelta = radius / 111_320;
+      const lngDelta = radius / (111_320 * Math.max(0.01, Math.cos(lat * Math.PI / 180)));
+      bounds.extend({ lat: lat - latDelta, lng: lng - lngDelta });
+      bounds.extend({ lat: lat + latDelta, lng: lng + lngDelta });
+    }
+
+    map.fitBounds(bounds, { top: 72, right: 72, bottom: 72, left: 72 });
+  }, []);
+
+  const selectHotspotCluster = useCallback((cluster) => {
+    setSelectedClusterId(Number(cluster.cluster_id));
+    setSelectedClusterRequestKey(hotspotRequestKey);
+    fitHotspotCluster(cluster);
+  }, [fitHotspotCluster, hotspotRequestKey]);
+
+  useEffect(() => {
+    if (!selectedCluster || !token) return undefined;
+    const controller = new AbortController();
+    fetchHotspotClusterPins(
+      getFlagsRequest,
+      token,
+      selectedCluster,
+      controller.signal,
+    )
+      .then((pins) => {
+        if (!controller.signal.aborted) {
+          setClusterPinsState({
+            key: clusterPinsRequestKey,
+            pins,
+            loading: false,
+            error: "",
+          });
+        }
+      })
+      .catch((requestError) => {
+        if (!controller.signal.aborted && requestError.name !== "AbortError") {
+          setClusterPinsState({
+            key: clusterPinsRequestKey,
+            pins: [],
+            loading: false,
+            error: requestError.message || "Cluster pin details could not be loaded.",
+          });
+        }
+      });
+    return () => controller.abort();
+  }, [clusterPinsRequestKey, selectedCluster, token]);
+
+  useEffect(() => {
+    if (!selectedCluster || !clusterPinsAreCurrent || !clusterPinsState.pins.length) return;
+    fitHotspotCluster(selectedCluster, clusterPinsState.pins);
+  }, [
+    clusterPinsAreCurrent,
+    clusterPinsState.pins,
+    fitHotspotCluster,
+    selectedCluster,
+  ]);
+
+  const clearSelectedCluster = useCallback(() => {
+    setSelectedClusterId(null);
+    setSelectedClusterRequestKey("");
+  }, []);
+
+  const toggleHotspots = useCallback(() => {
+    const next = !showHotspots;
+    const transition = hotspotViewTransition(next);
+    setShowHotspots(transition.showHotspots);
+    if (transition.mapView) setMapView(transition.mapView);
+    setSelectedClusterId(null);
+    setSelectedClusterRequestKey("");
+  }, [showHotspots]);
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -251,78 +658,86 @@ export default function MapOverview({ token, filters }) {
     const isSelected = Number(selectedBarangayId) === id;
     const colorIndex = quantileClass(count, mapBreaks);
     return {
-      fillColor: colorIndex < 0
-        ? "#cbd5e1"
-        : CHOROPLETH_COLORS[mapView][colorIndex],
-      fillOpacity: 1,
-      strokeColor: isSelected ? "#0f172a" : isHovered ? "#f97316" : "#ffffff",
-      strokeWeight: isSelected ? 4 : isHovered ? 2 : 1,
-      zIndex: isSelected ? 100 : isHovered ? 10 : 0,
+      fillColor: showHotspots
+        ? isDark ? "#34d399" : "#166534"
+        : colorIndex < 0
+          ? isDark ? "#334155" : "#cbd5e1"
+          : (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][colorIndex],
+      fillOpacity: showHotspots ? (isDark ? 0.2 : 0.16) : 1,
+      strokeColor: showHotspots
+        ? isDark ? "#a7f3d0" : "#ffffff"
+        : isSelected
+          ? (isDark ? "#fbbf24" : "#0f172a")
+          : isHovered ? "#f97316" : isDark ? "#94a3b8" : "#ffffff",
+      strokeWeight: showHotspots ? 1.5 : isSelected ? 4 : isHovered ? 2 : 1,
+      zIndex: showHotspots ? 0 : isSelected ? 100 : isHovered ? 10 : 0,
     };
-  }, [hoveredBarangayId, mapBreaks, mapRowsById, mapView, selectedBarangayId]);
+  }, [hoveredBarangayId, isDark, mapBreaks, mapRowsById, mapView, selectedBarangayId, showHotspots]);
 
   useEffect(() => {
     styleFeatureRef.current = styleFeature;
     dataLayerRef.current?.setStyle((feature) => styleFeature(feature));
   }, [styleFeature]);
 
-  const fitBarangayBounds = useCallback(() => {
+  const fitBarangayBounds = useCallback((force = false, selectionOverride) => {
     const map = mapRef.current;
     const container = map?.getDiv();
     if (!mapIdleRef.current || !map || !container?.clientWidth || !container?.clientHeight
-      || !boundaryFeaturesRef.current.length) return;
+      || !containerSizeObservedRef.current || !sourceGeoJsonFeaturesRef.current.length) return;
+    if (!shouldFitBarangayMap({
+      force,
+      userInteracted: userMapInteractedRef.current,
+    })) return;
     const size = `${container.clientWidth}x${container.clientHeight}`;
-    const selectedId = selectedBarangayId == null ? null : Number(selectedBarangayId);
+    const activeSelection = selectionOverride === undefined
+      ? selectedBarangayId
+      : selectionOverride;
+    const selectedId = activeSelection == null ? null : Number(activeSelection);
     const signature = `${selectedId ?? "all"}:${size}`;
-    if (signature === lastFitSignatureRef.current) return;
-    const bounds = new window.google.maps.LatLngBounds();
-    const features = selectedId == null
-      ? boundaryFeaturesRef.current
-      : boundaryFeaturesRef.current.filter((feature) => (
-        getBarangayIdForGeoJsonName(feature.getProperty("ADM4_EN")) === selectedId
+    if (!force && signature === lastFitSignatureRef.current) return;
+    const geoJsonFeatures = selectedId == null
+      ? sourceGeoJsonFeaturesRef.current
+      : sourceGeoJsonFeaturesRef.current.filter((feature) => (
+        getBarangayIdForGeoJsonName(feature.properties?.ADM4_EN) === selectedId
       ));
-    features.forEach((feature) => {
-      feature.getGeometry()?.forEachLatLng((latLng) => bounds.extend(latLng));
-    });
-    if (!bounds.isEmpty()) {
-      lastFitSignatureRef.current = signature;
-      const isSelectionFit = selectedId != null;
-      const padding = isSelectionFit ? 60 : 24;
-      if (isSelectionFit) pendingSelectionFitRef.current = true;
-      map.fitBounds(bounds, {
-        top: padding,
-        right: padding,
-        bottom: padding,
-        left: padding,
-      });
+    if (!geoJsonFeatures.length) return;
+    const isSelectionFit = selectedId != null;
+    lastFitSignatureRef.current = signature;
+    const padding = isSelectionFit ? 60 : 24;
+    if (isSelectionFit) pendingSelectionFitRef.current = true;
+    programmaticMapChangeRef.current = true;
+    const fittedBounds = fitMapToGeoJsonFeatures(map, geoJsonFeatures, padding);
+    if (!fittedBounds) {
+      programmaticMapChangeRef.current = false;
+      lastFitSignatureRef.current = "";
+      return;
+    }
+    if (!initialFitCompletedRef.current) {
+      initialFitCompletedRef.current = true;
     }
   }, [selectedBarangayId]);
 
-  const scheduleBarangayFit = useCallback(() => {
+  const scheduleBarangayFit = useCallback((force = false, selectionOverride) => {
     if (fitFrameRef.current != null) {
       window.cancelAnimationFrame(fitFrameRef.current);
     }
     fitFrameRef.current = window.requestAnimationFrame(() => {
       fitFrameRef.current = window.requestAnimationFrame(() => {
         fitFrameRef.current = null;
-        fitBarangayBoundsRef.current?.();
+        fitBarangayBoundsRef.current?.(force, selectionOverride);
       });
     });
   }, []);
 
-  const addBarangayLabels = useCallback((features, sourceFeatures) => {
+  const addBarangayLabels = useCallback((features) => {
     labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     if (!mapRef.current || !window.google?.maps?.Marker) return;
-    const sourceByName = new Map(sourceFeatures.map((feature) => [
-      feature.properties.ADM4_EN,
-      feature,
-    ]));
     features.forEach((feature) => {
       const name = feature.getProperty("ADM4_EN");
       const id = getBarangayIdForGeoJsonName(name);
       if (id == null) return;
-      const position = getGeoJsonCentroid(sourceByName.get(name));
+      const position = BARANGAY_POINTS_BY_ID.get(Number(id));
       if (!position) return;
       const marker = new window.google.maps.Marker({
         map: mapRef.current,
@@ -337,11 +752,12 @@ export default function MapOverview({ token, filters }) {
         label: {
           text: getShortBarangayLabel(feature.getProperty("ADM4_EN")),
           className: "map-overview-feature-label",
+          color: isDark ? "#f8fafc" : "#0f172a",
         },
       });
       labelMarkersRef.current.push({ marker, barangayId: id });
     });
-  }, []);
+  }, [isDark]);
 
   const updateBarangayLabelVisibility = useCallback(() => {
     const zoom = mapRef.current?.getZoom() || 0;
@@ -349,9 +765,12 @@ export default function MapOverview({ token, filters }) {
       const visible = zoom >= 14
         || barangayId === Number(selectedBarangayId)
         || barangayId === Number(hoveredBarangayId);
+      const label = marker.getLabel();
+      const labelColor = isDark ? "#f8fafc" : "#0f172a";
+      if (label && label.color !== labelColor) marker.setLabel({ ...label, color: labelColor });
       marker.setVisible(visible);
     });
-  }, [hoveredBarangayId, selectedBarangayId]);
+  }, [hoveredBarangayId, selectedBarangayId, isDark]);
 
   useEffect(() => {
     fitBarangayBoundsRef.current = fitBarangayBounds;
@@ -366,53 +785,57 @@ export default function MapOverview({ token, filters }) {
   }, [updateBarangayLabelVisibility]);
 
   useEffect(() => {
-    scheduleBarangayFit();
+    scheduleBarangayFit(true);
   }, [scheduleBarangayFit, selectedBarangayId]);
+
+  const markUserMapInteraction = useCallback(() => {
+    if (initialFitCompletedRef.current && !programmaticMapChangeRef.current) {
+      userMapInteractedRef.current = true;
+    }
+  }, []);
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
-    if (municipalityRestrictionRef.current) {
-      map.setOptions({
-        minZoom: MAP_MIN_ZOOM,
-        maxZoom: MAP_MAX_ZOOM,
-        restriction: {
-          latLngBounds: municipalityRestrictionRef.current,
-          strictBounds: true,
-        },
-      });
-    }
-    hoverInfoWindowRef.current = new window.google.maps.InfoWindow();
+    hoverInfoWindowRef.current = new window.google.maps.InfoWindow({
+      disableAutoPan: true,
+      headerDisabled: true,
+    });
     if (boundaryFeaturesRef.current.length) {
-      addBarangayLabels(
-        boundaryFeaturesRef.current,
-        sourceGeoJsonFeaturesRef.current,
-      );
+      addBarangayLabels(boundaryFeaturesRef.current);
       updateLabelVisibilityRef.current?.();
     }
     mapIdleListenerRef.current = map.addListener("idle", () => {
       mapIdleRef.current = true;
+      programmaticMapChangeRef.current = false;
       if (pendingSelectionFitRef.current) {
         pendingSelectionFitRef.current = false;
         if (map.getZoom() > MAX_SELECTED_BARANGAY_ZOOM) {
+          programmaticMapChangeRef.current = true;
           map.setZoom(MAX_SELECTED_BARANGAY_ZOOM);
         }
       }
       scheduleBarangayFit();
       updateLabelVisibilityRef.current?.();
     });
+    mapInteractionListenersRef.current = BARANGAY_MAP_INTERACTION_EVENTS.map(
+      (eventName) => map.addListener(eventName, markUserMapInteraction),
+    );
     if (typeof ResizeObserver !== "undefined") {
       resizeObserverRef.current = new ResizeObserver(() => {
         const container = map.getDiv();
         const size = `${container.clientWidth}x${container.clientHeight}`;
+        containerSizeObservedRef.current = true;
         if (size === lastMapSizeRef.current) return;
         lastMapSizeRef.current = size;
         lastFitSignatureRef.current = "";
         scheduleBarangayFit();
       });
       resizeObserverRef.current.observe(map.getDiv());
+    } else {
+      containerSizeObservedRef.current = true;
     }
     scheduleBarangayFit();
-  }, [addBarangayLabels, scheduleBarangayFit]);
+  }, [addBarangayLabels, markUserMapInteraction, scheduleBarangayFit]);
 
   const handleDataLayerLoad = useCallback((dataLayer) => {
     dataLayerRef.current = dataLayer;
@@ -428,20 +851,9 @@ export default function MapOverview({ token, filters }) {
         const features = dataLayer.addGeoJson(normalizedGeoJson);
         if (features.length !== 16) throw new Error("Expected all barangay boundaries.");
         boundaryFeaturesRef.current = features;
-        municipalityRestrictionRef.current = getMunicipalityRestriction(features);
-        if (municipalityRestrictionRef.current) {
-          mapRef.current?.setOptions({
-            minZoom: MAP_MIN_ZOOM,
-            maxZoom: MAP_MAX_ZOOM,
-            restriction: {
-              latLngBounds: municipalityRestrictionRef.current,
-              strictBounds: true,
-            },
-          });
-        }
         sourceGeoJsonFeaturesRef.current = normalizedGeoJson.features;
         dataLayer.setStyle((feature) => styleFeatureRef.current?.(feature) || {});
-        addBarangayLabels(features, normalizedGeoJson.features);
+        addBarangayLabels(features);
         scheduleBarangayFit();
         updateLabelVisibilityRef.current?.();
       })
@@ -452,9 +864,9 @@ export default function MapOverview({ token, filters }) {
     labelMarkersRef.current.forEach(({ marker }) => marker.setMap(null));
     labelMarkersRef.current = [];
     boundaryFeaturesRef.current = [];
-    municipalityRestrictionRef.current = null;
     sourceGeoJsonFeaturesRef.current = [];
     lastFitSignatureRef.current = "";
+    initialFitCompletedRef.current = false;
     dataLayerRef.current = null;
   }, []);
 
@@ -463,6 +875,8 @@ export default function MapOverview({ token, filters }) {
     hoverInfoWindowRef.current = null;
     mapIdleListenerRef.current?.remove();
     mapIdleListenerRef.current = null;
+    mapInteractionListenersRef.current.forEach((listener) => listener.remove());
+    mapInteractionListenersRef.current = [];
     resizeObserverRef.current?.disconnect();
     resizeObserverRef.current = null;
     if (fitFrameRef.current != null) {
@@ -470,6 +884,10 @@ export default function MapOverview({ token, filters }) {
       fitFrameRef.current = null;
     }
     mapIdleRef.current = false;
+    containerSizeObservedRef.current = false;
+    initialFitCompletedRef.current = false;
+    userMapInteractedRef.current = false;
+    programmaticMapChangeRef.current = false;
     lastFitSignatureRef.current = "";
     lastMapSizeRef.current = "";
     pendingSelectionFitRef.current = false;
@@ -488,17 +906,11 @@ export default function MapOverview({ token, filters }) {
     const count = Number(mapView === "registered"
       ? row?.registry_total || 0
       : row?.inspections?.total || 0);
-    const content = document.createElement("div");
-    content.className = "map-overview-hover-tooltip";
-    const name = document.createElement("strong");
-    name.textContent = row?.barangayName
-      || event.feature?.getProperty("ADM4_EN")
-      || "Barangay";
-    const metric = document.createElement("span");
-    metric.textContent = `${count.toLocaleString()} ${
-      mapView === "registered" ? "registered businesses" : "inspection reports"
-    }`;
-    content.append(name, metric);
+    const content = createBarangayMapPopup({
+      name: row?.barangayName || event.feature?.getProperty("ADM4_EN"),
+      count,
+      countLabel: mapView === "registered" ? "registered businesses" : "inspection reports",
+    });
     hoverInfoWindowRef.current?.setContent(content);
     if (event.latLng) {
       hoverInfoWindowRef.current?.setPosition(event.latLng);
@@ -512,7 +924,19 @@ export default function MapOverview({ token, filters }) {
   }, []);
 
   const selectFromList = (event) => {
-    setSelectedBarangayId(event.target.value ? Number(event.target.value) : null);
+    const selectedId = event.target.value ? Number(event.target.value) : null;
+    if (selectedId == null) {
+      userMapInteractedRef.current = false;
+      lastFitSignatureRef.current = "";
+    }
+    setSelectedBarangayId(selectedId);
+  };
+
+  const fitAllBarangays = () => {
+    userMapInteractedRef.current = false;
+    lastFitSignatureRef.current = "";
+    setSelectedBarangayId(null);
+    scheduleBarangayFit(true, null);
   };
 
   const pinRows = useMemo(() => {
@@ -541,7 +965,7 @@ export default function MapOverview({ token, filters }) {
     .filter((row) => row.count > 0);
 
   if (loading && !overview) {
-    return <div className="map-overview-loading" role="status">Loading barangay details…</div>;
+    return <div role="status" aria-label="Loading barangay details" aria-busy="true"><OverviewMapSkeleton /></div>;
   }
   if (error && !overview) {
     return (
@@ -553,7 +977,10 @@ export default function MapOverview({ token, filters }) {
   }
 
   return (
-    <div className="map-overview">
+    <div
+      className="map-overview"
+      style={{ "--hotspot-flag-red": FLAG_COLORS.Red.marker }}
+    >
       <div className="map-overview-topbar" aria-label={`${selectedRow ? shortBarangay(selectedRow.barangayName) : "All barangays"} totals`}>
         <div className="map-overview-total">
           <strong>{topTotals.registered.toLocaleString()}</strong>
@@ -569,49 +996,175 @@ export default function MapOverview({ token, filters }) {
         </div>
       </div>
 
-      <div className="map-overview-controls" role="group" aria-label="Analytics filters">
-        <span className="map-overview-filter-by">Filter by</span>
-        <div className="map-overview-control-group">
-          <label className="map-overview-select-label map-overview-select-label--filter">
-            <span>Barangay</span>
-            <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
-              <option value="">All barangays</option>
-              {barangayRows.map((row) => (
-                <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
-              ))}
-            </select>
-          </label>
-          <label className="map-overview-date-label" title="Choose the date range">
-            <span>Date range</span>
-            <select aria-label="Date range" title="Choose the date range"
-              value={datePreset} onChange={(event) => setDatePreset(event.target.value)}>
-              <option value="all">All time</option>
-              <option value="year">This year</option>
-              <option value="30days">Last 30 days</option>
-              <option value="7days">Last 7 days</option>
-            </select>
-          </label>
+      <section
+        className="map-overview-filter-card"
+        aria-labelledby="map-overview-filters-title"
+      >
+        <div className="map-overview-filter-heading">
+          <div className="map-overview-filter-heading-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 5h16l-6.5 7.5v5l-3 1.5v-6.5L4 5z" />
+            </svg>
+          </div>
+          <div>
+            <h3 id="map-overview-filters-title">Filters</h3>
+            <p>Choose what you would like to see on the map and in the details.</p>
+          </div>
         </div>
-      </div>
+        <div className="map-overview-controls" role="group" aria-label="Overview filters">
+          <div className="map-overview-control-group">
+            <label className="map-overview-select-label map-overview-select-label--filter">
+              <span>Barangay</span>
+              <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
+                <option value="">All barangays</option>
+                {barangayRows.map((row) => (
+                  <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
+                ))}
+              </select>
+            </label>
+            <label className="map-overview-select-label map-overview-select-label--filter">
+              <span>Sector</span>
+              <select
+                aria-label="Filter registered businesses by sector"
+                value={selectedSectorKey}
+                onChange={(event) => {
+                  const nextSectorKey = event.target.value;
+                  setSelectedLineOfBusinessKey((selectedKey) => (
+                    lineOfBusinessKeyAfterSectorChange(
+                      selectedKey,
+                      allLineOfBusinessOptions,
+                      nextSectorKey,
+                    )
+                  ));
+                  setSelectedSectorKey(nextSectorKey);
+                  setActiveDimension("display_sector");
+                }}
+              >
+                <option value="">All sectors</option>
+                {displaySectorOptions.map((sector) => (
+                  <option key={sector.value} value={sector.value}>{sector.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="map-overview-select-label map-overview-select-label--filter">
+              <span className="map-overview-filter-label-heading">
+                <span>Line of business</span>
+                <AnalyticsInfoTip label="About line-of-business filtering">
+                  Each business is counted under its first-listed PSIC activity.
+                  Secondary activities are not counted. The activity description
+                  is a label; the filter uses its full normalized key.
+                </AnalyticsInfoTip>
+              </span>
+              <select
+                aria-label="Filter registered businesses by line of business"
+                value={selectedLineOfBusinessKey}
+                disabled={loading || lineOfBusinessOptions.length === 0}
+                onChange={(event) => {
+                  setSelectedLineOfBusinessKey(event.target.value);
+                  setActiveDimension("display_sector");
+                }}
+              >
+                <option value="">All activities</option>
+                {selectedSectorKey
+                  ? lineOfBusinessOptions.map((option) => (
+                    <option key={option.value} value={option.value} title={option.label}>
+                      {option.label}
+                    </option>
+                  ))
+                  : lineOfBusinessOptionsBySector.map((sector) => (
+                    <optgroup key={sector.value} label={sector.label}>
+                      {sector.options.map((option) => (
+                        <option key={option.value} value={option.value} title={option.label}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+              </select>
+            </label>
+            <label className="map-overview-date-label" title="Choose the date range">
+              <span>Date range</span>
+              <select aria-label="Date range" title="Choose the date range"
+                value={datePreset} onChange={(event) => {
+                  clearSelectedCluster();
+                  setDatePreset(event.target.value);
+                }}>
+                <option value="all">All time</option>
+                <option value="year">This year</option>
+                <option value="30days">Last 30 days</option>
+                <option value="7days">Last 7 days</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <p className="map-overview-filter-scope">
+          Filters registered businesses only.
+        </p>
+        {(selectedSectorKey || selectedLineOfBusinessOption) && (
+          <div className="map-overview-active-filters" aria-label="Active filters">
+            {selectedSectorKey && (
+              <span className="map-overview-active-filter">
+                Sector: {displaySectorOptions.find(
+                  (sector) => sector.value === selectedSectorKey,
+                )?.label || selectedSectorKey}
+                <button
+                  type="button"
+                  aria-label="Remove sector filter"
+                  onClick={() => setSelectedSectorKey("")}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+            {selectedLineOfBusinessOption && (
+              <span className="map-overview-active-filter">
+                Line of business: {selectedLineOfBusinessOption.label}
+                <button
+                  type="button"
+                  aria-label="Remove line-of-business filter"
+                  onClick={() => setSelectedLineOfBusinessKey("")}
+                >
+                  ×
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+      </section>
 
-      {loading && <p className="map-overview-refreshing" role="status">Updating barangay details…</p>}
-      {error && <p className="map-overview-error-inline" role="alert">Some barangay details could not be updated.</p>}
+      <div className="analytics-map-update-slot" role="status" aria-live="polite">
+        {loading ? "Updating barangay details…" : error ? "Some barangay details could not be updated." : ""}
+      </div>
 
       <div className="map-overview-layout">
         <section className="map-overview-map-card" aria-label="Barangay map">
           <div className="map-overview-map-heading map-overview-map-toolbar">
-            <div className="map-overview-segmented" role="group" aria-label="Map color">
-              <button type="button" className={mapView === "registered" ? "active" : ""}
-                aria-pressed={mapView === "registered"} onClick={() => setMapView("registered")}>
-                Registered
+            {!showHotspots && (
+              <div className="map-overview-segmented" role="group" aria-label="Map color">
+                <button type="button" className={mapView === "registered" ? "active" : ""}
+                  aria-pressed={mapView === "registered"} onClick={() => setMapView("registered")}>
+                  Registered
+                </button>
+                <button type="button" className={mapView === "inspections" ? "active" : ""}
+                  aria-pressed={mapView === "inspections"} onClick={() => setMapView("inspections")}>
+                  Inspections
+                </button>
+              </div>
+            )}
+            <div className="map-overview-hotspot-controls">
+              <button
+                type="button"
+                className={`map-overview-hotspot-toggle${showHotspots ? " active" : ""}`}
+                role="switch"
+                aria-checked={showHotspots}
+                onClick={toggleHotspots}
+              >
+                Show hotspots
               </button>
-              <button type="button" className={mapView === "inspections" ? "active" : ""}
-                aria-pressed={mapView === "inspections"} onClick={() => setMapView("inspections")}>
-                Inspections
-              </button>
-              <button type="button" disabled aria-label="Hotspots coming soon">
-                Hotspots · Coming soon
-              </button>
+              <div className="map-overview-hotspot-scan-note" role="status">
+                {scanNote.text}
+              </div>
             </div>
           </div>
           <div className="map-overview-map-stage">
@@ -626,14 +1179,21 @@ export default function MapOverview({ token, filters }) {
                 zoom={13}
                 onLoad={handleMapLoad}
                 onUnmount={handleMapUnmount}
+                onZoomChanged={() => {
+                  const zoom = mapRef.current?.getZoom();
+                  if (zoom != null) setMapZoom(zoom);
+                }}
+                onClick={clearSelectedCluster}
                 options={{
-                  mapId: REVELA_MAP_ID,
+                   mapId: REVELA_MAP_ID,
+                   colorScheme: isDark ? "DARK" : "LIGHT",
+                  isFractionalZoomEnabled: true,
                   clickableIcons: false,
                   mapTypeControl: false,
                   streetViewControl: false,
                   fullscreenControl: true,
                   zoomControl: true,
-                  minZoom: MAP_MIN_ZOOM,
+                  minZoom: Math.max(MIN_BARANGAY_MAP_ZOOM, MAP_MIN_ZOOM),
                   maxZoom: MAP_MAX_ZOOM,
                 }}
               >
@@ -644,8 +1204,121 @@ export default function MapOverview({ token, filters }) {
                   onMouseOver={setHoveredFeature}
                   onMouseOut={clearHoveredFeature}
                 />
+                {showHotspots && hotspotClusters.map((cluster) => {
+                  const isSelected = hasSelectedCluster
+                    && Number(cluster.cluster_id) === Number(selectedClusterId);
+                  const isDimmed = hasSelectedCluster && !isSelected;
+                  const zIndex = 200 + Number(cluster.size || 0);
+                  const outlinePath = hotspotCirclePath(
+                    cluster.centroid,
+                    hotspotOverlayRadius(cluster.radius_m),
+                  );
+                  const selectCluster = (event) => {
+                    event?.domEvent?.stopPropagation();
+                    selectHotspotCluster(cluster);
+                  };
+                  return (
+                    <Fragment key={cluster.cluster_id}>
+                      {mapZoom >= 14 && (
+                        <>
+                          <Circle
+                            center={cluster.centroid}
+                            radius={hotspotOverlayRadius(cluster.radius_m)}
+                            onClick={selectCluster}
+                            options={{
+                              clickable: true,
+                              fillColor: FLAG_COLORS.Red.marker,
+                              fillOpacity: isDimmed ? 0.08 : 0.25,
+                              strokeOpacity: 0,
+                              strokeWeight: 0,
+                              zIndex,
+                            }}
+                          />
+                          <Polyline
+                            path={outlinePath}
+                            onClick={selectCluster}
+                            options={{
+                              clickable: true,
+                              strokeOpacity: 0,
+                              zIndex: zIndex + 1,
+                              icons: [{
+                                icon: {
+                                  path: "M 0,-1 0,1",
+                                  strokeColor: FLAG_COLORS.Red.marker,
+                                  strokeOpacity: isDimmed ? 0.25 : 0.95,
+                                  strokeWeight: isSelected ? 4 : 2,
+                                  scale: 1,
+                                },
+                                repeat: "10px",
+                              }],
+                            }}
+                          />
+                        </>
+                      )}
+                      <Marker
+                        position={cluster.centroid}
+                        title={hotspotTooltipLabel(cluster)}
+                        onClick={selectCluster}
+                        options={{
+                          clickable: true,
+                          optimized: true,
+                          zIndex: (isSelected ? 10_000 : 1_000) + Number(cluster.size || 0),
+                          icon: {
+                            path: window.google.maps.SymbolPath.CIRCLE,
+                            scale: 0,
+                          },
+                          label: {
+                            text: String(cluster.size),
+                            className: [
+                              "map-overview-hotspot-badge",
+                              `map-overview-hotspot-badge--${hotspotBadgeTier(cluster.size)}`,
+                              isSelected && "map-overview-hotspot-badge--selected",
+                              isDimmed && "map-overview-hotspot-badge--dimmed",
+                            ].filter(Boolean).join(" "),
+                          },
+                        }}
+                      />
+                      {isSelected && clusterPinsAreCurrent && clusterPinsState.pins
+                        .filter((pin) => (
+                          Number.isFinite(Number(pin.latitude))
+                          && Number.isFinite(Number(pin.longitude))
+                        ))
+                        .map((pin) => (
+                          <Marker
+                            key={`member-${pin.logID}`}
+                            position={{
+                              lat: Number(pin.latitude),
+                              lng: Number(pin.longitude),
+                            }}
+                            title={pin.detectedName || "Unnamed detection"}
+                            options={{
+                              clickable: false,
+                              optimized: true,
+                              zIndex: zIndex + 2,
+                              icon: {
+                                path: window.google.maps.SymbolPath.CIRCLE,
+                                scale: 4,
+                                fillColor: FLAG_COLORS.Red.marker,
+                                fillOpacity: 1,
+                                strokeColor: "#ffffff",
+                                strokeWeight: 1,
+                              },
+                            }}
+                          />
+                        ))}
+                    </Fragment>
+                  );
+                })}
               </GoogleMap>
             )}
+            <button
+              type="button"
+              className="map-overview-fit-all"
+              aria-label="Fit all 16 barangays in the map"
+              onClick={fitAllBarangays}
+            >
+              Fit all barangays
+            </button>
             {boundaryError && (
               <p className="map-overview-map-error" role="alert">
                 Barangay boundaries could not be displayed.
@@ -668,7 +1341,25 @@ export default function MapOverview({ token, filters }) {
                   <path d="M4 9h16M9 9v11" />
                 </svg>
               </button>
-              {legendOpen && (
+              {legendOpen && showHotspots && (
+                <div
+                  ref={legendPanelRef}
+                  id="map-overview-legend"
+                  className="map-overview-map-legend map-overview-hotspot-legend"
+                  role="group"
+                  aria-label="Hotspot legend"
+                  data-hotspot-legend
+                >
+                  <span className="map-overview-legend-title">Hotspot groups</span>
+                  <div className="map-overview-hotspot-legend-copy">
+                    <i aria-hidden="true" />
+                    <span>
+                      Hotspot group: 3 or more Red-flagged (expired or unregistered) locations within about 50 m. Number = locations in the group. Circle = area they cover.
+                    </span>
+                  </div>
+                </div>
+              )}
+              {legendOpen && !showHotspots && (
                 <div ref={legendPanelRef} id="map-overview-legend" className="map-overview-map-legend" role="group"
                   aria-label={mapView === "inspections"
                     ? "Inspections per barangay map legend"
@@ -679,7 +1370,7 @@ export default function MapOverview({ token, filters }) {
                   <div className="map-overview-legend-ranges">
                     {mapRangeLabels.map((label, index) => (
                       <span key={label}>
-                        <i style={{ background: CHOROPLETH_COLORS[mapView][index] }} />
+                         <i style={{ background: (isDark ? DARK_CHOROPLETH_COLORS : CHOROPLETH_COLORS)[mapView][index] }} />
                         {label}
                       </span>
                     ))}
@@ -692,27 +1383,152 @@ export default function MapOverview({ token, filters }) {
             </div>
           </div>
           <p className="map-overview-map-hint">
-            Zoom in or use the list below to pick small barangays.
+            Zoom in or use the Barangay filter above to pick small barangays.
           </p>
         </section>
 
         <aside className="map-overview-panel" aria-label="Barangay details">
-          <div className="map-overview-panel-heading">
-            {selectedRow ? (
-              <span className="map-overview-selection-chip">
-                {shortBarangay(selectedRow.barangayName)}
-                <button type="button" aria-label="Show all barangays"
-                  onClick={() => setSelectedBarangayId(null)}>×</button>
-              </span>
-            ) : (
-              <h3>All barangays</h3>
-            )}
-            {selectedRow && (
-              <button className="map-overview-reset" type="button"
-                onClick={() => setSelectedBarangayId(null)}>Show all barangays</button>
-            )}
-          </div>
+          {!showHotspots && (
+            <div className="map-overview-panel-heading">
+              {selectedRow ? (
+                <span className="map-overview-selection-chip">
+                  {shortBarangay(selectedRow.barangayName)}
+                  <button type="button" aria-label="Show all barangays"
+                    onClick={fitAllBarangays}>×</button>
+                </span>
+              ) : (
+                <h3>All barangays</h3>
+              )}
+              {selectedRow && (
+                <button className="map-overview-reset" type="button"
+                  onClick={fitAllBarangays}>Show all barangays</button>
+              )}
+            </div>
+          )}
+          {showHotspots && (
+            <>
+              <section className="map-overview-hotspot-summary" aria-live="polite">
+                <div className="map-overview-card-heading">
+                  <h4>Possible hotspot groups</h4>
+                  <AnalyticsInfoTip label="About hotspot locations">
+                    {hotspotMethodNote(hotspotData?.parameters_used)}
+                  </AnalyticsInfoTip>
+                </div>
+                <p className="map-overview-hotspot-period">
+                  Period: {hotspotPeriodLabel(datePreset)}
+                </p>
+                {hotspotLoading ? (
+                  <div className="map-overview-hotspot-summary-skeleton" role="status" aria-label="Loading hotspot groups">
+                    <span />
+                  </div>
+                ) : hotspotError ? (
+                  <div role="alert" className="map-overview-hotspot-error">
+                    <p>{hotspotError}</p>
+                    <button type="button" onClick={() => setHotspotRetry((retry) => retry + 1)}>
+                      Retry
+                    </button>
+                  </div>
+                ) : !hotspotData?.last_detection_run ? (
+                  <p>No detection scan data yet. A scan is needed to identify possible groups.</p>
+                ) : hotspotStats.clusterCount === 0 ? (
+                  <>
+                    <p>No nearby groups for this period.</p>
+                    {datePreset !== "all" && (
+                      <button type="button" onClick={() => {
+                        clearSelectedCluster();
+                        setDatePreset("all");
+                      }}>
+                        Show all time
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p>
+                    {hotspotStats.clusterCount} possible groups found among {hotspotStats.redFlaggedCount.toLocaleString()} Red-flagged locations.
+                  </p>
+                )}
+                {hotspotStats.outsideBoundaryCount > 0 && (
+                  <p className="map-overview-hotspot-outside-boundary">
+                    {hotspotStats.outsideBoundaryCount.toLocaleString()} locations are outside the municipal boundary.
+                  </p>
+                )}
+                <p className="map-overview-hotspot-caveat">
+                  Nearby groups are possible hotspots only; they do not confirm a violation.
+                </p>
+              </section>
+              {hotspotLoading && (
+                <div className="map-overview-hotspot-list-skeleton" aria-hidden="true">
+                  {Array.from({ length: 7 }, (_, index) => (
+                    <span key={index} />
+                  ))}
+                </div>
+              )}
+              {!hotspotLoading && !hotspotError && hotspotStats.clusterCount > 0 && (
+                selectedCluster && clusterDetail ? (
+                  <section className="map-overview-hotspot-summary map-overview-cluster-detail" aria-live="polite">
+                    <div className="map-overview-card-heading">
+                      <div>
+                        <h4>Group of {clusterDetail.pinCount} nearby locations</h4>
+                        <p>{clusterDetail.location}</p>
+                      </div>
+                    </div>
+                    <div className="map-overview-cluster-pin-list" aria-label="Locations in selected hotspot group">
+                      {token && (!clusterPinsAreCurrent || clusterPinsState.loading) ? (
+                        <p role="status">Loading location details…</p>
+                      ) : clusterPinsAreCurrent && clusterPinsState.error ? (
+                        <div>
+                          <p role="alert">{clusterPinsState.error}</p>
+                          <button type="button" onClick={() => setClusterDetailRetry((value) => value + 1)}>
+                            Retry
+                          </button>
+                        </div>
+                      ) : clusterDetail.pins.map((pin) => (
+                        <article className="map-overview-cluster-pin" key={pin.logID}>
+                          <strong>{pin.name}</strong>
+                          <span>{pin.address}</span>
+                          <span>Detected {pin.detectedDate}</span>
+                        </article>
+                      ))}
+                    </div>
+                    <div className="map-overview-hotspot-actions">
+                      <button
+                        type="button"
+                        className="map-overview-hotspot-open-map"
+                        disabled={!selectedClusterMapPath}
+                        onClick={() => selectedClusterMapPath && navigate(selectedClusterMapPath)}
+                      >
+                        View on Maps &amp; Flags
+                      </button>
+                      <button
+                        type="button"
+                        className="map-overview-hotspot-back"
+                        onClick={clearSelectedCluster}
+                      >
+                        Back to list
+                      </button>
+                    </div>
+                  </section>
+                ) : (
+                  <section className="map-overview-hotspot-group-list" aria-label="All hotspot groups">
+                    {hotspotClusters.map((cluster) => (
+                      <button
+                        type="button"
+                        key={cluster.cluster_id}
+                        aria-pressed={selectedClusterRequestKey === hotspotRequestKey
+                          && Number(cluster.cluster_id) === Number(selectedClusterId)}
+                        onClick={() => selectHotspotCluster(cluster)}
+                      >
+                        Group of {Number(cluster.size)} · {hotspotGroupLocation(cluster)}
+                      </button>
+                    ))}
+                  </section>
+                )
+              )}
+            </>
+          )}
 
+          {!showHotspots && (
+            <>
           <section className="map-overview-detail-card">
             <div className="map-overview-card-heading">
               <h4>A. Official Registry · {Number(panelData?.registry_total || 0).toLocaleString()} businesses</h4>
@@ -730,8 +1546,80 @@ export default function MapOverview({ token, filters }) {
                 </button>
               ))}
             </div>
-            <CountsBar rows={coloredDimensionRows}
-              emptyMessage="No registered businesses in this view yet." />
+            {activeDimension === "status_size" ? (
+              <div className="map-overview-registry-status">
+                <p className="map-overview-registry-status-note">
+                  Official registry application status only—not geospatial flag color or inspection outcome.
+                  Registry records are included whether or not they have coordinates or a map pin.
+                </p>
+                {registryStatusLoading && (
+                  <p role="status">Loading registry status breakdown…</p>
+                )}
+                {registryStatusError && (
+                  <div className="map-overview-error-inline" role="alert">
+                    <span>{registryStatusError}</span>
+                    <button type="button" onClick={retryRegistryStatus}>Retry</button>
+                  </div>
+                )}
+                {registryStatusData && (
+                  <>
+                    <p className="map-overview-registry-status-scope">
+                      Snapshot as of {new Date(registryStatusData.as_of).toLocaleString()}
+                      {" · Scope: "}
+                      {registryStatusScopeLabel(registryStatusData)}
+                    </p>
+                    <p className="map-overview-registry-status-note">
+                      Registry date filters are shown only when applied; map-pin and inspection date ranges do not filter this view.
+                    </p>
+                    <section className="map-overview-registry-status-total"
+                      aria-label="Municipality registry status totals">
+                      <h5>
+                        Mataasnakahoy municipality total ·{" "}
+                        {Number(registryStatusData.municipality.total || 0).toLocaleString()} businesses
+                      </h5>
+                      <RegistryStatusTable
+                        aggregate={registryStatusData.municipality}
+                        statuses={registryStatusData.statuses}
+                        totalLabel="Municipality total"
+                      />
+                    </section>
+                    <div className="map-overview-registry-status-barangays">
+                      {registryStatusData.barangays.map((barangay) => (
+                        <details
+                          className="map-overview-registry-status-barangay"
+                          key={barangay.barangayID ?? "unknown"}
+                        >
+                          <summary>
+                            <span>{barangay.barangayName}</span>
+                            <strong>
+                              {Number(barangay.total || 0).toLocaleString()} businesses
+                            </strong>
+                          </summary>
+                          <RegistryStatusTable
+                            aggregate={barangay}
+                            statuses={registryStatusData.statuses}
+                            totalLabel="Barangay total"
+                          />
+                        </details>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : selectedLineOfBusinessKey
+              && Number(panelData?.registry_total || 0) === 0 ? (
+                <div className="map-overview-filter-empty">
+                  <p>No registered businesses match this filter.</p>
+                  <button type="button" onClick={() => setSelectedLineOfBusinessKey("")}>
+                    Clear
+                  </button>
+                </div>
+              ) : (
+                <CountsBar rows={coloredDimensionRows}
+                  emptyMessage={selectedSectorKey
+                    ? "No registered businesses match this sector."
+                    : "No registered businesses in this view yet."} />
+              )}
           </section>
 
           <section className="map-overview-detail-card">
@@ -797,6 +1685,8 @@ export default function MapOverview({ token, filters }) {
             )}
             </div>
           </section>
+            </>
+          )}
         </aside>
       </div>
     </div>

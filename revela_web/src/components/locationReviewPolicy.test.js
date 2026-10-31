@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   IMPORTED_LOCATION,
   PREVIOUS_LOCATION,
   canConfirmLocationChoice,
   confirmLocationChoice,
   hasImportedLocationCandidate,
+  isSamePinCandidate,
+  pinMoveDistanceMeters,
   resetLocationChoices,
+  reviewApprovalConfirmation,
   selectLocationChoice,
   selectedLocationChoice,
 } from "./locationReviewPolicy.js";
+
+const mapPageSource = readFileSync(
+  new URL("../pages/MapPage.jsx", import.meta.url),
+  "utf8",
+);
 
 function pendingCandidate(businessID, overrides = {}) {
   return {
@@ -149,4 +158,55 @@ test("API failure does not run the success callback", async () => {
     /request failed/,
   );
   assert.equal(successes, 0);
+});
+
+test("same-pin proposals can be approved to synchronize the map pin", () => {
+  const candidate = pendingCandidate("BIZ-SAME", {
+    locationReapproval: false,
+    originalLatitude: 13.947664,
+    originalLongitude: 121.119366,
+    candidateLatitude: 13.947664,
+    candidateLongitude: 121.119366,
+  });
+  assert.equal(pinMoveDistanceMeters(candidate), 0);
+  assert.equal(isSamePinCandidate(candidate), true);
+  assert.match(
+    mapPageSource,
+    /Proposed coordinates match the current record\. Approval will sync the map pin to this location\./,
+  );
+  assert.match(mapPageSource, /samePin \? "Approve & sync pin" : "Approve pin move"/);
+});
+
+test("approval confirmation includes the move distance, coordinates, business, and score", () => {
+  const candidate = pendingCandidate("BIZ-MOVE", {
+    businessName: "Example Shop",
+    locationReapproval: false,
+    originalLatitude: 13.947664,
+    originalLongitude: 121.119366,
+    candidateLatitude: 13.948664,
+    candidateLongitude: 121.119366,
+    matchScore: 0.55,
+  });
+  const confirmation = reviewApprovalConfirmation(candidate);
+  assert.match(confirmation, /Business: Example Shop/);
+  assert.match(confirmation, /Current pin: 13\.947664, 121\.119366/);
+  assert.match(confirmation, /Proposed pin: 13\.948664, 121\.119366/);
+  assert.match(confirmation, /Distance: \d+ m/);
+  assert.match(confirmation, /Match score: 0\.55/);
+});
+
+test("review queue clears stale cards, keeps Retry, and allows same-pin approval", () => {
+  assert.match(mapPageSource, /setReviewQueue\(null\);[\s\S]*getRegistryReviewQueueRequest/);
+  assert.match(mapPageSource, /catch \(err\) \{[\s\S]*setReviewQueue\(null\);[\s\S]*Request ID:/);
+  assert.match(mapPageSource, /Could not load pin suggestions\. Please try again\./);
+  assert.match(mapPageSource, /onClick=\{\(\) => loadRegistryReviewQueue\(reviewQueuePage\)\}[\s\S]*Retry/);
+  assert.doesNotMatch(
+    mapPageSource,
+    /disabled=\{[^}]*samePin[^}]*\}/,
+  );
+  assert.match(mapPageSource, /Distance to move:/);
+  assert.match(mapPageSource, /Low match score\. Check the Google place before approving\./);
+  assert.match(mapPageSource, /Barangay \{String\(candidate\.barangayName/);
+  assert.match(mapPageSource, /Address: \{candidate\.businessAddress/);
+  assert.match(mapPageSource, /reviewApprovalConfirmation\(candidate\)/);
 });

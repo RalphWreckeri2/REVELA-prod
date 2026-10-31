@@ -91,8 +91,9 @@ test("expired refreshes continue polling while labelling retained results histor
 // data-URL test module. Every HTTP call below is mocked.
 const apiSource = readFileSync(new URL("../services/api.js", import.meta.url), "utf8")
   .replace("import.meta.env.VITE_API_ORIGIN", '"http://analytics.test"')
-  .replace("../components/mobileDetection.js", new URL("./mobileDetection.js", import.meta.url).href);
-const { getAnalyticsOverviewRequest } = await import(
+  .replace("../components/mobileDetection.js", new URL("./mobileDetection.js", import.meta.url).href)
+  .replace("../components/backupStatusView.js", new URL("./backupStatusView.js", import.meta.url).href);
+  const { getAnalyticsOverviewRequest } = await import(
   `data:text/javascript;base64,${Buffer.from(apiSource).toString("base64")}`
 );
 

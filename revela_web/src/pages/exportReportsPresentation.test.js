@@ -1,0 +1,58 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const page = readFileSync(new URL("./ExportReportsPage.jsx", import.meta.url), "utf8");
+const compliance = readFileSync(new URL("../components/ComplianceReportCard.jsx", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../styles/ExportReportsPage.css", import.meta.url), "utf8");
+
+test("exports separate demographic charts from field reports without the title pill", () => {
+  assert.doesNotMatch(page, /BPLO Official/);
+  assert.match(page, /aria-label="Report categories"/);
+  assert.match(page, /activeSection === "profile" && <section/);
+  assert.match(page, /activeSection === "operations" && <section/);
+  assert.match(page, /Demographics spreadsheet \(CSV\)/);
+  assert.match(page, /Complete dossier \(PDF\)/);
+  assert.match(styles, /\.export-report-view-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+});
+
+test("export page omits the redundant KPI strip without removing figures from downloads", () => {
+  assert.doesNotMatch(page, /Quick Census KPI Strip|Active Municipality-wide|Active vs Total Ratio/);
+  assert.match(page, /Section: "KPI", Metric: "Total Registered Entities", Value: kpis\?\.total_businesses/);
+  assert.match(page, /Section: "KPI", Metric: "Compliance Rate", Value: `\$\{kpis\?\.compliance_rate/);
+  assert.match(page, /type: "demographic-complete"/);
+});
+
+test("each chart keeps its PNG and PDF handlers behind one export menu", () => {
+  for (const id of ["size", "type", "reg-type", "sector", "barangay", "compliance_size", "timeline"]) {
+    assert.equal((page.match(new RegExp(`<ChartExportMenu chartId="${id}"`, "g")) || []).length, 1);
+    assert.match(page, new RegExp(`onPng=\\{\\(\\) => exportChartAsImage\\("${id}"\\)\\}`));
+    assert.match(page, new RegExp(`onPdf=\\{\\(\\) => exportChartAsPdf\\("${id}"`));
+  }
+  assert.match(page, /<ExportActionsMenu className="no-export"/);
+  assert.match(page, /querySelectorAll\("\.no-export"\)/);
+  assert.match(compliance, /<details className="operational-report-details">/);
+});
+
+test("complete dossier tables share one print palette while the official header and footer remain", () => {
+  const dossier = page.split("CASE 2: Complete Demographic Profile Dossier")[1]?.split("CASE 3: List of Unregistered Businesses")[0] ?? "";
+  assert.equal((dossier.match(/className="dossier-section(?: dossier-section--long)?"/g) || []).length, 8);
+  assert.doesNotMatch(dossier, /<th style=\{\{ background:/);
+  assert.match(page, /\.demographic-complete-body \.print-table th\s*\{[^}]*background: #eaf1ed !important/);
+  assert.match(page, /box-decoration-break: clone/);
+  assert.match(page, /className="print-header"/);
+  assert.match(page, /className="print-footer"/);
+});
+
+test("operational PDFs use compact neutral tables without changing the letterhead", () => {
+  const unregistered = page.split("CASE 3: List of Unregistered Businesses")[1]?.split("CASE 4: Field Inspector Dispatch Plan")[0] ?? "";
+  const dispatch = page.split("CASE 4: Field Inspector Dispatch Plan")[1]?.split("Official Signature Block")[0] ?? "";
+  assert.match(page, /className="operational-print-body inspection-print-body"/);
+  assert.match(unregistered, /className="operational-print-body unregistered-print-body"/);
+  assert.match(dispatch, /className="operational-print-body dispatch-print-body"/);
+  assert.doesNotMatch(unregistered + dispatch, /<th style=\{\{ background:|background: f\.Status|background: r\.RiskLevel/);
+  assert.match(page, /\.print-report-container:has\(\.operational-print-body\) \.report-body\s*\{[^}]*box-decoration-break: clone/);
+  assert.match(page, /\.operational-print-body \.print-table th\s*\{[^}]*background: #eaf1ed !important/);
+  assert.match(page, /className="print-header"/);
+  assert.match(page, /className="print-footer"/);
+});

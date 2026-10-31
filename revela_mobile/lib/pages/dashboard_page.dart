@@ -15,6 +15,7 @@ import '../service/auth_service.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:showcaseview/showcaseview.dart';
 import 'inspection_page.dart';
+import 'home_page.dart';
 import 'profile_page.dart';
 import 'main_layout.dart';
 import '../utils/date_utils.dart';
@@ -241,6 +242,23 @@ class _DashboardPageState extends State<DashboardPage>
     if (!mounted) return;
     widget.onDrawerToggled?.call(false);
     if (mounted) setState(() => _isDrawerOpen = false);
+  }
+
+  void _openDashboardTab(int index) {
+    if (!mounted) return;
+    if (widget.onSwitchTab != null) {
+      widget.onSwitchTab!(index);
+      return;
+    }
+
+    final page = switch (index) {
+      1 => const HomePage(),
+      2 => const InspectionPage(),
+      _ => null,
+    };
+    if (page != null) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => page));
+    }
   }
 
   String _getGreeting() {
@@ -1061,12 +1079,29 @@ class _DashboardPageState extends State<DashboardPage>
                                             assignedCount +
                                             submittedCount +
                                             verifiedCount;
-                                        return Text(
-                                          '$realTotal Total Assignments',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            color: context.adaptiveTextMid,
+                                        return TextButton.icon(
+                                          onPressed: () => _openDashboardTab(2),
+                                          icon: const Icon(
+                                            Icons.arrow_forward_rounded,
+                                            size: 15,
+                                          ),
+                                          label: Text(
+                                            '$realTotal Total Assignments',
+                                          ),
+                                          style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                context.adaptiveTextMid,
+                                            textStyle: const TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                            ),
+                                            minimumSize: Size.zero,
+                                            tapTargetSize:
+                                                MaterialTapTargetSize
+                                                    .shrinkWrap,
                                           ),
                                         );
                                       },
@@ -1178,6 +1213,28 @@ class _DashboardPageState extends State<DashboardPage>
                                         color: context.adaptiveTextDark,
                                       ),
                                     ),
+                                    TextButton.icon(
+                                      onPressed: () => _openDashboardTab(1),
+                                      icon: const Icon(
+                                        Icons.map_outlined,
+                                        size: 16,
+                                      ),
+                                      label: const Text('View map'),
+                                      style: TextButton.styleFrom(
+                                        foregroundColor:
+                                            context.adaptivePrimary,
+                                        textStyle: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 4,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                    ),
                                   ],
                                 ).animate().fadeIn(delay: 300.ms),
                                 const SizedBox(height: 16),
@@ -1198,6 +1255,8 @@ class _DashboardPageState extends State<DashboardPage>
                                                     Icons.flag_rounded,
                                                     Colors.red,
                                                     isZero: false,
+                                                    onTap: () =>
+                                                        _openDashboardTab(1),
                                                   )
                                                   .animate()
                                                   .boxShadow(
@@ -1229,6 +1288,8 @@ class _DashboardPageState extends State<DashboardPage>
                                                     Icons.flag_rounded,
                                                     Colors.red,
                                                     isZero: true,
+                                                    onTap: () =>
+                                                        _openDashboardTab(1),
                                                   )
                                                   .animate()
                                                   .fadeIn(delay: 350.ms)
@@ -1248,6 +1309,8 @@ class _DashboardPageState extends State<DashboardPage>
                                                   Icons.flag_rounded,
                                                   Colors.amber,
                                                   isZero: yellowFlagsCount == 0,
+                                                  onTap: () =>
+                                                      _openDashboardTab(1),
                                                 )
                                                 .animate()
                                                 .fadeIn(delay: 400.ms)
@@ -1267,6 +1330,8 @@ class _DashboardPageState extends State<DashboardPage>
                                                   Icons.flag_rounded,
                                                   Colors.orange,
                                                   isZero: orangeFlagsCount == 0,
+                                                  onTap: () =>
+                                                      _openDashboardTab(1),
                                                 )
                                                 .animate()
                                                 .fadeIn(delay: 450.ms)
@@ -1673,60 +1738,73 @@ class _DashboardPageState extends State<DashboardPage>
     String value,
     IconData icon,
     Color color, {
+    required VoidCallback onTap,
     bool isZero = false,
   }) {
     final effectiveColor = isZero ? Colors.grey : color;
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-      decoration: BoxDecoration(
-        color: context.adaptiveSurface,
+    return Semantics(
+      button: true,
+      label: '$title flags: $value. Open map.',
+      child: Material(
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: context.isDarkMode
-              ? Colors.grey.shade800
-              : Colors.grey.shade200,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: effectiveColor.withValues(alpha: isZero ? 0.05 : 0.1),
-            blurRadius: 15,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
             decoration: BoxDecoration(
-              color: effectiveColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(12),
+              color: context.adaptiveSurface,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: context.isDarkMode
+                    ? Colors.grey.shade800
+                    : Colors.grey.shade200,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: effectiveColor.withValues(alpha: isZero ? 0.05 : 0.1),
+                  blurRadius: 15,
+                  offset: const Offset(0, 8),
+                ),
+              ],
             ),
-            child: Icon(icon, color: effectiveColor, size: 20),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              color: isZero ? Colors.grey[400] : context.adaptiveTextDark,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: effectiveColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: effectiveColor, size: 20),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: isZero ? Colors.grey[400] : context.adaptiveTextDark,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: context.adaptiveTextMid,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: context.adaptiveTextMid,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -61,6 +61,10 @@ try {
         .flatMap(([width, height]) => (process.env.REVELA_LAYOUT_CAPTURE ? ["light", "dark"] : ["light"])
           .map(theme => ({ width, height, theme }))),
         { width: 1440, height: 900, theme: "light", attentionZero: true }]
+    : smokePage === "notification-pagination-smoke"
+      ? [[820, 1000], [390, 800], [320, 720]].flatMap(([width, height]) => ["light", "dark"].map(theme => ({ width, height, theme })))
+    : smokePage === "text-field-focus-smoke"
+      ? [[1280, 900], [390, 800]].flatMap(([width, height]) => ["light", "dark"].map(theme => ({ width, height, theme })))
     : [{ width: 820, height: 1000, theme: "light" }];
   for (const { width, height, theme, attentionZero } of scenarios) {
     await call("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false }, sessionId);

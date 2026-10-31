@@ -25,5 +25,6 @@ def test_registry_only_map_response_uses_registry_source(has_source):
             (flags.VIRTUAL_REGISTRY_LOG_ID_OFFSET + 1)
         assert payload["data"][0]["flagSource"] == "registry"
         assert payload["data"][0]["flagSource"] != "registry_only"
+        assert payload["data"][0]["recordedBarangayID"] == 1
     finally:
         db.close()

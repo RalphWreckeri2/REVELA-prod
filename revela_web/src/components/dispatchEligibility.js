@@ -50,6 +50,7 @@ export function activeInspectorsForDispatch(list) {
 
 export function canDispatchFlag(flag, { isAdmin } = {}) {
   if (!isAdmin) return false;
+  if (flag?.isCentroidPreview || flag?.hasExactCoords === false) return false;
   if (NON_DISPATCHABLE_FLAG_COLORS.includes(flag?.color)) {
     return false;
   }
@@ -60,6 +61,9 @@ export function canDispatchFlag(flag, { isAdmin } = {}) {
 }
 
 export function dispatchButtonLabel(flag) {
+  if (flag?.isCentroidPreview || flag?.hasExactCoords === false) {
+    return "No exact location";
+  }
   if (flag?.color === "Black") return "Black businesses cannot be dispatched";
   if (flag?.hasActiveInspection) return "Undergoing Inspection";
   if (flag?.verificationStatus === "Verified") return "Re-dispatch inspector";

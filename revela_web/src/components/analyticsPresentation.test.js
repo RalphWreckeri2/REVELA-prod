@@ -1,12 +1,45 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   activeInspectorWorkload,
+  activeFlagRecommendations,
   completeInspectionTimeline,
   groupOperationsStatusBreakdown,
   groupInspectionStatuses,
+  INSPECTION_STATUS_STACKS,
   pivotCategoryCounts,
+  recommendationAllocationLabel,
+  recommendationReason,
+  rankedRecommendationRows,
 } from "./analyticsPresentation.js";
+
+const analyticsPageSource = readFileSync(
+  new URL("../pages/AnalyticsPage.jsx", import.meta.url),
+  "utf8",
+);
+const analyticsPageStyles = readFileSync(
+  new URL("../styles/AnalyticsPage.css", import.meta.url),
+  "utf8",
+);
+
+test("Analytics loading skeletons preserve local content geometry", () => {
+  assert.match(analyticsPageSource, /role="status" aria-busy="true" className="analytics-sr-only"/);
+  assert.match(analyticsPageSource, /analytics-skeleton-frame--\$\{variant\}/);
+  assert.match(analyticsPageSource, /analytics-kpi-value-skeleton/);
+  assert.equal((analyticsPageSource.match(/variant="stacked"/g) || []).length, 4);
+  assert.equal((analyticsPageSource.match(/getStackedChartLayout\(/g) || []).length, 8);
+  assert.match(analyticsPageSource, /const getStackedChartLayout = \(data, statuses\)/);
+  assert.doesNotMatch(analyticsPageSource, /chartHeight=\{480\}/);
+  assert.match(analyticsPageSource, /variant="operations" rows=\{operationsStatusRows\.length\}/);
+  assert.match(analyticsPageSource, /variant="radar"/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame\s*\{[^}]*width:\s*100%/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame--stacked\s*\{/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame--table\s*\{/);
+  assert.match(analyticsPageStyles, /\.analytics-skeleton-frame--map\s*\{/);
+  assert.match(analyticsPageStyles, /\.analytics-kpi-value-skeleton--compact\s*\{/);
+  assert.doesNotMatch(analyticsPageSource, /AnalyticsSkeleton/);
+});
 
 test("groups inspection statuses and excludes barangays with no reports", () => {
   const rows = groupInspectionStatuses([
@@ -51,6 +84,11 @@ test("Operations status totals use the same groups as Section B", () => {
     verified: sectionB.verified,
     total: sectionB.total,
   });
+  assert.deepEqual(INSPECTION_STATUS_STACKS, [
+    { key: "pending", label: "Pending", color: "#f97316" },
+    { key: "awaiting_review", label: "Waiting for review", color: "#3b82f6" },
+    { key: "verified", label: "Verified", color: "#10b981" },
+  ]);
 });
 
 test("active inspectors remain visible with zero workload", () => {
@@ -70,6 +108,79 @@ test("active inspectors remain visible with zero workload", () => {
     { userID: 1, fullName: "Ana", pending: 1, awaiting_review: 2, verified: 3 },
     { userID: 2, fullName: "Bea", pending: 0, awaiting_review: 0, verified: 0 },
   ]);
+});
+
+test("ranked recommendation rows preserve table order and attach matching dispatch data", () => {
+  const rows = rankedRecommendationRows([
+    { barangayID: 2, rank: 1, barangayName: "A" },
+    { barangayID: 1, rank: 2, barangayName: "B" },
+  ], [
+    { barangayID: "1", inspectors: 1 },
+  ]);
+  assert.deepEqual(rows.map(({ rank, barangayName, dispatch }) => ({
+    rank,
+    barangayName,
+    inspectors: dispatch?.inspectors ?? null,
+  })), [
+    { rank: 1, barangayName: "A", inspectors: null },
+    { rank: 2, barangayName: "B", inspectors: 1 },
+  ]);
+});
+
+test("active recommendation list excludes no-flag barangays and counts them", () => {
+  const result = activeFlagRecommendations([
+    { barangayName: "A", flagged_count: 2 },
+    { barangayName: "B", flagged_count: 0 },
+    { barangayName: "C", flagged_count: 1 },
+  ]);
+  assert.deepEqual(result, {
+    rows: [
+      { barangayName: "A", flagged_count: 2 },
+      { barangayName: "C", flagged_count: 1 },
+    ],
+    noActiveFlagsCount: 1,
+  });
+});
+
+test("recommendation wording uses requested reason and allocation phrases", () => {
+  assert.equal(recommendationReason({
+    red_count: 42, unregistered_candidate_count: 42, yellow_count: 0, distance_km: 0.9,
+  }), "Red 42 (42 not in registry) · Yellow 0 · 0.9 km from BPLO");
+  assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 1 }), "1 inspector allocated");
+  assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 2 }), "2 inspectors allocated");
+  assert.equal(recommendationAllocationLabel({ allocation_status: "deferred", inspectors: 0 }), "Waiting for a free inspector");
+  assert.equal(recommendationAllocationLabel(null), "Not scheduled yet");
+});
+
+test("recommendation headers and rows share centered, responsive column tracks", () => {
+  assert.match(
+    analyticsPageStyles,
+    /\.analytics-recommendation-table\s*\{[^}]*--analytics-recommendation-columns:\s*40px minmax\(0, 1fr\) 150px 220px;/,
+  );
+  assert.equal(
+    (analyticsPageStyles.match(/grid-template-columns:\s*var\(--analytics-recommendation-columns\);/g) || []).length,
+    2,
+  );
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-priority\s*\{[^}]*justify-self:\s*center;[^}]*text-align:\s*center;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-assignment\s*\{[^}]*min-width:\s*200px;[^}]*text-align:\s*center;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-priority-label\s*\{[^}]*justify-content:\s*center;[^}]*text-align:\s*center;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-table \{ overflow-x: auto;/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-columns,\s*\.analytics-recommendation-rows\s*\{[^}]*min-width:\s*720px;/);
+  assert.doesNotMatch(analyticsPageStyles, /\.analytics-recommendation-columns\s*\{\s*display:\s*none;/);
+});
+
+test("expanded recommendations show executive metrics without raw score weights", () => {
+  const recommendationDisclosure = analyticsPageSource.slice(
+    analyticsPageSource.indexOf('className="analytics-recommendation-detail"'),
+    analyticsPageSource.indexOf('className="analytics-recommendation-toggle"'),
+  );
+  assert.match(recommendationDisclosure, /Priority level/);
+  assert.match(recommendationDisclosure, /Unregistered flags/);
+  assert.match(recommendationDisclosure, /Distance from BPLO/);
+  assert.match(recommendationDisclosure, /Action steps/);
+  assert.match(recommendationDisclosure, /dispatch\.actionSteps/);
+  assert.doesNotMatch(recommendationDisclosure, /scoreBreakdown|weight \{score\?\.weight/);
+  assert.match(analyticsPageStyles, /\.analytics-recommendation-executive-metrics\s*\{/);
 });
 
 test("pivots grouped counts by barangay", () => {

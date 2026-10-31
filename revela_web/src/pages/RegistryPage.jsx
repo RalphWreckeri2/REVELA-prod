@@ -460,7 +460,6 @@ export default function RegistryPage() {
       }
   }, [token, setBarangays]);
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [list, setList, hasList] = useSessionDataset(viewKey, "list", null);
   const businesses = list?.data ?? [];
   const total = list?.total ?? 0;
@@ -476,7 +475,6 @@ export default function RegistryPage() {
     const sequence = ++registryRequestSequence.current;
     if (!isSilent) {
       setLoading(!hasList);
-      setIsRefreshing(true);
     }
     setError("");
     try {
@@ -498,10 +496,10 @@ export default function RegistryPage() {
       }
       return false;
     } finally {
-      if (currentQuery.current === requestQuery && sequence === registryRequestSequence.current) { setLoading(false); setIsRefreshing(false); }
+      if (currentQuery.current === requestQuery && sequence === registryRequestSequence.current) setLoading(false);
     }
   }, [page, debouncedSearch, barangay, status, regType, pageSize, token, query, hasList, setList]);
-  const refreshView = useAppDataRefresh(viewKey, reason => refreshResults([
+  useAppDataRefresh(viewKey, reason => refreshResults([
     fetchBusinesses(reason !== "initial"), reason === "initial" && hasBarangays ? true : loadBarangays(),
   ]));
 
@@ -590,29 +588,6 @@ export default function RegistryPage() {
           <p className="page-subtitle">Official BPLO-registered establishments in Mataasnakahoy.</p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%" }}>
-          <button
-            className="quick-refresh-btn"
-            type="button"
-            onClick={refreshView}
-            disabled={isRefreshing}
-            title="Refresh registry"
-          >
-            <svg
-              className={isRefreshing ? "spin-icon" : ""}
-              viewBox="0 0 24 24"
-              width="14"
-              height="14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.19" />
-            </svg>
-            <span>{isRefreshing ? "Syncing…" : "Refresh"}</span>
-          </button>
-
           <button
             className="ghost-btn"
             onClick={handleImport}

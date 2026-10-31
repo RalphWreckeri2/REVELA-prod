@@ -5,7 +5,7 @@
  * Google Map preview with the existing flag population and marker behavior
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { GoogleMap } from "@react-google-maps/api";
 import DashboardLayout from "../components/DashboardLayout";
@@ -15,18 +15,29 @@ import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
-import { hasDispatchableWlcTargets, wlcEligibilityLabel } from "../components/wlcPolicy";
+import { hasDispatchableWlcTargets } from "../components/wlcPolicy";
 import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getRegistryRequest, getInspectionWorkloadRequest, markNotificationsReadRequest } from "../services/api";
-import { getBarangayCentroid } from "../utils/barangayCentroids";
+import {
+  DEFAULT_MAP_CENTER,
+  getApproximateBarangayDisplayPoint,
+} from "../utils/barangayCentroids";
+import {
+  APPROXIMATE_LOCATION_LABEL,
+  createApproximateMarkerContent,
+  createApproximateMarkerIcon,
+} from "../components/approximateMapMarker";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
+import {
+  createCentroidPreviewFlags,
+  hasMapCoordinates,
+} from "../components/mapLocationMetrics";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import { dateQuery, deadlinePresentation, formatOverviewNumber, formatOverviewPeriod, formatOverviewUpdatedAt, manilaGreeting, weatherPresentation } from "./overviewPresentation";
 import Swal from "sweetalert2";
 import "../styles/HomePage.css";
 import "../styles/OverviewDashboard.css";
 
-const DEFAULT_CENTER = { lat: 13.9667, lng: 121.1167 };
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
 const OVERVIEW_ANALYTICS_SECTIONS = ["summary", "prescriptive"];
 
@@ -84,13 +95,12 @@ function PersonalizedGreeting({ user }) {
     <h1 className="hero-greeting" id="overview-greeting">
       {greeting},{" "}
       <span className="hero-greeting-name">{firstName}</span>{" "}
-      <span className="hero-wave" role="img" aria-label="waving hand">👋</span>
     </h1>
   );
 }
 
 const clockFormat = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Manila", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true,
+  timeZone: "Asia/Manila", hour: "numeric", minute: "2-digit", hour12: true,
 });
 const clockDateFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "Asia/Manila", weekday: "long", month: "long", day: "numeric", year: "numeric",
@@ -108,7 +118,6 @@ function PhilippineClock() {
       <div className="hero-card-title"><OverviewIcon kind="clock" /> Philippine Time</div>
       <div className="hero-clock">{time} <span className="hero-clock-ampm">{amPm}</span></div>
       <p className="hero-card-date">{clockDateFormat.format(now)}</p>
-      <p className="hero-card-foot">Asia/Manila · UTC+8</p>
     </div>
   );
 }
@@ -133,7 +142,13 @@ function HeroBanner({ user }) {
   const [weatherState, setWeatherState] = useState("loading");
   useEffect(() => {
     let cancelled = false;
-    fetch("https://api.open-meteo.com/v1/forecast?latitude=13.9667&longitude=121.1167&current=temperature_2m,weather_code")
+    const weatherUrl = new URL("https://api.open-meteo.com/v1/forecast");
+    weatherUrl.search = new URLSearchParams({
+      latitude: String(DEFAULT_MAP_CENTER.lat),
+      longitude: String(DEFAULT_MAP_CENTER.lng),
+      current: "temperature_2m,weather_code",
+    });
+    fetch(weatherUrl)
       .then(res => {
         if (!res.ok) throw new Error("Weather unavailable");
         return res.json();
@@ -154,16 +169,16 @@ function HeroBanner({ user }) {
   return (
     <section className="hero-banner" aria-labelledby="overview-greeting">
       <div className="hero-left">
-        <p className="hero-eyebrow">Mataasnakahoy · BPLO</p>
+        <p className="hero-eyebrow">BPLO · Mataasnakahoy</p>
         <PersonalizedGreeting user={user} />
-        <p className="hero-sub">Here’s what needs attention today.</p>
+        <p className="hero-sub">A quick look at what matters today.</p>
       </div>
 
       <div className="hero-right">
         <div className="hero-cards">
           <PhilippineClock />
           <div className="hero-card hero-weather-card" aria-busy={weatherState === "loading"}>
-            <div className="hero-card-title">Local Weather</div>
+            <div className="hero-card-title">Weather in Mataasnakahoy</div>
             <div className="hero-weather-row">
               <span className="hero-temp">{weather?.temperature ?? "—"}</span>
               <span className={`hero-weather-icon is-${weather?.icon ?? "unknown"}`}><WeatherIcon kind={weather?.icon ?? "unknown"} /></span>
@@ -194,14 +209,15 @@ const workloadPath = (view, reportID) => `/inspections?view=${encodeURIComponent
 
 function SourceCards({ sources, states }) {
   const cards = [
-    ["Registry Businesses", sources.registry?.total, "/registry", "Registered businesses", states.registry, "registry"],
-    ["Unlinked Detection Records", sources.detection?.total, sourcePath("detection"), "Unlinked map detections", states.detection, "detection"],
-    ["Unlinked Manual Records", sources.manual?.total, sourcePath("manual"), "Unlinked inspector reports", states.manual, "manual"],
+    ["Registered businesses", sources.registry?.total, "/registry", "In the business registry", states.registry, "registry"],
+    ["Unlinked map detections", sources.detection?.total, sourcePath("detection"), "Not yet linked to the registry", states.detection, "detection"],
+    ["Unlinked inspector reports", sources.manual?.total, sourcePath("manual"), "Not yet linked to the registry", states.manual, "manual"],
   ];
   if (sources.unclassified?.total > 0 || states.unclassified.error) cards.push(
     ["Unclassified Records", sources.unclassified?.total, sourcePath("unclassified"), "Unknown source", states.unclassified, "unclassified"]);
   return <section className="overview-surface overview-business-records" aria-labelledby="overview-source-title">
-    <div className="overview-section-heading"><h2 id="overview-source-title">Business Records</h2></div>
+    <div className="overview-section-heading"><h2 id="overview-source-title">Business records</h2></div>
+    <p className="overview-section-sub">Where the business information comes from.</p>
     <div className="overview-action-grid source-grid">{cards.map(([label, value, to, note, state, tone]) =>
       <ActionCard key={label} {...{ label, value, to, note, state, tone }} />)}</div>
     <details className="overview-explanation"><summary>What these counts mean</summary>
@@ -213,7 +229,7 @@ function SourceCards({ sources, states }) {
 function NeedsAttention({ data, state }) {
   const updatedAt = formatOverviewUpdatedAt(data?.as_of);
   return <section className="overview-surface overview-attention" aria-labelledby="overview-attention-title">
-    <div className="overview-section-heading"><h2 id="overview-attention-title">Needs Attention</h2>
+    <div className="overview-section-heading"><div><p className="overview-section-kicker">Your starting point</p><h2 id="overview-attention-title">Needs your attention</h2></div>
       {data && <span className="overview-updated-at">{updatedAt ?? "Update time unavailable"}</span>}</div>
     <RequestFeedback state={state} label="inspection workload" />
     <div className="overview-action-grid attention-grid">
@@ -224,6 +240,7 @@ function NeedsAttention({ data, state }) {
       <ActionCard label="Open 15+ days" value={data?.age_groups?.["15+"]} empty="Unavailable" to={workloadPath("age_15+")}
         note={data?.age_groups?.["15+"] === 0 ? "None pending 15+ days" : "Waiting 15 days or more"} state={state} tone={data?.age_groups?.["15+"] > 0 ? "warning" : "neutral"} />
     </div>
+    <InspectionSnapshot data={data} state={state} />
   </section>;
 }
 
@@ -241,8 +258,11 @@ function InspectionSnapshot({ data, state }) {
   ].filter(Boolean) : [];
   const updatedAt = formatOverviewUpdatedAt(data?.as_of);
   const period = formatOverviewPeriod(data?.period_from, data?.period_to);
-  return <section className="overview-surface overview-workload" aria-labelledby="overview-workload-title">
-    <div className="overview-section-heading"><h2 id="overview-workload-title">Inspection Snapshot</h2></div>
+  return <details className="overview-workload" aria-labelledby="overview-workload-title">
+    <summary className="overview-workload-toggle" id="overview-workload-title">
+      <span>More about open assignments</span>
+      {state.hasResult && <small>{formatOverviewNumber(data?.open)} currently open</small>}
+    </summary>
     <div className="overview-action-grid workload-grid">
       <ActionCard label="Open assignments" value={data?.open} to={workloadPath("open")} note="Currently in dispatch" state={state} />
       <ActionCard label="Oldest open" value={data?.oldest_open_days} empty={data?.open === 0 ? "None open" : "Age unavailable"} formatValue={days => days == null ? data?.open === 0 ? "None open" : "Age unavailable" : `${formatOverviewNumber(days)} ${days === 1 ? "day" : "days"}`} to={workloadPath("oldest", data?.oldest_report_id)} note="Days since last dispatch" state={state} />
@@ -268,7 +288,7 @@ function InspectionSnapshot({ data, state }) {
     {data && <details className="overview-explanation overview-methodology"><summary>How these numbers are calculated</summary>
       <p>{updatedAt ?? "Update time unavailable"}. The average covers the last 30 days{period ? ` (${period})` : ""} and uses {formatOverviewNumber(data.resolution_sample_size)} completed {data.resolution_sample_size === 1 ? "report" : "reports"}. Waiting time counts whole days from the latest dispatch or reassignment, not from completion. Due dates use Philippine local time; older records may not show their original timezone.</p>
     </details>}
-  </section>;
+  </details>;
 }
 
 function BarangayPrioritiesWidget({ opsRankings, state }) {
@@ -277,9 +297,9 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
   return (
     <section className="overview-surface overview-priorities" aria-labelledby="overview-priorities-title" aria-busy={state.loading}>
       <div className="overview-section-heading">
-        <h2 id="overview-priorities-title">Barangay Inspection Priorities</h2>
+        <h2 id="overview-priorities-title">Where to inspect next</h2>
       </div>
-      <p className="overview-section-sub">Top five eligible field destinations in municipal WLC order.</p>
+      <p className="overview-section-sub">Barangays with the highest priority for new inspections.</p>
       <RequestFeedback state={state} label="barangay priorities" />
       {state.hasResult && top5.length === 0 && <p className="overview-empty">No barangays with targets eligible for a new inspection dispatch.</p>}
       <ol className="overview-priority-list">
@@ -298,7 +318,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
                 <span className="overview-priority-rank" aria-label={`Rank ${formatOverviewNumber(b.rank)}`}>{formatOverviewNumber(b.rank)}</span>
                 <span className="overview-priority-main">
                   <span className="overview-priority-name">{shortBarangay(b.barangayName) || "Unknown barangay"}</span>
-                  <span className="overview-priority-meta"><strong>{formatOverviewNumber(b.ops_score)}</strong>/100 OPS · {wlcEligibilityLabel(b)}</span>
+                  <span className="overview-priority-meta">Priority score <strong>{formatOverviewNumber(b.ops_score)}</strong>/100 · {formatOverviewNumber(b.dispatchable_count ?? ((b.red_count || 0) + (b.yellow_count || 0)))} available for inspection</span>
                 </span>
                 <span className={`overview-priority-category is-${categoryClass}`}>{category}</span>
               </Link>
@@ -311,7 +331,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
         <p>OPS combines weighted flag burden, optional sector scores and proximity. Red, Yellow and Black flags supply risk context. New field plans skip Black-only barangays and already-assigned targets; the remaining destinations retain their municipal ranks.</p>
         <p>High: 60–100 · Medium: 30–below 60 · Low: below 30. These are barangay priorities, not counts of unassigned tasks.</p>
       </details>
-      <Link className="overview-section-link" to="/analytics?tab=prescriptive">View Prescriptive Analytics <OverviewIcon kind="arrow" /></Link>
+      <Link className="overview-section-link" to="/analytics?tab=prescriptive">Explore inspection priorities <OverviewIcon kind="arrow" /></Link>
     </section>
   );
 }
@@ -319,10 +339,14 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
 // ── Mini Map Widget ───────────────────────────────────────────────────────────
 function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError }) {
   const [mapInstance, setMapInstance] = useState(null);
+  const [showApproximateLocations, setShowApproximateLocations] = useState(false);
   const mapRef = useRef(null);
   const markerRefs = useRef([]);
 
-  const buildMarkerEl = (color) => {
+  const buildMarkerEl = useCallback((color, approximate = false) => {
+    if (approximate) {
+      return createApproximateMarkerContent(26, 34, false, false, color);
+    }
     const el = document.createElement("div");
     el.style.cssText = `width:22px;height:22px;cursor:pointer;filter:drop-shadow(0 2px 3px rgba(0,0,0,0.3))`;
     el.innerHTML = `<svg viewBox="0 0 24 32" width="22" height="22" xmlns="http://www.w3.org/2000/svg">
@@ -330,7 +354,33 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
       <circle cx="12" cy="12" r="5" fill="white" opacity="0.9"/>
     </svg>`;
     return el;
-  };
+  }, []);
+  const approximateFlags = useMemo(
+    () => createCentroidPreviewFlags(
+      flags,
+      getApproximateBarangayDisplayPoint,
+    ),
+    [flags],
+  );
+  const exactFlags = useMemo(
+    () => flags.filter(hasMapCoordinates).slice(0, 100),
+    [flags],
+  );
+  const displayedFlags = useMemo(
+    () => showApproximateLocations
+      ? [...exactFlags, ...approximateFlags.slice(0, 100)]
+      : exactFlags,
+    [approximateFlags, exactFlags, showApproximateLocations],
+  );
+  const noExactLocationCount = flags.filter((flag) => !hasMapCoordinates(flag)).length;
+  const nonGreenPreviewCount = exactFlags.filter(
+    (flag) => parseColor(flag) !== "Green",
+  ).length;
+  const unassignedCount = flags.filter((flag) => {
+    if (hasMapCoordinates(flag)) return false;
+    const id = Number(flag.barangayID);
+    return !Number.isInteger(id) || id <= 0;
+  }).length;
 
   const handleMapLoad = useCallback((map) => {
     mapRef.current = map;
@@ -351,18 +401,12 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
 
     const canUseAdvanced = Boolean(window.google?.maps?.marker?.AdvancedMarkerElement);
 
-    flags
-      .slice(0, 100) // cap for performance
-      .forEach(f => {
+    displayedFlags.forEach(f => {
         const fc = getFlagColor(parseColor(f));
-        const rawLat = f.latitude != null ? Number(f.latitude) : null;
-        const rawLng = f.longitude != null ? Number(f.longitude) : null;
-        const hasCoords = rawLat != null && rawLng != null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0 && rawLng !== 0;
-        const centroid = !hasCoords ? getBarangayCentroid(f.barangayName || f.barangay) : null;
-        const position = {
-          lat: hasCoords ? rawLat : (centroid?.lat ?? DEFAULT_CENTER.lat),
-          lng: hasCoords ? rawLng : (centroid?.lng ?? DEFAULT_CENTER.lng),
-        };
+        const position = f.isCentroidPreview
+          ? f.mapPreviewPosition
+          : { lat: Number(f.latitude), lng: Number(f.longitude) };
+        if (!position || !Number.isFinite(position.lat) || !Number.isFinite(position.lng)) return;
         let marker = null;
 
         if (canUseAdvanced) {
@@ -370,7 +414,10 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
             marker = new window.google.maps.marker.AdvancedMarkerElement({
               position,
               map: activeMap,
-              content: buildMarkerEl(fc.marker),
+              content: buildMarkerEl(fc.marker, f.isCentroidPreview),
+              title: f.isCentroidPreview
+                ? APPROXIMATE_LOCATION_LABEL
+                : f.detectedName || f.name || "Business location",
             });
           } catch {
             marker = null;
@@ -381,15 +428,20 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
           marker = new window.google.maps.Marker({
             position,
             map: activeMap,
-            icon: {
-              path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
-              fillColor: fc.marker,
-              fillOpacity: 1,
-              strokeColor: "#ffffff",
-              strokeWeight: 1,
-              scale: 0.8,
-              anchor: new window.google.maps.Point(12, 32),
-            }
+            title: f.isCentroidPreview
+              ? APPROXIMATE_LOCATION_LABEL
+              : f.detectedName || f.name || "Business location",
+            icon: f.isCentroidPreview
+              ? createApproximateMarkerIcon(window.google.maps, 1, fc.marker)
+              : {
+                path: "M12 0C5.37 0 0 5.37 0 12c0 9 12 20 12 20s12-11 12-20C24 5.37 18.63 0 12 0z",
+                fillColor: fc.marker,
+                fillOpacity: 1,
+                strokeColor: "#ffffff",
+                strokeWeight: 1,
+                scale: 0.8,
+                anchor: new window.google.maps.Point(12, 32),
+              }
           });
         }
 
@@ -403,20 +455,30 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
       });
       markerRefs.current = [];
     };
-  }, [isLoaded, mapInstance, flags]);
-
-  const nonGreenPreviewCount = flags.slice(0, 100).filter(f => parseColor(f) !== "Green").length;
+  }, [buildMarkerEl, displayedFlags, isLoaded, mapInstance]);
 
   return (
     <section className="overview-surface overview-map" aria-labelledby="overview-map-title" aria-busy={state.loading || (!isLoaded && !loadError)}>
       <div className="overview-section-heading">
-        <h2 id="overview-map-title">Map Preview</h2>
-        <button className="overview-inline-action" type="button" onClick={onOpenMap}>
-          Open Full Map ↗
-        </button>
+        <h2 id="overview-map-title">Explore the map</h2>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "flex-end", gap: 8 }}>
+          {approximateFlags.length > 0 && (
+            <button
+              type="button"
+              className="overview-approximate-toggle"
+              aria-pressed={showApproximateLocations}
+              onClick={() => setShowApproximateLocations((visible) => !visible)}
+            >
+              {showApproximateLocations ? "Hide" : "Show"} approximate locations ({approximateFlags.length})
+            </button>
+          )}
+          <button className="overview-inline-action" type="button" onClick={onOpenMap}>
+            Open full map ↗
+          </button>
+        </div>
       </div>
       <RequestFeedback state={state} label="map records" />
-      <p className="overview-section-sub">Up to 100 markers from the {state.hasResult ? formatOverviewNumber(flags.length) : "—"} loaded records. Open the full map to explore more.</p>
+      <p className="overview-section-sub">See where business records are located around Mataasnakahoy.</p>
       <div className="overview-map-canvas">
         {loadError ? (
           <div style={miniMapFallback}>
@@ -431,7 +493,7 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
         ) : (
           <GoogleMap
             mapContainerStyle={{ width: "100%", height: "100%" }}
-            center={DEFAULT_CENTER}
+            center={DEFAULT_MAP_CENTER}
             zoom={12}
             options={{
               disableDefaultUI: true,
@@ -456,20 +518,31 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
         {/* Flag count badge */}
         {state.hasResult && (
           <div className="overview-map-count">
-            {formatOverviewNumber(nonGreenPreviewCount)} non-green records in preview
+            {formatOverviewNumber(nonGreenPreviewCount)} flagged locations shown
           </div>
         )}
       </div>
 
-        {/* Mini legend */}
-      <ul className="overview-map-legend" aria-label="Flag legend">
-        {Object.entries(FLAG_COLORS).map(([color, meta]) => (
-          <li key={color}>
-            <span style={{ background: meta.marker }} aria-hidden="true" />
-            {meta.label}
-          </li>
-        ))}
-      </ul>
+      <details className="overview-explanation overview-map-notes">
+        <summary>About the locations shown</summary>
+        <p>Up to 100 exact locations are shown. Approximate previews are optional and do not affect counts.
+          {state.hasResult && ` ${formatOverviewNumber(noExactLocationCount)} businesses have no exact location yet.`}
+          {unassignedCount > 0 && ` ${formatOverviewNumber(unassignedCount)} have no stored barangay ID and are not placed.`}
+          {" "}Open the full map to explore more.</p>
+      </details>
+
+      {/* Mini legend */}
+      <details className="overview-explanation overview-map-key">
+        <summary>What the map colors mean</summary>
+        <ul className="overview-map-legend" aria-label="Flag legend">
+          {Object.entries(FLAG_COLORS).map(([color, meta]) => (
+            <li key={color}>
+              <span style={{ background: meta.marker }} aria-hidden="true" />
+              {meta.label}
+            </li>
+          ))}
+        </ul>
+      </details>
       {state.hasResult && flags.length === 0 && <p className="overview-empty">No map records in the loaded results.</p>}
     </section>
   );
@@ -508,8 +581,13 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
       <div className="overview-section-heading">
         <h2 id="overview-deadlines-title">Assignment Deadlines</h2>
       </div>
-      <p className="overview-section-sub">Outstanding assignments in the loaded inspection records.</p>
+      <p className="overview-section-sub">{state.hasResult
+        ? outstanding.length === 0 ? "Stay on top of inspection due dates." : `${formatOverviewNumber(outstanding.length)} outstanding ${outstanding.length === 1 ? "deadline" : "deadlines"} in the loaded records.`
+        : "See when open assignments are due."}</p>
       <RequestFeedback state={state} label="assignment deadlines" />
+      <div className="overview-deadline-content">
+      <details className="overview-calendar-details">
+        <summary>Browse deadlines by date</summary>
       <div className="calendar-widget-header">
         <h3 className="calendar-widget-title">
           <svg className="calendar-widget-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16" aria-hidden="true">
@@ -593,10 +671,12 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
         <span><i className="is-upcoming" aria-hidden="true" />Upcoming</span>
         <span className="calendar-widget-today-key">Today</span>
       </div>
+      <p className="overview-scope-note">Based on up to 1,000 loaded inspection records.</p>
+      </details>
       <div className="calendar-widget-tasks">
         <div className="calendar-widget-tasks-header">
           <h3 id="overview-selected-deadlines" aria-live="polite">
-            {selectedDate ? `Deadlines · ${selectedDate.toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : "Earliest outstanding"}
+            {selectedDate ? `Deadlines · ${selectedDate.toLocaleDateString("en-PH", { month: "short", day: "numeric" })}` : "Next deadlines"}
           </h3>
           {selectedDate && (
             <button className="overview-inline-action" type="button" onClick={() => setSelectedDay(null)}>Clear date</button>
@@ -604,7 +684,13 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
         </div>
         <div className="calendar-widget-task-list" aria-labelledby="overview-selected-deadlines">
           {state.hasResult && displayedTasks.length === 0 ? (
-            <p className="overview-empty">{selectedDate ? "No outstanding deadlines for this date in the loaded records." : "No outstanding assignment deadlines in the loaded records."}</p>
+            selectedDate ? <p className="overview-empty">No outstanding deadlines for this date in the loaded records.</p> : (
+              <div className="overview-deadline-empty" role="status">
+                <span className="overview-deadline-empty-icon" aria-hidden="true">✓</span>
+                <strong>All caught up</strong>
+                <p>No assignment deadlines to review right now.</p>
+              </div>
+            )
           ) : displayedTasks.map(task => {
             const isOverdue = new Date(task.deadline) < new Date();
             return (
@@ -629,7 +715,7 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
         </div>
         {!selectedDate && outstanding.length > 3 && <p className="overview-scope-note">Showing the earliest three deadlines. Select a date to see its assignments.</p>}
       </div>
-      <p className="overview-scope-note">Based on up to 1,000 loaded inspection records. Task links open Dispatch.</p>
+      </div>
       <Link className="overview-section-link" to={activityPath} title="Review recorded inspection lifecycle activity">View Inspection Activity <OverviewIcon kind="arrow" /></Link>
     </section>
   );
@@ -954,17 +1040,12 @@ export default function HomePage() {
           Last computed: {summary.metadata?.computed_at ?? priorities.metadata?.computed_at ?? "unknown"}.
         </p>
       )}
-      {/* Main Layout: 2 Columns */}
+      {/* Overview sections follow reading order; only the map and priorities share a row. */}
       <div className="overview-dashboard-layout">
         <HeroBanner user={user} />
+        <NeedsAttention data={workload} state={requestStates.workload} />
 
-        {/* Left Column (Main Content) */}
-        <div className="overview-main-column">
-          <NeedsAttention data={workload} state={requestStates.workload} />
-          <InspectionSnapshot data={workload} state={requestStates.workload} />
-          <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
-
-          {/* Map */}
+        <div className="overview-feature-grid">
           <MiniMapWidget
             flags={allFlags}
             state={requestStates.flags}
@@ -973,16 +1054,13 @@ export default function HomePage() {
             isLoaded={isLoaded}
             loadError={loadError}
           />
-        </div>
-
-        {/* Right Column (Sidebar) */}
-        <div className="overview-side-column">
-          <VisualCalendarWidget inspections={inspections} state={requestStates.inspections} navigate={navigate} />
           <BarangayPrioritiesWidget
             opsRankings={opsRankings}
             state={requestStates.ops}
           />
         </div>
+        <SourceCards sources={{ registry: registryCount, detection: detectionCount, manual: manualCount, unclassified: unclassifiedCount }} states={requestStates} />
+        <VisualCalendarWidget inspections={inspections} state={requestStates.inspections} navigate={navigate} />
       </div>
 
       {/* Footer */}

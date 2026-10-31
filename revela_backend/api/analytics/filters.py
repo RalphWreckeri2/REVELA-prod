@@ -59,6 +59,7 @@ def parse_analytics_filters(args) -> Dict[str, Any]:
         "flag_color": _strip(args.get("flag_color")),
         "detected_from": _strip(args.get("detected_from")),
         "detected_to": _strip(args.get("detected_to")),
+        "population": _strip(args.get("population")) or "objective",
         "inspection_result": _strip(args.get("inspection_result")),
         "verification_status": _strip(args.get("verification_status")),
         "inspection_from": _strip(args.get("inspection_from")),
@@ -90,6 +91,19 @@ def registry_sql(alias: str, F: Dict[str, Any]) -> Tuple[str, List[Any]]:
     if F.get("line_of_business"):
         parts.append(f"{alias}.lineOfBusiness = %s")
         params.append(F["line_of_business"])
+
+    if F.get("display_sector"):
+        normalized_lob = (
+            f"CONVERT(LOWER(REGEXP_REPLACE(COALESCE({alias}.lineOfBusiness, ''), "
+            "'[^A-Za-z0-9]', '')) USING utf8mb4) COLLATE utf8mb4_unicode_ci"
+        )
+        parts.append(
+            "EXISTS (SELECT 1 FROM registry_sector_map rsm "
+            f"WHERE rsm.normalized_line_of_business = {normalized_lob} "
+            "AND rsm.match_status IN ('matched', 'combo') "
+            "AND rsm.display_sector_key = %s)"
+        )
+        params.append(F["display_sector"])
 
     if F.get("business_type"):
         parts.append(f"{alias}.businessType = %s")

@@ -55,21 +55,61 @@ void main() {
       (tester) async {
         await pumpLogin(tester, brightness: brightness);
 
-        expect(find.text('Read the full Privacy Policy'), findsOneWidget);
-        expect(find.text('Read the Terms & Conditions'), findsOneWidget);
-        expect(find.text('Read Cookie & Storage Policy'), findsOneWidget);
+        expect(
+          find.byKey(const Key('privacy-policy-acknowledgment-link')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('terms-policy-acknowledgment-link')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('cookies-policy-acknowledgment-link')),
+          findsOneWidget,
+        );
         expect(find.byType(Checkbox), findsOneWidget);
+        expect(find.byIcon(Icons.lock_outline_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.description_outlined), findsOneWidget);
+        expect(find.byIcon(Icons.storage_outlined), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
   }
+
+  testWidgets('privacy acknowledgment adapts to phone and tablet widths', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    for (final size in [const Size(320, 568), const Size(760, 814)]) {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      await pumpLogin(tester, brightness: Brightness.light);
+
+      expect(find.text('Your Privacy Matters'), findsOneWidget);
+      expect(
+        find.byKey(const Key('privacy-policy-acknowledgment-link')),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getSize(find.byKey(const Key('privacy-policy-dialog-card')))
+            .height,
+        lessThan(size.height * 0.9),
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
 
   testWidgets('cookie policy opens as a local native scrollable screen', (
     tester,
   ) async {
     await pumpLogin(tester, brightness: Brightness.light);
 
-    await tester.tap(find.text('Read Cookie & Storage Policy'));
+    await tester.tap(
+      find.byKey(const Key('cookies-policy-acknowledgment-link')),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     await tester.runAsync(
@@ -97,7 +137,9 @@ void main() {
   ) async {
     await pumpLogin(tester, brightness: Brightness.light);
 
-    await tester.tap(find.text('Read the full Privacy Policy'));
+    await tester.tap(
+      find.byKey(const Key('privacy-policy-acknowledgment-link')),
+    );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     await tester.runAsync(
@@ -112,7 +154,7 @@ void main() {
 
     await tester.pageBack();
     await tester.pump(const Duration(milliseconds: 500));
-    await tester.tap(find.text('Read the Terms & Conditions'));
+    await tester.tap(find.byKey(const Key('terms-policy-acknowledgment-link')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
     await tester.runAsync(
@@ -148,7 +190,12 @@ void main() {
         isNotNull,
       );
 
-      await tester.tap(find.widgetWithText(ElevatedButton, 'Continue'));
+      final continueButtonFinder = find.widgetWithText(
+        ElevatedButton,
+        'Continue',
+      );
+      await tester.ensureVisible(continueButtonFinder);
+      await tester.tap(continueButtonFinder);
       await tester.pumpAndSettle();
 
       final preferences = await SharedPreferences.getInstance();

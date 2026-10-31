@@ -6,9 +6,10 @@ import { join, resolve } from "node:path";
 import { createServer } from "vite";
 
 const edge = process.env.EDGE_BINARY || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe";
-const tempRoot = "C:\\Users\\RUFFAA~1\\AppData\\Local\\Temp\\opencode";
+const tempRoot = process.env.OPENCODE_TEMP_ROOT || "C:\\Users\\Mateo\\AppData\\Local\\Temp\\opencode";
 const focusedAnalytics = process.argv.includes("--analytics-fixes-only");
-const output = focusedAnalytics ? tempRoot : resolve("artifacts/layout-review");
+const clsOnly = process.argv.includes("--analytics-cls-only");
+const output = focusedAnalytics || clsOnly ? tempRoot : resolve("artifacts/layout-review");
 if (!existsSync(edge) || !existsSync(tempRoot) || !existsSync(output)) throw new Error("Edge, the approved temporary directory, and artifacts/layout-review are required.");
 const profile = mkdtempSync(join(tempRoot, "revela-layout-browser-"));
 const server = await createServer({ server: { host: "127.0.0.1", port: 0, open: false } });
@@ -123,7 +124,61 @@ try {
       })) };
   })()`);
 
-  if (focusedAnalytics) {
+  if (clsOnly) {
+    await metrics(1280, 900);
+    await call("Page.addScriptToEvaluateOnNewDocument", { source: `
+      window.__analyticsShifts = [];
+      new PerformanceObserver(list => {
+        for (const entry of list.getEntries()) if (!entry.hadRecentInput) window.__analyticsShifts.push(entry.value);
+      }).observe({ type: 'layout-shift', buffered: true });
+    ` });
+    await call("Page.navigate", { url: `${origin}/scripts/layout-preview.html?page=analytics&state=loading` });
+    await wait(`document.querySelector('.analytics-overview-skeleton') && getComputedStyle(document.querySelector('.analytics-overview-skeleton')).visibility === 'visible'`, "delayed Overview skeleton");
+    const before = await evaluate(`(() => {
+      const bounds = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { width: r.width, height: r.height }; };
+      return { map: bounds('.analytics-overview-skeleton .map-overview-layout'), kpi: bounds('.analytics-overview-skeleton .map-overview-total'), operations: bounds('.analytics-loading-section .analytics-inspector-operations-card') };
+    })()`);
+    await evaluate(`window.__releaseLayout()`);
+    await wait(`document.querySelector('.map-overview-layout:not(.analytics-overview-skeleton .map-overview-layout)') && !document.querySelector('.analytics-loading-section')`, "loaded Overview");
+    await sleep(600);
+    const after = await evaluate(`(() => {
+      const bounds = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { width: r.width, height: r.height }; };
+      return { map: bounds('.map-overview:not(.analytics-overview-skeleton) .map-overview-layout'), kpi: bounds('.map-overview:not(.analytics-overview-skeleton) .map-overview-total'), operations: bounds('.analytics-inspector-operations-card'), cls: window.__analyticsShifts.reduce((sum, value) => sum + value, 0) };
+    })()`);
+    console.log(JSON.stringify({ before, after }, null, 2));
+    assert.ok(after.cls < 0.1, `Overview CLS ${after.cls} must remain below 0.1`);
+    await call("Page.navigate", { url: `${origin}/scripts/layout-preview.html?page=analytics&state=loading&tab=prescriptive&recommendations=ranked` });
+    await wait(`document.querySelector('.analytics-recommendations-skeleton') && getComputedStyle(document.querySelector('.analytics-recommendations-skeleton')).visibility === 'visible'`, "delayed Recommendations skeleton");
+    const recommendationsBefore = await evaluate(`(() => {
+      const r = document.querySelector('.analytics-recommendations-skeleton').getBoundingClientRect();
+      return { width: r.width, height: r.height };
+    })()`);
+    await evaluate(`window.__releaseLayout()`);
+    await wait(`document.querySelectorAll('.analytics-recommendation-row summary').length === 5`, "five ranked rows");
+    await sleep(400);
+    const recommendationsAfter = await evaluate(`(() => {
+      const r = document.querySelector('.analytics-recommendation-list').getBoundingClientRect();
+      return { width: r.width, height: r.height, cls: window.__analyticsShifts.reduce((sum, value) => sum + value, 0) };
+    })()`);
+    console.log(JSON.stringify({ recommendationsBefore, recommendationsAfter }, null, 2));
+    assert.ok(recommendationsAfter.cls < 0.1, `Recommendations CLS ${recommendationsAfter.cls} must remain below 0.1`);
+    await evaluate(`document.querySelector('.analytics-tab-btn').click()`);
+    await wait(`document.querySelector('.map-overview-layout')`, "cached Overview tab");
+    assert.equal(await evaluate(`Boolean(document.querySelector('.analytics-loading-section'))`), false, "cached tab switch must not show a page skeleton");
+    await evaluate(`document.querySelectorAll('.analytics-tab-btn')[1].click()`);
+    await wait(`document.querySelector('.analytics-recommendation-rows')`, "cached Recommendations tab");
+    assert.equal(await evaluate(`Boolean(document.querySelector('.analytics-recommendations-skeleton'))`), false, "returning to a cached tab must not re-skeleton");
+    results.push({ page: "Overview", before, after }, { page: "Recommendations", before: recommendationsBefore, after: recommendationsAfter });
+    await metrics(768, 1024, ipadUA, true);
+    await call("Page.navigate", { url: `${origin}/scripts/layout-preview.html?page=analytics&state=loading` });
+    await wait(`document.querySelector('.analytics-overview-skeleton') && getComputedStyle(document.querySelector('.analytics-overview-skeleton')).visibility === 'visible'`, "tablet Overview skeleton");
+    await evaluate(`window.__releaseLayout()`);
+    await wait(`document.querySelector('.map-overview:not(.analytics-overview-skeleton) .map-overview-layout')`, "tablet Overview loaded");
+    await sleep(400);
+    const tabletCls = await evaluate(`window.__analyticsShifts.reduce((sum, value) => sum + value, 0)`);
+    assert.ok(tabletCls < 0.1, `tablet Overview CLS ${tabletCls} must remain below 0.1`);
+    results.push({ page: "Overview tablet", cls: tabletCls });
+  } else if (focusedAnalytics) {
     for (const [width, height] of [[1920, 1080], [1280, 900], [1024, 900]]) {
       for (const sidebar of ["expanded", "collapsed"]) {
         await metrics(width, height);
@@ -300,12 +355,12 @@ try {
   console.log("Checking PNG and PDF exports");
   await navigate("reports");
   await scrollTo("#chart-card-size");
-  await evaluate(`document.querySelector('#chart-card-size button[title*="PNG"]').click()`);
+  await evaluate(`document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PNG"]').click()`);
   await wait(`document.body.textContent.includes('Chart Exported!') || document.body.textContent.includes('Export Failed')`, "PNG export", 30000);
   assert.equal(await evaluate(`document.body.textContent.includes('Chart Exported!')`), true, "PNG capture succeeds");
   await sleep(200);
   assert.ok(downloads.some(filename => filename.endsWith(".png")), "PNG download starts");
-  await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
+  await evaluate(`document.querySelector('.swal2-container')?.remove(); document.body.classList.remove('swal2-shown', 'swal2-height-auto'); document.querySelector('#chart-card-size .export-actions-menu > summary').click(); document.querySelector('#chart-card-size button[title*="PDF"]').click()`);
   await wait(`window.__printCount > 0`, "PDF print flow", 30000);
   assert.ok(await evaluate(`Boolean(document.querySelector('.print-report-container img[src^="data:image/png"]'))`), "PDF includes chart image");
   await call("Emulation.setEmulatedMedia", { media: "print" });
@@ -337,9 +392,9 @@ try {
 
   }
   assert.deepEqual(consoleIssues, [], "no Recharts dimension warnings or browser exceptions");
-  await writeFile(join(output, focusedAnalytics ? "revela-analytics-fixes-results.json" : "results.json"), JSON.stringify({ zoom: "100%", browser: "Microsoft Edge (Chromium), fresh profile", consoleIssues, results }, null, 2));
+  await writeFile(join(output, clsOnly ? "analytics-cls-results.json" : focusedAnalytics ? "revela-analytics-fixes-results.json" : "results.json"), JSON.stringify({ zoom: "100%", browser: "Microsoft Edge (Chromium), fresh profile", consoleIssues, results }, null, 2));
   await rm(join(output, focusedAnalytics ? "revela-analytics-fixes-failure.png" : "failure.png"), { force: true });
-  console.log(`Passed ${results.length} layout/state/device scenarios at 100% zoom. Screenshots: ${output}`);
+  console.log(`Passed ${results.length} ${clsOnly ? "analytics CLS and cached-tab" : "layout/state/device"} scenarios at 100% zoom. Results: ${output}`);
   await Promise.race([call("Browser.close").catch(() => {}), sleep(2000)]);
 } catch (error) {
   if (call && session) {

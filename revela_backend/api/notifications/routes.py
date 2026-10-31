@@ -17,7 +17,14 @@ notifications_bp = Blueprint("notifications", __name__)
 @jwt_required()
 def list_notifications_route():
     uid = int(get_jwt_identity())
-    result, err = notif_service.list_notifications(uid)
+    try:
+        limit = int(request.args.get("limit", "50"))
+        offset = int(request.args.get("offset", "0"))
+    except ValueError:
+        return jsonify({"error": "limit and offset must be integers"}), 400
+    if not 1 <= limit <= 50 or offset < 0:
+        return jsonify({"error": "limit must be 1–50 and offset must be non-negative"}), 400
+    result, err = notif_service.list_notifications(uid, limit=limit, offset=offset)
     if err:
         return jsonify({"error": err}), 500
     return jsonify(result), 200

@@ -196,9 +196,33 @@ def test_registry_active_name_match_does_not_count_as_link_or_verified_complianc
     db.commit()
     row = map_pin()
     assert row["flagColor"] == "Green"  # Preserve existing colour matching semantics.
+    assert row["registryMatched"] == 1
     assert row["registryLinked"] is False  # No actual FK, despite the derived Green.
     assert row["inspectionVerifiedCompliant"] is False
     assert report_ids() == []
+
+
+def test_registry_matched_pin_uses_registry_barangay_for_display_and_filtering(db):
+    pin(db, linked=True)
+    db.db.execute("INSERT INTO barangays (barangayID, barangayName) VALUES (2, 'Barangay II')")
+    db.db.execute("UPDATE official_registry SET barangayID=2 WHERE businessID='REG-17'")
+    db.commit()
+
+    payload, error = flags.get_flags()
+    assert error is None, error
+    row = next(item for item in payload["data"] if item["logID"] == 17)
+    assert row["barangayID"] == 2
+    assert row["barangayName"] == "Barangay II"
+    assert row["recordedBarangayID"] == 1
+    assert row["registryMatched"] == 1
+
+    barangay_one, error = flags.get_flags(barangay_id=1)
+    assert error is None, error
+    assert barangay_one["total"] == 0
+
+    barangay_two, error = flags.get_flags(barangay_id=2)
+    assert error is None, error
+    assert barangay_two["total"] == 1
 
 
 def test_dangling_business_id_is_not_a_registry_link(db):

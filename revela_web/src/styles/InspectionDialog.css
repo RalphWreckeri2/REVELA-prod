@@ -56,7 +56,7 @@
 .dispatch-dialog :is(p, h2, span) {
   overflow-wrap: anywhere;
 }
-.dispatch-dialog :is(button, a, input, select, [tabindex]):focus-visible {
+.dispatch-dialog :is(button, a, select, [tabindex]):focus-visible {
   outline: 2px solid var(--color-primary-dark);
   outline-offset: 3px;
 }

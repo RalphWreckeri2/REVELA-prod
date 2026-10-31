@@ -11,7 +11,6 @@ import numpy as np
 from collections import Counter
 from concurrent.futures import Future
 from datetime import datetime, timezone
-from sklearn.cluster import DBSCAN
 from flask import Blueprint, current_app, g, has_app_context, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from google import genai
@@ -19,13 +18,41 @@ from google.genai import types
 from app import mysql
 from api.middleware.decorators import jwt_required, admin_required
 from api.analytics.service import get_wlc_config, update_wlc_config, reset_wlc_config
-from api.analytics.scoring import calculate_rankings, select_rankings
+from api.analytics.sector_risk import (
+    DEFAULT_SECTOR_RISK_POLICY,
+    load_persisted_sector_risk_policy,
+    load_sector_risk_policy_audit,
+    save_persisted_sector_risk_policy,
+    validate_sector_risk_categories,
+)
+from api.analytics.scoring import MODEL_VERSION, calculate_rankings, select_rankings
 from api.analytics.non_registry import (
     non_registry_monitoring_sql, build_non_registry_monitoring,
     registry_linked_monitoring_sql, build_registry_linked_monitoring,
 )
 from api.flags.compliance import origin_source_sql, current_confirmation_rows, confirmation_summary
-from api.models.detection_runs import get_recent_detection_runs
+from api.flags.compliance import registry_link_sql
+from api.models.detection_runs import (
+    _is_missing_stop_metadata_column,
+    get_recent_detection_runs,
+)
+from api.analytics.hotspots import (
+    HOTSPOT_POPULATIONS,
+    HOTSPOT_POPULATION_OBJECTIVE,
+    HOTSPOT_POPULATION_UNREGISTERED,
+    build_hotspot_population_sql,
+    cache_hotspots,
+    cluster_hotspot_rows,
+    count_hotspot_dispositions,
+    get_cached_hotspots,
+    hotspot_cluster_memberships,
+    hotspot_date_window,
+    hotspot_population_flags,
+    invalidate_hotspots_cache,
+    load_barangay_polygons,
+    read_hotspot_settings,
+    resolve_hotspot_parameters,
+)
 from api.analytics.filters import (
     parse_analytics_filters,
     registry_sql,
@@ -40,6 +67,15 @@ from api.analytics.filters import (
 _CACHED_GEMINI_MODEL = "gemini-3.6-flash"
 _LAST_MODEL_DISCOVERY_TIME = 0
 _DISCOVERY_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+SECTOR_RISK_ASSISTANT_GUIDANCE = (
+    "Matched PSIC categories use their sector-policy score; flagged entities "
+    "without a matched sector use the unclassified fallback of 50; explicit "
+    "barangay overrides take precedence. State current sector coverage using "
+    "the WLC model's known and total sector entity counts when available. "
+    "Sector policy scores are administrative priorities, not measured industry "
+    "risk. Do not redistribute the default 68% Risk / 7% Sector / 25% "
+    "Proximity weights when sector inputs are missing or constant."
+)
 
 
 def _get_candidate_gemini_models(client, force_refresh=False):
@@ -299,6 +335,7 @@ def invalidate_analytics_cache():
         _analytics_cache_generation += 1
         # Reserve active flights until their queries finish, but do not publish
         # or satisfy fresh reads from a result computed before invalidation.
+    invalidate_hotspots_cache()
 
 
 def init_analytics_cache_invalidation(app):
@@ -311,7 +348,12 @@ def init_analytics_cache_invalidation(app):
             return response
         blueprint = request.blueprint
         if blueprint == "analytics":
-            changes_data = request.path in ("/api/analytics/wlc-config", "/api/analytics/wlc-config/reset")
+            changes_data = request.path in (
+                "/api/analytics/wlc-config",
+                "/api/analytics/wlc-config/reset",
+                "/api/analytics/sector-policy",
+                "/api/analytics/sector-policy/reset",
+            )
         else:
             changes_data = blueprint in ("registry", "flags", "inspections", "users")
             if request.path in (
@@ -653,6 +695,8 @@ analytics_bp = Blueprint("analytics", __name__)
 def get_all_analytics():
     try:
         F = parse_analytics_filters(request.args)
+        if F["population"] not in HOTSPOT_POPULATIONS:
+            return jsonify({"error": "Unknown DBSCAN population."}), 400
         section = request.args.get("section")
         if section:
             if section not in _ANALYTICS_READ_SECTIONS:
@@ -670,6 +714,121 @@ def get_all_analytics():
     except Exception:
         current_app.logger.exception("Failed to load analytics")
         return jsonify({"error": "Failed to load analytics"}), 500
+
+
+@analytics_bp.route("/hotspots", methods=["GET"])
+@jwt_required()
+def get_analytics_hotspots():
+    """Return date-scoped clusters for the selected hotspot population."""
+    date_preset = (request.args.get("date_preset") or "all").strip().lower()
+    population = (
+        request.args.get("population") or HOTSPOT_POPULATION_OBJECTIVE
+    ).strip()
+    if population not in HOTSPOT_POPULATIONS:
+        return jsonify({"error": "Unknown DBSCAN population."}), 400
+    try:
+        start, end = hotspot_date_window(date_preset)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    cursor = mysql.connection.cursor()
+    try:
+        settings = read_hotspot_settings(cursor)
+        parameters, fallbacks = resolve_hotspot_parameters(settings)
+        flags = hotspot_population_flags(population, parameters["flags"])
+        date_key = (
+            start.isoformat() if start else None,
+            end.isoformat() if end else None,
+        )
+        cache_key = (
+            date_preset, date_key, parameters["eps_m"],
+            parameters["min_samples"], tuple(parameters["flags"]),
+            tuple(sorted(parameters["sources"].items())),
+            population, tuple(flags), tuple(sorted(fallbacks.items())),
+        )
+        cached = get_cached_hotspots(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
+        ladder = ladder_columns_available(cursor)
+        effective_flag = _effective_flag_color_sql("g", ladder=ladder)
+        population_sql, population_params = build_hotspot_population_sql(
+            effective_flag,
+            registry_link_sql("g"),
+            start,
+            end,
+            population=population,
+            flags=flags,
+        )
+        cursor.execute(population_sql, population_params)
+        population_rows = list(cursor.fetchall() or [])
+
+        cursor.execute(
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID"
+        )
+        barangay_rows = list(cursor.fetchall() or [])
+        try:
+            cursor.execute(
+                "SELECT startedAt, status, stopReason FROM detection_runs "
+                "ORDER BY startedAt DESC, runID DESC LIMIT 1"
+            )
+        except Exception as error:
+            if not _is_missing_stop_metadata_column(error):
+                raise
+            cursor.execute(
+                "SELECT startedAt, status FROM detection_runs "
+                "ORDER BY startedAt DESC, runID DESC LIMIT 1"
+            )
+            latest_run = cursor.fetchone()
+            if latest_run:
+                latest_run["stopReason"] = None
+        else:
+            latest_run = cursor.fetchone()
+    except Exception:
+        current_app.logger.exception("Failed to load analytics hotspots")
+        return jsonify({"error": "Failed to load analytics hotspots"}), 500
+    finally:
+        cursor.close()
+
+    try:
+        clusters, totals = cluster_hotspot_rows(
+            population_rows,
+            parameters,
+            load_barangay_polygons(barangay_rows),
+        )
+        latest_run_date = latest_run["startedAt"] if latest_run else None
+        if hasattr(latest_run_date, "strftime"):
+            latest_run_date = latest_run_date.strftime("%Y-%m-%dT%H:%M:%SZ")
+        date_window = {
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+        }
+        response = {
+            "date_preset": date_preset,
+            "date_window": date_window,
+            "parameters_used": parameters,
+            "parameter_fallbacks": fallbacks,
+            "population": count_hotspot_dispositions(
+                population_rows,
+                population=population,
+                flags=flags,
+            ),
+            "clusters": clusters,
+            "totals": {
+                **totals,
+                "cluster_count": len(clusters),
+            },
+            "last_detection_run": ({
+                "date": latest_run_date,
+                "status": latest_run["status"],
+                "stop_reason": latest_run.get("stopReason"),
+            } if latest_run else None),
+        }
+    except Exception:
+        current_app.logger.exception("Failed to aggregate analytics hotspots")
+        return jsonify({"error": "Failed to aggregate analytics hotspots"}), 500
+    cache_hotspots(cache_key, response)
+    return jsonify(response), 200
 
 
 def _barangay_overview_label(value, max_length=32):
@@ -705,6 +864,36 @@ def _barangay_overview_dimension(rows, limit=None):
     ]
 
 
+def _registry_line_of_business_filter(line_of_business_key, alias="o"):
+    if not line_of_business_key:
+        return "", []
+    registry_line_expression = (
+        f"CONVERT(LOWER(REGEXP_REPLACE(COALESCE({alias}.lineOfBusiness, ''), "
+        "'[^A-Za-z0-9]', '')) USING utf8mb4) "
+        "COLLATE utf8mb4_unicode_ci"
+    )
+    return f"""
+        AND EXISTS (
+            SELECT 1
+            FROM registry_sector_map lob_map
+            JOIN psic_active_version active_version
+              ON active_version.singleton_id = 1
+             AND lob_map.source_version = active_version.source_version
+            JOIN psic_lines primary_line
+              ON primary_line.psic_line_id = lob_map.primary_psic_line_id
+             AND primary_line.source_version = active_version.source_version
+            WHERE lob_map.normalized_line_of_business =
+                  {registry_line_expression}
+              AND lob_map.match_status IN ('matched', 'combo')
+              AND CONVERT(
+                      primary_line.normalized_line_of_business
+                      USING utf8mb4
+                  ) COLLATE utf8mb4_unicode_ci =
+                  CONVERT(%s USING utf8mb4) COLLATE utf8mb4_unicode_ci
+        )
+    """, [line_of_business_key]
+
+
 @analytics_bp.route("/barangay-overview", methods=["GET"])
 @jwt_required()
 def get_barangay_overview():
@@ -712,9 +901,20 @@ def get_barangay_overview():
     cursor = mysql.connection.cursor()
     try:
         filters = parse_analytics_filters(request.args)
+        filters["display_sector"] = (
+            str(request.args.get("display_sector") or "").strip() or None
+        )
         filters["barangay_ids"] = None
         filters["registration_type_supported"] = True
         registry_where, registry_params = registry_sql("o", filters)
+        line_of_business_key = (
+            str(request.args.get("line_of_business_key") or "").strip() or None
+        )
+        line_of_business_filter, line_of_business_params = (
+            _registry_line_of_business_filter(line_of_business_key)
+        )
+        registry_where += line_of_business_filter
+        registry_params = registry_params + line_of_business_params
         ladder = ladder_columns_available(cursor)
         geo_where, geo_params = geo_sql("g", filters, ladder=ladder)
         inspection_where, inspection_params = inspection_sql("ir", filters)
@@ -732,7 +932,7 @@ def get_barangay_overview():
                     "business_size": [],
                     "business_type": [],
                     "registration_type": [],
-                    "line_of_business": [],
+                    "display_sector": [],
                 },
                 "pins": {
                     "registered_on_map": 0,
@@ -780,7 +980,6 @@ def get_barangay_overview():
             ("business_size", "businessSize", None),
             ("business_type", "businessType", None),
             ("registration_type", "registrationType", None),
-            ("line_of_business", "lineOfBusiness", 5),
         )
         overall_registry_dimensions = {}
         for response_key, column, limit in dimension_columns:
@@ -806,6 +1005,118 @@ def get_barangay_overview():
                 barangay["registry"][response_key] = _barangay_overview_dimension(
                     rows_by_barangay.get(barangay_id, []), limit=limit
                 )
+
+        cursor.execute(
+            """SELECT display_sector_key,
+                      MIN(display_sector_label) AS display_sector_label,
+                      MIN(sort_order) AS sort_order
+               FROM display_sector
+               WHERE is_active = 1 AND display_sector_key IS NOT NULL
+                 AND display_sector_label IS NOT NULL
+               GROUP BY display_sector_key
+               ORDER BY MIN(sort_order), MIN(display_sector_label)"""
+        )
+        display_sector_options = [
+            {
+                "value": row["display_sector_key"],
+                "label": row["display_sector_label"],
+            }
+            for row in cursor.fetchall()
+        ]
+        cursor.execute(
+            f"""
+            SELECT primary_line.normalized_line_of_business AS value,
+                   MIN(primary_line.line_of_business) AS description,
+                   sector_map.display_sector_key AS sector_key,
+                   COUNT(*) AS count
+            FROM official_registry o
+            JOIN registry_sector_map sector_map
+              ON sector_map.normalized_line_of_business =
+                 CONVERT(
+                     LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                     USING utf8mb4
+                 ) COLLATE utf8mb4_unicode_ci
+             AND sector_map.match_status IN ('matched', 'combo')
+            JOIN psic_active_version active_version
+              ON active_version.singleton_id = 1
+             AND sector_map.source_version = active_version.source_version
+            JOIN psic_lines primary_line
+              ON primary_line.psic_line_id = sector_map.primary_psic_line_id
+             AND primary_line.source_version = active_version.source_version
+            WHERE 1=1 {registry_sql("o", filters)[0]}
+            GROUP BY primary_line.normalized_line_of_business,
+                     sector_map.display_sector_key
+            ORDER BY sector_map.display_sector_key,
+                     MIN(primary_line.line_of_business)
+            """,
+            registry_sql("o", filters)[1],
+        )
+        line_of_business_options = [
+            {
+                "value": row["value"],
+                "label": (
+                    f"{str(row['description'] or row['value']).strip().title()} "
+                    f"({int(row['count'] or 0):,})"
+                ),
+                "sector_key": row["sector_key"],
+                "count": int(row["count"] or 0),
+            }
+            for row in cursor.fetchall()
+        ]
+        cursor.execute(
+            f"""
+            SELECT o.barangayID,
+                   COALESCE(rsm.display_sector_key, 'unmapped') AS category,
+                   COALESCE(rsm.display_sector_label, 'Needs classification') AS label,
+                   COUNT(*) AS count
+            FROM official_registry o
+            LEFT JOIN registry_sector_map rsm
+              ON rsm.normalized_line_of_business =
+                 CONVERT(
+                     LOWER(REGEXP_REPLACE(COALESCE(o.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                     USING utf8mb4
+                 ) COLLATE utf8mb4_unicode_ci
+             AND rsm.match_status IN ('matched', 'combo')
+            WHERE 1=1 {registry_where}
+            GROUP BY o.barangayID, category, label
+            """,
+            registry_params,
+        )
+        sector_rows = cursor.fetchall()
+        sectors_by_barangay = {}
+        overall_sector_counts = {}
+        sector_labels = {}
+        for row in sector_rows:
+            key = row["category"]
+            count = int(row["count"] or 0)
+            sector_labels[key] = row["label"]
+            overall_sector_counts[key] = overall_sector_counts.get(key, 0) + count
+            sectors_by_barangay.setdefault(row["barangayID"], {})[key] = (
+                sectors_by_barangay.get(row["barangayID"], {}).get(key, 0) + count
+            )
+
+        def sector_breakdown(counts):
+            ordered = sorted(
+                counts.items(),
+                key=lambda item: (-item[1], sector_labels[item[0]].casefold()),
+            )
+            return [
+                {
+                    "value": key,
+                    "label": sector_labels[key],
+                    "short_label": sector_labels[key],
+                    "count": count,
+                }
+                for key, count in ordered
+            ]
+
+        overall_registry_dimensions["display_sector"] = sector_breakdown(
+            overall_sector_counts
+        )
+        for barangay_id, barangay in barangays.items():
+            barangay["registry"]["display_sector"] = sector_breakdown(
+                sectors_by_barangay.get(barangay_id, {})
+            )
 
         cursor.execute(
             f"""
@@ -974,10 +1285,225 @@ def get_barangay_overview():
         overall["inspections_unassigned"] = overall_inspection_counts["total"] - sum(
             row["inspections"]["total"] for row in rows
         )
-        return jsonify({"barangays": rows, "overall": overall}), 200
+        return jsonify({
+            "barangays": rows,
+            "overall": overall,
+            "display_sectors": display_sector_options,
+            "line_of_business_options": line_of_business_options,
+        }), 200
     except Exception:
         current_app.logger.exception("Failed to load barangay overview")
         return jsonify({"error": "Failed to load barangay overview"}), 500
+    finally:
+        cursor.close()
+
+
+@analytics_bp.route("/registry-status-by-size", methods=["GET"])
+@jwt_required()
+def get_registry_status_by_size():
+    """Return read-only official-registry status aggregates by barangay and size."""
+    cursor = mysql.connection.cursor()
+    try:
+        filters = parse_analytics_filters(request.args)
+        filters["display_sector"] = (
+            str(request.args.get("display_sector") or "").strip() or None
+        )
+        filters["registration_type_supported"] = True
+        registry_where, registry_params = registry_sql("o", filters)
+        line_of_business_key = (
+            str(request.args.get("line_of_business_key") or "").strip() or None
+        )
+        line_of_business_filter, line_of_business_params = (
+            _registry_line_of_business_filter(line_of_business_key)
+        )
+        registry_where += line_of_business_filter
+        registry_params.extend(line_of_business_params)
+
+        cursor.execute(
+            """
+            SELECT barangayID, barangayName
+            FROM barangays
+            ORDER BY barangayID
+            """
+        )
+        known_barangays = cursor.fetchall()
+        barangay_names = {
+            int(row["barangayID"]): str(row["barangayName"])
+            for row in known_barangays
+        }
+
+        cursor.execute(
+            f"""
+            SELECT
+                COALESCE(b.barangayID, -1) AS barangay_id,
+                COALESCE(NULLIF(TRIM(b.barangayName), ''), 'Unknown/Unassigned')
+                    AS barangay_name,
+                COALESCE(NULLIF(TRIM(o.businessSize), ''), 'Unknown')
+                    AS business_size,
+                COALESCE(NULLIF(TRIM(o.applicationStatus), ''), 'Unknown')
+                    AS application_status,
+                COUNT(DISTINCT o.businessID) AS business_count
+            FROM official_registry o
+            LEFT JOIN barangays b ON b.barangayID = o.barangayID
+            WHERE 1=1 {registry_where}
+            GROUP BY barangay_id, barangay_name, business_size, application_status
+            ORDER BY barangay_name, business_size, application_status
+            """,
+            registry_params,
+        )
+        grouped_rows = cursor.fetchall()
+
+        known_statuses = ["Active", "Expired", "Revoked", "Pending", "Closed"]
+        statuses = set(known_statuses)
+        for row in grouped_rows:
+            statuses.add(str(row["application_status"] or "Unknown"))
+        status_order = known_statuses + sorted(
+            statuses.difference(known_statuses).difference({"Unknown"}),
+            key=str.casefold,
+        )
+        if "Unknown" in statuses:
+            status_order.append("Unknown")
+
+        requested_barangay_ids = filters.get("barangay_ids")
+        scoped_barangay_ids = (
+            [barangay_id for barangay_id in barangay_names
+             if barangay_id in requested_barangay_ids]
+            if requested_barangay_ids else list(barangay_names)
+        )
+        barangay_aggregates = {
+            barangay_id: {
+                "barangayID": barangay_id,
+                "barangayName": barangay_names[barangay_id],
+                "total": 0,
+                "status_counts": {status: 0 for status in status_order},
+                "business_sizes": {},
+            }
+            for barangay_id in scoped_barangay_ids
+        }
+        overall_aggregate = {
+            "total": 0,
+            "status_counts": {status: 0 for status in status_order},
+            "business_sizes": {},
+        }
+
+        def add_group(aggregate, business_size, application_status, count):
+            size_row = aggregate["business_sizes"].setdefault(
+                business_size,
+                {
+                    "business_size": business_size,
+                    "total": 0,
+                    "status_counts": {status: 0 for status in status_order},
+                },
+            )
+            size_row["total"] += count
+            size_row["status_counts"][application_status] = (
+                size_row["status_counts"].get(application_status, 0) + count
+            )
+            aggregate["total"] += count
+            aggregate["status_counts"][application_status] = (
+                aggregate["status_counts"].get(application_status, 0) + count
+            )
+
+        for row in grouped_rows:
+            barangay_id = int(row["barangay_id"])
+            application_status = str(row["application_status"] or "Unknown")
+            business_size = str(row["business_size"] or "Unknown")
+            count = int(row["business_count"] or 0)
+            add_group(overall_aggregate, business_size, application_status, count)
+            if barangay_id == -1:
+                aggregate = barangay_aggregates.setdefault(
+                    -1,
+                    {
+                        "barangayID": None,
+                        "barangayName": "Unknown/Unassigned",
+                        "total": 0,
+                        "status_counts": {status: 0 for status in status_order},
+                        "business_sizes": {},
+                    },
+                )
+            else:
+                aggregate = barangay_aggregates.get(barangay_id)
+                if aggregate is None:
+                    continue
+            add_group(aggregate, business_size, application_status, count)
+
+        def serialize_aggregate(aggregate):
+            denominator = int(aggregate["total"])
+
+            def serialize_size(size_row):
+                size_denominator = int(size_row["total"])
+                return {
+                    **size_row,
+                    "status_percentages": {
+                        status: (
+                            100.0 * int(size_row["status_counts"].get(status, 0))
+                            / size_denominator
+                            if size_denominator else None
+                        )
+                        for status in status_order
+                    },
+                }
+
+            return {
+                **aggregate,
+                "status_percentages": {
+                    status: (
+                        100.0 * int(aggregate["status_counts"].get(status, 0))
+                        / denominator
+                        if denominator else None
+                    )
+                    for status in status_order
+                },
+                "business_sizes": [
+                    serialize_size(size_row)
+                    for _, size_row in sorted(
+                        aggregate["business_sizes"].items(),
+                        key=lambda item: (
+                            item[0] == "Unknown",
+                            item[0].casefold(),
+                        ),
+                    )
+                ],
+            }
+
+        barangay_results = [
+            serialize_aggregate(aggregate)
+            for _, aggregate in sorted(
+                barangay_aggregates.items(),
+                key=lambda item: (
+                    item[0] == -1,
+                    item[1]["barangayName"].casefold(),
+                ),
+            )
+        ]
+        applied_registry_filters = {
+            key: filters.get(key)
+            for key in (
+                "barangay_ids",
+                "application_status",
+                "business_size",
+                "business_type",
+                "registration_type",
+                "line_of_business",
+                "display_sector",
+                "renewal_from",
+                "renewal_to",
+            )
+            if filters.get(key) not in (None, [], "")
+        }
+        if line_of_business_key:
+            applied_registry_filters["line_of_business_key"] = line_of_business_key
+        return jsonify({
+            "as_of": datetime.now(timezone.utc).isoformat(),
+            "statuses": status_order,
+            "filters_applied": applied_registry_filters,
+            "total": overall_aggregate["total"],
+            "municipality": serialize_aggregate(overall_aggregate),
+            "barangays": barangay_results,
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to load registry status-by-size aggregates")
+        return jsonify({"error": "Failed to load registry status-by-size aggregates"}), 500
     finally:
         cursor.close()
 
@@ -1206,7 +1732,43 @@ def _prescriptive_registry_sql(ladder):
     """
 
 
-def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
+def _prescriptive_sector_sql(effective_flag_color):
+    """Count active-flag entities by their canonical PSIC display category."""
+    return f"""
+        SELECT c.barangayID,
+               rsm.display_sector_label AS sector_category,
+               COUNT(DISTINCT COALESCE(
+                   CASE WHEN c.registry_business_id IS NOT NULL
+                       THEN CONCAT('business:', CAST(c.registry_business_id AS CHAR)) END,
+                   CASE WHEN c.businessID IS NOT NULL
+                       THEN CONCAT('business:', CAST(c.businessID AS CHAR)) END,
+                   CASE WHEN c.placeID IS NOT NULL
+                       THEN CONCAT('place:', CAST(c.placeID AS CHAR)) END,
+                   CONCAT('log:', CAST(c.logID AS CHAR))
+               )) AS entity_count
+        FROM (
+            SELECT g.logID, g.barangayID,
+                   {effective_flag_color} AS eff_color,
+                   {_registry_column_sql('g', 'businessID')} AS registry_business_id,
+                   g.businessID, g.placeID
+            FROM geospatial_logs g
+            WHERE {_PIN_ACTIONABLE_SQL}
+        ) c
+        LEFT JOIN official_registry r
+          ON r.businessID = COALESCE(c.registry_business_id, c.businessID)
+        LEFT JOIN registry_sector_map rsm
+          ON rsm.normalized_line_of_business =
+             CONVERT(
+                 LOWER(REGEXP_REPLACE(COALESCE(r.lineOfBusiness, ''), '[^A-Za-z0-9]', ''))
+                 USING utf8mb4
+             ) COLLATE utf8mb4_unicode_ci
+         AND rsm.match_status IN ('matched', 'combo')
+        WHERE c.eff_color IN ('Red', 'Yellow', 'Black')
+        GROUP BY c.barangayID, rsm.display_sector_label
+    """
+
+
+def _load_prescriptive_rows(cur, effective_flag_color, ladder):
     """One municipal input/scoring path for Analytics and Map dispatch."""
     builder = _barangay_rankings_sql_split if _rankings_split_enabled() else _barangay_rankings_sql
     # All dashboard filters deliberately stay OUT of the operational model.
@@ -1218,9 +1780,21 @@ def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
     rows = list(cur.fetchall())
     _execute(cur, "prescriptive.registry_active_flags", _prescriptive_registry_sql(ladder))
     registry = {row["barangayID"]: row for row in cur.fetchall()}
+    _execute(cur, "prescriptive.sector_risk", _prescriptive_sector_sql(effective_flag_color))
+    sector_categories = {}
+    for sector_row in cur.fetchall():
+        categories = sector_categories.setdefault(sector_row["barangayID"], {})
+        categories[sector_row["sector_category"]] = int(sector_row["entity_count"] or 0)
     for row in rows:
         row.update(registry.get(row["barangayID"], {}))
-    return calculate_rankings(rows, config)
+        row["sector_category_counts"] = sector_categories.get(row["barangayID"], {})
+    return rows
+
+
+def _load_prescriptive_rankings(cur, effective_flag_color, ladder, config):
+    rows = _load_prescriptive_rows(cur, effective_flag_color, ladder)
+    sector_policy = load_persisted_sector_risk_policy(cur)
+    return calculate_rankings(rows, config, sector_policy)
 
 
 _PRESCRIPTIVE_WORKFORCE_SQL = """
@@ -2046,72 +2620,103 @@ def _get_all_analytics_inner(F=None):
     # DBSCAN Hotspot Intelligence
     dbscan_insight = "There is not enough location data to identify nearby groups of flagged records."
     dbscan_clusters = []
+    dbscan_population = {}
+    dbscan_parameters = {}
     _dbscan_t0 = _phase_start(phases)
     try:
-        _execute(cur, "diagnostic.dbscan_hotspots", f"""
-                 SELECT g.logID, g.detectedName, g.detectedDate,
-                     {effective_flag_color} AS flagColor,
-                     g.latitude, g.longitude,
-                     COALESCE(b.barangayName, 'Unknown Area') as barangayName
-            FROM geospatial_logs g
-            LEFT JOIN barangays b ON g.barangayID = b.barangayID
-            WHERE {effective_flag_color} IN ('Red', 'Black')
-              AND g.latitude IS NOT NULL
-              AND g.longitude IS NOT NULL
-              AND (g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL OR g.flagColor = 'Orange' OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID)) {geo_g}
-        """, geo_g_p)
-        hotspot_data = cur.fetchall()
+        population = F.get("population") or HOTSPOT_POPULATION_OBJECTIVE
+        if population not in HOTSPOT_POPULATIONS:
+            raise ValueError(f"Unknown DBSCAN population: {population!r}.")
+        parameters, parameter_fallbacks = resolve_hotspot_parameters(
+            read_hotspot_settings(cur)
+        )
+        flags = hotspot_population_flags(population, parameters["flags"])
+        dbscan_parameters = parameters
+        dbscan_settings = (
+            f"DBSCAN settings: Haversine eps={parameters['eps_m']:g} m, "
+            f"min_samples={parameters['min_samples']}; population={population}; "
+            f"flags={', '.join(flags) if flags else 'none'}."
+        )
+        population_sql, population_params = build_hotspot_population_sql(
+            effective_flag_color,
+            registry_link_sql("g"),
+            None,
+            None,
+            population=population,
+            flags=flags,
+            extra_where_sql=geo_g,
+            extra_params=geo_g_p,
+        )
+        _execute(
+            cur, "diagnostic.dbscan_hotspots", population_sql, population_params
+        )
+        hotspot_data = list(cur.fetchall() or [])
+        dbscan_population = count_hotspot_dispositions(
+            hotspot_data,
+            population=population,
+            flags=flags,
+        )
+        dbscan_population["parameter_fallbacks"] = parameter_fallbacks
+        _execute(
+            cur,
+            "diagnostic.dbscan_barangays",
+            "SELECT barangayID, barangayName FROM barangays ORDER BY barangayID",
+        )
+        barangay_rows = list(cur.fetchall() or [])
+        hotspot_groups, _ = cluster_hotspot_rows(
+            hotspot_data,
+            parameters,
+            load_barangay_polygons(barangay_rows),
+        )
+        memberships, primary_cluster_id = hotspot_cluster_memberships(
+            hotspot_data, hotspot_groups
+        )
 
-        if len(hotspot_data) >= 3:
-            import numpy as np
-            from sklearn.cluster import DBSCAN
-            from collections import Counter
+        for row in hotspot_data:
+            if row.get("disposition") != "eligible":
+                continue
+            cluster_id = memberships[int(row["logID"])]
+            detected_date = row.get("detectedDate")
+            dbscan_clusters.append({
+                "log_id": int(row["logID"]),
+                "detected_name": row.get("detectedName"),
+                "detected_date": (
+                    detected_date.strftime("%Y-%m-%d %H:%M")
+                    if detected_date else None
+                ),
+                "flag_color": row.get("flagColor"),
+                "lat": float(row["latitude"]),
+                "lng": float(row["longitude"]),
+                "cluster": cluster_id,
+                "is_primary": cluster_id == primary_cluster_id and cluster_id != -1,
+                "barangay": row.get("barangayName") or "Unknown Area",
+            })
 
-            # Convert coords to radians for Haversine distance
-            coords = np.radians(
-                [[float(r['latitude']), float(r['longitude'])] for r in hotspot_data])
-
-            # 20 meters in radians (10m is often too strict due to GPS drift, 20m provides a better result)
-            kms_per_radian = 6371.0088
-            epsilon = 0.02 / kms_per_radian
-
-            db = DBSCAN(eps=epsilon, min_samples=3,
-                        algorithm='ball_tree', metric='haversine').fit(coords)
-            labels = db.labels_
-
-            valid_labels = [lbl for lbl in labels if lbl != -1]  # -1 is noise
-            largest_cluster_label = -1
-            if valid_labels:
-                # Find largest cluster
-                largest_cluster_label = Counter(
-                    valid_labels).most_common(1)[0][0]
-                cluster_size = Counter(valid_labels).most_common(1)[0][1]
-
-            # Export points for visualization
-            for idx, row in enumerate(hotspot_data):
-                dbscan_clusters.append({
-                    "log_id": int(row['logID']),
-                    "detected_name": row['detectedName'],
-                    "detected_date": row['detectedDate'].strftime("%Y-%m-%d %H:%M") if row['detectedDate'] else None,
-                    "flag_color": row['flagColor'],
-                    "lat": float(row['latitude']),
-                    "lng": float(row['longitude']),
-                    "cluster": int(labels[idx]),
-                    "is_primary": bool(int(labels[idx]) == largest_cluster_label and int(labels[idx]) != -1),
-                    "barangay": row['barangayName']
-                })
-
-            if valid_labels:
-
-                # Find dominant barangay in this cluster
-                cluster_barangays = [hotspot_data[i]['barangayName'] for i, lbl in enumerate(
-                    labels) if lbl == largest_cluster_label]
-                dominant_barangay = Counter(
-                    cluster_barangays).most_common(1)[0][0]
-
-                dbscan_insight = f"Largest nearby group: {cluster_size} flagged records around {dominant_barangay}. Consider prioritizing this area for inspection; proximity alone does not confirm a violation."
-            else:
-                dbscan_insight = "No nearby groups of flagged records were found."
+        if hotspot_groups:
+            largest_group = hotspot_groups[0]
+            dominant_barangay = "Unknown Area"
+            if largest_group["per_barangay"]:
+                dominant_barangay = max(
+                    largest_group["per_barangay"],
+                    key=lambda row: row["count"],
+                )["barangay_name"]
+            dbscan_insight = (
+                f"Largest nearby group: {largest_group['size']} eligible "
+                f"effective-flagged records around {dominant_barangay}. "
+                f"{dbscan_settings} Consider "
+                "prioritizing this area for inspection; proximity alone does "
+                "not confirm a violation."
+            )
+        elif dbscan_clusters:
+            dbscan_insight = (
+                "No nearby groups of eligible effective-flagged records "
+                f"were found. {dbscan_settings}"
+            )
+        else:
+            dbscan_insight = (
+                "There is not enough eligible effective-flagged record "
+                f"location data to form a group. {dbscan_settings}"
+            )
     except Exception as e:
         print(f"DBSCAN Error: {e}")
         dbscan_insight = "Hotspot detection temporarily unavailable."
@@ -2212,6 +2817,8 @@ def _get_all_analytics_inner(F=None):
         "category_risk_drivers": category_risk_drivers,
         "category_linkage_summary": category_linkage_summary,
         "flag_trend": flag_trend, "dbscan_insight": dbscan_insight,
+        "dbscan_population": dbscan_population,
+        "parameters_used": dbscan_parameters,
         "morans_insight": morans_insight, "dbscan_clusters": dbscan_clusters,
         "morans_data": morans_data,
     }
@@ -2733,6 +3340,157 @@ def reset_config_endpoint():
     return jsonify({"message": "WLC configuration reset to default successfully.", "data": updated_config}), 200
 
 
+@analytics_bp.route("/sector-policy", methods=["GET"])
+@jwt_required()
+def get_sector_policy():
+    cur = mysql.connection.cursor()
+    try:
+        policy = load_persisted_sector_risk_policy(cur)
+        return jsonify({
+            "data": policy,
+            "defaults": DEFAULT_SECTOR_RISK_POLICY,
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to load sector risk policy")
+        return jsonify({"error": "Failed to load sector risk policy."}), 500
+    finally:
+        cur.close()
+
+
+@analytics_bp.route("/sector-policy", methods=["PUT"])
+@admin_required()
+def update_sector_policy():
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Sector risk policy data is required."}), 400
+    try:
+        categories = validate_sector_risk_categories(data)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    cur = mysql.connection.cursor()
+    try:
+        mysql.connection.begin()
+        updated_policy = save_persisted_sector_risk_policy(
+            cur, categories, int(get_jwt_identity())
+        )
+        mysql.connection.commit()
+    except Exception:
+        mysql.connection.rollback()
+        current_app.logger.exception("Failed to persist sector risk policy")
+        return jsonify({"error": "Failed to save sector risk policy."}), 500
+    finally:
+        cur.close()
+    return jsonify({
+        "message": "Sector risk policy updated successfully.",
+        "data": updated_policy,
+    }), 200
+
+
+@analytics_bp.route("/sector-policy/reset", methods=["POST"])
+@admin_required()
+def reset_sector_policy():
+    cur = mysql.connection.cursor()
+    try:
+        mysql.connection.begin()
+        updated_policy = save_persisted_sector_risk_policy(
+            cur,
+            DEFAULT_SECTOR_RISK_POLICY["categories"],
+            int(get_jwt_identity()),
+        )
+        mysql.connection.commit()
+    except Exception:
+        mysql.connection.rollback()
+        current_app.logger.exception("Failed to reset sector risk policy")
+        return jsonify({"error": "Failed to reset sector risk policy."}), 500
+    finally:
+        cur.close()
+    return jsonify({
+        "message": "Sector risk policy reset to defaults successfully.",
+        "data": updated_policy,
+    }), 200
+
+
+@analytics_bp.route("/sector-policy/audit", methods=["GET"])
+@admin_required()
+def get_sector_policy_audit():
+    try:
+        limit = int(request.args.get("limit", 50))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    cur = mysql.connection.cursor()
+    try:
+        rows = load_sector_risk_policy_audit(cur, limit)
+        return jsonify({"data": rows}), 200
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    except Exception:
+        current_app.logger.exception("Failed to load sector risk policy audit history")
+        return jsonify({"error": "Failed to load sector risk policy audit history."}), 500
+    finally:
+        cur.close()
+
+
+@analytics_bp.route("/sector-policy/preview", methods=["POST"])
+@admin_required()
+def preview_sector_policy():
+    data = request.get_json(silent=True)
+    if data is None:
+        return jsonify({"error": "Sector policy preview data is required."}), 400
+    try:
+        categories = validate_sector_risk_categories(data)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    cur = mysql.connection.cursor()
+    try:
+        ladder = ladder_columns_available(cur)
+        effective_flag_color = _effective_flag_color_sql("g", ladder=ladder)
+        current_policy = load_persisted_sector_risk_policy(cur)
+        candidate_policy = {
+            "version": current_policy["version"] + 1,
+            "fallback_score": DEFAULT_SECTOR_RISK_POLICY["fallback_score"],
+            "categories": categories,
+        }
+        rows = _load_prescriptive_rows(cur, effective_flag_color, ladder)
+        current_rankings = calculate_rankings(
+            rows, get_wlc_config(), current_policy
+        )
+        candidate_rankings = calculate_rankings(
+            rows, get_wlc_config(), candidate_policy
+        )
+        old_by_id = {row["barangayID"]: row for row in current_rankings}
+        new_by_id = {row["barangayID"]: row for row in candidate_rankings}
+        selected_ids = {
+            row["barangayID"] for row in current_rankings[:8]
+        } | {
+            row["barangayID"] for row in candidate_rankings[:8]
+        }
+        preview_rows = []
+        for barangay_id in selected_ids:
+            old = old_by_id[barangay_id]
+            new = new_by_id[barangay_id]
+            preview_rows.append({
+                "barangayID": barangay_id,
+                "barangayName": new["barangayName"],
+                "old_ops": old["ops_score"],
+                "old_rank": old["rank"],
+                "new_ops": new["ops_score"],
+                "new_rank": new["rank"],
+            })
+        preview_rows.sort(key=lambda row: (row["new_rank"], row["old_rank"]))
+        return jsonify({
+            "current_version": current_policy["version"],
+            "proposed_version": candidate_policy["version"],
+            "model_version": MODEL_VERSION,
+            "rows": preview_rows,
+        }), 200
+    except Exception:
+        current_app.logger.exception("Failed to preview sector risk policy")
+        return jsonify({"error": "Failed to preview sector risk policy."}), 500
+    finally:
+        cur.close()
+
+
 @analytics_bp.route("/chat", methods=["POST"])
 @jwt_required()
 def analytics_chat():
@@ -2998,15 +3756,15 @@ def analytics_chat():
             "that ranks barangays by inspection priority. Higher score = higher priority for dispatching inspectors.\n"
             "- **WLC Weights**: The OPS score is computed from three weighted sub-scores:\n"
             "  - Risk Score (w1): 100*(3*Red + 2*Yellow + 4*Black)/largest municipal weighted flag burden; zero if no flags exist\n"
-            "  - Sector Score (w2): Configured barangay policy score, with the existing neutral fallback of 50 when an override is missing. The default 68% Risk / 7% Sector / 25% Proximity weights come from stakeholder interviews and must not be redistributed because sector inputs are missing or constant. Do not describe a neutral fallback as measured industry risk\n"
+            f"  - Sector Score (w2): {SECTOR_RISK_ASSISTANT_GUIDANCE}\n"
             "  - Proximity Score (w3): 100 minus normalized straight-line BPLO distance, using active-flag locations; missing locations use neutral proximity 50\n"
             "  - OPS = w1*Risk + w2*Sector + w3*Proximity using effective weights. It is a relative priority score, NOT violation probability. Barangay display filters preserve municipal ranks; other dashboard filters do not change operational scores\n"
             "- **Registry active-flag rate**: Unique current Red/Yellow/Black registry businesses / all registry businesses; null means N/A. Not a confirmed non-compliance rate. Unregistered candidates are a separate count\n"
             "- **Risk Level**: Derived from OPS score — High (>=60), Medium (>=30), Low (<30)\n"
             "- **Dispatch Recommendations**: Deterministic WLC-ranked plans, not AI-generated allocations. High priority starts at OPS 60, Standard at 30, Monitor below 30. Only currently free inspectors are allocated (maximum six). Deferred plans have zero inspectors; never invent staffing or promise a deployment date for them. Black-only barangays and already-assigned targets are skipped: dispatchable_count must be positive for a new field plan. Black flags are administrative risk context, never an authorization for redispatch\n"
-            "- **Nearby flagged records (DBSCAN)**: Uses geospatial log records whose effective flag is Red or Black, which have coordinates, and which have a place ID, reporter, stored Orange flag, or linked inspection report. Each dot and each group size count records, not distinct businesses. DBSCAN uses Haversine distance with a 20 m neighborhood and min_samples=3 (including the point itself); connected neighborhoods can extend beyond 20 m end-to-end, and groups may cross barangay boundaries. Isolated records are not part of a group. The number of groups is not the number of records in a group\n"
+            "- **Nearby flagged records (DBSCAN)**: The objective population is eligible geolocated geospatial-log records with effective Red or Black flags, from any source, with registry-linked records allowed. The Map Overview overlay uses the narrower `unregistered_candidates` subset: effective Red only, detection source, no direct registry link, and no businessID; its existing Red-location wording describes that subset. `hotspots.flags` defaults to Red and Black, and response metadata identifies the population, parameter sources, flag/source counts, and exclusions. Each point and group size counts geospatial records, not distinct businesses. Uses Haversine distance and DBSCAN MinPts including the point itself. Connected neighborhoods can extend beyond eps end-to-end, groups may cross barangay boundaries, and noise points are not clusters. Neither proximity nor an internal clustering score establishes a real hotspot or violation\n"
             "- **Severe flags by barangay**: Separately counts distinct eligible geospatial log IDs with effective Red or Black flags and coordinates, grouped within barangay boundaries. Its dashed benchmark is NumPy's 75th percentile (default linear interpolation) of those counts across geolocated barangays; at least four such barangays are required, and only positive counts strictly above the benchmark are highlighted. A high count is not a spatial group\n"
-            "- **Filters for these two spatial charts**: Both apply selected barangay, effective flag-color, and detection-date filters; a selected flag color further narrows the Red/Black records required by these charts. Registry/business and inspection filters do not affect these geospatial calculations\n"
+            "- **Filters for these two spatial charts**: DBSCAN applies selected barangay, effective flag-color, and detection-date filters to the selected population. The separate severe-flags chart counts effective Red or Black records and also applies those geospatial filters. Registry/business and inspection filters do not affect these calculations\n"
             "- **Unavailable chart data**: In spatialDiagnostics, analysisAvailable=false means the corresponding chart could not be calculated from sufficient available data; do not present empty arrays or zero counts as evidence that there were no groups or severe flags\n"
             "- **Keep spatial measures distinct**: Spatial-group count, records per group, number of above-benchmark barangays, and OPS/WLC inspection-priority rankings are different measures. OPS rankings are not calculated from the number of DBSCAN groups or from the chart's above-benchmark count. Neither proximity nor a high count proves a violation or its cause\n"
             "- **Inspector Stats**: Performance metrics for individual inspectors (inspections completed, resolution time, etc.).\n"

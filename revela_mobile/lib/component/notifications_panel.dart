@@ -20,7 +20,10 @@ class NotificationsPanel extends StatefulWidget {
 
 class _NotificationsPanelState extends State<NotificationsPanel> {
   List<InAppNotification> _items = [];
+  int _notificationTotal = 0;
   bool _loading = true;
+  bool _loadingPrevious = false;
+  String? _previousError;
   String? _error;
 
   @override
@@ -35,10 +38,11 @@ class _NotificationsPanelState extends State<NotificationsPanel> {
       _error = null;
     });
     try {
-      final list = await InAppNotificationsService().fetchNotifications();
+      final page = await InAppNotificationsService().fetchNotifications();
       if (mounted) {
         setState(() {
-          _items = list;
+          _items = page.notifications;
+          _notificationTotal = page.total;
           _loading = false;
         });
       }
@@ -49,6 +53,38 @@ class _NotificationsPanelState extends State<NotificationsPanel> {
           _loading = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadPreviousNotifications() async {
+    if (_loadingPrevious || _items.length >= _notificationTotal) return;
+    setState(() {
+      _loadingPrevious = true;
+      _previousError = null;
+    });
+    try {
+      final page = await InAppNotificationsService().fetchNotifications(
+        offset: _items.length,
+      );
+      if (mounted) {
+        setState(() {
+          final loadedIds = _items.map((item) => item.id).toSet();
+          _items.addAll(
+            page.notifications.where((item) => loadedIds.add(item.id)),
+          );
+          _notificationTotal = page.notifications.isEmpty
+              ? _items.length
+              : page.total;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _previousError = 'Could not load previous notifications.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loadingPrevious = false);
     }
   }
 
@@ -148,9 +184,36 @@ class _NotificationsPanelState extends State<NotificationsPanel> {
                 : ListView.separated(
                     shrinkWrap: true,
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                    itemCount: _items.length,
+                    itemCount: _items.length +
+                        (_items.length < _notificationTotal ? 1 : 0),
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
                     itemBuilder: (_, i) {
+                      if (i == _items.length) {
+                        return Center(
+                          child: Column(
+                            children: [
+                              if (_previousError != null)
+                                Text(
+                                  _previousError!,
+                                  style: TextStyle(
+                                    color: Colors.red[700],
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              TextButton(
+                                onPressed: _loadingPrevious
+                                    ? null
+                                    : _loadPreviousNotifications,
+                                child: Text(
+                                  _loadingPrevious
+                                      ? 'Loading...'
+                                      : 'See previous notifications',
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
                       final n = _items[i];
                       return GestureDetector(
                         onTap: () async {
