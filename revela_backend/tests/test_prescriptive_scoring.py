@@ -3,7 +3,9 @@ import itertools
 import unittest
 from copy import deepcopy
 
-from api.analytics.dispatch import generate_recommendations, _urgency_label, _score_breakdown
+from api.analytics.dispatch import (
+    dispatch_exclusion_reasons, generate_recommendations, _urgency_label, _score_breakdown,
+)
 from api.analytics.scoring import calculate_rankings, select_rankings, haversine_km
 from api.analytics.service import DEFAULT_CONFIG
 
@@ -49,6 +51,25 @@ class PrescriptiveScoringTests(unittest.TestCase):
         self.assertEqual(model["reference_max_burden"], 0)
         self.assertTrue(all(r["risk_score"] == r["ops_score"] == 0 for r in rankings))
         self.assertEqual(generate_recommendations(rankings, 6, model["weights"]), [])
+
+    def test_dispatch_exclusion_reasons_distinguish_black_assigned_and_top_three(self):
+        rankings = [
+            {"barangayID": 1, "red_count": 0, "yellow_count": 0, "black_count": 4,
+             "dispatchable_count": 0, "dispatchable_business_count": 0},
+            {"barangayID": 2, "red_count": 2, "yellow_count": 1, "black_count": 0,
+             "dispatchable_count": 0, "dispatchable_business_count": 0},
+            *[
+                {"barangayID": bid, "red_count": 1, "yellow_count": 0, "black_count": 0,
+                 "dispatchable_count": 1, "dispatchable_business_count": 1}
+                for bid in (3, 4, 5, 6)
+            ],
+        ]
+
+        self.assertEqual(dispatch_exclusion_reasons(rankings), {
+            1: "Administrative review — Black only",
+            2: "Targets already assigned",
+            6: "Outside current top-three plan",
+        })
 
     def test_interview_weights_are_never_redistributed_for_sector_input_coverage(self):
         for sectors in ({}, {"Barangay 1": 80}, {"Barangay 1": 50, "Barangay 2": 50},

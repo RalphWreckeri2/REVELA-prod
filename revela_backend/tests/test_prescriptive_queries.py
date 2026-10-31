@@ -83,6 +83,43 @@ class PrescriptiveQueryTests(unittest.TestCase):
         with patch.object(routes, "_rankings_split_enabled", return_value=split):
             return routes._build_prescriptive_section(self.db.cursor(), self.color, True, self.config, filters or {})
 
+    def test_prescriptive_payload_explains_each_dispatch_exclusion(self):
+        rankings = [
+            {"barangayID": 1, "barangayName": "Black only", "rank": 1, "ops_score": 90,
+             "risk_score": 90, "sector_score": 50, "distance_score": 50, "flagged_count": 2,
+             "red_count": 0, "yellow_count": 0, "black_count": 2,
+             "dispatchable_count": 0, "dispatchable_business_count": 0},
+            {"barangayID": 2, "barangayName": "Assigned targets", "rank": 2, "ops_score": 80,
+             "risk_score": 80, "sector_score": 50, "distance_score": 50, "flagged_count": 1,
+             "red_count": 1, "yellow_count": 0, "black_count": 0,
+             "dispatchable_count": 0, "dispatchable_business_count": 0},
+            *[
+                {"barangayID": bid, "barangayName": f"Eligible {bid}", "rank": bid, "ops_score": 70 - bid,
+                 "risk_score": 70 - bid, "sector_score": 50, "distance_score": 50, "flagged_count": 1,
+                 "red_count": 1, "yellow_count": 0, "black_count": 0,
+                 "dispatchable_count": 1, "dispatchable_business_count": 1}
+                for bid in (3, 4, 5, 6)
+            ],
+        ]
+        model = {"weights": {"w1": .68, "w2": .07, "w3": .25}}
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"available_count": 0}
+        with patch.object(routes, "_load_prescriptive_rankings", return_value=(rankings, model)), \
+                patch.object(routes, "_execute"):
+            section = routes._build_prescriptive_section(cursor, self.color, True, self.config, {})
+
+        reasons = {row["barangayID"]: row["dispatch_exclusion_reason"] for row in section["rankings"]}
+        self.assertEqual(reasons, {
+            1: "Administrative review — Black only",
+            2: "Targets already assigned",
+            3: None,
+            4: None,
+            5: None,
+            6: "Outside current top-three plan",
+        })
+        self.assertTrue(all(row["allocation_status"] == "deferred"
+                            for row in section["dispatch_recommendations"]))
+
     def test_only_active_flags_with_paired_valid_coordinates_define_proximity(self):
         for split in (False, True):
             builder = routes._barangay_rankings_sql_split if split else routes._barangay_rankings_sql

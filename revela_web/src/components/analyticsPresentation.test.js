@@ -149,7 +149,10 @@ test("recommendation wording uses requested reason and allocation phrases", () =
   assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 1 }), "1 inspector allocated");
   assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 2 }), "2 inspectors allocated");
   assert.equal(recommendationAllocationLabel({ allocation_status: "deferred", inspectors: 0 }), "Waiting for a free inspector");
-  assert.equal(recommendationAllocationLabel(null), "Not scheduled yet");
+  assert.equal(recommendationAllocationLabel(null, "Administrative review — Black only"), "Administrative review — Black only");
+  assert.equal(recommendationAllocationLabel(null, "Targets already assigned"), "Targets already assigned");
+  assert.equal(recommendationAllocationLabel(null, "Outside current top-three plan"), "Outside current top-three plan");
+  assert.equal(recommendationAllocationLabel(null), "No dispatch recommendation");
 });
 
 test("recommendation headers and rows share centered, responsive column tracks", () => {

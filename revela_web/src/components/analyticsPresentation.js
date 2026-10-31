@@ -108,13 +108,13 @@ export function recommendationReason(row) {
   return `Red ${red} (${unregistered} not in registry) · Yellow ${yellow} · ${distanceLabel}`;
 }
 
-export function recommendationAllocationLabel(dispatch) {
+export function recommendationAllocationLabel(dispatch, exclusionReason) {
   if (dispatch?.allocation_status === "deferred") return "Waiting for a free inspector";
   const inspectorCount = Number(dispatch?.inspectors || 0);
   if (dispatch && inspectorCount > 0) {
     return `${inspectorCount} inspector${inspectorCount === 1 ? "" : "s"} allocated`;
   }
-  return "Not scheduled yet";
+  return exclusionReason || "No dispatch recommendation";
 }
 
 export function pivotCategoryCounts(rows = [], labelKey, countKey = "count") {

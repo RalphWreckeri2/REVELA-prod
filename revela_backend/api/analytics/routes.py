@@ -1875,19 +1875,24 @@ def _diagnostic_category_linkage_sql(effective_flag_color, registry_match_sql, g
 
 
 def _build_prescriptive_section(cur, effective_flag_color, ladder, config, filters):
-    from api.analytics.dispatch import generate_recommendations
+    from api.analytics.dispatch import dispatch_exclusion_reasons, generate_recommendations
 
     municipal_rankings, model = _load_prescriptive_rankings(cur, effective_flag_color, ladder, config)
     _execute(cur, "prescriptive.active_inspectors", _PRESCRIPTIVE_WORKFORCE_SQL)
     workforce = cur.fetchone() or {}
     available = int(workforce.get("available_count") or 0)
     recommendations = generate_recommendations(municipal_rankings, available, model["weights"])
+    exclusion_reasons = dispatch_exclusion_reasons(municipal_rankings)
+    rankings_with_dispatch_reasons = [
+        {**row, "dispatch_exclusion_reason": exclusion_reasons.get(row["barangayID"])}
+        for row in municipal_rankings
+    ]
     allocation_capacity = min(6, available)
     allocated = sum(recommendation["inspectors"] for recommendation in recommendations)
     model["ignored_filters"] = [key for key, value in (filters or {}).items()
                                 if value and key != "barangay_ids"]
     return {
-        "rankings": select_rankings(municipal_rankings, filters),
+        "rankings": select_rankings(rankings_with_dispatch_reasons, filters),
         "rankings_computed_at": datetime.now(timezone.utc).isoformat(),
         "wlc_config": config, "model": model,
         "dispatch_recommendations": select_rankings(recommendations, filters),

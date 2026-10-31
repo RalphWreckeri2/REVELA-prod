@@ -2277,7 +2277,7 @@ export default function AnalyticsPage() {
                           {row.priority_label || row.risk_level || "No priority"}
                         </span>
                         <span className="analytics-recommendation-assignment">
-                          {recommendationAllocationLabel(dispatch)}
+                          {recommendationAllocationLabel(dispatch, row.dispatch_exclusion_reason)}
                         </span>
                       </summary>
                       <div className="analytics-recommendation-detail">
@@ -2316,7 +2316,7 @@ export default function AnalyticsPage() {
                             )}
                           </>
                         ) : (
-                          <p>No dispatch allocation is available for this barangay.</p>
+                          <p>{row.dispatch_exclusion_reason || "No dispatch explanation is available."}</p>
                         )}
                       </div>
                     </details>

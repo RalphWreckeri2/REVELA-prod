@@ -104,6 +104,36 @@ def _generate_action_steps(brgy: Dict, inspectors: int, urgency: str) -> List[st
     return steps
 
 
+def _is_dispatch_eligible(brgy: Dict) -> bool:
+    dispatchable = brgy.get("dispatchable_count", brgy.get("red_count", 0) + brgy.get("yellow_count", 0))
+    businesses = brgy.get("dispatchable_business_count", dispatchable)
+    return dispatchable > 0 and int(businesses or 0) > 0
+
+
+def dispatch_exclusion_reasons(rankings: List[Dict]) -> Dict[Any, str]:
+    """Explain why a ranked barangay has no entry in the current dispatch plan."""
+    eligible = [row for row in rankings if _is_dispatch_eligible(row)]
+    top_three_ids = {row["barangayID"] for row in eligible[:3]}
+    reasons = {}
+
+    for row in rankings:
+        barangay_id = row["barangayID"]
+        if _is_dispatch_eligible(row):
+            if barangay_id not in top_three_ids:
+                reasons[barangay_id] = "Outside current top-three plan"
+            continue
+
+        red = int(row.get("red_count") or 0)
+        yellow = int(row.get("yellow_count") or 0)
+        black = int(row.get("black_count") or 0)
+        if black > 0 and red == 0 and yellow == 0:
+            reasons[barangay_id] = "Administrative review — Black only"
+        elif red + yellow > 0:
+            reasons[barangay_id] = "Targets already assigned"
+
+    return reasons
+
+
 # ── main entry point ─────────────────────────────────────────────────────────
 
 def generate_recommendations(
@@ -127,12 +157,7 @@ def generate_recommendations(
     total_inspectors = max(0, min(int(total_inspectors), 6))
 
     # Eligibility precedes the top-3 limit; never spend a slot on a flag-free row.
-    valid = [
-        b for b in rankings
-        if b.get("dispatchable_count", b.get("red_count", 0) + b.get("yellow_count", 0)) > 0
-        and int(b.get("dispatchable_business_count",
-                      b.get("dispatchable_count", b.get("red_count", 0) + b.get("yellow_count", 0))) or 0) > 0
-    ][:3]
+    valid = [b for b in rankings if _is_dispatch_eligible(b)][:3]
 
     if not valid:
         return []
