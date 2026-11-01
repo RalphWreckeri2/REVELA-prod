@@ -94,10 +94,10 @@ export function buildWorkflowSummaryModel(operation, result = {}) {
     activityLabel: operation === "detection"
       ? "Places checked"
       : operation === "reconcile"
-        ? "Red flags in run"
+        ? "red flags"
         : operation === "snap"
-          ? "Candidates selected"
-          : "Pins selected",
+          ? "candidates"
+          : "pins",
     hasCapturedDetails: records.length > 0,
     emptyMessage: operation === "detection"
       ? result.error

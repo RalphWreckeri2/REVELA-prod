@@ -2991,7 +2991,14 @@ export default function MapPage() {
     const result = resultData || outcome;
     const model = buildWorkflowSummaryModel(operation, result);
     const countMarkup = model.counts
-      .map(({ label, count }) => `<div class="workflow-summary-count"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`)
+      .map(({ label, count }) => {
+        const key = label === "Updated / snapped" || label === "Reconciled" || label === "Reverified / updated"
+          ? "success"
+          : label === "No match" || label === "Sent for review"
+            ? "warning"
+            : "neutral";
+        return `<div class="workflow-summary-count workflow-summary-count--${key}"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`;
+      })
       .join("");
     const contextCountsMarkup = model.contextCounts
       .map(([label, count]) => `<div class="workflow-summary-count"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`)
@@ -3010,8 +3017,8 @@ export default function MapPage() {
     const rowsMarkup = model.hasCapturedDetails
       ? `<div class="workflow-summary-table-scroll">
           <table class="workflow-summary-table">
-            <colgroup><col class="workflow-col-business"><col class="workflow-col-id"><col class="workflow-col-address"><col class="workflow-col-outcome"><col class="workflow-col-changes"></colgroup>
-            <thead><tr><th>Business</th><th>Business ID</th><th>Barangay / address</th><th>Outcome and explanation</th><th>Before → after</th></tr></thead>
+            <colgroup><col class="workflow-col-business"><col class="workflow-col-address"><col class="workflow-col-outcome"><col class="workflow-col-details"></colgroup>
+            <thead><tr><th>Business</th><th>Barangay / address</th><th>Outcome</th><th>Details</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -3020,22 +3027,26 @@ export default function MapPage() {
           <div><button type="button" class="workflow-page-previous">Previous</button><button type="button" class="workflow-page-next">Next</button></div>
         </div>`
       : `<div class="workflow-summary-empty">${escapeHtml(emptyMessage)}</div>`;
+    const subtitleParts = [];
+    if (model.checked) subtitleParts.push(`${model.checked} ${model.activityLabel}`);
+    if (model.operationId) subtitleParts.push(`Run ${model.operationId}`);
     await Swal.fire({
       title: `${model.title}`,
       html: `<div class="workflow-summary-modal">
-        <div class="workflow-summary-counts">${countMarkup || '<div class="workflow-summary-count"><span>Results</span><strong>0</strong></div>'}</div>
-        ${contextCountsMarkup ? `<div class="workflow-summary-counts">${contextCountsMarkup}</div>` : ""}
+        ${subtitleParts.length ? `<p class="workflow-summary-subtitle">${subtitleParts.map(escapeHtml).join(" · ")}</p>` : ""}
+        <div class="workflow-summary-counts workflow-summary-counts--${escapeHtml(operation)}">${countMarkup || '<div class="workflow-summary-count workflow-summary-count--neutral"><span>Results</span><strong>0</strong></div>'}</div>
+        ${contextCountsMarkup ? `<div class="workflow-summary-counts workflow-summary-counts--context">${contextCountsMarkup}</div>` : ""}
         ${model.contextNote ? `<p class="workflow-summary-note">${escapeHtml(model.contextNote)}</p>` : ""}
-        ${model.checked ? `<p class="workflow-summary-note">${escapeHtml(model.activityLabel)}: ${model.checked}</p>` : ""}
         ${errorMarkup}
         ${unavailableMessage}
         ${rowsMarkup}
-        ${model.operationId ? `<p class="workflow-summary-run-id">Run ID: ${escapeHtml(model.operationId)}</p>` : ""}
       </div>`,
-      width: "min(1100px, 96vw)",
+      width: "min(1180px, 96vw)",
+      heightAuto: false,
+      showCloseButton: true,
       showConfirmButton: true,
       confirmButtonText: "Close",
-      confirmButtonColor: "#4f46e5",
+      confirmButtonColor: "#27831b",
       customClass: { popup: "workflow-summary-popup" },
       didOpen: (popup) => {
         if (!model.hasCapturedDetails) return;
@@ -3044,47 +3055,73 @@ export default function MapPage() {
         const previous = popup.querySelector(".workflow-page-previous");
         const next = popup.querySelector(".workflow-page-next");
         let currentPage = 1;
-        const describeValues = (values) => {
-          if (!values || typeof values !== "object") return "—";
-          const entries = Object.entries(values).filter(([, value]) => value !== null && value !== undefined);
-          return entries.length
-            ? entries.map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join("<br>")
-            : "—";
-        };
+        let expandedRecordId = null;
+        const labelField = (field) => ({
+          coordSource: "Coordinate source",
+          flagColor: "Flag color",
+          matchStatus: "Match status",
+        }[field] || field.replaceAll(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()));
+        const formatValue = (value) => value === null || value === undefined || value === "" ? "—" : escapeHtml(value);
         const renderPage = () => {
           const page = paginateWorkflowRecords(
             model.records, currentPage, WORKFLOW_SUMMARY_PAGE_SIZE,
           );
           currentPage = page.page;
-          body.innerHTML = page.records.map((record) => {
+          body.innerHTML = page.records.map((record, index) => {
             const address = [
-              record.barangayName || (record.barangayID ? `Barangay ID ${record.barangayID}` : ""),
+              record.barangayName
+                || flags.find((flag) => String(flag.logID) === String(record.logID || record.record_id))?.barangayName
+                || (record.barangayID ? `Barangay ID ${record.barangayID}` : ""),
               record.businessAddress,
             ].filter(Boolean).join(" · ") || "—";
-            return `<tr>
-              <td><strong>${escapeHtml(record.businessName || "Unnamed business")}</strong></td>
-              <td>${escapeHtml(record.businessID || record.record_id || (record.logID ? `Map log ${record.logID}` : record.placeID || "—"))}</td>
-              <td>${escapeHtml(address)}</td>
-              <td><strong>${escapeHtml(String(record.outcome || "Recorded").replaceAll("_", " "))}</strong><br>${escapeHtml(record.explanation || record.reason || "No explanation was recorded.")}</td>
-              <td><small><strong>Before</strong><br>${describeValues(record.before)}<br><strong>After</strong><br>${describeValues(record.after)}</small></td>
-            </tr>`;
+            const recordId = String(record.businessID || record.record_id || record.logID || record.placeID || index);
+            const expanded = recordId === expandedRecordId;
+            const outcome = String(record.outcome || "recorded");
+            const outcomeLabel = model.counts.find(({ label }) => label.toLowerCase() === outcome.replaceAll("_", " "))?.label
+              || outcome.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+            const fields = [...new Set([
+              ...Object.keys(record.before || {}),
+              ...Object.keys(record.after || {}),
+            ])].filter((field) => record.before?.[field] !== null || record.after?.[field] !== null);
+            const details = fields.length
+              ? `<div class="workflow-summary-detail-grid">
+                  <strong>Field</strong><strong>Before</strong><strong>After</strong>
+                  ${fields.map((field) => `<span>${escapeHtml(labelField(field))}</span><span>${formatValue(record.before?.[field])}</span><strong>${formatValue(record.after?.[field])}</strong>`).join("")}
+                </div>`
+              : `<p class="workflow-summary-detail-empty">No field-level changes were recorded.</p>`;
+            return `<tr class="workflow-summary-record-row">
+                <td><strong>${escapeHtml(record.businessName || "Unnamed business")}</strong><span class="workflow-summary-business-id">${escapeHtml(record.businessID || record.placeID || ((record.logID || record.record_id) ? `ID ${record.logID || record.record_id}` : ""))}</span></td>
+                <td>${escapeHtml(address)}</td>
+                <td><span class="workflow-summary-outcome workflow-summary-outcome--${escapeHtml(outcome)}">${escapeHtml(outcomeLabel)}</span><span class="workflow-summary-explanation">${escapeHtml(record.explanation || record.reason || "No explanation was recorded.")}</span></td>
+                <td><button type="button" class="workflow-summary-details-toggle" data-record-id="${escapeHtml(recordId)}" aria-expanded="${expanded}">${expanded ? "Hide" : "View"}</button></td>
+              </tr>${expanded ? `<tr class="workflow-summary-details-row"><td colspan="4">${details}</td></tr>` : ""}`;
           }).join("");
           label.textContent = `${page.total ? (currentPage - 1) * WORKFLOW_SUMMARY_PAGE_SIZE + 1 : 0}–${Math.min(currentPage * WORKFLOW_SUMMARY_PAGE_SIZE, page.total)} of ${page.total}`;
           previous.disabled = currentPage <= 1;
           next.disabled = currentPage >= page.pageCount;
         };
+        next.addEventListener("click", () => {
+          currentPage += 1;
+          expandedRecordId = null;
+          renderPage();
+        });
         previous.addEventListener("click", () => {
+          expandedRecordId = null;
           currentPage -= 1;
           renderPage();
         });
-        next.addEventListener("click", () => {
-          currentPage += 1;
+        body.addEventListener("click", (event) => {
+          const button = event.target.closest(".workflow-summary-details-toggle");
+          if (!button) return;
+          expandedRecordId = button.getAttribute("data-record-id") === expandedRecordId
+            ? null
+            : button.getAttribute("data-record-id");
           renderPage();
         });
         renderPage();
       },
     });
-  }, [token]);
+  }, [token, flags]);
 
   const showWorkflowOperationSummary = useCallback(async (operation, outcome = {}) => {
     const config = {
