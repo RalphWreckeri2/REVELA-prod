@@ -426,7 +426,7 @@ export default function MapOverview({ token, filters }) {
     const controller = new AbortController();
     getAnalyticsHotspotsRequest(token, hotspotRequest.date_preset, {
       signal: controller.signal,
-      population: "unregistered_candidates",
+      population: "objective",
     })
       .then((data) => {
         if (controller.signal.aborted) return;
@@ -540,7 +540,7 @@ export default function MapOverview({ token, filters }) {
     )
     : null;
   const selectedClusterMapPath = selectedCluster
-    ? hotspotGroupMapPath(selectedCluster)
+    ? hotspotGroupMapPath(selectedCluster, hotspotData?.population?.flags)
     : null;
   const scanNote = hotspotScanNote(
     hotspotData?.last_detection_run,
@@ -589,6 +589,7 @@ export default function MapOverview({ token, filters }) {
       token,
       selectedCluster,
       controller.signal,
+      hotspotData?.population?.flags,
     )
       .then((pins) => {
         if (!controller.signal.aborted) {
@@ -611,7 +612,12 @@ export default function MapOverview({ token, filters }) {
         }
       });
     return () => controller.abort();
-  }, [clusterPinsRequestKey, selectedCluster, token]);
+  }, [
+    clusterPinsRequestKey,
+    hotspotData?.population?.flags,
+    selectedCluster,
+    token,
+  ]);
 
   useEffect(() => {
     if (!selectedCluster || !clusterPinsAreCurrent || !clusterPinsState.pins.length) return;
@@ -1465,7 +1471,7 @@ export default function MapOverview({ token, filters }) {
                   </>
                 ) : (
                   <p>
-                    {hotspotStats.clusterCount} possible groups found among {hotspotStats.redFlaggedCount.toLocaleString()} Red-flagged locations.
+                    {hotspotStats.clusterCount} possible groups found among {hotspotStats.eligibleCount.toLocaleString()} eligible locations with {hotspotStats.flagLabel} flags.
                   </p>
                 )}
                 {hotspotStats.outsideBoundaryCount > 0 && (

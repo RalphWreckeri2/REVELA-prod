@@ -21,7 +21,7 @@ export function hotspotPinMapPath(logID) {
     : null;
 }
 
-export function hotspotGroupMapPath(cluster) {
+export function hotspotGroupMapPath(cluster, flags = ["Red", "Black"]) {
   const logIds = hotspotClusterPinIds(cluster);
   if (!logIds.length) return null;
 
@@ -38,6 +38,7 @@ export function hotspotGroupMapPath(cluster) {
     params.set("hotspot_lat", String(lat));
     params.set("hotspot_lng", String(lng));
     params.set("hotspot_radius_m", String(radius));
+    params.set("hotspot_flags", flags.join(","));
   }
   return `/map?${params.toString()}`;
 }
@@ -57,6 +58,9 @@ export function parseHotspotGroupParams(search = "") {
   const lat = Number(params.get("hotspot_lat"));
   const lng = Number(params.get("hotspot_lng"));
   const radiusMeters = Number(params.get("hotspot_radius_m"));
+  const flags = (params.get("hotspot_flags") || "Red,Black")
+    .split(",")
+    .filter((flag) => ["Red", "Black"].includes(flag));
   if (
     params.has("hotspot_lat")
     && params.has("hotspot_lng")
@@ -71,6 +75,7 @@ export function parseHotspotGroupParams(search = "") {
       logIds: [],
       center: { lat, lng },
       radiusMeters,
+      flags: flags.length ? flags : ["Red", "Black"],
     };
   }
 
@@ -83,10 +88,7 @@ export function matchesHotspotGroup(flag, group) {
   if (group.logIds.length) return group.logIds.includes(flagId);
 
   if (
-    flag?.source !== "detection"
-    || flag?.color !== "Red"
-    || flag?.registryLinked
-    || flag?.businessID != null
+    !(group.flags || ["Red", "Black"]).includes(flag?.color)
     || flag?.latitude == null
     || flag?.longitude == null
   ) {
@@ -205,26 +207,35 @@ export function hotspotClusterDetails(cluster, pinRows = []) {
   };
 }
 
-export async function fetchHotspotClusterPins(getFlagsPage, token, cluster, signal) {
+export async function fetchHotspotClusterPins(
+  getFlagsPage,
+  token,
+  cluster,
+  signal,
+  flags = ["Red", "Black"],
+) {
   const memberIds = new Set(hotspotClusterPinIds(cluster));
   if (!memberIds.size) return [];
 
   const rows = [];
-  let page = 1;
-  let pages;
-  do {
-    const result = await getFlagsPage({
-      page,
-      limit: 1000,
-      color: "Red",
-      origin: "detection",
-      registryLink: "unlinked",
-      signal,
-    }, token);
-    rows.push(...(Array.isArray(result) ? result : (result?.data || [])));
-    pages = result?.pages ?? 1;
-    page += 1;
-  } while (page <= pages);
+  const colors = Array.isArray(flags) && flags.length
+    ? flags.filter((flag) => ["Red", "Black"].includes(flag))
+    : ["Red", "Black"];
+  for (const color of colors) {
+    let page = 1;
+    let pages;
+    do {
+      const result = await getFlagsPage({
+        page,
+        limit: 1000,
+        color,
+        signal,
+      }, token);
+      rows.push(...(Array.isArray(result) ? result : (result?.data || [])));
+      pages = result?.pages ?? 1;
+      page += 1;
+    } while (page <= pages);
+  }
 
   return rows.filter((row) => memberIds.has(Number(row.logID)));
 }
@@ -248,12 +259,16 @@ export function hotspotResponseMatchesPeriod(data, datePreset) {
 
 export function hotspotSummary(data) {
   const clusters = Array.isArray(data?.clusters) ? data.clusters : [];
+  const flags = Array.isArray(data?.population?.flags)
+    ? data.population.flags
+    : ["Red", "Black"];
   return {
     clusterCount: clusters.length,
     locationCount: Number(data?.totals?.clustered_points || 0),
     uncertainCount: Number(data?.totals?.uncertain_points || 0),
     outsideBoundaryCount: Number(data?.totals?.outside_boundary_count || 0),
-    redFlaggedCount: Number(data?.population?.eligible_points || 0),
+    eligibleCount: Number(data?.population?.eligible_points || 0),
+    flagLabel: flags.join(" and "),
   };
 }
 

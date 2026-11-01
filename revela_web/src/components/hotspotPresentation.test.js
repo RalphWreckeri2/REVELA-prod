@@ -56,14 +56,15 @@ test("hotspot totals count spanning clusters once overall and once per barangay"
       },
     ],
     totals: { clustered_points: 6, uncertain_points: 1, outside_boundary_count: 2 },
-    population: { eligible_points: 8 },
+    population: { eligible_points: 8, flags: ["Red", "Black"] },
   };
   assert.deepEqual(hotspotSummary(data), {
     clusterCount: 2,
     locationCount: 6,
     uncertainCount: 1,
     outsideBoundaryCount: 2,
-    redFlaggedCount: 8,
+    eligibleCount: 8,
+    flagLabel: "Red and Black",
   });
 });
 
@@ -90,7 +91,7 @@ test("hotspot request is scoped only by the selected date preset", () => {
   assert.deepEqual(hotspotRequestParams(""), { date_preset: "all" });
   assert.match(apiSource, /getAnalyticsHotspotsRequest\(\s*token,\s*datePreset = "all"/);
   assert.match(apiSource, /new URLSearchParams\(\{\s*date_preset: datePreset \|\| "all"/);
-  assert.match(mapOverviewSource, /population: "unregistered_candidates"/);
+  assert.match(mapOverviewSource, /population: "objective"/);
   assert.doesNotMatch(
     apiSource.slice(
       apiSource.indexOf("export async function getAnalyticsHotspotsRequest"),
@@ -110,13 +111,15 @@ test("hotspot period labels, response guard, and current population counts match
   assert.match(mapOverviewSource, /hotspotResponseMatchesPeriod\(data, hotspotRequest\.date_preset\)/);
 
   const currentResponses = [
-    { date_preset: "all", population: { eligible_points: 200 } },
-    { date_preset: "7days", population: { eligible_points: 66 } },
+    { date_preset: "all", population: { eligible_points: 200, flags: ["Red", "Black"] } },
+    { date_preset: "7days", population: { eligible_points: 66, flags: ["Red"] } },
   ];
   assert.equal(hotspotResponseMatchesPeriod(currentResponses[0], "all"), true);
-  assert.equal(hotspotSummary(currentResponses[0]).redFlaggedCount, 200);
+  assert.equal(hotspotSummary(currentResponses[0]).eligibleCount, 200);
+  assert.equal(hotspotSummary(currentResponses[0]).flagLabel, "Red and Black");
   assert.equal(hotspotResponseMatchesPeriod(currentResponses[1], "7days"), true);
-  assert.equal(hotspotSummary(currentResponses[1]).redFlaggedCount, 66);
+  assert.equal(hotspotSummary(currentResponses[1]).eligibleCount, 66);
+  assert.equal(hotspotSummary(currentResponses[1]).flagLabel, "Red");
   assert.equal(hotspotResponseMatchesPeriod(currentResponses[1], "all"), false);
   assert.equal(hotspotSummary(currentResponses[0]).outsideBoundaryCount, 0);
 });
@@ -282,13 +285,12 @@ test("selected hotspot details itemize pins from existing flag pages", async () 
       pages: 2,
     };
   };
-  const pins = await fetchHotspotClusterPins(getFlagsPage, "token", cluster);
-  assert.equal(pages.length, 2);
-  assert.ok(pages.every((params) => (
-    params.color === "Red"
-    && params.origin === "detection"
-    && params.registryLink === "unlinked"
-  )));
+  const pins = await fetchHotspotClusterPins(
+    getFlagsPage, "token", cluster, undefined, ["Red", "Black"],
+  );
+  assert.equal(pages.length, 4);
+  assert.deepEqual([...new Set(pages.map((params) => params.color))], ["Red", "Black"]);
+  assert.ok(pages.every((params) => !("origin" in params) && !("registryLink" in params)));
   const details = hotspotClusterDetails(cluster, pins);
   assert.equal(details.location, "Brgy. One");
   assert.equal(details.pinCount, 2);
@@ -383,11 +385,12 @@ test("group deep links cap IDs, use centroid and radius for large groups, and pr
     logIds: [],
     center: { lat: 13.95, lng: 121.11 },
     radiusMeters: 75.5,
+    flags: ["Red", "Black"],
   });
   assert.equal(matchesHotspotGroup({
     id: 200,
     source: "detection",
-    color: "Red",
+    color: "Black",
     latitude: 13.9501,
     longitude: 121.11,
   }, largeGroup), true);
@@ -395,6 +398,13 @@ test("group deep links cap IDs, use centroid and radius for large groups, and pr
     id: 201,
     source: "registry",
     color: "Red",
+    latitude: 13.9501,
+    longitude: 121.11,
+  }, largeGroup), true);
+  assert.equal(matchesHotspotGroup({
+    id: 202,
+    source: "detection",
+    color: "Yellow",
     latitude: 13.9501,
     longitude: 121.11,
   }, largeGroup), false);
