@@ -59,7 +59,16 @@ export default function BackupStatusPanel({
           <dd className="database-backup-automatic-status">
             <span className="database-backup-automatic-label">{automaticBackupStatus}</span>
             {!loading && data && automaticBackupStatus !== "On" && (
-              <span className="database-backup-detail database-backup-warning">{automaticBackupReason}</span>
+              <>
+                <span className="database-backup-detail database-backup-warning">{automaticBackupReason}</span>
+                {data.automaticExecutionBlockers?.length > 0 && (
+                  <ul className="database-backup-detail database-backup-warning">
+                    {data.automaticExecutionBlockers.map((blocker, index) => (
+                      <li key={`${blocker}-${index}`}>{blocker}</li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </dd>
         </div>

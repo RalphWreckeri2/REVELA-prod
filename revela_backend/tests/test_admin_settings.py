@@ -593,6 +593,7 @@ class DatabaseBackupStatusTests(unittest.TestCase):
             "automatic_execution_ready": False,
             "external_trigger_configured": False,
             "automatic_execution_reason": "No external trigger is integrated.",
+            "automatic_execution_blockers": ["The protected external API trigger is not configured."],
             "retention_policy": {
                 "weekly_successful_copies": 4,
                 "monthly_archives": 3,
@@ -613,6 +614,10 @@ class DatabaseBackupStatusTests(unittest.TestCase):
         self.assertEqual(history_record["tableCount"], 2)
         self.assertTrue(history_record["monthlyArchive"])
         self.assertFalse(response.get_json()["automaticExecutionEnabled"])
+        self.assertEqual(
+            response.get_json()["automaticExecutionBlockers"],
+            ["The protected external API trigger is not configured."],
+        )
         self.assertFalse(response.get_json()["retention"]["cleanupEnabled"])
 
     def test_admin_roles_receive_honest_unconfigured_capabilities(self):

@@ -2,13 +2,11 @@
 
 ## Reconciled worktrees
 
-The current `main` checkout (`0275fee`) is a descendant of Sol's
-`backup-volume-preparation` checkout (`498c573`), so no commit merge was needed.
-Sol's backup implementation and tests were uncommitted in that other worktree.
-Their source files were added here without modifying that checkout. The current
-worktree's newer uncommitted Settings UI/status changes were retained and
-connected to the existing implementation rather than replaced by Sol's older
-panel. Both worktrees remain uncommitted.
+Historical integration note: the backup implementation from Sol's
+`backup-volume-preparation` worktree (`498c573`) was incorporated into `main`
+without modifying that other worktree. The then-current Settings UI/status
+changes were retained and connected to the implementation. This note describes
+the original integration, not the current production deployment state.
 
 ## Integrated behavior
 - The Settings page reads `GET /api/admin-settings/database-backup/status`.
@@ -17,8 +15,8 @@ panel. Both worktrees remain uncommitted.
   existing `admin_required()` authorization.
 - **Back Up Now** calls `POST /api/admin-settings/backups/run`. A manual job
   runs asynchronously through the existing exporter and shares the OS lock and
-  source-server advisory lock with other jobs. `DB_BACKUP_ENABLED=0` remains
-  the global execution kill switch.
+  source-server advisory lock with other jobs. `DB_BACKUP_ENABLED=0` is the
+  global execution kill switch; the local example defaults it to `0`.
 - Completed history rows download through
   `GET /api/admin-settings/backups/<id>/download`; no public/static artifact
   URL is returned. The endpoint streams the private file and checks its SHA-256
@@ -44,10 +42,10 @@ panel. Both worktrees remain uncommitted.
   category with a **proposed 30-day retention**, not yet approved. Cleanup is
   off by default and requires `DB_BACKUP_CLEANUP_ENABLED=1` in addition to
   `DB_BACKUP_ENABLED=1`. No existing artifact was deleted.
-- Automatic execution has a separate `DB_BACKUP_SCHEDULE_ENABLED=0` switch.
-  Enabling `DB_BACKUP_ENABLED` for an explicitly approved manual export does
-  not start the weekly scheduler. Both flags default to off; no scheduler or
-  export runs in the default configuration.
+- Automatic execution has a separate `DB_BACKUP_SCHEDULE_ENABLED` switch.
+  Enabling `DB_BACKUP_ENABLED` alone for a manual export does not start the
+  weekly scheduler. Both flags default to off in local development; production
+  is configured separately as recorded below.
 - The external workflow in
   `.github/workflows/database-backup-trigger.yml` runs Fridays at 11:00 UTC
   (7:00 PM Asia/Manila), POSTs to the protected API trigger, then polls the
@@ -62,24 +60,62 @@ panel. Both worktrees remain uncommitted.
   create a second backup for a completed weekly slot, and overlapping jobs are
   rejected. API sleeping remains untouched; the trigger and polling requests
   wake/keep the API responsive as needed.
-- Automatic execution is still disabled and not ready. The workflow is local
-  only and undeployed; `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0`,
-  `DB_BACKUP_ENABLED=0`, and `DB_BACKUP_SCHEDULE_ENABLED=0`. Readiness must not
-  be marked true until the workflow and its private secrets are installed,
-  the runtime has been verified, and the isolated restore/cost gates pass.
+
+## Current production status (verified 2026-11-01)
+
+- **Local development defaults:** `recovery/backup.env.example` keeps
+  `DB_BACKUP_ENABLED`, `DB_BACKUP_SCHEDULE_ENABLED`,
+  `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED`, and `DB_BACKUP_CLEANUP_ENABLED` at
+  `0`. It is an example, not a description of the deployed production service.
+- **Verified production configuration:** read-only inspection of the deployed
+  API found `DB_BACKUP_ENABLED=1`, `DB_BACKUP_SCHEDULE_ENABLED=1`, and
+  `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=1`; `DB_BACKUP_CLEANUP_ENABLED=0`.
+  Storage is the existing mounted volume, runtime configuration validation
+  reported no issues, and the configured capacity floor is 1 GiB. A read-only
+  volume check measured 4,819,763,200 free bytes.
+- **Production TLS/client check:** the deployed strict TLS preflight succeeded
+  with MySQL 9.7.4, certificate verification and hostname verification true,
+  and a negotiated TLS cipher. This current result supersedes the earlier
+  2026-10-29 investigation below; no production TLS setting was changed as
+  part of this verification.
+- **Successful production backup:** GitHub Actions run #1 completed from
+  `workflow_dispatch` on 2026-11-01. The workflow successfully requested and
+  polled durable job `d4718bb143ac47cb82e7981825b94be7`; the production API
+  reported it `completed` and the matching catalog record is present. The
+  archive was created at 2026-11-01 20:41:53 Asia/Manila and is 169,800 bytes.
+  This was a manually dispatched GitHub Actions run (`workflow_dispatch`).
+  Although the API processed the then-due weekly slot, 2026-10-30 19:00
+  Asia/Manila, this run is not a GitHub `schedule` event and does not verify
+  scheduled-event delivery.
+- **Recurring schedule:** the active default-branch workflow uses
+  `0 11 * * 5`, equivalent to Fridays at 19:00 Asia/Manila. The repository
+  variable and required secrets were configured for the successful manual
+  dispatch; a real scheduled (`schedule`) event has not yet been observed and
+  remains pending verification.
+  The next expected cron run is Friday, 2026-11-06 at 19:00 Asia/Manila.
+- **3-2-1 status:** not operational or verified. The recorded production
+  artifact is on the existing API volume; this does not establish an
+  independent off-site/cloud copy or two verified media types. Do not describe
+  the arrangement as meeting 3-2-1 until those copies and media are established
+  and a recovery test is documented.
+- **Restore and retention:** no isolated restore test is recorded, so
+  `automatic_execution_ready` remains false and production backup readiness
+  is not fully accepted. Cleanup remains disabled; the proposed retention
+  policy is not active or approved for automatic cleanup.
 
 ## Deployment, export, restore, and recurring-operation gates
 
 These are separate gates; a restore server is not a prerequisite for starting
 the application:
 
-- **Deploy/start with backups disabled:** keep
+- **Local development or intentionally disabled deployment:** keep
   `DB_BACKUP_ENABLED=0`, `DB_BACKUP_SCHEDULE_ENABLED=0`,
   `DB_BACKUP_CLEANUP_ENABLED=0`, and
   `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0`. An incomplete backup-only
   configuration reports as not ready but does not prevent the API from
   starting. No backup account, backup CA, alert/heartbeat URL, external
   trigger secret, or restore instance is needed for this disabled deployment.
+  These defaults do not describe the verified production configuration above.
 - **Read-only TLS preflight:** requires the dedicated DB credentials and a CA
   that validates the server certificate for the exact `BACKUP_DB_HOST`. It
   does not need a volume, alert endpoint, restore server, or enabled backup
@@ -102,16 +138,22 @@ the application:
   heartbeat or failure-alert safeguards to make this gate pass.
 
 The non-secret runtime settings in `recovery/backup.env.example` use the
-existing Railway mount `/app/instance/inspection_evidence` and a proposed
-`DB_BACKUP_MIN_FREE_BYTES=1073741824` (1 GiB) floor. The current read-only
-container check verified the mount and measured 4,820,172,800 free bytes
-(about 4.49 GiB). This leaves about 3.49 GiB above the preflight floor for the
-first archive and work directory. Actual dump and workspace use must be
-measured during the authorized run; abort if the API reports insufficient
-capacity. The API variable was set for the next deployment with deploys
-skipped. Backup execution remains disabled.
+existing Railway mount and a 1 GiB minimum-free-space floor. The deployed
+production mount and free space were verified above. The successful production
+archive is 169,800 bytes; continue monitoring volume capacity as backups
+accumulate. Local example flags remain off and must not be used to infer
+production state.
 
-### Dedicated account and verified CA setup
+### Historical dedicated account and CA investigation (2026-10-29)
+
+The observations and proposed DBA procedures in this subsection describe the
+2026-10-29 investigation, not the current production TLS result. On
+2026-11-01, the deployed strict TLS preflight verified both the certificate
+chain and hostname successfully against MySQL 9.7.4. Do not apply the
+historical SQL or TLS changes below solely on the basis of the earlier
+hostname-mismatch finding. No TLS changes are indicated by the successful
+preflight. All proposed SQL and TLS steps below are retained for historical
+context only; they are not current production instructions.
 
 The intended production **private** endpoint was checked on 2026-10-29 through
 a Railway SSH tunnel, using the API runtime's effective `DB_HOST` for TLS SNI.
@@ -196,8 +238,8 @@ checks it is absent from usage totals and generated ZIP contents and remains
 untouched after cleanup (`tests/test_evidence_cleanup.py`). Do not place
 certificate material at the volume root or reference it from photo metadata.
 
-Current MySQL settings remain at their stock baseline after the failed reload
-was rolled back: `ssl_ca=ca.pem`, `ssl_cert=server-cert.pem`,
+At the 2026-10-29 post-rollback check, MySQL settings were at their stock
+baseline: `ssl_ca=ca.pem`, `ssl_cert=server-cert.pem`,
 `ssl_key=server-key.pem`, and `ssl_capath=NULL`, resolving the active files
 under `/var/lib/mysql`. There are no persisted TLS entries. The old stock CA,
 server certificate, and key are preserved. The proposed private-CA leaf did
@@ -212,7 +254,8 @@ certificate; a download-back SHA-256 comparison confirmed the staged file.
 No active TLS setting was changed. Do not use the earlier stock-first
 candidate; it did not validate the proposed leaf.
 
-The proposed in-place values, only after DBA review/approval, are:
+Historical candidate values examined during the 2026-10-29 investigation
+(retained for reference only; not a current recommendation or instruction):
 
 ```sql
 SET PERSIST ssl_ca = '/var/lib/mysql/tls/ca-bundle-candidate-reordered.pem';
@@ -265,12 +308,12 @@ volume. The file exists, but the recorded post-rollback check found no
 persisted TLS entries. MySQL 9.7 allows the dynamic TLS paths to be persisted
 and reloaded in place; no MySQL restart is part of the approved procedure.
 
-The DBA must use an authorized account with the MySQL 9.7 privileges needed to
-persist these settings and run the reload;
-`ALTER INSTANCE RELOAD TLS` requires `CONNECTION_ADMIN` (or an account with
-equivalent documented administrative privilege). Use the provider's protected
-DBA session, never the exposed `root` credential. Do not use `SET GLOBAL`
-alone: it would not persist the paths through redeploy.
+The historical investigation noted that an authorized account with the MySQL
+9.7 privileges would have been needed to persist these settings and run the
+reload; `ALTER INSTANCE RELOAD TLS` requires `CONNECTION_ADMIN` (or an account
+with equivalent documented administrative privilege). These privilege notes
+are preserved as historical context, not as instructions to change the
+currently verified production TLS configuration.
 
 With an in-place reload, existing database sessions are not disconnected; no
 planned outage is expected. New TLS handshakes use the new certificate. Clients
@@ -284,32 +327,32 @@ rollback.
 The first attempt to reload the new leaf failed with MySQL Error 3888,
 `Invalid certificates`; rollback restored the recorded stock certificate/key
 baseline and removed the new persisted TLS entries. No MySQL restart occurred.
-Before creating the backup account, have the DBA review the X.509 trust impact,
-confirm the SAN against the private endpoint, and approve the proposed `ssl_ca`
-change. After a successful reload, run the read-only strict TLS preflight.
+This historical failure and rollback do not supersede the successful
+2026-11-01 production strict TLS preflight.
 
-### DBA change and rollback checklist
+### Historical DBA change and rollback checklist
+
+This checklist records the proposed 2026-10-29 DBA work and is not a current
+instruction to change production TLS. The strict production preflight passed
+on 2026-11-01; no historical TLS change below should be repeated on the basis
+of this document.
+
+The commands and configuration examples below preserve the original setup
+record. The successful production backup confirms that the backup path was
+subsequently provisioned; do not rerun account-creation, credential-injection,
+or TLS-change steps from this historical checklist. Use an approved current
+procedure for any separately authorized future change.
 
 The certificate issuance, public-file uploads, candidate-bundle validation,
-and isolated restore-server setup are complete. No active MySQL TLS settings
-have been changed since the successful rollback. The only remaining DBA-side
-configuration change is the exact additive `ssl_ca` plus `ssl_cert`/`ssl_key`
-sequence shown above; it requires review of existing X.509 account use and
-explicit approval before execution. If approved, use the protected DBA
-session, preserve the current baseline values, apply only those three paths,
-and run `ALTER INSTANCE RELOAD TLS`. Do not change TLS versions,
-`require_secure_transport`, or unrelated settings.
+and isolated restore-server setup were recorded as complete during that
+historical work. The proposed TLS change, account provisioning, and rollback
+commands are retained as a record of the 2026-10-29 plan, not as remaining
+production steps. The latest strict preflight already verified certificate
+and hostname, MySQL `9.7.4`, and a negotiated cipher. Do not repeat or apply
+the historical TLS changes because of this document.
 
-After a successful reload, create the dedicated `revela_backup` account below,
-inject its password privately, and run `python -m recovery.cli tls-preflight`
-with all backup execution switches still `0`. Require verified certificate
-and hostname, MySQL `9.7.4`, and a negotiated cipher before enabling a manual
-export. If reload fails, do not restart MySQL; restore the recorded baseline
-and remove only the newly persisted entries, as in the already successful
-rollback.
-
-After an approved reload, verify the live and persisted values from the same
-private DBA session:
+The historical checklist proposed verifying live and persisted values from
+the same private DBA session:
 
 ```sql
 SELECT @@GLOBAL.ssl_ca, @@GLOBAL.ssl_cert, @@GLOBAL.ssl_key, @@GLOBAL.ssl_capath;
@@ -320,11 +363,12 @@ WHERE VARIABLE_NAME IN ('ssl_ca', 'ssl_cert', 'ssl_key')
 ORDER BY VARIABLE_NAME;
 ```
 
-Expected active values are the three `/var/lib/mysql/tls/...` paths above;
-`ssl_capath` remains `NULL`. Expect three persisted entries.
+The historical expected values were the three `/var/lib/mysql/tls/...` paths
+above, with `ssl_capath` as `NULL` and three persisted entries.
 
-If any `SET PERSIST` or the reload fails, restore the recorded active baseline
-without restarting MySQL:
+The investigation also documented the following rollback if a `SET PERSIST`
+or reload failed. It records the prior incident response and is not an
+instruction to change current production TLS:
 
 ```sql
 SET PERSIST ssl_ca = 'ca.pem';
@@ -337,9 +381,9 @@ RESET PERSIST IF EXISTS ssl_cert;
 RESET PERSIST IF EXISTS ssl_key;
 ```
 
-Verify active paths are back to `ca.pem`, `server-cert.pem`, and
-`server-key.pem`, with `ssl_capath=NULL`, and the persisted-variable query
-returns no TLS rows. Do not remove the uploaded files.
+The historical rollback verification expected active paths `ca.pem`,
+`server-cert.pem`, and `server-key.pem`, `ssl_capath=NULL`, and no persisted
+TLS rows. The uploaded files were not removed.
 
 The API's Railway private IPv6 source was observed from a one-off runtime
 connection, but Railway has not established that this address survives
@@ -444,10 +488,11 @@ workspace use must be reviewed.
 
 The CA PEM is not a password, but its source and integrity must be trusted;
 mount the CA file at the configured path and ensure the API process can read
-it. Do not enable execution to test connectivity: run
-`python -m recovery.cli tls-preflight` in the deployed API runtime with all
-execution switches still `0`. Require verified certificate and hostname,
-server version `9.7.4`, and a negotiated TLS cipher.
+it. `python -m recovery.cli tls-preflight` performs a read-only connection and
+does not start an export. The deployed production check passed on 2026-11-01
+with verified certificate and hostname, server version `9.7.4`, and a
+negotiated TLS cipher. Local and non-production preflights should likewise
+not be confused with changing production settings.
 
 `BACKUP_ALERT_WEBHOOK` is optional for the supervised one-time manual export.
 If it is absent, failure details are recorded in durable status/history and a
@@ -460,22 +505,52 @@ an existing approved HTTPS endpoint when available; do not add a paid service.
 needed for this one-time manual export/restore test. No new paid alert service
 is part of this setup.
 
-### Isolated Windows restore instance
+### Isolated restore test (pending)
 
-The existing isolated Oracle MySQL Community Server **9.7.4** Windows ZIP
-instance is already prepared in a dedicated directory and run manually (not
-installed as or registered with a Windows service). The existing `MySQL80`
-service remains untouched. The official ZIP URL is
-`https://cdn.mysql.com/Downloads/MySQL-9.7/mysql-9.7.4-winx64.zip`; its
-official response reported **344,052,123 bytes** (about 328 MiB) on
-2026-10-29, and the published checksum was verified. The test server is
-loopback-only at `127.0.0.1:33307`, with events off and no Windows service;
-no production data has been imported. Pass its `bin\mysql.exe` explicitly to
-`restore-test`.
+An isolated restore test has **not** been completed or recorded. The dedicated
+Windows MySQL Community Server 9.7.4 ZIP instance was prepared and manually
+run at `127.0.0.1:33307`, configured for loopback-only access, and not
+registered as a Windows service. The existing `MySQL80` service was left
+untouched. This records preparation only; it is not evidence that an archive
+has been restored or validated.
 
-The production export has not been run, so archive and expanded SQL sizes are
-still unknown; check free space again after the first actual backup and before
-the restore. No production data has been imported.
+Before the test, confirm that this is still the intended isolated instance and
+that it is fresh and empty (only MySQL system schemas), has a server UUID
+different from the source UUID in the receipt, has `event_scheduler` disabled,
+binds only to `127.0.0.1` or `::1`, and runs the same MySQL major version as
+the backup. Keep it on port `33307` (not `3306`). Do not connect it to
+production, point it at the production database, or use the local `railway`
+database. Stop if any precondition is not met; do not make a restore target
+safe by changing production.
+
+Transfer the selected production archive and its exact matching receipt only
+through an approved protected path. Keep the target-config JSON private; it
+must identify only the isolated loopback target (for example, host
+`127.0.0.1`, port `33307`, and the isolated instance's credentials), and must
+not specify a database. Choose a new output directory that does not already
+exist. From `revela_backend`, set `RECOVERY_ISOLATED=1` and run the restore
+checker with the archive, matching receipt, private target configuration,
+new output directory, and the `mysql.exe` from the dedicated ZIP instance:
+
+```powershell
+$env:RECOVERY_ISOLATED = "1"
+python -m recovery.cli restore-test `
+  --file "<protected-path-to-archive>" `
+  --receipt "<protected-path-to-matching-receipt.json>" `
+  --output "<new-nonexistent-output-directory>" `
+  --target-config "<private-isolated-target-config.json>" `
+  --mysql-bin "<path-to-dedicated-MySQL-9.7.4-ZIP-bin\mysql.exe>"
+```
+
+The checker verifies the archive against the receipt, rejects a non-empty or
+non-loopback target, port `3306`, a matching source UUID, enabled events, and
+the wrong MySQL major version. It imports the dump, compares the restored
+object inventory with the receipt, checks each table, and writes
+`restore-report.json` into the new output directory. Review that report for
+`success: true`, `isolated: true`, and distinct source/target UUIDs; retain the
+report with the matching receipt through the approved operator process.
+Record the restore evidence before treating restore acceptance or automatic
+readiness as complete. Never target production.
 
 ## Status and history contract
 
@@ -504,10 +579,12 @@ bounded catch-up window. Both endpoints return `private, no-store`; the status
 endpoint exposes only the matching job's safe state/result. The trigger status
 is persisted in the existing backup state/catalog storage.
 
-## Unresolved activation requirements
+## Production acceptance status and remaining gates
 
-The implementation is prepared locally, but do not activate any execution or
-cleanup switch until the following are resolved:
+The production deployment and trigger path are active and have completed one
+backup, as recorded in the production snapshot above. Older activation notes
+below have been replaced by the current status and must not be used to infer
+that production switches are off.
 
 1. **MySQL/client match.** Railway's production MySQL metadata was read on
    2026-10-29 through the Railway SSH tunnel using read-only system-variable
@@ -526,16 +603,11 @@ cleanup switch until the following are resolved:
    Public returned HTTP 429 (`toomanyrequests: Data limit exceeded`); no image
    was deployed, published, or uploaded as an artifact.
 
-   The direct private endpoint still presents the stock auto-generated
-   certificate until the approved in-place reload, so strict identity
-   verification has not passed. The private-CA leaf and client trust root are
-   issued and uploaded. The staged additive CA bundle validates both the
-   stock and proposed server certificates. The earlier reload failed because
-   the active stock CA did not trust the new leaf; rollback restored the
-   baseline and no restart occurred. Before applying the proposed `ssl_ca`,
-   `ssl_cert`, and `ssl_key` paths, the DBA must review the X.509 client
-   account impact and approve that exact change. The TLS preflight remains
-   blocked until the in-place reload succeeds.
+   The direct endpoint's hostname mismatch and failed TLS reload described
+   elsewhere in this document are historical 2026-10-29 findings. The
+   deployed strict preflight passed on 2026-11-01 with certificate and
+   hostname verification true, MySQL 9.7.4, and a negotiated cipher. No TLS
+   change is indicated by the current preflight result.
 
    Build after review with the verified versions:
 
@@ -543,45 +615,25 @@ cleanup switch until the following are resolved:
    docker build --build-arg PYTHON_BASE_IMAGE=docker.io/library/python:3.13-slim-bookworm --build-arg MYSQL_APT_COMPONENT=mysql-9.7-lts --build-arg MYSQL_CLIENT_VERSION=9.7.4-1debian12 -t revela-backend:<release-id> .
    ```
 
-   After deploying the reviewed code in the future (with all execution flags
-   off), configure the private least-privilege backup identity and CA in that
-   runtime and run the already-deployed read-only command:
+   The read-only command used for the successful production check is:
 
    ```powershell
    python -m recovery.cli tls-preflight
    ```
 
-   Require a successful response with `mysql_version=9.7.4`, a non-empty
-   `tls_cipher`, and both verification flags true before a production export.
-2. **Runtime storage and secrets.** Confirm the production API volume mount,
-   mounted status, free space, and approved minimum reserve without listing or
-   changing inspection evidence. Set `DB_BACKUP_VOLUME_DIR`,
-   `DB_BACKUP_MIN_FREE_BYTES`, and `DB_BACKUP_VOLUME_REQUIRE_MOUNT=1`.
-   Railway currently reports the API volume mount as
-   `/app/instance/inspection_evidence`, mounted with 4,820,172,800 free bytes.
-   `DB_BACKUP_MIN_FREE_BYTES=1073741824` is already set for the next deployment
-   with deploys skipped. Privately configure the least-privilege MySQL
-   identity and CA file. An existing HTTPS `BACKUP_ALERT_WEBHOOK` is optional
-   for this supervised manual export; without one, only the existing in-app
-   admin inbox and durable status/history report failures, and are not an
-   independent channel. `BACKUP_HEARTBEAT_URL` is only required when recurring
-   scheduling is enabled; it is not required for this one-time export. Re-run
-   the read-only TLS preflight in that runtime.
-3. **External trigger setup.** The GitHub Actions workflow and protected API
-   endpoints are implemented locally, not deployed. For the future approved
-   deployment, install GitHub Actions repository secrets
-   `DB_BACKUP_TRIGGER_URL=https://api.revelasys.site/api/admin-settings/database-backup/trigger`
-   and `DB_BACKUP_TRIGGER_TOKEN=<same random token as Railway>`. Set that
-   token only through Railway's secret input and GitHub's Actions secret UI;
-   never add it to source, an issue, or chat. Set
-   `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=1` only after confirming the workflow
-   exists on the default branch and both secret names are configured. Also set
-   the GitHub Actions repository variable
-   `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=true`; without it, the workflow skips
-   before allocating a runner. Test
-   authenticated rejection, same-key retry, duplicate-run `409`, durable
-   polling, API wake-up, and status/catalog consistency with synthetic or
-   non-production data. Do not disable sleeping.
+   It returned `mysql_version=9.7.4`, a non-empty `tls_cipher`, and both
+   verification flags true.
+2. **Runtime storage and secrets.** The deployed API's volume mount, mounted
+   status, and free space have been verified; the 1 GiB floor is configured.
+   No inspection-evidence files were listed or changed during the preflight.
+3. **External trigger and cron verification.** The active workflow, required
+   secret-backed request, repository-variable gate, and protected API trigger
+   have all been exercised successfully by the 2026-11-01 manual
+   `workflow_dispatch`. The corresponding API job completed and its archive is
+   in the production catalog. This does not verify GitHub's scheduled event
+   delivery: wait for the next Friday cron run and confirm the Actions event is
+   `schedule`, the durable job reaches `completed`, and its backup appears in
+   catalog history.
 4. **Retention approval.** Approve or change the proposed separate manual
    retention of 30 days, and approve the four-weekly/three-monthly count policy
    against measured volume capacity. Keep `DB_BACKUP_CLEANUP_ENABLED=0` until
@@ -592,8 +644,9 @@ cleanup switch until the following are resolved:
    `0.00176/0.02465 vCPU`, memory average/max `721/4,483 MB`, and volume use
    `85.7 MB / 5,000 MB`; the current billing view showed `$0.108` usage and a
    `$3.75` period estimate. These are existing service totals, not backup
-   measurements. Backup export duration and compressed size remain **unknown**
-   because no approved export was run. At the published Railway rates
+   measurements. One production archive of 169,800 bytes is recorded, but one
+   run does not establish a representative ongoing backup cost. At the
+   published Railway rates
    ($0.00000772/vCPU-second and $0.00000386/GB-second), keeping the API awake
    for one hour at its historical average CPU/memory is approximately
    `$0.010` per run, or `$0.044/month` at 4.35 runs; using historical peak
@@ -610,85 +663,20 @@ cleanup switch until the following are resolved:
    runner-minute allowance and any extra charge depend on the repository's
    plan and current Actions usage. No plan, billing limit, or billing setting
    was changed.
-6. **Production/manual and isolated-restore acceptance.** These have not been
-   run and require separate approval. After deploying only the reviewed image
-   with `DB_BACKUP_ENABLED=0`, `DB_BACKUP_SCHEDULE_ENABLED=0`, and
-   `DB_BACKUP_CLEANUP_ENABLED=0`, `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0`, and
-   `DB_BACKUP_SCHEDULER_MODE=external_api`, verify status/configuration and storage
-   without starting a job. For an approved manual backup only, set the global
-   switch to `1` while leaving schedule and cleanup at `0`, start it from the
-   admin Settings panel, and verify the durable receipt, downloaded archive
-   SHA-256/length, gzip integrity, database inventory, MySQL version and
-   source-server UUID. The authenticated status response includes archive
-   hash, version, source UUID, and table count; compare a downloaded file with
-   `Get-FileHash -Algorithm SHA256 <downloaded-file>`. Obtain any private
-   receipt needed by the restore drill only through the approved operator
-   access path.
+6. **Isolated restore acceptance.** The production export and trigger flow are
+   verified, but a restore test is still pending. Use an approved isolated
+   target that meets the safeguards in “Isolated restore test (pending)” above.
+   Verify the archive against its matching receipt, run the restore checker,
+   retain its successful report, and record the evidence through the approved
+   operator process. Do not restore into production or the local `railway`
+   database.
 
-   Run `python -m recovery.cli restore-test` only against a freshly initialized
-   isolated MySQL instance bound to loopback on a non-production port other
-   than 3306, with `event_scheduler=OFF`, a different server UUID, the same
-   MySQL major version, and no application schemas. Set
-   `RECOVERY_ISOLATED=1`; provide the downloaded archive, matching receipt,
-   a new output directory, and a private `--target-config` JSON containing
-   only that isolated loopback target's connection settings (no `database`
-   key). The command verifies checksums, imports the snapshot, compares object
-   inventory, runs table checks, and writes `restore-report.json`. Retain that
-   report as acceptance evidence; do not point this tool at production.
-
-## Concrete activation sequence (requires separate approval)
-
-1. Review and merge/deploy this local change only through the approved
-   release path. Build the API with the pinned MySQL 9.7.4 client. Keep all
-   four execution/cleanup/external-trigger flags at `0`; API sleeping remains
-   as-is.
-2. Set the API volume path to the observed mount, establish a conservative
-   positive free-space floor, and privately inject the dedicated backup DB
-   account and CA. An existing HTTPS failure-alert destination is optional for
-   the one-time manual test; without it, the existing admin inbox is used and
-   is not an independent channel. `BACKUP_HEARTBEAT_URL` remains unset for the
-   one-time manual test; configure its HTTPS destination before any recurring
-   schedule is enabled. Do not paste private values into code, logs, or chat.
-3. Use Railway's deployed service console/CLI to run the read-only TLS
-   preflight. Require verified certificate and hostname plus the 9.7.4 server
-   version and negotiated cipher. Check status and volume preflight while the
-   backup execution switches remain off.
-4. Configure the GitHub Actions repository secrets:
-   - `DB_BACKUP_TRIGGER_URL`:
-     `https://api.revelasys.site/api/admin-settings/database-backup/trigger`
-   - `DB_BACKUP_TRIGGER_TOKEN`: same randomly generated value (at least 32
-     characters) as the Railway secret `DB_BACKUP_TRIGGER_TOKEN`.
-
-   Keep the GitHub Actions repository variable
-   `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED` absent/`false` and the Railway
-   `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0` until the production backup and
-   restore checks have been approved.
-5. In a non-production environment, prove disabled requests cannot start work,
-   invalid bearer tokens receive 401, a valid same-key retry returns the
-   original job ID, concurrent different IDs receive 409, and polling reports
-   queued/running/completed/failed from durable status. Confirm a trigger
-   wakes the sleeping API and the job writes to the API's existing volume.
-6. Only after explicit production-execution approval, run the single manual
-   backup/isolated restore acceptance in gate 6. Obtain separate approval for
-   automatic weekly execution and the cost estimate. Then, and only then, set
-   `DB_BACKUP_ENABLED=1`, `DB_BACKUP_SCHEDULE_ENABLED=1`,
-   `DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=1`, and the matching GitHub Actions
-   variable to `true`. Keep cleanup at `0` unless retention is separately
-   approved; the 30-day manual retention remains proposal only.
-
-Until these items are resolved and approved, preserve:
-
-```text
-DB_BACKUP_ENABLED=0
-DB_BACKUP_SCHEDULE_ENABLED=0
-DB_BACKUP_CLEANUP_ENABLED=0
-DB_BACKUP_EXTERNAL_TRIGGER_ENABLED=0
-```
-
-No deployment, production export, restore, credential change, or billing change
-was performed. Local synthetic tests are necessary but do not establish that
-the production volume, TLS, database client, external trigger, isolated restore,
-or cost is ready.
+Automatic readiness remains false until valid isolated-restore evidence is
+recorded and other runtime readiness conditions pass. Cleanup remains disabled
+(`DB_BACKUP_CLEANUP_ENABLED=0`); the proposed count-based and manual retention
+policies are not active. Do not enable cleanup without separate retention
+approval and a successful synthetic retention test. No production settings
+were changed for this documentation update.
 
 ## Local validation
 

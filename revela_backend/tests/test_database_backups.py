@@ -1164,7 +1164,12 @@ def test_in_process_scheduler_is_not_reported_ready_for_automatic_backups(setup,
         monkeypatch.setenv("DB_BACKUP_TRIGGER_TOKEN", "trigger-token-fixture-" + ("x" * 24))
         pending = status.report()
         assert pending["automatic_execution_ready"] is False
-        assert "A scheduled run may still be attempted" in pending["automatic_execution_reason"]
+        assert (
+            "verify the GitHub Actions repository variable and secrets separately"
+            in pending["automatic_execution_reason"]
+        )
+        assert "No successful scheduled backup is recorded for the current monitoring period." in pending["automatic_execution_blockers"]
+        assert "A recent isolated restore test matching the latest backup is missing or invalid." not in pending["automatic_execution_blockers"]
         committed = store.records()[0]
         store.s3.delete_object(Key=committed["object"]["key"], VersionId=committed["object"]["version_id"])
         store.s3.delete_object(

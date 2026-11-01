@@ -145,6 +145,29 @@ def report():
                        and current_deployment_success
                        and not missed and drill_valid and not state.get("retention_warning")
                        and state.get("phase") == "succeeded")
+    blockers = []
+    if not database_enabled():
+        blockers.append("Database backup execution is disabled.")
+    if not schedule_enabled():
+        blockers.append("Automatic scheduling is disabled.")
+    if issues:
+        blockers.append("Backup runtime configuration is incomplete.")
+    if not external_trigger_configured:
+        blockers.append("The protected external API trigger is not configured.")
+    if not storage_verified:
+        blockers.append("Backup storage has not been verified by a successful preflight.")
+    if not scheduled:
+        blockers.append("No successful scheduled backup is recorded.")
+    elif not current_deployment_success:
+        blockers.append("No successful scheduled backup is recorded for the current monitoring period.")
+    if missed:
+        blockers.append("The latest expected weekly backup is missing.")
+    if not drill_valid:
+        blockers.append("A recent isolated restore test matching the latest backup is missing or invalid.")
+    if state.get("retention_warning"):
+        blockers.append("Backup retention cleanup needs attention.")
+    if state.get("phase") != "succeeded":
+        blockers.append("The latest backup job has not completed successfully.")
     next_run = triggers()["database_exports"].get_next_fire_time(None, now()).isoformat()
     return {
         "enabled": database_enabled(), "operational": operational,
@@ -154,8 +177,9 @@ def report():
         "automatic_execution_reason": (
             "The external scheduler is not configured with its protected API trigger."
             if not external_trigger_configured else
-            "Automatic backup readiness is pending runtime, restore, retention, and cost verification. A scheduled run may still be attempted if the GitHub Actions workflow is enabled."
+            "Automatic backup is not operational yet. Resolve the checks listed below and verify the GitHub Actions repository variable and secrets separately."
         ),
+        "automatic_execution_blockers": blockers,
         "scheduler_running": running, "scheduler_mode": mode,
         "scheduler_configured": scheduler_configured, "storage_verified": storage_verified,
         "scheduler_started_at": current_app.extensions.get("database_backup_scheduler_started_at")

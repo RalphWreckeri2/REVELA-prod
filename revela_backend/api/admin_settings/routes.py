@@ -181,6 +181,7 @@ def database_backup_status_route():
         "automaticExecutionEnabled": automatic_enabled,
         "automaticExecutionStatus": "ready" if automatic_enabled else "not_ready",
         "automaticExecutionReason": result.get("automatic_execution_reason"),
+        "automaticExecutionBlockers": result.get("automatic_execution_blockers", []),
         "externalTriggerConfigured": result.get("external_trigger_configured", False),
     }
     response = jsonify(payload)
