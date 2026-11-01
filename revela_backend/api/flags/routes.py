@@ -105,22 +105,50 @@ def run_detection_route():
     if mode not in {"quick", "full"}:
         mode = "quick"
 
-    result, error = run_detection(user_id=user_id, mode=mode)
+    try:
+        operation_id = str(uuid.UUID(str(payload.get("operation_id") or "")))
+    except ValueError:
+        operation_id = str(uuid.uuid4())
+    from api.registry.audit import (
+        complete_registry_workflow_run,
+        start_registry_workflow_run,
+    )
+    start_registry_workflow_run(operation_id, "detection")
+    try:
+        result, error = run_detection(user_id=user_id, mode=mode)
+    except Exception as exc:
+        current_app.logger.exception("Run Detection failed unexpectedly")
+        complete_registry_workflow_run(operation_id, {
+            "operation": "detection",
+            "operation_id": operation_id,
+            "records": [],
+            "result_counts": {},
+            "error": str(exc),
+        })
+        return jsonify({"error": str(exc), "operation_id": operation_id}), 500
+    persisted_result = dict(result or {})
+    persisted_result.setdefault("operation", "detection")
+    persisted_result.setdefault("records", [])
+    persisted_result.setdefault("result_counts", {})
+    if error:
+        persisted_result["error"] = error
+    persisted_result["operation_id"] = operation_id
+    complete_registry_workflow_run(operation_id, persisted_result)
     if error:
         if error == "A detection scan is already in progress.":
-            return jsonify({"error": error}), 409
+            return jsonify({"error": error, "operation_id": operation_id}), 409
         if result and result.get("status") in (
             "skipped_quota", "daily_quota_exceeded", "monthly_quota_exceeded"
         ):
-            return jsonify({"error": error, **result}), 429
+            return jsonify({"error": error, **result, "operation_id": operation_id}), 429
         if error == "Detection cancelled by user.":
-            return jsonify({"message": error}), 200
+            return jsonify({"message": error, "operation_id": operation_id}), 200
         if "Monthly detection limit reached" in error or ("Places API" in error and "limit reached" in error) or "budget" in error.lower():
-            return jsonify({"error": error}), 429
+            return jsonify({"error": error, "operation_id": operation_id}), 429
         if "official business registry is empty" in error.lower():
-            return jsonify({"error": error}), 400
-        return jsonify({"error": error}), 500
-    return jsonify(result), 200
+            return jsonify({"error": error, "operation_id": operation_id}), 400
+        return jsonify({"error": error, "operation_id": operation_id}), 500
+    return jsonify({**result, "operation_id": operation_id}), 200
 
 
 # ── POST /api/flags/reconcile ─────────────────────────────────────────────────
@@ -147,46 +175,48 @@ def reconcile_flags_route():
         if reg_count == 0:
             return jsonify({"error": "Cannot reconcile: The official business registry is empty. Please import business records first."}), 400
 
+        from api.registry.audit import (
+            complete_registry_workflow_run,
+            start_registry_workflow_run,
+        )
+        import uuid
+
+        payload = request.get_json(silent=True) or {}
+        run_id = str(uuid.UUID(str(payload.get("operation_id") or uuid.uuid4())))
+        start_registry_workflow_run(run_id, "reconcile")
         if red_count == 0:
-            return jsonify({
-                "message": "No Red flags to reconcile. All existing flags are already reconciled.",
-                "converted": 0,
-                "reconciled_records": 0,
+            result = {
+                "counts": {"reconciled": 0, "unchanged": 0, "failed": 0},
+                "records": [],
                 "total": 0,
-            }), 200
-
-        from api.registry.audit import ensure_registry_workflow_events
-        ensure_registry_workflow_events()
-        cursor = mysql.connection.cursor()
-        cursor.execute(
-            "SELECT COALESCE(MAX(eventID), 0) AS last_event_id FROM registry_workflow_events")
-        event_row = cursor.fetchone()
-        last_event_id = (
-            event_row.get("last_event_id")
-            if isinstance(event_row, dict)
-            else event_row[0]
-        ) if event_row else 0
-        cursor.close()
-
-        converted = reconcile_existing_flags(force=True)
-
-        cursor = mysql.connection.cursor()
-        cursor.execute("""
-            SELECT COUNT(DISTINCT businessID) AS total
-            FROM registry_workflow_events
-            WHERE eventType = 'reconciled' AND eventID > %s
-        """, (last_event_id,))
-        reconciled_row = cursor.fetchone()
-        reconciled_records = (
-            reconciled_row.get("total")
-            if isinstance(reconciled_row, dict)
-            else reconciled_row[0]
-        ) if reconciled_row else 0
-        cursor.close()
+                "message": "No Red flags to reconcile.",
+            }
+        else:
+            reconciliation = reconcile_existing_flags(
+                force=True, include_results=True
+            )
+            records = reconciliation["records"]
+            reconciled_count = reconciliation["reconciled_records"]
+            result = {
+                "counts": {
+                    "reconciled": reconciled_count,
+                    "no_match": sum(row["outcome"] == "no_match" for row in records),
+                    "failed": 0,
+                },
+                "records": records,
+                "total": int(red_count),
+                "message": (
+                    f"{reconciled_count} flag(s) reconciled out of "
+                    f"{red_count} Red flag(s)."
+                ),
+            }
+        result["operation_id"] = run_id
+        complete_registry_workflow_run(run_id, result)
         return jsonify({
-            "message": f"{converted} flag(s) reconciled out of {red_count} Red flag(s).",
-            "converted": converted,
-            "reconciled_records": int(reconciled_records),
+            **result,
+            "operation_id": run_id,
+            "converted": result["counts"]["reconciled"],
+            "reconciled_records": result["counts"]["reconciled"],
             "total": red_count,
         }), 200
     except Exception as e:

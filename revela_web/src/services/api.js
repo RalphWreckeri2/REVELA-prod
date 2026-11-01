@@ -746,7 +746,7 @@ export async function runDetectionRequest(token, mode = "quick", options = {}) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, operation_id: options.operationId }),
     });
     options.onResponse?.(res);
     return await handleResponse(res);
@@ -781,12 +781,16 @@ export async function getDetectionQuotaRequest(token) {
   }
 }
 
-export async function reconcileFlagsRequest(token) {
+export async function reconcileFlagsRequest(token, operationId) {
   if (!token) throw new Error("Missing authentication token.");
   try {
     const res = await fetch(`${BASE_URL}/flags/reconcile`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ operation_id: operationId }),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1673,7 +1677,7 @@ export async function reverifyPreviewRequest(token) {
 }
 
 /** POST /api/registry/reverify - re-check existing pins against Google Places (background job) */
-export async function reverifyPinsRequest(token, limit = 50) {
+export async function reverifyPinsRequest(token, limit = 50, operationId) {
   try {
     const res = await fetch(`${BASE_URL}/registry/reverify`, {
       method: "POST",
@@ -1681,7 +1685,7 @@ export async function reverifyPinsRequest(token, limit = 50) {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ limit }),
+      body: JSON.stringify({ limit, operation_id: operationId }),
     });
     return await handleResponse(res);
   } catch (err) {
@@ -1755,7 +1759,7 @@ export async function resolveRegistryReviewCandidateRequest(token, businessID) {
 
 /** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
 /** POST /api/registry/snap-unresolved — batch geocode registry entries with NULL coordinates */
-export async function snapUnresolvedPinsRequest(token, limit = 200) {
+export async function snapUnresolvedPinsRequest(token, limit = 200, operationId) {
   try {
     const res = await fetch(`${BASE_URL}/registry/snap-unresolved`, {
       method: "POST",
@@ -1763,8 +1767,22 @@ export async function snapUnresolvedPinsRequest(token, limit = 200) {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ limit }),
+      body: JSON.stringify({ limit, operation_id: operationId }),
     });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
+export async function getWorkflowRunRequest(token, operationId) {
+  if (!token) throw new Error("Missing authentication token.");
+  if (!operationId) throw new Error("Missing workflow run ID.");
+  try {
+    const res = await fetch(
+      `${BASE_URL}/registry/workflow-runs/${encodeURIComponent(operationId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
     return await handleResponse(res);
   } catch (err) {
     connectionGuard(err);

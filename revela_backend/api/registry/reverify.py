@@ -514,29 +514,104 @@ def _log_run_summary(places_resolver, counts):
         return None
 
 
-def run(limit=50):
+def run(limit=50, run_id=None):
     """Re-verify up to `limit` suspect pins. Returns (summary, error)."""
     if not _run_lock.acquire(blocking=False):
         return None, "A re-verify run is already in progress."
     try:
-        return _run(limit)
+        return _run(limit, run_id=run_id)
     finally:
         _run_lock.release()
 
 
-def _run(limit):
+def _run(limit, run_id=None):
     from app import mysql
     from api.notifications import hub
     from api.registry import places_resolver, service
+    from api.registry.audit import complete_registry_workflow_run
 
+    def finish_result(result):
+        if run_id:
+            result["operation"] = "reverify"
+            result["operation_id"] = run_id
+            complete_registry_workflow_run(run_id, result)
+        return result
+
+    def result_row(biz, outcome, reason=None, new=None, meta=None):
+        meta = meta or {}
+        labels = {
+            "moved": "reverified",
+            "review": "review",
+            "verified": "matched",
+            "unresolved": "no_match",
+            "conflict": "no_match",
+            "api_error": "failed",
+            "skipped_quota": "skipped_quota",
+            "not_processed": "not_processed",
+        }
+        category = labels.get(outcome, outcome)
+        explanation = {
+            "reverified": "A confident place match was found and the pin coordinates were updated.",
+            "review": "A possible match was found but needs manual review; the current pin was not changed.",
+            "matched": "The existing pin was verified against the matched place.",
+            "no_match": "No safe matching place was found; the current pin was left unchanged.",
+            "failed": "The lookup failed and the current pin was left unchanged.",
+            "skipped_quota": "Not processed because the lookup quota was reached.",
+            "not_processed": "Not processed because an earlier lookup error stopped this run.",
+        }.get(category, "The operation did not change this record.")
+        reason = reason or meta.get("reason")
+        if outcome == "conflict":
+            reason = reason or "The suggested place is already linked to another business."
+        if reason:
+            explanation = f"{explanation} Reason: {reason}."
+        return {
+            "record_id": str(biz.get("businessID") or ""),
+            "businessID": biz.get("businessID"),
+            "businessName": biz.get("businessName"),
+            "businessAddress": biz.get("businessAddress"),
+            "barangayID": biz.get("barangayID"),
+            "barangayName": barangay_names.get(biz.get("barangayID")),
+            "outcome": category,
+            "reason": reason,
+            "explanation": explanation,
+            "before": {
+                "latitude": biz.get("latitude"),
+                "longitude": biz.get("longitude"),
+                "coordSource": biz.get("coordSource"),
+                "matchStatus": biz.get("matchStatus"),
+            },
+            "after": {
+                "latitude": new[0] if outcome in ("moved", "verified") and new else biz.get("latitude"),
+                "longitude": new[1] if outcome in ("moved", "verified") and new else biz.get("longitude"),
+                "coordSource": (
+                    meta.get("coord_source") or biz.get("coordSource")
+                    if outcome in ("moved", "verified")
+                    else biz.get("coordSource")
+                ),
+                "matchStatus": (
+                    meta.get("match_status") or "auto"
+                    if outcome in ("moved", "verified")
+                    else biz.get("matchStatus")
+                ),
+            },
+        }
+
+    barangay_names = {}
     try:
         places_resolver.reset_run_state()
         halted = getattr(places_resolver, "_halted", None)
         if halted:
             err = f"Google Places is blocked until the server restarts: {halted}"
             _log_run_summary(places_resolver, Counter())
-            _emit(hub, "completed", 100, 0, 0, 0, 0, err, error=err)
-            return None, err
+            failed_result = finish_result({
+                "counts": {"reverified": 0, "no_match": 0, "unchanged": 0,
+                           "skipped_quota": 0, "failed": 1},
+                "records": [],
+                "error": err,
+            })
+            _emit(hub, "completed", 100, 0, 0, 0, 0, err,
+                  error=err, run_id=run_id)
+            return failed_result, err
 
         cur = mysql.connection.cursor()
         try:
@@ -561,20 +636,27 @@ def _run(limit):
                 "No pins have coordinates yet -- run Snap Pins first."
                 if not rows else "No unreliable pins left to re-verify."
             )
-            _emit(hub, "completed", 100, 0, 0, 0, 0, msg)
             usage = _log_run_summary(places_resolver, Counter())
-            return {
+            result = finish_result({
                 "total": 0, "resolved": 0, "moved": 0, "review": 0,
                 "no_match": 0, "skipped_quota": 0, "api_error": 0,
                 "cache_hits": 0, "usage": usage, "message": msg,
-            }, None
+                "counts": {"reverified": 0, "review": 0, "no_match": 0,
+                           "unchanged": 0, "skipped_quota": 0, "failed": 0},
+                "records": [],
+            })
+            _emit(hub, "completed", 100, 0, 0, 0, 0, msg, run_id=run_id)
+            return result, None
 
         _emit(hub, "running", 0, 0, 0, 0, total,
               f"Re-verifying {total} pins against Google Places...")
         brgy_name_by_id = {v: k for k,
                            v in service._load_barangay_lookup().items()}
+        barangay_names = brgy_name_by_id
 
         counts = Counter()
+        run_records = []
+        recorded_business_ids = set()
         reasons = Counter()           # why unresolved rows were not matched
         consecutive_errors = 0
         consecutive_api_errors = 0
@@ -604,6 +686,10 @@ def _run(limit):
                 halted = getattr(places_resolver, "_halted", None)
                 if halted:
                     counts["api_error"] += 1
+                    run_records.append(result_row(
+                        biz, "api_error", reason=halted, meta=meta
+                    ))
+                    recorded_business_ids.add(str(biz["businessID"]))
                     abort_msg = f"Google Places is blocked: {halted}"
                     break
                 if lat is None and meta.get("reason") in (
@@ -617,6 +703,10 @@ def _run(limit):
                 # Temporary API trouble (HTTP 4xx/5xx, network): not a "no match" -> retry next run.
                 if lat is None and meta.get("reason") == "api_error":
                     counts["api_error"] += 1
+                    run_records.append(result_row(
+                        biz, "api_error", reason=meta.get("api_error"), meta=meta
+                    ))
+                    recorded_business_ids.add(str(biz["businessID"]))
                     consecutive_api_errors += 1
                     if consecutive_api_errors >= 3:
                         abort_msg = f"Google Places keeps failing ({meta.get('api_error')}). See the server log."
@@ -656,6 +746,13 @@ def _run(limit):
                 finally:
                     cur.close()
                 counts[outcome] += 1
+                run_records.append(result_row(
+                    biz,
+                    outcome,
+                    new=new,
+                    meta=meta,
+                ))
+                recorded_business_ids.add(str(biz["businessID"]))
                 if outcome == "unresolved":
                     reasons[meta.get("reason") or "unknown"] += 1
                     if printed_examples < 15:       # lets you see WHY names did not match
@@ -664,13 +761,17 @@ def _run(limit):
                               f"reason={meta.get('reason')} best={meta.get('best_name')!r} "
                               f"score={meta.get('best_score')}")
                 consecutive_errors = 0
-            except Exception:
+            except Exception as exc:
                 traceback.print_exc()
                 try:
                     mysql.connection.rollback()
                 except Exception:
                     pass
                 counts["api_error"] += 1
+                run_records.append(result_row(
+                    biz, "api_error", reason=str(exc)
+                ))
+                recorded_business_ids.add(str(biz["businessID"]))
                 consecutive_errors += 1
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                     raise RuntimeError(
@@ -685,21 +786,54 @@ def _run(limit):
                       f"Checked {idx + 1}/{total}: {counts['moved']} moved, {counts['review']} to review, "
                       f"{counts['verified']} already right, {failed} not matched")
 
+        for biz in todo:
+            business_id = str(biz["businessID"])
+            if business_id in recorded_business_ids:
+                continue
+            if counts["skipped_quota"]:
+                outcome = "skipped_quota"
+                reason = "The Places lookup quota was reached before this record was checked."
+            elif abort_msg:
+                outcome = "not_processed"
+                reason = "An earlier lookup error stopped the run before this record was checked."
+            else:
+                outcome = "api_error"
+                reason = abort_msg or "The run stopped before this record was checked."
+            run_records.append(result_row(biz, outcome, reason=reason))
+            recorded_business_ids.add(business_id)
+
         if abort_msg:
             usage = _log_run_summary(places_resolver, counts)
             resolved = counts["verified"] + counts["moved"] + counts["review"]
             no_match = counts["unresolved"] + counts["conflict"]
+            result = finish_result({
+                "operation": "reverify",
+                "total": total,
+                **dict(counts),
+                "resolved": resolved,
+                "no_match": no_match,
+                "cache_hits": 0,
+                "usage": usage,
+                "counts": {
+                    "reverified": counts["moved"],
+                    "review": counts["review"],
+                    "matched": counts["verified"],
+                    "no_match": no_match,
+                    "skipped_quota": counts["skipped_quota"],
+                    "failed": counts["api_error"],
+                },
+                "records": run_records,
+                "error": abort_msg,
+            })
             _emit(
                 hub, "completed", 100, counts["moved"] + counts["review"],
                 no_match + counts["api_error"], counts["verified"], total,
                 abort_msg, error=abort_msg, resolved=resolved,
                 no_match=no_match, skipped_quota=counts["skipped_quota"],
                 api_error=counts["api_error"], cache_hits=0, usage=usage,
+                run_id=run_id,
             )
-            return {
-                "total": total, **dict(counts), "resolved": resolved,
-                "no_match": no_match, "cache_hits": 0, "usage": usage,
-            }, abort_msg
+            return result, abort_msg
 
         moved_total = counts["moved"] + counts["review"]
         failed_total = counts["unresolved"] + \
@@ -717,26 +851,55 @@ def _run(limit):
             msg += f" {counts['api_error']} had Google errors and will be retried next run."
         if budget_hit:
             msg += " Google Places budget reached; run again later to continue (progress is saved)."
+        result = finish_result({
+            "operation": "reverify",
+            "total": total,
+            **dict(counts),
+            "reasons": dict(reasons),
+            "resolved": resolved,
+            "no_match": no_match,
+            "cache_hits": 0,
+            "usage": usage,
+            "budget_hit": budget_hit,
+            "message": msg,
+            "counts": {
+                "reverified": counts["moved"],
+                "review": counts["review"],
+                "matched": counts["verified"],
+                "no_match": no_match,
+                "skipped_quota": counts["skipped_quota"],
+                "failed": counts["api_error"],
+            },
+            "records": run_records,
+        })
         _emit(
             hub, "completed", 100, moved_total, failed_total, counts["verified"],
             total, msg, budget_hit=budget_hit, resolved=resolved,
             no_match=no_match, skipped_quota=counts["skipped_quota"],
             api_error=counts["api_error"], cache_hits=0, usage=usage,
+            run_id=run_id,
         )
         hub.publish_to_admins({"type": "registry_updated"})
-        return {
-            "total": total, **dict(counts), "reasons": dict(reasons),
-            "resolved": resolved, "no_match": no_match,
-            "cache_hits": 0, "usage": usage,
-            "budget_hit": budget_hit, "message": msg,
-        }, None
+        return result, None
 
     except Exception as e:
         traceback.print_exc()
         err = f"Re-verify failed: {e}"
         try:
             _log_run_summary(places_resolver, Counter())
-            _emit(hub, "completed", 100, 0, 0, 0, 0, err, error=err)
-        except Exception:
-            pass
-        return None, str(e)
+        except Exception as summary_error:
+            print(f"[reverify] failed to load failure summary: {summary_error}")
+        try:
+            finish_result({
+                "operation": "reverify",
+                "counts": {"reverified": 0, "no_match": 0, "unchanged": 0,
+                           "skipped_quota": 0, "failed": 1},
+                "records": run_records if "run_records" in locals() else [],
+                "error": err,
+            })
+        except Exception as persistence_error:
+            traceback.print_exc()
+            err = f"{err} Run details could not be saved: {persistence_error}"
+        _emit(hub, "completed", 100, 0, 0, 0, 0, err,
+              error=err, run_id=run_id)
+        return None, err

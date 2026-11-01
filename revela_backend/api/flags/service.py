@@ -1157,7 +1157,9 @@ _RECONCILE_INTERVAL_S = 300   # run at most once every 5 minutes
 _reconcile_lock = threading.Lock()
 
 
-def reconcile_existing_flags(force: bool = False, silent: bool = False):
+def reconcile_existing_flags(
+    force: bool = False, silent: bool = False, include_results: bool = False
+):
     """
     Reconciles existing Red flags in geospatial_logs against official_registry.
     If a Red flag was erroneously created for a registered business, converts it
@@ -1171,12 +1173,12 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
     global _last_reconcile_time
     now = time.time()
     if not force and (now - _last_reconcile_time) < _RECONCILE_INTERVAL_S:
-        return 0   # too soon; skip
+        return {"reconciled_records": 0, "records": []} if include_results else 0
 
     # Prevent concurrent reconcile runs
     if not _reconcile_lock.acquire(blocking=False):
         print("[Reconcile] Already running. Skipping duplicate concurrent call.")
-        return 0
+        return {"reconciled_records": 0, "records": []} if include_results else 0
 
     try:
         _last_reconcile_time = now
@@ -1208,7 +1210,7 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             if not silent:
                 hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100,
                                       "status": "No Red flags to reconcile.", "converted": 0, "total": 0, "stage": "completed"})
-            return 0
+            return {"reconciled_records": 0, "records": []} if include_results else 0
 
         cursor = mysql.connection.cursor()
         cursor.execute("SELECT COUNT(*) AS total FROM official_registry")
@@ -1220,12 +1222,13 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
             if not silent:
                 hub.publish_to_admins({"type": "reconcile_progress", "percentage": 100,
                                       "status": "Official registry is empty. No records to reconcile against.", "converted": 0, "total": len(red_flags), "stage": "completed"})
-            return 0
+            return {"reconciled_records": 0, "records": []} if include_results else 0
 
         registry = _load_registry()
         rejected_place_pairs = _load_rejected_place_pairs()
         registry_match_index = _RegistryMatchIndex(registry)
         converted_count = 0
+        results = []
         total = len(red_flags)
 
         if not silent:
@@ -1311,6 +1314,58 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                     rejected_place_pairs=rejected_place_pairs,
                 )
                 converted_count += 1
+                results.append({
+                    "record_id": str(flag.get("logID") or ""),
+                    "logID": flag.get("logID"),
+                    "businessID": matched.get("businessID"),
+                    "businessName": matched.get("businessName") or name,
+                    "businessAddress": (
+                        matched.get("businessAddress")
+                        or flag.get("nearestLandmark")
+                    ),
+                    "barangayID": matched.get("barangayID") or b_id,
+                    "outcome": "reconciled",
+                    "explanation": (
+                        f"Matched the Red map finding to registry business "
+                        f"{matched.get('businessID')} and updated its flag to "
+                        f"{target_color}."
+                    ),
+                    "before": {
+                        "flagColor": "Red",
+                        "latitude": flag.get("latitude"),
+                        "longitude": flag.get("longitude"),
+                    },
+                    "after": {
+                        "flagColor": target_color,
+                        "latitude": lat,
+                        "longitude": lng,
+                    },
+                })
+            else:
+                results.append({
+                    "record_id": str(flag.get("logID") or ""),
+                    "logID": flag.get("logID"),
+                    "businessID": biz_id,
+                    "businessName": name or "Unnamed map finding",
+                    "businessAddress": flag.get("nearestLandmark"),
+                    "barangayID": b_id,
+                    "outcome": "no_match",
+                    "reason": "No matching official registry business was found.",
+                    "explanation": (
+                        "The Red map finding did not match a registry business; "
+                        "its color and coordinates were left unchanged."
+                    ),
+                    "before": {
+                        "flagColor": "Red",
+                        "latitude": flag.get("latitude"),
+                        "longitude": flag.get("longitude"),
+                    },
+                    "after": {
+                        "flagColor": "Red",
+                        "latitude": flag.get("latitude"),
+                        "longitude": flag.get("longitude"),
+                    },
+                })
 
             if not silent and (idx % 5 == 0 or idx == total - 1):
                 pct = min(99, int(((idx + 1) / max(total, 1)) * 100))
@@ -1332,6 +1387,8 @@ def reconcile_existing_flags(force: bool = False, silent: bool = False):
                 "total": total,
                 "stage": "completed"
             })
+        if include_results:
+            return {"reconciled_records": converted_count, "records": results}
         return converted_count
 
     finally:
@@ -2609,10 +2666,55 @@ def _run_detection_cycle(user_id=None, mode="quick"):
     seen_place_ids = set()
     counters = {
         "new_flags": 0, "total_checked": 0, "matched": 0, "no_match": 0,
-        "duplicates": 0, "non_business": 0, "closed_results": 0, "review": 0,
+        "already_flagged": 0, "reconciled": 0, "duplicates": 0, "non_business": 0,
+        "closed_results": 0, "review": 0,
         "unique_in_bound_pois": 0,
         "actionable_business_candidates": 0,
     }
+    result_records = []
+    barangay_name_by_id = {}
+
+    def add_detection_record(
+        place, outcome, barangay_id, existing_flag=None, registry_match=None,
+        log_id=None,
+    ):
+        location = (place.get("geometry") or {}).get("location") or {}
+        outcome_text = {
+            "new_detected": "New unregistered business flagged Red.",
+            "matched": "Matched to an official registry business; the map finding was updated.",
+            "already_flagged": "An existing map flag was already present; no duplicate flag was created.",
+        }.get(outcome, "Detection result recorded.")
+        name = place.get("name") or "Unnamed business"
+        result_records.append({
+            "record_id": str(log_id or place.get("place_id") or ""),
+            "logID": log_id or (existing_flag or {}).get("logID"),
+            "placeID": place.get("place_id"),
+            "businessID": (
+                (registry_match or {}).get("businessID")
+                or (existing_flag or {}).get("businessID")
+            ),
+            "businessName": (
+                (registry_match or {}).get("businessName")
+                or (existing_flag or {}).get("detectedName")
+                or name
+            ),
+            "businessAddress": place.get("vicinity") or place.get("formatted_address"),
+            "barangayID": barangay_id,
+            "barangayName": barangay_name_by_id.get(barangay_id),
+            "outcome": outcome,
+            "explanation": outcome_text,
+            "before": {
+                "flagColor": (existing_flag or {}).get("flagColor"),
+            },
+            "after": {
+                "flagColor": (
+                    "Red" if outcome == "new_detected"
+                    else _detection_status_color(
+                        (registry_match or {}).get("applicationStatus")
+                    ) if registry_match else (existing_flag or {}).get("flagColor")
+                ),
+            },
+        })
 
     try:
         def progress_callback(idx, total_steps, lat, lng, mode=None):
@@ -2651,8 +2753,22 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             barangay_rows = lookup_cursor.fetchall()
         finally:
             lookup_cursor.close()
+        barangay_name_by_id = {
+            row.get("barangayID") if isinstance(row, dict) else row[0]:
+            row.get("barangayName") if isinstance(row, dict) else row[1]
+            for row in barangay_rows
+        }
         try:
-            reconcile_existing_flags(silent=True)
+            reconcile_result = reconcile_existing_flags(
+                silent=True, include_results=True
+            )
+            if isinstance(reconcile_result, dict):
+                reconciled_records = [
+                    record for record in reconcile_result.get("records", [])
+                    if record.get("outcome") == "reconciled"
+                ]
+                result_records.extend(reconciled_records)
+                counters["reconciled"] = len(reconciled_records)
         except Exception as re_err:
             print(f"[Run Detection] Reconcile error: {re_err}")
 
@@ -2684,7 +2800,16 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 loc = (place.get("geometry") or {}).get("location") or {}
                 lat, lng = loc.get("lat"), loc.get("lng")
                 address = place.get("vicinity")
-                if not lat or not lng:
+                if lat is None or lng is None:
+                    result_records.append({
+                        "record_id": str(place_id),
+                        "placeID": place_id,
+                        "businessName": place_name,
+                        "businessAddress": address,
+                        "outcome": "failed",
+                        "reason": "The Places result did not include coordinates.",
+                        "explanation": "No flag was created because the result had no usable coordinates.",
+                    })
                     continue
                 counters["unique_in_bound_pois"] += 1
                 if place.get("business_status") in (
@@ -2695,6 +2820,11 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 existing_flag = existing_flags.get(place_id)
 
                 if existing_flag and existing_flag["flagColor"] in ("Green", "Orange", "Black", "Purple"):
+                    counters["already_flagged"] += 1
+                    add_detection_record(
+                        place, "already_flagged", existing_flag.get("barangayID"),
+                        existing_flag=existing_flag,
+                    )
                     continue
 
                 barangay_id = _get_barangay_id_by_coords(
@@ -2743,6 +2873,10 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                     # placeID is already held by an official registry business
                     if place_id in registry_by_place_id:
                         counters["matched"] += 1
+                        add_detection_record(
+                            place, "matched", barangay_id,
+                            registry_match=registry_by_place_id[place_id][0],
+                        )
                         continue
 
                     counters["no_match"] += 1
@@ -2754,7 +2888,16 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                         )
                         inserted_flag_ids.append(flag_id)
                         counters["new_flags"] += 1
+                        add_detection_record(
+                            place, "new_detected", barangay_id, log_id=flag_id,
+                        )
                         writes_pending = True
+                    else:
+                        counters["already_flagged"] += 1
+                        add_detection_record(
+                            place, "already_flagged", barangay_id,
+                            existing_flag=existing_flag,
+                        )
                 else:
                     counters["matched"] += 1
                     target_color = _detection_status_color(
@@ -2780,6 +2923,10 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                         poi_address=address,
                         commit=False,
                         rejected_place_pairs=rejected_place_pairs,
+                    )
+                    add_detection_record(
+                        place, "matched", target_barangay_id,
+                        existing_flag=existing_flag, registry_match=nearest,
                     )
                     writes_pending = True
 
@@ -2929,6 +3076,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "closed_results": counters["closed_results"],
                 "matched": counters["matched"],
                 "no_match": counters["no_match"],
+                "already_flagged": counters["already_flagged"],
                 "review": counters["review"],
                 "new_flags": counters["new_flags"],
                 "initial_requests": (
@@ -2955,6 +3103,14 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             "quota_stop": None,
             "quota":            get_detection_quota_info(),
             "places_usage":     places_usage,
+            "records": result_records,
+            "result_counts": {
+                outcome: sum(row["outcome"] == outcome for row in result_records)
+                for outcome in (
+                    "new_detected", "matched", "already_flagged",
+                    "reconciled", "failed",
+                )
+            },
         }, None
 
     except PlacesBudgetExceeded as be:
@@ -2989,6 +3145,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "closed_results": counters["closed_results"],
                 "matched": counters["matched"],
                 "no_match": counters["no_match"],
+                "already_flagged": counters["already_flagged"],
                 "review": counters["review"],
                 "new_flags": counters["new_flags"],
                 "initial_requests": (
@@ -3018,6 +3175,14 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 done_total + state["incomplete_points"]
             ),
             "total_points": state["total_points"],
+            "records": result_records,
+            "result_counts": {
+                outcome: sum(row["outcome"] == outcome for row in result_records)
+                for outcome in (
+                    "new_detected", "matched", "already_flagged",
+                    "reconciled", "failed",
+                )
+            },
         }, msg
 
     except Exception as e:

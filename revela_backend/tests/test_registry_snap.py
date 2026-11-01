@@ -57,6 +57,7 @@ class RegistrySnapTests(unittest.TestCase):
         with (
             patch("api.registry.audit.ensure_registry_workflow_events"),
             patch("api.registry.audit.record_registry_workflow_event"),
+            patch("api.registry.audit.complete_registry_workflow_run") as complete_run,
             patch.object(service, "mysql", db),
             patch.object(service, "GOOGLE_MAPS_API_KEY", "dummy_test_key"),
             patch.object(service.places_resolver,
@@ -79,11 +80,28 @@ class RegistrySnapTests(unittest.TestCase):
             patch.object(service, "_geocode") as geocode,
             patch("api.notifications.hub.publish_to_admins"),
         ):
-            summary, error = service.snap_unresolved_pins(limit=1)
+            summary, error = service.snap_unresolved_pins(
+                limit=1, run_id="55555555-5555-4555-8555-555555555555"
+            )
 
         self.assertIsNone(error)
         self.assertEqual(summary["snapped"], 1)
         self.assertEqual(summary["cached"], 2)
+        self.assertEqual(
+            summary["operation_id"],
+            "55555555-5555-4555-8555-555555555555",
+        )
+        complete_run.assert_called_once_with(
+            summary["operation_id"], summary
+        )
+        snapped_records = [
+            record for record in summary["records"]
+            if record["outcome"] == "snapped"
+        ]
+        self.assertEqual(len(snapped_records), 1)
+        self.assertEqual(snapped_records[0]["businessID"], "BIZ-GEOCODE-01")
+        self.assertEqual(snapped_records[0]["before"]["latitude"], 13.9620)
+        self.assertEqual(snapped_records[0]["after"]["latitude"], 13.9667)
         resolve_location.assert_called_once()
         self.assertTrue(resolve_location.call_args.kwargs["refresh_geocode"])
         geocode.assert_not_called()
@@ -150,6 +168,9 @@ class RegistrySnapTests(unittest.TestCase):
         self.assertTrue(summary["api_error"])
         self.assertEqual(summary["snapped"], 0)
         self.assertEqual(summary["skipped_quota"], 0)
+        self.assertEqual(summary["counts"]["api_error"], 1)
+        self.assertEqual(summary["records"][0]["businessID"], "BIZ-API-ERROR")
+        self.assertEqual(summary["records"][0]["outcome"], "api_error")
         update_pin.assert_not_called()
         mock_mysql.connection.commit.assert_not_called()
         self.assertFalse([call for call in select_cursor.execute.call_args_list

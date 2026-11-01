@@ -184,6 +184,34 @@ def workflow_summary():
         return jsonify({"error": "Failed to load workflow summary"}), 500
 
 
+@registry_bp.route("/workflow-runs/<run_id>", methods=["GET"])
+@admin_required()
+def workflow_run_result(run_id):
+    from api.registry.audit import get_registry_workflow_run
+
+    try:
+        normalized_run_id = str(uuid.UUID(run_id))
+    except ValueError:
+        return jsonify({"error": "Invalid workflow run ID."}), 400
+    try:
+        run = get_registry_workflow_run(normalized_run_id)
+        if run is None:
+            return jsonify({"error": "Workflow run was not found."}), 404
+        if not run["completed"]:
+            return jsonify({"error": "Workflow run is still in progress."}), 202
+        return jsonify({"run_id": normalized_run_id, **run}), 200
+    except Exception:
+        current_app.logger.exception("Failed to load registry workflow run")
+        return jsonify({"error": "Failed to load workflow run result."}), 500
+
+
+def _workflow_run_id(payload):
+    try:
+        return str(uuid.UUID(str(payload.get("operation_id") or "")))
+    except (ValueError, AttributeError):
+        return str(uuid.uuid4())
+
+
 def _text_search_monthly_limit_response():
     quota = places_resolver.get_text_search_quota_status()
     if not quota["monthly_quota_exceeded"]:
@@ -245,13 +273,16 @@ def snap_unresolved():
     body = request.get_json(silent=True) or {}
     # hard cap at 1000/run
     limit = max(1, min(int(body.get("limit", 200)), 1000))
+    run_id = _workflow_run_id(body)
+    from api.registry.audit import start_registry_workflow_run
+    start_registry_workflow_run(run_id, "snap")
 
     app_instance = current_app._get_current_object()
 
     def _run():
         with app_instance.app_context():
             try:
-                snap_unresolved_pins(limit=limit)
+                snap_unresolved_pins(limit=limit, run_id=run_id)
             except Exception as e:
                 import traceback
                 print(f"[snap_unresolved] background thread error: {e}")
@@ -259,7 +290,10 @@ def snap_unresolved():
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    return jsonify({"message": f"Snap started for up to {limit} businesses. Watch SSE for progress."}), 202
+    return jsonify({
+        "message": f"Snap started for up to {limit} businesses. Watch SSE for progress.",
+        "operation_id": run_id,
+    }), 202
 
 
 # ── GET /api/registry/reverify-preview ───────────────────────────────────────
@@ -295,18 +329,49 @@ def reverify_run():
     body = request.get_json(silent=True) or {}
     limit = max(
         1, min(int(body.get("limit", reverify.BATCH_LIMIT)), reverify.BATCH_LIMIT))
+    run_id = _workflow_run_id(body)
+    from api.registry.audit import start_registry_workflow_run
+    start_registry_workflow_run(run_id, "reverify")
     app_instance = current_app._get_current_object()
 
     def _go():
         with app_instance.app_context():
             try:
-                reverify.run(limit=limit)
+                result, error = reverify.run(limit=limit, run_id=run_id)
+                if error == "A re-verify run is already in progress.":
+                    from api.notifications import hub
+                    from api.registry.audit import complete_registry_workflow_run
+                    message = "A re-verify run is already in progress."
+                    complete_registry_workflow_run(run_id, {
+                        "operation": "reverify",
+                        "operation_id": run_id,
+                        "counts": {"reverified": 0, "review": 0, "matched": 0,
+                                   "no_match": 0, "skipped_quota": 0, "failed": 1},
+                        "records": [],
+                        "error": message,
+                    })
+                    hub.publish_to_admins({
+                        "type": "snap_progress",
+                        "mode": "reverify",
+                        "run_id": run_id,
+                        "stage": "completed",
+                        "percentage": 100,
+                        "snapped": 0,
+                        "failed": 1,
+                        "cached": 0,
+                        "total": 0,
+                        "status": message,
+                        "error": message,
+                    })
             except Exception:
                 import traceback
                 traceback.print_exc()
 
     threading.Thread(target=_go, daemon=True).start()
-    return jsonify({"message": f"Re-verify started for up to {limit} pins. Watch the progress window."}), 202
+    return jsonify({
+        "message": f"Re-verify started for up to {limit} pins. Watch the progress window.",
+        "operation_id": run_id,
+    }), 202
 
 
 # ── POST /api/registry/upload ─────────────────────────────────────────────────

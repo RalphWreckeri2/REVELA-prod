@@ -318,6 +318,7 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
             patch.object(service, "mysql", database),
             patch.object(service, "get_detection_quota_info", return_value=quota_info),
             patch.object(service, "_ensure_place_types_column"),
+            patch("api.registry.inspection_link.confirmed_pin_column_available", return_value=False),
             patch.object(service, "_load_registry", side_effect=lambda: database.registry),
             patch.object(service, "reconcile_existing_flags"),
             patch.object(service, "create_detection_run", side_effect=lambda *_args: 1),
@@ -349,6 +350,15 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
             self.assertEqual(first_result["run_summary"]["matched"], 1)
             self.assertEqual(first_result["run_summary"]["new_flags"], 1)
             self.assertEqual(first_result["run_summary"]["non_business"], 2)
+            first_outcomes = {
+                row["placeID"]: row["outcome"] for row in first_result["records"]
+            }
+            self.assertEqual(first_outcomes, {
+                "place-silva": "matched",
+                "place-unregistered": "new_detected",
+            })
+            self.assertEqual(first_result["result_counts"]["new_detected"], 1)
+            self.assertEqual(first_result["result_counts"]["matched"], 1)
 
             registered_flags = [
                 flag for flag in database.flags
@@ -383,6 +393,10 @@ class NearbyNewDetectionIntegrationTests(unittest.TestCase):
         self.assertEqual(second_result["attempted_points"], 2)
         self.assertEqual(second_result["run_summary"]["api_requests_consumed"], 1)
         self.assertEqual(second_result["run_summary"]["new_flags"], 0)
+        self.assertIn(
+            "already_flagged",
+            {row["outcome"] for row in second_result["records"]},
+        )
         self.assertEqual(second_result["run_summary"]["non_business"], 2)
         self.assertEqual(calls_by_point, {point_a: 1, point_b: 2})
         self.assertEqual(database.checkpoints, {point_a_key, point_b_key})

@@ -92,7 +92,7 @@ import {
   cancelRunDetection,
   getDetectionQuotaRequest,
   getPlacesUsageRequest,
-  getRegistryWorkflowSummaryRequest,
+  getWorkflowRunRequest,
   reconcileFlagsRequest,
   snapUnresolvedPinsRequest,
   reverifyPreviewRequest,
@@ -102,6 +102,12 @@ import {
   resolveRegistryReviewCandidateRequest,
 } from "../services/api";
 import Swal from "sweetalert2";
+import {
+  buildWorkflowSummaryModel,
+  createWorkflowOperationId,
+  paginateWorkflowRecords,
+  WORKFLOW_SUMMARY_PAGE_SIZE,
+} from "../components/workflowSummary";
 
 
 const Icon = {
@@ -433,12 +439,6 @@ const escapeHtml = (value) => String(value ?? "")
   .replaceAll(">", "&gt;")
   .replaceAll('"', "&quot;")
   .replaceAll("'", "&#39;");
-
-const formatWorkflowDate = (value) => {
-  if (!value) return "—";
-  const parsed = new Date(String(value).replace(" ", "T"));
-  return Number.isNaN(parsed.getTime()) ? escapeHtml(value) : escapeHtml(parsed.toLocaleString());
-};
 
 // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const STREET_VIEW_LAYER_MIN_ZOOM = 16;
@@ -2971,94 +2971,144 @@ export default function MapPage() {
     };
   }, []);
 
-  const showWorkflowOperationSummary = useCallback(async (operation, outcome = {}) => {
-    const config = {
-      reconcile: { title: "Reconcile Complete", section: "reconciled", label: "Reconciled" },
-      snap: { title: "Snap Pins Complete", section: "snapped", label: "Snapped to Map" },
-      reverify: { title: "Re-verify Complete", section: "reverified", label: "Reverified" },
-    }[operation];
-    if (!config) return;
-
-    let savedSection = null;
+  const showWorkflowSummaryDetails = useCallback(async (operation, outcome = {}) => {
+    const operationId = outcome.operation_id || outcome.run_id;
+    let resultData = null;
     let detailsUnavailable = false;
-    try {
-      const summary = await getRegistryWorkflowSummaryRequest(token);
-      savedSection = summary?.[config.section] || { count: 0, records: [] };
-    } catch {
+    if (operationId) {
+      try {
+        const run = await getWorkflowRunRequest(token, operationId);
+        resultData = run?.result
+          ? { ...run.result, operation_id: run.run_id || operationId }
+          : null;
+      } catch {
+        detailsUnavailable = true;
+      }
+    } else {
       detailsUnavailable = true;
     }
 
-    const operationCount = operation === "reconcile"
-      ? Number(outcome.reconciled_records ?? outcome.converted ?? 0)
-      : operation === "reverify"
-        ? Number(outcome.resolved ?? outcome.snapped ?? 0)
-        : Number(outcome.snapped ?? 0);
-    const extraCounts = [
-      ["No match", outcome.no_match],
-      ["Skipped by quota", outcome.skipped_quota],
-      ["API errors", outcome.api_error],
-    ].filter(([, value]) => value !== undefined && value !== null);
-    const countMarkup = [
-      `<p><strong>${escapeHtml(config.label)} this run:</strong> ${Number.isFinite(operationCount) ? operationCount : 0}</p>`,
-      ...extraCounts.map(([label, value]) => `<p><strong>${escapeHtml(label)}:</strong> ${Number(value) || 0}</p>`),
-    ].join("");
-    const latestRecords = operationCount > 0 && Array.isArray(savedSection?.records)
-      ? savedSection.records
-      : [];
-    const detailMarkup = latestRecords.length
-      ? `<div style="max-height:60vh;overflow:auto;text-align:left"><table style="width:100%;border-collapse:collapse;font-size:12px">
-          <thead><tr><th style="text-align:left;padding:8px">Business</th><th style="text-align:left;padding:8px">Status</th><th style="text-align:left;padding:8px">Date</th><th style="text-align:left;padding:8px">Address / location</th></tr></thead>
-          <tbody>${latestRecords.map((record) => {
-            const location = [
-              record.latitude ?? record.newLat,
-              record.longitude ?? record.newLng,
-            ].every((value) => value !== null && value !== undefined)
-              ? `${record.latitude ?? record.newLat}, ${record.longitude ?? record.newLng}`
-              : "";
-            const placeDetails = [record.businessAddress, location].filter(Boolean).join(" · ") || "—";
+    const result = resultData || outcome;
+    const model = buildWorkflowSummaryModel(operation, result);
+    const countMarkup = model.counts
+      .map(({ label, count }) => `<div class="workflow-summary-count"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`)
+      .join("");
+    const contextCountsMarkup = model.contextCounts
+      .map(([label, count]) => `<div class="workflow-summary-count"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`)
+      .join("");
+    const emptyMessage = operation === "detection"
+      ? model.emptyMessage
+      : model.emptyMessage;
+    const unavailableMessage = detailsUnavailable
+      ? "<p class=\"workflow-summary-note\">Detailed run results could not be retrieved. No unrelated saved records are being shown.</p>"
+      : !model.hasCapturedDetails && model.checked > 0
+        ? `<p class="workflow-summary-note">No detailed records were captured for this run. ${operation === "detection" ? `${model.checked} places were checked, but no new businesses were flagged.` : ""}</p>`
+        : "";
+    const errorMarkup = model.error
+      ? `<p class="workflow-summary-note">Run note: ${escapeHtml(model.error)}</p>`
+      : "";
+    const rowsMarkup = model.hasCapturedDetails
+      ? `<div class="workflow-summary-table-scroll">
+          <table class="workflow-summary-table">
+            <colgroup><col class="workflow-col-business"><col class="workflow-col-id"><col class="workflow-col-address"><col class="workflow-col-outcome"><col class="workflow-col-changes"></colgroup>
+            <thead><tr><th>Business</th><th>Business ID</th><th>Barangay / address</th><th>Outcome and explanation</th><th>Before → after</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="workflow-summary-pagination">
+          <span class="workflow-summary-page-label"></span>
+          <div><button type="button" class="workflow-page-previous">Previous</button><button type="button" class="workflow-page-next">Next</button></div>
+        </div>`
+      : `<div class="workflow-summary-empty">${escapeHtml(emptyMessage)}</div>`;
+    await Swal.fire({
+      title: `${model.title}`,
+      html: `<div class="workflow-summary-modal">
+        <div class="workflow-summary-counts">${countMarkup || '<div class="workflow-summary-count"><span>Results</span><strong>0</strong></div>'}</div>
+        ${contextCountsMarkup ? `<div class="workflow-summary-counts">${contextCountsMarkup}</div>` : ""}
+        ${model.contextNote ? `<p class="workflow-summary-note">${escapeHtml(model.contextNote)}</p>` : ""}
+        ${model.checked ? `<p class="workflow-summary-note">${escapeHtml(model.activityLabel)}: ${model.checked}</p>` : ""}
+        ${errorMarkup}
+        ${unavailableMessage}
+        ${rowsMarkup}
+        ${model.operationId ? `<p class="workflow-summary-run-id">Run ID: ${escapeHtml(model.operationId)}</p>` : ""}
+      </div>`,
+      width: "min(1100px, 96vw)",
+      showConfirmButton: true,
+      confirmButtonText: "Close",
+      confirmButtonColor: "#4f46e5",
+      customClass: { popup: "workflow-summary-popup" },
+      didOpen: (popup) => {
+        if (!model.hasCapturedDetails) return;
+        const body = popup.querySelector(".workflow-summary-table tbody");
+        const label = popup.querySelector(".workflow-summary-page-label");
+        const previous = popup.querySelector(".workflow-page-previous");
+        const next = popup.querySelector(".workflow-page-next");
+        let currentPage = 1;
+        const describeValues = (values) => {
+          if (!values || typeof values !== "object") return "—";
+          const entries = Object.entries(values).filter(([, value]) => value !== null && value !== undefined);
+          return entries.length
+            ? entries.map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`).join("<br>")
+            : "—";
+        };
+        const renderPage = () => {
+          const page = paginateWorkflowRecords(
+            model.records, currentPage, WORKFLOW_SUMMARY_PAGE_SIZE,
+          );
+          currentPage = page.page;
+          body.innerHTML = page.records.map((record) => {
+            const address = [
+              record.barangayName || (record.barangayID ? `Barangay ID ${record.barangayID}` : ""),
+              record.businessAddress,
+            ].filter(Boolean).join(" · ") || "—";
             return `<tr>
-              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px"><strong>${escapeHtml(record.businessName || "Unnamed business")}</strong><br><small>${escapeHtml(record.businessID || "")}</small></td>
-              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px">${escapeHtml(record.resultStatus || record.failReason || record.reason || "Recorded")}</td>
-              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px">${formatWorkflowDate(record.eventAt)}</td>
-              <td style="vertical-align:top;border-top:1px solid #e2e8f0;padding:8px">${escapeHtml(placeDetails)}</td>
+              <td><strong>${escapeHtml(record.businessName || "Unnamed business")}</strong></td>
+              <td>${escapeHtml(record.businessID || record.record_id || (record.logID ? `Map log ${record.logID}` : record.placeID || "—"))}</td>
+              <td>${escapeHtml(address)}</td>
+              <td><strong>${escapeHtml(String(record.outcome || "Recorded").replaceAll("_", " "))}</strong><br>${escapeHtml(record.explanation || record.reason || "No explanation was recorded.")}</td>
+              <td><small><strong>Before</strong><br>${describeValues(record.before)}<br><strong>After</strong><br>${describeValues(record.after)}</small></td>
             </tr>`;
-          }).join("")}</tbody>
-        </table></div>
-        <p style="text-align:left;font-size:11px;color:#64748b">Showing the latest saved database records for this workflow (up to ${latestRecords.length}). The count above is from this run.</p>`
-      : `<p>${operationCount === 0 ? "No database records were affected by this run." : "No saved detail records are available for this workflow yet."}</p>`;
+          }).join("");
+          label.textContent = `${page.total ? (currentPage - 1) * WORKFLOW_SUMMARY_PAGE_SIZE + 1 : 0}–${Math.min(currentPage * WORKFLOW_SUMMARY_PAGE_SIZE, page.total)} of ${page.total}`;
+          previous.disabled = currentPage <= 1;
+          next.disabled = currentPage >= page.pageCount;
+        };
+        previous.addEventListener("click", () => {
+          currentPage -= 1;
+          renderPage();
+        });
+        next.addEventListener("click", () => {
+          currentPage += 1;
+          renderPage();
+        });
+        renderPage();
+      },
+    });
+  }, [token]);
 
+  const showWorkflowOperationSummary = useCallback(async (operation, outcome = {}) => {
+    const config = {
+      detection: { title: "Detection Scan Finished" },
+      reconcile: { title: "Reconcile Complete" },
+      snap: { title: "Snap Pins Complete" },
+      reverify: { title: "Re-verify Complete" },
+    }[operation];
+    if (!config) return;
     const result = await Swal.fire({
-      icon: "success",
+      icon: outcome.error ? "warning" : "success",
       title: config.title,
-      html: `${countMarkup}${detailsUnavailable
-        ? '<p>Saved record details could not be loaded. Please try again from Maps &amp; Flags.</p>'
-        : '<p>The run counts above come from the completed operation. Use View details to inspect saved database records.</p>'}`,
+      text: outcome.message || outcome.status || "The operation finished. Open its run-specific summary to review the captured results.",
       showDenyButton: true,
       confirmButtonText: "Close",
-      denyButtonText: "View details",
+      denyButtonText: "View summary",
       confirmButtonColor: "#059669",
-      denyButtonColor: "#6366f1",
+      denyButtonColor: "#4f46e5",
+      customClass: { popup: "workflow-completion-popup" },
     });
-
     if (result.isDenied) {
-      if (detailsUnavailable) {
-        await Swal.fire({
-          icon: "error",
-          title: "Details unavailable",
-          text: "The operation completed, but saved database records could not be loaded. Refresh and try again.",
-          confirmButtonColor: "#ef4444",
-        });
-        return;
-      }
-      await Swal.fire({
-        title: `${config.label} — Saved Records`,
-        html: detailMarkup,
-        width: 900,
-        confirmButtonText: "Close",
-        confirmButtonColor: "#6366f1",
-      });
+      await showWorkflowSummaryDetails(operation, outcome);
     }
-  }, [token]);
+  }, [showWorkflowSummaryDetails]);
 
   const [layers, setLayers] = useState({ base: true, flags: true, barangay: false, diagnostics: false });
   const [showCentroidOnlyPins, setShowCentroidOnlyPins] = useState(false);
@@ -3454,19 +3504,10 @@ export default function MapPage() {
         fetchPlacesUsage();
         if (!workflowSummaryShownRef.current) {
           workflowSummaryShownRef.current = true;
-          if (d?.error) {
-            void Swal.fire({
-              icon: "error",
-              title: snapRunModeRef.current === "reverify" ? "Re-verify Failed" : "Snap Pins Failed",
-              text: d.error,
-              confirmButtonColor: "#ef4444",
-            });
-          } else {
-            const operation = d.mode === "reverify" || snapRunModeRef.current === "reverify"
-              ? "reverify"
-              : "snap";
-            void showWorkflowOperationSummary(operation, d);
-          }
+          const operation = d.mode === "reverify" || snapRunModeRef.current === "reverify"
+            ? "reverify"
+            : "snap";
+          void showWorkflowOperationSummary(operation, d);
         }
         if (dismissTimer) clearTimeout(dismissTimer);
         dismissTimer = d?.error
@@ -3697,8 +3738,10 @@ export default function MapPage() {
     }, 1000);
 
     setActionError("");
+    const operationId = createWorkflowOperationId();
     try {
       const result = await runDetectionRequest(token, runDetectionMode, {
+        operationId,
         onResponse: res => { requestId = res.headers.get("X-Request-ID"); httpStatus = res.status; },
       });
       finishBenchmark(trial, result?.status || "incomplete", {
@@ -3730,9 +3773,14 @@ export default function MapPage() {
       }
       setDetectionProgress(null);
 
-      // If the scan was cancelled the backend returns { message: "Detection cancelled by user." }
-      // with no new_flags — exit silently, the cancel handler already dismissed the overlay.
-      if (!result || result.message) {
+      if (!result) {
+        return;
+      }
+      if (result.message) {
+        await showWorkflowOperationSummary("detection", {
+          ...result,
+          error: result.message,
+        });
         return;
       }
 
@@ -3780,7 +3828,7 @@ export default function MapPage() {
             ? `${count} new flag${count !== 1 ? "s" : ""} saved so far. The scan has not checked all grid points.`
             : count > 0
               ? "New Red Flags have been plotted on the municipal map and queued for field verification."
-              : `All ${totalChecked} commercial POIs checked within Mataasnakahoy match active registry permits or are already flagged.`}
+              : `No new businesses flagged this run. ${totalChecked} returned places were checked; see View summary for captured matched and already-flagged results.`}
               </div>
             </div>
             ${showWarning ? `
@@ -3808,10 +3856,21 @@ export default function MapPage() {
           </div>
         `,
         confirmButtonColor: "#6366f1",
-        confirmButtonText: count > 0 ? "View Detected on Map" : "Understood"
+        confirmButtonText: "Close",
+        denyButtonText: "View summary",
+        showDenyButton: true,
+        showCancelButton: count > 0,
+        cancelButtonText: "View detected on map",
+        cancelButtonColor: "#dc2626",
+        customClass: { popup: "workflow-completion-popup" },
       });
 
-      if (alertRes.isConfirmed && count > 0) {
+      if (alertRes.isDenied) {
+        await showWorkflowSummaryDetails("detection", {
+          ...result,
+          operation_id: operationId,
+        });
+      } else if (alertRes.dismiss === Swal.DismissReason.cancel && count > 0) {
         setFilterColor("Red");
       }
     } catch (err) {
@@ -3823,14 +3882,24 @@ export default function MapPage() {
         && /429|quota exceeded|daily budget reached|daily limit reached|monthly limit reached/i.test(errorMessage);
       await fetchFlags(true);
       if (isQuotaError) {
+        await fetchPlacesUsage();
+        await fetchDetectionQuota();
+      }
+      if (err.responseData?.operation_id) {
+        await showWorkflowOperationSummary("detection", {
+          ...err.responseData,
+          error: errorMessage,
+          message: errorMessage,
+        });
+        return;
+      }
+      if (isQuotaError) {
         Swal.fire({
           icon: "warning",
           title: "Detection Budget Reached",
           text: errorMessage,
           confirmButtonColor: "#6366f1"
         });
-        await fetchPlacesUsage();
-        await fetchDetectionQuota();
       } else {
         Swal.fire({
           icon: "error",
@@ -4078,8 +4147,9 @@ export default function MapPage() {
       snapDismissedRef.current = false;
       workflowSummaryShownRef.current = false;
       snapRunModeRef.current = "reverify";
+      const operationId = createWorkflowOperationId();
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Re-verifying pins against Google Places...', snapped: 0, failed: 0, cached: 0, total: batch });
-      await reverifyPinsRequest(token, batch);
+      await reverifyPinsRequest(token, batch, operationId);
     } catch (err) {
       workflowSummaryShownRef.current = true;
       setSnapProgress(null);
@@ -4284,8 +4354,9 @@ export default function MapPage() {
       snapDismissedRef.current = false;
       workflowSummaryShownRef.current = false;
       snapRunModeRef.current = "snap";
+      const operationId = createWorkflowOperationId();
       setSnapProgress({ stage: 'running', percentage: 0, status: 'Starting Places name search...', snapped: 0, failed: 0, cached: 0, total: unsnappedCount });
-      await snapUnresolvedPinsRequest(token, 200);
+      await snapUnresolvedPinsRequest(token, 200, operationId);
     } catch (err) {
       workflowSummaryShownRef.current = true;
       setSnapProgress(null);

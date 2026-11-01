@@ -3436,7 +3436,7 @@ def sync_registry(file, ext: str):
 
 # ── Batch Pin Snapping ────────────────────────────────────────────────────────
 
-def snap_unresolved_pins(limit: int = 200):
+def snap_unresolved_pins(limit: int = 200, run_id=None):
     """
     Cost-Optimized Batch Pin Snapper.
 
@@ -3453,16 +3453,76 @@ def snap_unresolved_pins(limit: int = 200):
     from api.notifications import hub
     from api.models.geospatial import insert_green_flag
     from api.registry.audit import (
+        complete_registry_workflow_run,
         ensure_registry_workflow_events,
         record_registry_workflow_event,
     )
 
+    def save_result(result):
+        if run_id:
+            result["operation_id"] = run_id
+            complete_registry_workflow_run(run_id, result)
+        return result
+
+    def result_row(
+        biz, outcome, reason=None, new_lat=None, new_lng=None,
+        new_source=None, new_match_status=None,
+    ):
+        values = dict(biz) if isinstance(biz, dict) else dict(zip(
+            ("businessID", "barangayID", "businessName", "businessAddress",
+             "lineOfBusiness", "applicationStatus", "coordSource", "matchStatus",
+             "resolveKey", "latitude", "longitude", "businessType"),
+            biz,
+        ))
+        explanation = {
+            "snapped": "Coordinates and map pin were updated.",
+            "no_match": "No usable map location was found; saved coordinates were left unchanged.",
+            "unchanged": "The lookup completed, but the registry record was not updated.",
+            "skipped_quota": "Not processed because the lookup quota was reached.",
+            "api_error": "The lookup failed; the saved record was left unchanged.",
+            "cached": "Skipped because this business has no changed lookup inputs since its previous attempt.",
+        }.get(outcome, "The operation did not complete for this record.")
+        if reason:
+            explanation = f"{explanation} Reason: {reason}."
+        return {
+            "record_id": str(values.get("businessID") or ""),
+            "businessID": values.get("businessID"),
+            "businessName": values.get("businessName"),
+            "businessAddress": values.get("businessAddress"),
+            "barangayID": values.get("barangayID"),
+            "barangayName": barangay_name_by_id.get(values.get("barangayID")),
+            "outcome": outcome,
+            "reason": reason,
+            "explanation": explanation,
+            "before": {
+                "latitude": values.get("latitude"),
+                "longitude": values.get("longitude"),
+                "coordSource": values.get("coordSource"),
+                "matchStatus": values.get("matchStatus"),
+            },
+            "after": {
+                "latitude": new_lat if outcome == "snapped" else values.get("latitude"),
+                "longitude": new_lng if outcome == "snapped" else values.get("longitude"),
+                "coordSource": new_source if outcome == "snapped" else values.get("coordSource"),
+                "matchStatus": new_match_status if outcome == "snapped" else values.get("matchStatus"),
+            },
+        }
+
+    run_records = []
     places_resolver.reset_run_state()
     api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
     if not api_key:
         err = "GOOGLE_MAPS_API_KEY is not configured on the server."
+        if run_id:
+            save_result({
+                "counts": {"snapped": 0, "no_match": 0, "unchanged": 0,
+                           "skipped_quota": 0, "failed": 1},
+                "records": [],
+                "error": err,
+            })
         hub.publish_to_admins({
             "type": "snap_progress",
+            "run_id": run_id,
             "stage": "completed",
             "percentage": 100,
             "snapped": 0,
@@ -3499,8 +3559,11 @@ def snap_unresolved_pins(limit: int = 200):
         """)
         rows = cursor.fetchall()
         cursor.close()
+        barangay_lookup = _load_barangay_lookup()
+        barangay_name_by_id = {value: name for name, value in barangay_lookup.items()}
 
         candidates = []
+        recorded_business_ids = set()
         cached = 0
         for biz in rows:
             if isinstance(biz, dict):
@@ -3536,6 +3599,10 @@ def snap_unresolved_pins(limit: int = 200):
             )
             if stored_key and stored_key == current_key:
                 cached += 1
+                run_records.append(result_row(biz, "cached"))
+                recorded_business_ids.add(str(
+                    biz.get("businessID") if isinstance(biz, dict) else biz[0]
+                ))
                 continue
 
             candidates.append(biz)
@@ -3553,8 +3620,22 @@ def snap_unresolved_pins(limit: int = 200):
                 "Snap Pins",
                 {"resolved": 0, "no_match": 0, "cache_hits": cached},
             )
+            result = save_result({
+                "operation": "snap",
+                "total_candidates": 0,
+                "snapped": 0,
+                "failed": 0,
+                "cached": cached,
+                "counts": {
+                    "snapped": 0, "no_match": 0, "unchanged": 0,
+                    "skipped_quota": 0, "failed": 0, "cached": cached,
+                },
+                "records": run_records,
+                "message": msg,
+            })
             hub.publish_to_admins({
                 "type": "snap_progress",
+                "run_id": run_id,
                 "stage": "completed",
                 "percentage": 100,
                 "snapped": 0,
@@ -3564,16 +3645,11 @@ def snap_unresolved_pins(limit: int = 200):
                 "status": msg
             })
             hub.publish_to_admins({"type": "registry_updated"})
-            return {
-                "total_candidates": 0,
-                "snapped": 0,
-                "failed": 0,
-                "cached": cached,
-                "message": msg
-            }, None
+            return result, None
 
         hub.publish_to_admins({
             "type": "snap_progress",
+            "run_id": run_id,
             "stage": "running",
             "percentage": 0,
             "snapped": 0,
@@ -3584,8 +3660,6 @@ def snap_unresolved_pins(limit: int = 200):
         })
 
         # Load barangay lookup for name→ID resolution
-        barangay_lookup = _load_barangay_lookup()
-
         snapped = 0
         failed = 0
         budget_hit = False
@@ -3793,8 +3867,18 @@ def snap_unresolved_pins(limit: int = 200):
                     )
                     mysql.connection.commit()
                     snapped += 1
+                    run_records.append(result_row(
+                        biz, "snapped", new_lat=lat, new_lng=lng,
+                        new_source=coord_src, new_match_status=match_status,
+                    ))
+                    recorded_business_ids.add(str(bid))
                 else:
                     mysql.connection.rollback()
+                    run_records.append(result_row(
+                        biz, "unchanged",
+                        reason="The record changed or became ineligible during this run.",
+                    ))
+                    recorded_business_ids.add(str(bid))
             else:
                 if geo_meta and geo_meta.get("budget_exhausted"):
                     budget_hit = True
@@ -3815,6 +3899,13 @@ def snap_unresolved_pins(limit: int = 200):
                 mysql.connection.commit()
                 failed += 1
                 no_match += 1
+                reason = (
+                    (geo_meta or {}).get("reason")
+                    or getattr(_geocode_state, "outcome", None)
+                    or "no usable result"
+                )
+                run_records.append(result_row(biz, "no_match", reason=reason))
+                recorded_business_ids.add(str(bid))
             cur2.close()
 
             # Progress update: immediately for early items, then every 5 businesses, and on the last one
@@ -3830,6 +3921,15 @@ def snap_unresolved_pins(limit: int = 200):
                     "total": total,
                     "status": f"Processing {idx + 1}/{total}... ({snapped} snapped, {failed} unresolvable, {cached} cached)"
                 })
+
+        for biz in candidates:
+            bid = biz.get("businessID") if isinstance(biz, dict) else biz[0]
+            if str(bid) in recorded_business_ids:
+                continue
+            outcome = "skipped_quota" if budget_hit else "api_error" if api_error else "failed"
+            reason = budget_reason if budget_hit else "Lookup stopped before this record was processed."
+            run_records.append(result_row(biz, outcome, reason=reason))
+            recorded_business_ids.add(str(bid))
 
         msg = (
             f"Snap complete! {snapped} pins placed, {failed} could not be resolved"
@@ -3855,8 +3955,34 @@ def snap_unresolved_pins(limit: int = 200):
             },
         )
 
+        counts = {
+            outcome: sum(row["outcome"] == outcome for row in run_records)
+            for outcome in (
+                "snapped", "no_match", "unchanged", "skipped_quota",
+                "api_error", "failed", "cached",
+            )
+        }
+        result = {
+            "operation": "snap",
+            "total_candidates": total,
+            "snapped": snapped,
+            "failed": failed,
+            "cached": cached,
+            "budget_hit": budget_hit,
+            "monthly_quota_exceeded": monthly_quota_exceeded,
+            "api_error": api_error,
+            "skipped_quota": skipped_quota,
+            "no_match": no_match,
+            "skipped_black_lock": skipped_black_lock,
+            "counts": counts,
+            "records": run_records,
+            "usage": _places_usage_snapshot("Snap Pins"),
+            "message": msg,
+        }
+        save_result(result)
         hub.publish_to_admins({
             "type": "snap_progress",
+            "run_id": run_id,
             "stage": "completed",
             "percentage": 100,
             "snapped": snapped,
@@ -3870,29 +3996,23 @@ def snap_unresolved_pins(limit: int = 200):
         })
         hub.publish_to_admins({"type": "registry_updated"})
 
-        return {
-            "total_candidates": total,
-            "snapped": snapped,
-            "failed": failed,
-            "cached": cached,
-            "budget_hit": budget_hit,
-            "monthly_quota_exceeded": monthly_quota_exceeded,
-            "api_error": api_error,
-            "skipped_quota": skipped_quota,
-            "no_match": no_match,
-            # Pins whose coordinates were fixed but whose colour was left
-            # alone because the business is Black locked.
-            "skipped_black_lock": skipped_black_lock,
-            "usage": _places_usage_snapshot("Snap Pins"),
-            "message": msg
-        }, None
+        return result, None
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         err_msg = f"Snapping failed: {str(e)}"
+        failed_result = {
+            "operation": "snap",
+            "counts": {"snapped": 0, "no_match": 0, "unchanged": 0,
+                       "skipped_quota": 0, "failed": 1},
+            "records": run_records,
+            "error": err_msg,
+        }
+        save_result(failed_result)
         hub.publish_to_admins({
             "type": "snap_progress",
+            "run_id": run_id,
             "stage": "completed",
             "percentage": 100,
             "snapped": 0,
