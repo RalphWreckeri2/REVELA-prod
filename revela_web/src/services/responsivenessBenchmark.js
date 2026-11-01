@@ -23,12 +23,12 @@ const quote = value => `"${String(value ?? "").replaceAll('"', '""')}"`;
 
 export function beginBenchmark(scenario, workload = {}, startedAt = performance.now()) {
   if (!enabled()) return null;
-  return { scenario, startedAt, workload, stages: {}, ...config() };
+  return { ...config(), scenario, startedAt, workload, stages: {} };
 }
 
 export function benchmarkStage(trial, name, details = {}) {
   if (!trial || trial.finished || trial.stages[name]) return;
-  trial.stages[name] = { ms: performance.now() - trial.startedAt, ...details };
+  trial.stages[name] = { ...details, ms: performance.now() - trial.startedAt };
 }
 
 export function finishBenchmark(trial, outcome, details = {}) {
@@ -41,12 +41,16 @@ export function finishBenchmark(trial, outcome, details = {}) {
     data_ms: stages.data?.ms, markers_ms: stages.markers?.ms,
     clustered_ms: stages.clustered?.ms, fit_ms: stages.fit?.ms,
     tiles_ms: stages.tiles?.ms, idle_ms: stages.idle?.ms, ready_ms: stages.ready?.ms,
+    request_id: trial.requestId, http_status: trial.httpStatus,
     cache: trial.cache, network: trial.network,
-    registry_rows: trial.registry_rows, map_rows: trial.map_rows,
-    geolocated_rows: trial.geolocated_rows,
-    expected_markers: trial.expected_markers,
+    registry_rows: trial.registryRows ?? trial.registry_rows,
+    map_rows: stages.data?.mapRows ?? trial.mapRows ?? trial.map_rows,
+    geolocated_rows: stages.data?.geolocatedRows ?? trial.geolocatedRows ?? trial.geolocated_rows,
+    expected_markers: stages.data?.expectedMarkers ?? trial.expectedMarkers ?? trial.expected_markers,
+    created_markers: stages.markers?.createdMarkers,
+    flags_pages: stages.data?.pages ?? trial.pages,
     workload: JSON.stringify(trial.workload),
-    ...details,
+    ...Object.fromEntries(Object.entries(details).filter(([, value]) => value !== undefined)),
   };
   const next = [...rows(), entry];
   window.sessionStorage.setItem(ROWS, JSON.stringify(next));
@@ -55,18 +59,69 @@ export function finishBenchmark(trial, outcome, details = {}) {
 }
 
 let mapTrial;
-export function markMapNavigation() {
+let documentMapTrialStarted = false;
+const pendingMapUnmounts = new WeakSet();
+
+function documentMapNavigationStart() {
+  if (window.location?.pathname !== "/map") return null;
+  const navigation = window.performance?.getEntriesByType?.("navigation")?.[0];
+  if (!navigation || !["navigate", "reload"].includes(navigation.type) ||
+      !Number.isFinite(navigation.startTime)) return null;
+  try {
+    return new URL(navigation.name, window.location.href).pathname === "/map"
+      ? navigation.startTime
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function markMapNavigation(event) {
+  if (event?.defaultPrevented || event?.button != null && event.button !== 0 ||
+      event?.metaKey || event?.ctrlKey || event?.shiftKey || event?.altKey) return;
   if (enabled()) mapTrial = beginBenchmark("map", { navigation: "spa" });
 }
 export function startMapBenchmark() {
   if (!enabled()) return null;
-  if (!mapTrial || mapTrial.finished) {
-    const navigation = performance.getEntriesByType("navigation")[0];
-    mapTrial = beginBenchmark("map", { navigation: "document" }, navigation?.startTime ?? performance.now());
+  if (!mapTrial || mapTrial.finished || pendingMapUnmounts.has(mapTrial)) {
+    const documentStart = documentMapTrialStarted ? null : documentMapNavigationStart();
+    documentMapTrialStarted ||= documentStart !== null;
+    mapTrial = beginBenchmark(
+      "map",
+      { navigation: documentStart === null ? "mount" : "document" },
+      documentStart ?? performance.now(),
+    );
   }
   return mapTrial;
 }
-export function endMapBenchmark() { mapTrial = null; }
+export function markMapBenchmarkUnmount(trial) {
+  if (trial) pendingMapUnmounts.add(trial);
+}
+export function resumeMapBenchmark(trial) {
+  if (trial) pendingMapUnmounts.delete(trial);
+}
+export function endMapBenchmark(trial) {
+  if (!trial) {
+    mapTrial = null;
+    return;
+  }
+  pendingMapUnmounts.delete(trial);
+  if (mapTrial === trial) mapTrial = null;
+}
+
+export function mapTilesLoaded(trial) {
+  if (!trial || trial.finished || !trial.stages.fit) return false;
+  benchmarkStage(trial, "tiles");
+  mapReady(trial);
+  return true;
+}
+
+export function mapIdle(trial) {
+  if (!trial || trial.finished || !trial.stages.fit || !trial.stages.tiles) return false;
+  benchmarkStage(trial, "idle");
+  mapReady(trial);
+  return true;
+}
 
 // Tiles must have loaded after the municipal fit; idle must follow those tiles.
 // Marker creation and clustering must refer to the complete paginated dataset.
@@ -99,7 +154,7 @@ export function installBenchmarkControls(matchingDryRunRequest) {
       window.sessionStorage.setItem(CONFIG, JSON.stringify(settings));
     },
     disable: () => window.sessionStorage.removeItem(ENABLED),
-    configure: settings => window.sessionStorage.setItem(CONFIG, JSON.stringify(settings)),
+    configure: settings => window.sessionStorage.setItem(CONFIG, JSON.stringify({ ...config(), ...settings })),
     rows,
     clear: () => window.sessionStorage.removeItem(ROWS),
     exportCSV: () => {

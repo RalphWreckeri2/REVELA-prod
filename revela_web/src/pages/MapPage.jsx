@@ -65,7 +65,10 @@ import { AuthContext } from "../context/authContext";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
-import { beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark, mapReady } from "../services/responsivenessBenchmark";
+import {
+  beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark,
+  markMapBenchmarkUnmount, mapIdle, mapReady, mapTilesLoaded, resumeMapBenchmark,
+} from "../services/responsivenessBenchmark";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import { getBarangayIdForGeoJsonName, normalizeGeoJsonWinding } from "../components/barangayMapMapping";
 import {
@@ -1507,19 +1510,11 @@ function MapCanvas({
         map.setZoom(minZoom);
       }
       clampMapCenterToRestriction(map, restrictionBoundsRef.current);
-      if (benchmarkTrial?.stages.fit) benchmarkTrial.idleAfterFit = true;
-      if (benchmarkTrial?.stages.tiles) {
-        benchmarkStage(benchmarkTrial, "idle");
-        mapReady(benchmarkTrial);
-      }
+      mapIdle(benchmarkTrial);
     });
 
     map.addListener("tilesloaded", () => {
-      if (benchmarkTrial?.stages.fit) {
-        benchmarkStage(benchmarkTrial, "tiles");
-        if (benchmarkTrial.idleAfterFit) benchmarkStage(benchmarkTrial, "idle");
-        mapReady(benchmarkTrial);
-      }
+      mapTilesLoaded(benchmarkTrial);
     });
 
     if (isPickingLocation) {
@@ -2079,7 +2074,9 @@ function MapCanvas({
     if (benchmarkTrial?.stages.data) {
       benchmarkStage(benchmarkTrial, "markers", { createdMarkers: effectMarkerRefs.size });
       if (markers.length) {
-        clusterRef.current.addListener("clusteringend", () => {
+        const benchmarkClusterer = clusterRef.current;
+        benchmarkClusterer.addListener("clusteringend", () => {
+          if (clusterRef.current !== benchmarkClusterer) return;
           benchmarkStage(benchmarkTrial, "clustered");
           mapReady(benchmarkTrial);
         });
@@ -2879,21 +2876,18 @@ export default function MapPage() {
   useEffect(() => {
     if (!benchmarkTrial) return undefined;
     clearTimeout(benchmarkCleanupRef.current);
+    resumeMapBenchmark(benchmarkTrial);
     const timeout = setTimeout(() => finishBenchmark(benchmarkTrial, "incomplete", {
-      request_id: benchmarkTrial.requestId, registry_rows: benchmarkTrial.registryRows,
-      map_rows: benchmarkTrial.stages.data?.mapRows,
-      expected_markers: benchmarkTrial.stages.data?.expectedMarkers,
-      geolocated_rows: benchmarkTrial.stages.data?.geolocatedRows,
-      created_markers: benchmarkTrial.stages.markers?.createdMarkers,
       notes: "map readiness timeout (60s)",
     }), 60000);
     return () => {
       clearTimeout(timeout);
       // React StrictMode replays effect cleanup immediately on mount. Defer
       // cancellation so a real unmount records a row, but a replay does not.
+      markMapBenchmarkUnmount(benchmarkTrial);
       benchmarkCleanupRef.current = setTimeout(() => {
         finishBenchmark(benchmarkTrial, "incomplete", { notes: "left map before readiness" });
-        endMapBenchmark();
+        endMapBenchmark(benchmarkTrial);
       }, 0);
     };
   }, [benchmarkTrial]);
@@ -3280,6 +3274,16 @@ export default function MapPage() {
         },
       });
       if (sequence !== flagsRequestSequence.current) return false;
+      const normalized = rawList.map(normalizeFlag);
+      const exactCount = normalized.filter(row => row.hasExactCoords).length;
+      const markerCount = normalized.filter(row => row.latitude != null && row.longitude != null &&
+        Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude))).length;
+      if (benchmarkTrial && !benchmarkTrial.finished) benchmarkStage(benchmarkTrial, "data", {
+        mapRows: rawList.length,
+        geolocatedRows: exactCount,
+        expectedMarkers: markerCount,
+        pages: benchmarkTrial.pages,
+      });
       if (benchmarkTrial && !benchmarkTrial.finished &&
           benchmarkTrial.expectedRows != null && rawList.length !== benchmarkTrial.expectedRows) {
         finishBenchmark(benchmarkTrial, "incomplete", {
@@ -3288,10 +3292,6 @@ export default function MapPage() {
           notes: `last page received but API total=${benchmarkTrial.expectedRows}`,
         });
       }
-      const normalized = rawList.map(normalizeFlag);
-      const exactCount = normalized.filter(row => row.hasExactCoords).length;
-      const markerCount = normalized.filter(row => row.latitude != null && row.longitude != null &&
-        Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude))).length;
       if (benchmarkTrial && !benchmarkTrial.finished &&
           ((benchmarkTrial.map_rows != null && Number(benchmarkTrial.map_rows) !== rawList.length) ||
             (benchmarkTrial.geolocated_rows != null && Number(benchmarkTrial.geolocated_rows) !== exactCount) ||
@@ -3302,12 +3302,6 @@ export default function MapPage() {
           flags_pages: benchmarkTrial.pages, notes: "dataset changed from configured snapshot",
         });
       }
-      if (benchmarkTrial && !benchmarkTrial.finished) benchmarkStage(benchmarkTrial, "data", {
-        mapRows: rawList.length,
-        geolocatedRows: exactCount,
-        expectedMarkers: markerCount,
-        pages: benchmarkTrial.pages,
-      });
       setFlags(normalized);
 
       // Fetch analytics for border-to-border risk heatmap (current state of the barangay)
