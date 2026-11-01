@@ -3457,10 +3457,10 @@ def preview_sector_policy():
             "categories": categories,
         }
         rows = _load_prescriptive_rows(cur, effective_flag_color, ladder)
-        current_rankings = calculate_rankings(
+        current_rankings, _ = calculate_rankings(
             rows, get_wlc_config(), current_policy
         )
-        candidate_rankings = calculate_rankings(
+        candidate_rankings, _ = calculate_rankings(
             rows, get_wlc_config(), candidate_policy
         )
         old_by_id = {row["barangayID"]: row for row in current_rankings}

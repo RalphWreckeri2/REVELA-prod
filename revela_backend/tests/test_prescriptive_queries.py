@@ -356,6 +356,74 @@ class PrescriptiveQueryTests(unittest.TestCase):
         self.assertEqual(response.get_json()["data"], updated)
         connection.commit.assert_called_once()
 
+    def test_sector_policy_preview_compares_real_rankings_without_saving_policy(self):
+        app = Flask(__name__)
+        proposed_categories = {
+            **DEFAULT_SECTOR_RISK_POLICY["categories"],
+            "Retail": 100,
+        }
+        cursor = self.db.cursor()
+        try:
+            policy_before = routes.load_persisted_sector_risk_policy(cursor)
+        finally:
+            cursor.close()
+
+        with app.test_request_context(
+            "/api/analytics/sector-policy/preview",
+            method="POST",
+            json={"categories": proposed_categories},
+        ), patch.object(routes, "mysql", SimpleNamespace(connection=self.db)), \
+                patch.object(routes, "get_wlc_config", return_value=self.config), \
+                patch.object(routes, "_load_prescriptive_rows", return_value=[
+                    {
+                        "barangayID": 1,
+                        "barangayName": "Barangay I",
+                        "red_count": 2,
+                        "yellow_count": 1,
+                        "sector_category_counts": {"Retail": 3},
+                    },
+                    {
+                        "barangayID": 2,
+                        "barangayName": "Barangay II",
+                        "red_count": 1,
+                        "sector_category_counts": {"Manufacturing": 2},
+                    },
+                ]):
+            response, status = routes.preview_sector_policy.__wrapped__()
+
+        self.assertEqual(status, 200)
+        preview = response.get_json()
+        self.assertEqual(preview["current_version"], policy_before["version"])
+        self.assertEqual(preview["proposed_version"], policy_before["version"] + 1)
+        self.assertTrue(preview["rows"])
+        for row in preview["rows"]:
+            self.assertEqual(
+                set(row),
+                {"barangayID", "barangayName", "old_ops", "old_rank", "new_ops", "new_rank"},
+            )
+        self.assertTrue(any(row["old_ops"] != row["new_ops"] for row in preview["rows"]))
+
+        cursor = self.db.cursor()
+        try:
+            policy_after = routes.load_persisted_sector_risk_policy(cursor)
+        finally:
+            cursor.close()
+        self.assertEqual(policy_after, policy_before)
+
+    def test_sector_policy_preview_returns_empty_rows_when_there_are_no_rankings(self):
+        app = Flask(__name__)
+        with app.test_request_context(
+            "/api/analytics/sector-policy/preview",
+            method="POST",
+            json={"categories": DEFAULT_SECTOR_RISK_POLICY["categories"]},
+        ), patch.object(routes, "mysql", SimpleNamespace(connection=self.db)), \
+                patch.object(routes, "get_wlc_config", return_value=self.config), \
+                patch.object(routes, "_load_prescriptive_rows", return_value=[]):
+            response, status = routes.preview_sector_policy.__wrapped__()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response.get_json()["rows"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
