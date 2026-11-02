@@ -109,40 +109,64 @@ export function endMapBenchmark(trial) {
   if (mapTrial === trial) mapTrial = null;
 }
 
+export function mapViewportChanged(trial) {
+  if (!trial || trial.finished || !trial.stages.fit) return false;
+  trial.viewportVersion = (trial.viewportVersion ?? 0) + 1;
+  trial.readyAttempt = (trial.readyAttempt ?? 0) + 1;
+  trial.readyScheduled = false;
+  delete trial.stages.tiles;
+  delete trial.stages.idle;
+  return true;
+}
+
 export function mapTilesLoaded(trial) {
   if (!trial || trial.finished || !trial.stages.fit) return false;
-  benchmarkStage(trial, "tiles");
+  benchmarkStage(trial, "tiles", { viewportVersion: trial.viewportVersion ?? 0 });
   mapReady(trial);
   return true;
 }
 
 export function mapIdle(trial) {
-  if (!trial || trial.finished || !trial.stages.fit || !trial.stages.tiles) return false;
-  benchmarkStage(trial, "idle");
+  if (!trial || trial.finished || !trial.stages.fit) return false;
+  benchmarkStage(trial, "idle", { viewportVersion: trial.viewportVersion ?? 0 });
   mapReady(trial);
   return true;
 }
 
-// Tiles must have loaded after the municipal fit; idle must follow those tiles.
-// Marker creation and clustering must refer to the complete paginated dataset.
-export function mapReady(trial, painted = () => requestAnimationFrame(() => {
-  benchmarkStage(trial, "ready");
-  finishBenchmark(trial, "completed", {
-    request_id: trial.requestId, http_status: trial.httpStatus,
-    registry_rows: trial.registryRows, map_rows: trial.stages.data?.mapRows,
-    geolocated_rows: trial.stages.data?.geolocatedRows,
-    expected_markers: trial.stages.data?.expectedMarkers,
-    created_markers: trial.stages.markers?.createdMarkers,
-    flags_pages: trial.stages.data?.pages,
-  });
-})) {
-  if (!trial || trial.finished || trial.readyScheduled) return false;
+function readinessGatesPass(trial, viewportVersion) {
+  if (!trial || trial.finished || (trial.viewportVersion ?? 0) !== viewportVersion) return false;
   const { data, markers, clustered, fit, tiles, idle } = trial.stages;
   if (!data || !markers || !clustered || !fit || !tiles || !idle) return false;
-  if (markers.createdMarkers !== data.expectedMarkers || clustered.ms < markers.ms ||
-      tiles.ms < fit.ms || idle.ms < tiles.ms) return false;
+  if (tiles.viewportVersion !== viewportVersion || idle.viewportVersion !== viewportVersion) return false;
+  return markers.createdMarkers === data.expectedMarkers &&
+    clustered.ms >= markers.ms && tiles.ms >= fit.ms;
+}
+
+// Tiles and idle may arrive in either order, but both must belong to the same
+// unchanged viewport and all data/marker/cluster/fit gates are rechecked to paint.
+export function mapReady(trial, requestFrame = callback => requestAnimationFrame(callback)) {
+  if (!trial || trial.finished || trial.readyScheduled) return false;
+  const viewportVersion = trial.viewportVersion ?? 0;
+  if (!readinessGatesPass(trial, viewportVersion)) return false;
+  const attempt = (trial.readyAttempt ?? 0) + 1;
+  trial.readyAttempt = attempt;
   trial.readyScheduled = true;
-  painted();
+  requestFrame(() => {
+    if (trial.finished || trial.readyAttempt !== attempt) return;
+    if (!readinessGatesPass(trial, viewportVersion)) {
+      trial.readyScheduled = false;
+      return;
+    }
+    benchmarkStage(trial, "ready");
+    finishBenchmark(trial, "completed", {
+      request_id: trial.requestId, http_status: trial.httpStatus,
+      registry_rows: trial.registryRows, map_rows: trial.stages.data?.mapRows,
+      geolocated_rows: trial.stages.data?.geolocatedRows,
+      expected_markers: trial.stages.data?.expectedMarkers,
+      created_markers: trial.stages.markers?.createdMarkers,
+      flags_pages: trial.stages.data?.pages,
+    });
+  });
   return true;
 }
 

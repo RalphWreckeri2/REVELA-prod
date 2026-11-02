@@ -67,7 +67,8 @@ import { useTheme } from "../context/themeContext";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import {
   beginBenchmark, benchmarkStage, finishBenchmark, startMapBenchmark, endMapBenchmark,
-  markMapBenchmarkUnmount, mapIdle, mapReady, mapTilesLoaded, resumeMapBenchmark,
+  markMapBenchmarkUnmount, mapIdle, mapReady, mapTilesLoaded, mapViewportChanged,
+  resumeMapBenchmark,
 } from "../services/responsivenessBenchmark";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import { getBarangayIdForGeoJsonName, normalizeGeoJsonWinding } from "../components/barangayMapMapping";
@@ -1425,17 +1426,20 @@ function MapCanvas({
   }, [municipalBounds]);
 
   const clampMapCenterToRestriction = useCallback((map, restriction) => {
-    if (!map || !restriction) return;
+    if (!map || !restriction) return false;
     const center = map.getCenter();
-    if (!center) return;
+    if (!center) return false;
     const southWest = restriction.getSouthWest();
     const northEast = restriction.getNorthEast();
     const lat = Math.min(Math.max(center.lat(), southWest.lat()), northEast.lat());
     const lng = Math.min(Math.max(center.lng(), southWest.lng()), northEast.lng());
     if (Math.abs(lat - center.lat()) > 1e-9 || Math.abs(lng - center.lng()) > 1e-9) {
+      mapViewportChanged(benchmarkTrial);
       map.setCenter({ lat, lng });
+      return true;
     }
-  }, []);
+    return false;
+  }, [benchmarkTrial]);
 
   const applyMunicipalViewLimits = useCallback(({ fit = false } = {}) => {
     const map = mapInstance || internalMapRef.current;
@@ -1478,12 +1482,13 @@ function MapCanvas({
 
     const currentZoom = map.getZoom();
     if (currentZoom == null || currentZoom < minZoom) {
+      mapViewportChanged(benchmarkTrial);
       map.setZoom(minZoom);
     }
     clampMapCenterToRestriction(map, municipalMapBounds.restriction);
 
     return true;
-  }, [clampMapCenterToRestriction, getMunicipalMapBounds, mapInstance, municipalBounds]);
+  }, [clampMapCenterToRestriction, getMunicipalMapBounds, mapInstance, municipalBounds, benchmarkTrial]);
 
   const handleMapLoad = useCallback((map) => {
     internalMapRef.current = map;
@@ -1496,8 +1501,12 @@ function MapCanvas({
     if (mapRef) mapRef.current = map;
 
     map.addListener("zoom_changed", () => {
+      mapViewportChanged(benchmarkTrial);
       const z = map.getZoom();
       if (z != null) setCurrentZoom(z);
+    });
+    map.addListener("bounds_changed", () => {
+      mapViewportChanged(benchmarkTrial);
     });
 
     // Safety net for programmatic moves (fitBounds / flyTo / setCenter) as
@@ -1506,11 +1515,14 @@ function MapCanvas({
     map.addListener("idle", () => {
       const minZoom = minZoomRef.current;
       const activeZoom = map.getZoom();
+      let adjustedViewport = false;
       if (minZoom != null && activeZoom != null && activeZoom < minZoom) {
+        mapViewportChanged(benchmarkTrial);
         map.setZoom(minZoom);
+        adjustedViewport = true;
       }
-      clampMapCenterToRestriction(map, restrictionBoundsRef.current);
-      mapIdle(benchmarkTrial);
+      adjustedViewport = clampMapCenterToRestriction(map, restrictionBoundsRef.current) || adjustedViewport;
+      if (!adjustedViewport) mapIdle(benchmarkTrial);
     });
 
     map.addListener("tilesloaded", () => {
