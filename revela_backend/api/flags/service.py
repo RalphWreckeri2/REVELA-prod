@@ -465,7 +465,7 @@ def _places_usage_count(cur, kind, today=False):
     return int((row.get("c") if isinstance(row, dict) else row[0]) or 0) if row else 0
 
 
-#: Detection-run statuses that mark a scan cycle as finished.
+#: Detection-run statuses that mark a fully covered scan cycle as finished.
 #:
 #: `_completed_points_this_cycle` uses these as a watermark: only when a run
 #: reaches one of them is the previous cycle's checkpoint list considered
@@ -473,10 +473,11 @@ def _places_usage_count(cur, kind, today=False):
 #: is deliberately NOT in this list, so its completed grid points stay
 #: checkpointed and the next scan resumes from where it stopped rather than
 #: starting the grid over.
+#: `completed_with_gaps` is a legacy status and is not a full-coverage reset.
 #:
 #: This matters more than it looks: the Legacy Nearby rate limiter makes runs
 #: stop on the work budget more often, so more runs end "partial".
-RESUME_RESET_STATUSES = ("completed", "completed_with_gaps", "reset")
+RESUME_RESET_STATUSES = ("completed", "reset")
 
 
 def _completed_points_this_cycle():
@@ -2275,6 +2276,15 @@ def _grid_scan_has_terminal_gaps(state):
     )
 
 
+def _grid_scan_is_complete(state):
+    completed_points = state["skipped_points"] + len(state["done_keys"])
+    return (
+        state["total_points"] > 0
+        and completed_points >= state["total_points"]
+        and state["incomplete_points"] == 0
+    )
+
+
 # ── Registry loader ───────────────────────────────────────────────────────────
 
 def _load_registry():
@@ -2977,7 +2987,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
         total_checked = counters["total_checked"]
         done_total = state["skipped_points"] + len(state["done_keys"])
         terminal_gaps = _grid_scan_has_terminal_gaps(state)
-        scan_terminal = done_total >= state["total_points"] or terminal_gaps
+        scan_complete = _grid_scan_is_complete(state)
         elapsed = _detection_elapsed_metrics(request_started_at)
         places_usage = _log_detection_summary(
             run_id, state, counters, elapsed=elapsed
@@ -2988,22 +2998,7 @@ def _run_detection_cycle(user_id=None, mode="quick"):
             f"outside_boundary_results={state['outside']}"
         )
 
-        if terminal_gaps:
-            update_detection_run_status(
-                run_id, "completed_with_gaps",
-                new_flags=new_flags, total_checked=total_checked,
-                **_detection_stop_metadata("completed"))
-            msg = (
-                f"Scan reached all {state['total_points']} grid points, but "
-                f"{state['incomplete_points']} dense cells remained saturated. "
-                f"{new_flags} new flags were recorded; this attempt counts toward "
-                "the monthly scan limit."
-            )
-            hub.publish_to_admins({
-                "type": "detection_progress", "stage": "completed",
-                "percentage": 100, "status": msg
-            })
-        elif not scan_terminal:
+        if not scan_complete:
             work_budget_reason = getattr(
                 _places_run_state, "work_budget_reason", None
             )
@@ -3014,6 +3009,8 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 and work_budget_reason == "request_limit"
             ):
                 stop_reason = "request_limit"
+            elif terminal_gaps:
+                stop_reason = "incomplete_points"
             else:
                 stop_reason = "work_budget"
             update_detection_run_status(
@@ -3049,11 +3046,9 @@ def _run_detection_cycle(user_id=None, mode="quick"):
                 "type": "detection_progress", "stage": "completed", "percentage": 100,
                 "status": f"Scan complete! Discovered {new_flags} new unregistered business{'' if new_flags == 1 else 'es'}."
             })
-
         return {
             "status": (
-                "completed_with_gaps" if terminal_gaps else
-                "partial" if not scan_terminal else "completed"
+                "completed" if scan_complete else "partial"
             ),
             "new_flags":        new_flags,
             "total_checked":    total_checked,

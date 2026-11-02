@@ -1202,8 +1202,24 @@ class RunDetectionGridTests(unittest.TestCase):
         }
 
         self.assertTrue(service._grid_scan_has_terminal_gaps(state))
+        self.assertFalse(service._grid_scan_is_complete(state))
         state["work_budget_stop"] = True
         self.assertFalse(service._grid_scan_has_terminal_gaps(state))
+
+    def test_grid_is_complete_only_when_every_point_is_covered(self):
+        state = {
+            "total_points": 3,
+            "skipped_points": 1,
+            "done_keys": ["second", "third"],
+            "incomplete_points": 0,
+        }
+
+        self.assertTrue(service._grid_scan_is_complete(state))
+        state["incomplete_points"] = 1
+        self.assertFalse(service._grid_scan_is_complete(state))
+        state["total_points"] = 0
+        state["incomplete_points"] = 0
+        self.assertFalse(service._grid_scan_is_complete(state))
 
     def test_elapsed_metrics_separate_end_to_end_from_scan_slice(self):
         service._places_run_state.started_at = service.time.monotonic() - 5

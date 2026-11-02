@@ -69,7 +69,7 @@ def get_monthly_detection_count(now=None):
     cur = mysql.connection.cursor()
     cur.execute("""
         SELECT COUNT(*) AS cnt FROM detection_runs
-        WHERE status IN ('completed', 'completed_with_gaps')
+        WHERE status = 'completed'
           AND startedAt >= %s
           AND startedAt < %s
     """, (month_start_utc, next_month_start_utc))
@@ -199,7 +199,7 @@ def get_latest_detection_run():
                r.status, r.newFlags, r.totalChecked, u.fullName as triggeredByName
         FROM detection_runs r
         LEFT JOIN users u ON r.triggeredByUserID = u.userID
-        WHERE r.status IN ('completed', 'completed_with_gaps')
+        WHERE r.status = 'completed'
         ORDER BY r.completedAt DESC, r.runID DESC
         LIMIT 1
     """)

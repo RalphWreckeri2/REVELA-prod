@@ -312,9 +312,10 @@ class ContinuationTests(unittest.TestCase):
         redo the whole grid.
         """
         self.assertNotIn("partial", service.RESUME_RESET_STATUSES)
+        self.assertNotIn("completed_with_gaps", service.RESUME_RESET_STATUSES)
         self.assertEqual(
             set(service.RESUME_RESET_STATUSES),
-            {"completed", "completed_with_gaps", "reset"},
+            {"completed", "reset"},
         )
 
     def test_resume_watermark_query_uses_the_shared_status_list(self):

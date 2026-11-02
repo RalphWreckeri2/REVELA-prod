@@ -44,6 +44,8 @@ class DetectionMonthlyQuotaTests(unittest.TestCase):
         query, params = cursor.execute.call_args.args
         self.assertIn("startedAt >= %s", query)
         self.assertIn("startedAt < %s", query)
+        self.assertIn("status = 'completed'", query)
+        self.assertNotIn("completed_with_gaps", query)
         self.assertNotIn("CURRENT_DATE()", query)
         self.assertEqual(
             params,
@@ -52,6 +54,23 @@ class DetectionMonthlyQuotaTests(unittest.TestCase):
                 datetime.datetime(2026, 11, 30, 16, 0),
             ),
         )
+        cursor.close.assert_called_once()
+
+    def test_latest_detection_run_excludes_incomplete_legacy_status(self):
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+
+        with (
+            patch.object(detection_runs, "ensure_detection_runs_table"),
+            patch.object(detection_runs, "mysql") as mock_mysql,
+        ):
+            mock_mysql.connection = connection
+            detection_runs.get_latest_detection_run()
+
+        query = cursor.execute.call_args.args[0]
+        self.assertIn("WHERE r.status = 'completed'", query)
+        self.assertNotIn("completed_with_gaps", query)
         cursor.close.assert_called_once()
 
 

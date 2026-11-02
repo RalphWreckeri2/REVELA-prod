@@ -148,7 +148,7 @@ many interrupted resumes are not a fundable single-run guarantee.
    that headroom. For New, Full needs **14 more base requests**, or **1,880 more than
    retry-inclusive Quick's 96** at its 1,976 maximum. New is currently disabled; no
    approval or live monetary budget was available to enable/fund it. Terminal result
-   saturation is explicitly `completed_with_gaps`, not proof of exhaustive coverage.
+   saturation is reported as `partial`, not proof of exhaustive coverage.
 5. **Why 9 points versus 5 requests:** the old `attempted_points` added previously
    checkpointed/skipped cells to this attempt's cells. **4 saved + 5 newly requested
    = 9** is reproduced in a mock test. Fixture replays are another way points can
@@ -191,11 +191,10 @@ Cloud figures below are the repository's recorded figures, not a live Cloud audi
 - Compatible old checkpoints are adopted, including saved Quick centers displaced
   by the previous rotation. Request-budget-only Test Mode changes preserve geographic
   checkpoint identity.
-- Complete cells are skipped. A fully bounded saturated cell is saved as a **gap**
-  checkpoint and advances the next slice, with final `completed_with_gaps` reporting.
-  A time/request-interrupted or API-failed cell stays retryable. A final cell cut off
-  during pagination cannot be mistaken for completed coverage or charged as a
-  completed monthly scan.
+- Complete cells are skipped. Saturated/incomplete cells remain retryable and are
+  not checkpointed as covered. Even when every cell was attempted, any incomplete
+  cell leaves the run `partial`; only full grid coverage is `completed`. Partial
+  runs do not consume a completed monthly scan.
 - A fresh preflight is checked before confirmation and checked again by the backend
   before starting. Quick admission funds the entire remaining sampling scope,
   including applicable retries. Full admission shows both its minimum and bounded

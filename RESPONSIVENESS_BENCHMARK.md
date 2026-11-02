@@ -1,4 +1,3 @@
--- Active: 1769740580880@@127.0.0.1@3306@mysql
 # Responsiveness benchmarks (manual, opt-in)
 
 Nothing in this guide deploys or starts a scan, submits an inspection, resets a quota, or changes a database automatically. Use an **approved staging environment** for any full-detection or inspection trial. Never use a production account for write trials. Benchmark switches are **off by default**.
@@ -25,6 +24,17 @@ The latest reported trial snapshot is **605** official-registry records, **902**
 3. For a full scan **only when approved on staging**, manually select one mode, click Run Detection, confirm, and wait for the response. Repeat at most ten authorized comparable runs. Do not treat SSE completion or the map-refresh dialog as the request's completion point. Capture `status`, work-budget fields and quota alongside the emitted CSV row; any absence is reported, not discarded.
 4. For map, open `/map` ten times per cache/navigation variant, letting each trial complete or time out before leaving. Do not toggle off layers during a trial. Confirm the CSV `map_rows` matches the API `total` and `created_markers===expected_markers`. Record actual browser/Google Maps script/tile cache behavior using DevTools Network and the chosen cache label; do not label a warm run cold solely because the page reloaded.
 5. `revelaBenchmark.rows()` previews rows, `revelaBenchmark.exportCSV()` downloads **one row per attempted trial**, including errors/incomplete outcomes. Export before closing the tab. `revelaBenchmark.clear()` starts a new series; `revelaBenchmark.disable()` disables further recording. Server logs `[req] id=... dur_ms=...` can be joined using the recorded `X-Request-ID`; server time is not client elapsed time. Do not subtract unsynchronized server/client wall-clock timestamps.
+
+## Reporting and evidence
+
+Keep the original browser and mobile CSV exports with the report as an appendix or
+supporting files. Cite those filenames (and the dataset snapshot and trial range)
+where the reported means, medians, ranges, and standard deviations appear. Calculate
+summary statistics from the successful comparable trials only, while retaining and
+disclosing incomplete or failed attempts separately; never discard those attempts
+from the benchmark record. When relating benchmark results to an external panel
+rating, describe them as **consistent with** that rating rather than as proof of the
+rating. This repository contains the collection procedure, not the raw trial CSVs.
 
 ## Mobile CSV (online submission only)
 

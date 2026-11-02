@@ -480,7 +480,11 @@ class DetectionBudgetRollbackTests(unittest.TestCase):
         self.assertEqual(self.reserve.call_count, 5)
         self.post.assert_not_called()
         self.create.assert_called_once()
-        self.update.assert_called_once_with(1, "partial", new_flags=0, total_checked=0)
+        self.update.assert_called_once_with(
+            1, "partial", new_flags=0, total_checked=0,
+            stop_reason="request_limit", requests_used=5,
+            max_requests=5, max_seconds=90,
+        )
         self.assertTrue(original_keys.issubset(self.database.checkpoints))
         self.assertEqual(len(self.database.checkpoints), 9)
 
@@ -512,7 +516,11 @@ class DetectionBudgetRollbackTests(unittest.TestCase):
                 self.assertEqual(self.reserve.call_count, 3)
                 self.assertEqual(result["run_summary"]["api_requests_consumed"], 2)
                 self.assertEqual(len(self.database.checkpoints), 2)
-                self.update.assert_called_once_with(1, "partial", new_flags=0, total_checked=0)
+                self.update.assert_called_once_with(
+                    1, "partial", new_flags=0, total_checked=0,
+                    stop_reason="places_quota", requests_used=2,
+                    max_requests=5, max_seconds=90,
+                )
                 self.assertEqual(
                     self.reserve.call_args.args[1:],
                     ("month", "day", self.caps["quota.legacy_nearby.monthly"], self.caps["quota.legacy_nearby.daily"]),
