@@ -7,9 +7,11 @@ dispatch exports use the same scoring implementation in `api/analytics/scoring.p
 ## Inputs and formula
 
 - Only eligible geospatial Red/Yellow/Black records enter the inspection workload.
-  Eligibility preserves the existing mapped/reported/inspected-pin predicate.
-  Counts are distinct `logID`s, **not unique establishments**; separate records can
-  refer to the same establishment. Green, Orange and Purple do not enter WLC.
+  Registry-origin pins (`registry` and `registry_detected`) are eligible so that
+  linked businesses whose permit later expires can enter the workload as Red.
+  Other pins retain the mapped/reported/inspected-pin predicate. Counts are
+  distinct `logID`s, **not unique establishments**; separate records can refer to
+  the same establishment. Green, Orange and Purple do not enter WLC.
 - `burden = 3*Red + 2*Yellow + 4*Black`.
 - `risk = 100*burden / maximum municipal burden`; zero when the maximum is zero.
   Normalizing by weighted burden fixes premature saturation at 100.

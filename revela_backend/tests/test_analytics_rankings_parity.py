@@ -131,6 +131,32 @@ class RankingsParityTests(unittest.TestCase):
         orig, _ = self._parity({}, True)
         self.assertEqual({r["barangayID"] for r in orig}, {1, 2, 3, 4, 5})
 
+    def test_expired_registry_pin_enters_workload_without_other_evidence(self):
+        db = RegistryDB(ladder=True)
+        self.addCleanup(db.close)
+        _seed(db, True)
+        db.db.execute(
+            "UPDATE geospatial_logs SET placeID = NULL, source = 'registry' "
+            "WHERE logID = 1"
+        )
+        db.db.execute(
+            "DELETE FROM inspection_reports WHERE targetID = 1"
+        )
+        db.db.execute(
+            "UPDATE official_registry SET applicationStatus = 'Expired' "
+            "WHERE businessID = 'B-1'"
+        )
+        db.commit()
+
+        F = parse_analytics_filters({})
+        F["registration_type_supported"] = True
+        sql, params = _build(routes._barangay_rankings_sql, F, True)
+        rows = self._run(db, sql, params)
+        barangay_one = next(row for row in rows if row["barangayID"] == 1)
+
+        self.assertEqual(barangay_one["red_count"], 1)
+        self.assertEqual(barangay_one["dispatchable_red_count"], 1)
+
     def test_no_filters_ladder_false(self):
         self._parity({}, False)
 

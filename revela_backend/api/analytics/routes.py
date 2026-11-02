@@ -1544,7 +1544,8 @@ def _rankings_split_enabled():
 # The actionable-pin predicate, shared by the original ON clause and the split
 # subquery so the two forms cannot drift.
 _PIN_ACTIONABLE_SQL = (
-    "(g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL "
+    "(g.source IN ('registry', 'registry_detected') "
+    "OR g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL "
     "OR g.flagColor = 'Orange' "
     "OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))"
 )
