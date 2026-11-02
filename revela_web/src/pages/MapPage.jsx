@@ -3244,11 +3244,23 @@ export default function MapPage() {
 
   const flagsRequestSequence = useRef(0);
   const flagsRequestController = useRef(null);
-  useEffect(() => () => flagsRequestController.current?.abort(), []);
+  const benchmarkFlagsFlightRef = useRef(null);
+  useEffect(() => () => {
+    flagsRequestSequence.current++;
+    benchmarkFlagsFlightRef.current = null;
+    flagsRequestController.current?.abort();
+    flagsRequestController.current = null;
+  }, []);
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
-  const fetchFlags = useCallback(async (isSilent = false) => {
-    if (!token) return;
+  const fetchFlags = useCallback((isSilent = false, benchmarkRequest = null) => {
+    if (!token) return Promise.resolve(false);
+    const benchmarkFlight = benchmarkFlagsFlightRef.current;
+    if (benchmarkFlight && !benchmarkFlight.trial.finished &&
+        (!benchmarkRequest || benchmarkFlight.trial === benchmarkRequest)) {
+      return benchmarkFlight.promise;
+    }
+
     const sequence = ++flagsRequestSequence.current;
     flagsRequestController.current?.abort();
     const controller = new AbortController();
@@ -3257,7 +3269,9 @@ export default function MapPage() {
       setLoadingFlags(!hasFlags);
     }
     setFlagsError("");
-    try {
+    let request;
+    request = (async () => {
+      try {
       const rawList = await getAllFlagsRequest(token, {
         signal: controller.signal,
         onResponse: res => {
@@ -3340,7 +3354,13 @@ export default function MapPage() {
     } finally {
       if (flagsRequestController.current === controller) flagsRequestController.current = null;
       if (sequence === flagsRequestSequence.current) setLoadingFlags(false);
+      if (benchmarkFlagsFlightRef.current?.promise === request) {
+        benchmarkFlagsFlightRef.current = null;
+      }
     }
+    })();
+    if (benchmarkRequest) benchmarkFlagsFlightRef.current = { trial: benchmarkRequest, promise: request };
+    return request;
   }, [token, benchmarkTrial, hasFlags, setFlags, setOpsRankings, setBarangayRiskLevels]);
 
   // Count Red Flags per barangay from the already-loaded flags array.
@@ -3474,10 +3494,14 @@ export default function MapPage() {
       return true;
     } catch { return false; }
   }, [token, setInspectors]);
-  useAppDataRefresh("map", reason => refreshResults([
-    fetchFlags(reason === "scheduled"), loadMapBarangays(), loadMapInspectors(),
+  const refreshMap = useAppDataRefresh("map", reason => refreshResults([
+    fetchFlags(reason === "scheduled", reason === "benchmark" ? benchmarkTrial : null),
+    loadMapBarangays(), loadMapInspectors(),
     ...(isAdmin ? [fetchDetectionQuota(), fetchPlacesUsage()] : []),
   ]));
+  useEffect(() => {
+    if (benchmarkTrial) void refreshMap("benchmark");
+  }, [benchmarkTrial, refreshMap]);
 
   useEffect(() => {
     const handleProgress = (event) => {

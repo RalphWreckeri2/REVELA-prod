@@ -84,26 +84,26 @@ test('incomplete map results retain configured and measured metadata', () => {
   globalThis.window = { sessionStorage };
   window.sessionStorage.setItem('revela:benchmark:enabled', '1');
   window.sessionStorage.setItem('revela:benchmark:config', JSON.stringify({
-    registry_rows: 605, map_rows: 902, geolocated_rows: 549, expected_markers: 549,
+    registry_rows: 5, map_rows: 10, geolocated_rows: 4, expected_markers: 4,
   }));
   const trial = beginBenchmark('map');
   trial.requestId = 'page-request';
   trial.httpStatus = 206;
   trial.pages = 1;
   benchmarkStage(trial, 'data', {
-    mapRows: 902, geolocatedRows: 549, expectedMarkers: 549, pages: 1,
+    mapRows: 10, geolocatedRows: 4, expectedMarkers: 4, pages: 1,
   });
-  benchmarkStage(trial, 'markers', { createdMarkers: 548 });
+  benchmarkStage(trial, 'markers', { createdMarkers: 3 });
   const row = finishBenchmark(trial, 'incomplete', {
     request_id: undefined, notes: 'readiness timeout',
   });
   assert.equal(row.request_id, 'page-request');
   assert.equal(row.http_status, 206);
-  assert.equal(row.registry_rows, 605);
-  assert.equal(row.map_rows, 902);
-  assert.equal(row.geolocated_rows, 549);
-  assert.equal(row.expected_markers, 549);
-  assert.equal(row.created_markers, 548);
+  assert.equal(row.registry_rows, 5);
+  assert.equal(row.map_rows, 10);
+  assert.equal(row.geolocated_rows, 4);
+  assert.equal(row.expected_markers, 4);
+  assert.equal(row.created_markers, 3);
   assert.equal(row.flags_pages, 1);
   assert.ok(Number.isFinite(row.data_ms));
   assert.ok(Number.isFinite(row.markers_ms));
@@ -115,7 +115,7 @@ test('failed map requests retain response and pagination metadata', () => {
   globalThis.window = { sessionStorage };
   window.sessionStorage.setItem('revela:benchmark:enabled', '1');
   window.sessionStorage.setItem('revela:benchmark:config', JSON.stringify({
-    registry_rows: 605, map_rows: 902, geolocated_rows: 549, expected_markers: 549,
+    registry_rows: 5, map_rows: 10, geolocated_rows: 4, expected_markers: 4,
   }));
   const trial = beginBenchmark('map');
   trial.requestId = 'failed-page';
@@ -124,8 +124,8 @@ test('failed map requests retain response and pagination metadata', () => {
   const row = finishBenchmark(trial, 'failed', { notes: 'flags request failed' });
   assert.equal(row.request_id, 'failed-page');
   assert.equal(row.http_status, 503);
-  assert.equal(row.registry_rows, 605);
-  assert.equal(row.map_rows, 902);
+  assert.equal(row.registry_rows, 5);
+  assert.equal(row.map_rows, 10);
   assert.equal(row.flags_pages, 2);
   delete globalThis.window;
 });
@@ -176,7 +176,7 @@ test('cached marker stages cannot satisfy readiness before fresh paginated data 
   window.sessionStorage.setItem('revela:benchmark:enabled', '1');
   const trial = beginBenchmark('map');
   trial.stages = {
-    markers: { ms: 1, createdMarkers: 549 },
+    markers: { ms: 1, createdMarkers: 4 },
     clustered: { ms: 2 },
     fit: { ms: 3 },
     tiles: { ms: 4 },

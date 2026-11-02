@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createAppRefreshCoordinator, REFRESH_MODES, refreshPreferenceKey } from "./appRefreshCoordinator.js";
+import { runAppDataRefresh } from "../components/useAppDataRefresh.js";
 
+const mapPageSource = readFileSync(new URL("../pages/MapPage.jsx", import.meta.url), "utf8");
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
 function fixture(saved) {
   let time = 1_000_000;
@@ -195,6 +198,57 @@ test("a fresh cached route paints without a remount GET or a new deadline; a due
   assert.deepEqual(f.coordinator.readData(key, "list").data, ["new"]);
   assert.equal(f.coordinator.snapshot().lastSuccess, f.now());
   remove(); f.coordinator.dispose();
+});
+
+test("revisiting cached map starts and awaits one full benchmark flags refresh", async () => {
+  assert.ok(mapPageSource.includes('fetchFlags(reason === "scheduled", reason === "benchmark" ? benchmarkTrial : null)'));
+  assert.ok(mapPageSource.includes('if (benchmarkTrial) void refreshMap("benchmark")'));
+  assert.ok(mapPageSource.includes("flagsRequestSequence.current++"));
+  assert.ok(mapPageSource.includes("benchmarkFlagsFlightRef.current = null"));
+  assert.ok(mapPageSource.includes("flagsRequestController.current?.abort()"));
+
+  const f = fixture();
+  const key = "map";
+  let releaseSecondPage;
+  const secondPage = new Promise(resolve => { releaseSecondPage = resolve; });
+  const pageRequests = [];
+  let benchmarkFetches = 0;
+  const refresh = async reason => {
+    if (reason !== "benchmark") {
+      f.coordinator.writeData(key, "flags", ["cached flags"]);
+      return { ok: true };
+    }
+
+    benchmarkFetches++;
+    const records = [];
+    pageRequests.push("page=1&limit=1000");
+    records.push("fresh page one");
+    pageRequests.push("page=2&limit=1000");
+    records.push(...await secondPage);
+    f.coordinator.writeData(key, "flags", records);
+    return { ok: true };
+  };
+
+  let remove = f.coordinator.register(key, refresh);
+  await flush();
+  assert.deepEqual(f.coordinator.readData(key, "flags"), ["cached flags"]);
+  remove();
+
+  remove = f.coordinator.register(key, refresh);
+  await flush();
+  assert.equal(benchmarkFetches, 0, "fresh cached route does not refresh automatically");
+
+  const firstRun = runAppDataRefresh(f.coordinator, key, "benchmark");
+  const joinedRun = runAppDataRefresh(f.coordinator, key, "benchmark");
+  assert.equal(benchmarkFetches, 1);
+  assert.deepEqual(pageRequests, ["page=1&limit=1000", "page=2&limit=1000"]);
+  assert.deepEqual(f.coordinator.readData(key, "flags"), ["cached flags"], "cached rows remain until every page arrives");
+
+  releaseSecondPage(["fresh page two"]);
+  assert.deepEqual(await Promise.all([firstRun, joinedRun]), [{ ok: true }, { ok: true }]);
+  assert.deepEqual(f.coordinator.readData(key, "flags"), ["fresh page one", "fresh page two"]);
+  remove();
+  f.coordinator.dispose();
 });
 
 test("query identity, passive events, local invalidation and late responses respect session cache", async () => {

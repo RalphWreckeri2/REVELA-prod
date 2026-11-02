@@ -12,6 +12,10 @@ export function useRefreshSnapshot() {
   return useSyncExternalStore(subscribe, getSnapshot);
 }
 
+export function runAppDataRefresh(coordinator, key, reason = "manual") {
+  return coordinator?.run(reason, key);
+}
+
 export function useAppDataRefresh(key, operation) {
   const coordinator = useRefreshCoordinator();
   const latest = useRef(operation);
@@ -20,7 +24,9 @@ export function useAppDataRefresh(key, operation) {
     if (!coordinator || !key) return undefined;
     return coordinator.register(key, reason => latest.current(reason));
   }, [coordinator, key]);
-  return useCallback(() => coordinator?.run("manual", key), [coordinator, key]);
+  return useCallback(reason => runAppDataRefresh(
+    coordinator, key, typeof reason === "string" ? reason : "manual",
+  ), [coordinator, key]);
 }
 
 /** In-memory, account-scoped dataset. Undefined means it has never loaded; [] is usable data. */
