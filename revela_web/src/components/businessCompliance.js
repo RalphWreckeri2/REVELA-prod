@@ -92,13 +92,15 @@ export function matchesMapFilters(record, {
     || (source === "detection" && origin === "detection" && !isRegistryLinked(record))
     || (source === "manual" && origin === "manual")
     || (source === "unclassified" && !["manual", "detection", "registry", "registry_detected"].includes(origin));
-  const q = search.trim().toLowerCase();
-  const referenceQuery = q.startsWith("#") ? q.slice(1).trim() : q;
-  const searchMatches = !q || [record.name, record.detectedName, record.barangay,
-    record.barangayName, record.address, record.notes, record.businessType]
-    .some(value => String(value ?? "").toLowerCase().includes(q))
-    || [record.id, record.logID].some(value => value != null
-      && String(value).toLowerCase().includes(referenceQuery));
+  const q = search.trim().toLowerCase().replace(/^#\s*/, "");
+  const searchTerms = q.split(/\s+/).filter(Boolean);
+  const searchableValues = [
+    record.name, record.detectedName, record.barangay, record.barangayName,
+    record.address, record.notes, record.businessType, record.businessID,
+    record.id, record.logID, record.pinReference, record.detectionReference,
+  ].filter(value => value != null).map(value => String(value).toLowerCase());
+  const searchMatches = searchTerms.length === 0 || searchTerms.every(term =>
+    searchableValues.some(value => value.includes(term)));
   return statusMatches && sourceMatches && searchMatches
     && (barangayID === "all" || String(record.barangayID) === String(barangayID))
     && matchesRegistryLink(record, registryLink);

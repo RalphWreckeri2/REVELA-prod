@@ -2131,8 +2131,9 @@ html.theme-dark .api-usage-modal {
   flex-direction: column;
   width: min(1180px, 96vw) !important;
   max-width: 96vw !important;
-  height: min(740px, 92vh);
-  max-height: 92vh !important;
+  height: min(740px, calc(100dvh - 24px));
+  max-height: calc(100dvh - 24px) !important;
+  box-sizing: border-box;
   padding: 28px 30px 22px !important;
   border-radius: 22px !important;
   text-align: left !important;
@@ -2264,6 +2265,18 @@ html.theme-dark .api-usage-modal {
   overflow: auto;
   border: 1px solid var(--color-border, #e2e8f0);
   border-radius: 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.45) transparent;
+}
+
+.workflow-summary-table-scroll::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.workflow-summary-table-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(100, 116, 139, 0.4);
 }
 
 .workflow-summary-table {
@@ -2387,20 +2400,29 @@ html.theme-dark .api-usage-modal {
 
 .workflow-summary-pagination {
   display: flex;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  padding: 12px 2px 0;
+  min-width: 0;
   font-size: 13px;
 }
 
 .workflow-summary-pagination > div {
   display: flex;
+  margin-left: auto;
   gap: 8px;
 }
 
-.workflow-summary-pagination button {
+.workflow-summary-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 2px 0;
+}
+
+.workflow-summary-footer button {
   min-height: 42px;
   padding: 7px 15px;
   border: 1px solid var(--color-border, #cbd5e1);
@@ -2413,6 +2435,19 @@ html.theme-dark .api-usage-modal {
 .workflow-summary-pagination button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.workflow-summary-footer .workflow-summary-close {
+  flex: 0 0 auto;
+  min-width: 92px;
+  border-color: #27831b;
+  background: #27831b;
+  color: #fff;
+  font-weight: 700;
+}
+
+.workflow-summary-footer .workflow-summary-close:hover {
+  background: #216d18;
 }
 
 .workflow-summary-empty {
@@ -2433,10 +2468,93 @@ html.theme-dark .api-usage-modal {
   overflow-wrap: anywhere;
 }
 
+html.theme-dark .workflow-summary-count {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #171d1b;
+  color: #d1d9d4;
+}
+
+html.theme-dark .workflow-summary-count--success {
+  border-color: rgba(74, 222, 128, 0.16);
+  background: #14251a;
+  color: #9de3a7;
+}
+
+html.theme-dark .workflow-summary-count--warning {
+  border-color: rgba(251, 191, 36, 0.16);
+  background: #292115;
+  color: #f2cf7d;
+}
+
+html.theme-dark .workflow-summary-table-scroll {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: #0d0f0e;
+}
+
+html.theme-dark .workflow-summary-table th {
+  background: #171d1b;
+  color: #b7c2bb;
+}
+
+html.theme-dark .workflow-summary-table td {
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e4e9e5;
+}
+
+html.theme-dark .workflow-summary-business-id,
+html.theme-dark .workflow-summary-explanation,
+html.theme-dark .workflow-summary-pagination {
+  color: #a7b3ab;
+}
+
+html.theme-dark .workflow-summary-outcome {
+  background: #202824;
+  color: #cbd6ce;
+}
+
+html.theme-dark .workflow-summary-outcome--no_match,
+html.theme-dark .workflow-summary-outcome--review {
+  background: #352a16;
+  color: #f2cf7d;
+}
+
+html.theme-dark .workflow-summary-outcome--snapped,
+html.theme-dark .workflow-summary-outcome--reconciled,
+html.theme-dark .workflow-summary-outcome--reverified {
+  background: #18301e;
+  color: #9de3a7;
+}
+
+html.theme-dark .workflow-summary-details-toggle,
+html.theme-dark .workflow-summary-footer button:not(.workflow-summary-close) {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: #171d1b;
+  color: #e4e9e5;
+}
+
+html.theme-dark .workflow-summary-details-toggle:hover,
+html.theme-dark .workflow-summary-footer button:not(.workflow-summary-close):hover:not(:disabled) {
+  background: #222b26;
+}
+
+html.theme-dark .workflow-summary-details-row td,
+html.theme-dark .workflow-summary-detail-grid,
+html.theme-dark .workflow-summary-detail-empty,
+html.theme-dark .workflow-summary-empty {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: #141917;
+  color: #bdc8c0;
+}
+
+html.theme-dark .workflow-summary-detail-grid > strong:nth-child(3n + 3) {
+  color: #e4e9e5;
+}
+
 @media (max-width: 640px) {
   .workflow-summary-popup {
     width: 96vw !important;
-    height: min(88vh, 740px);
+    height: min(740px, calc(100dvh - 24px));
+    max-height: calc(100dvh - 24px) !important;
     padding: 20px 14px 14px !important;
   }
 
@@ -2466,9 +2584,21 @@ html.theme-dark .api-usage-modal {
     margin-bottom: 12px;
   }
 
+  .workflow-summary-footer {
+    gap: 8px;
+  }
+
   .workflow-summary-pagination {
-    align-items: center;
-    flex-direction: row;
+    gap: 6px;
+  }
+
+  .workflow-summary-pagination > div {
+    gap: 4px;
+  }
+
+  .workflow-summary-footer button {
+    min-height: 38px;
+    padding: 6px 9px;
   }
 
   .workflow-summary-detail-grid {

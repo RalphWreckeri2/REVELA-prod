@@ -83,6 +83,19 @@ test("status, source, registry link, search and barangay use AND logic", () => {
   assert.equal(matchesMapFilters(verified(), { search: "Barangay I" }), true);
 });
 
+test("map search matches each word and searches Official Business IDs", () => {
+  const record = verified({
+    name: "Vergara's Apartment",
+    businessID: "BPLO-2026-0042",
+    id: 17,
+  });
+
+  assert.equal(matchesMapFilters(record, { search: "vergara apar" }), true);
+  assert.equal(matchesMapFilters(record, { search: "BPLO-2026" }), true);
+  assert.equal(matchesMapFilters(record, { search: "#17" }), true);
+  assert.equal(matchesMapFilters(record, { search: "vergara missing" }), false);
+});
+
 test("Currently Being Inspected is a workflow predicate across colours", () => {
   for (const color of ["Green", "Orange", "Red", "Purple"]) {
     assert.equal(matchesMapFilters(verified({ color, verificationStatus: "Submitted" }), { status: "in_inspection" }), true);

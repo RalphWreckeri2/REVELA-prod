@@ -1239,6 +1239,7 @@ function MapCanvas({
   barangayRiskLevels,
   opsRankings,
   selectedFlagId,
+  hasActiveFilters,
   hotspotGroupActive,
   hotspotGroupKey,
   hotspotGroupMemberIds,
@@ -2241,7 +2242,7 @@ function MapCanvas({
         </div>
       )}
 
-      {/* Helpful banner when 0 flags exist */}
+      {/* Distinguish an empty filtered view from an empty flag dataset. */}
       {!loadingFlags && !runDetectionLoading && flags.length === 0 && (
         <div style={{
           position: "absolute",
@@ -2262,15 +2263,22 @@ function MapCanvas({
           border: "1px solid rgba(255,255,255,0.12)",
           fontSize: 12,
           maxWidth: "min(90%, 460px)",
-        }}>
+        }} role="status">
           <span style={{ color: "#f59e0b", display: "flex", flexShrink: 0 }}>
             <Icon.AlertTriangle />
           </span>
           <div style={{ lineHeight: 1.4 }}>
-            <span style={{ fontWeight: 700, color: "#fff", display: "block" }}>No flagged establishments yet</span>
-            <span style={{ color: "#94a3b8" }}>
-              Run <strong>Geospatial Scan</strong> or click <strong>+ Add Flag</strong> to plot suspect establishments on the map.
-            </span>
+            {hasActiveFilters ? <>
+              <span style={{ fontWeight: 700, color: "#fff", display: "block" }}>No locations match the current search or filters</span>
+              <span style={{ color: "#cbd5e1" }}>
+                Try changing or clearing the filters. Google Maps place labels are separate from REVELA locations and are not filtered.
+              </span>
+            </> : <>
+              <span style={{ fontWeight: 700, color: "#fff", display: "block" }}>No flagged establishments yet</span>
+              <span style={{ color: "#94a3b8" }}>
+                Run <strong>Geospatial Scan</strong> or click <strong>+ Add Flag</strong> to plot suspect establishments on the map.
+              </span>
+            </>}
           </div>
         </div>
       )}
@@ -3027,12 +3035,17 @@ export default function MapPage() {
             <thead><tr><th>Business</th><th>Barangay / address</th><th>Outcome</th><th>Details</th></tr></thead>
             <tbody></tbody>
           </table>
-        </div>
-        <div class="workflow-summary-pagination">
-          <span class="workflow-summary-page-label"></span>
-          <div><button type="button" class="workflow-page-previous">Previous</button><button type="button" class="workflow-page-next">Next</button></div>
         </div>`
       : `<div class="workflow-summary-empty">${escapeHtml(emptyMessage)}</div>`;
+    const footerMarkup = `<div class="workflow-summary-footer">
+      ${model.hasCapturedDetails
+        ? `<div class="workflow-summary-pagination">
+            <span class="workflow-summary-page-label"></span>
+            <div><button type="button" class="workflow-page-previous">Previous</button><button type="button" class="workflow-page-next">Next</button></div>
+          </div>`
+        : "<span></span>"}
+      <button type="button" class="workflow-summary-close">Close</button>
+    </div>`;
     const subtitleParts = [];
     if (model.checked) subtitleParts.push(`${model.checked} ${model.activityLabel}`);
     if (model.operationId) subtitleParts.push(`Run ${model.operationId}`);
@@ -3046,22 +3059,28 @@ export default function MapPage() {
         ${errorMarkup}
         ${unavailableMessage}
         ${rowsMarkup}
+        ${footerMarkup}
       </div>`,
       width: "min(1180px, 96vw)",
       heightAuto: false,
       showCloseButton: true,
-      showConfirmButton: true,
-      confirmButtonText: "Close",
-      confirmButtonColor: "#27831b",
+      showConfirmButton: false,
       customClass: { popup: "workflow-summary-popup" },
       didOpen: (popup) => {
+        popup.querySelector(".workflow-summary-close")?.addEventListener("click", () => Swal.close());
         if (!model.hasCapturedDetails) return;
         const body = popup.querySelector(".workflow-summary-table tbody");
         const label = popup.querySelector(".workflow-summary-page-label");
         const previous = popup.querySelector(".workflow-page-previous");
         const next = popup.querySelector(".workflow-page-next");
         let currentPage = 1;
-        let expandedRecordId = null;
+        const firstRecord = model.records[0];
+        const firstRecordHasChanges = firstRecord
+          && (Object.keys(firstRecord.before || {}).length
+            || Object.keys(firstRecord.after || {}).length);
+        let expandedRecordId = firstRecordHasChanges
+          ? String(firstRecord.businessID || firstRecord.record_id || firstRecord.logID || firstRecord.placeID || 0)
+          : null;
         const labelField = (field) => ({
           coordSource: "Coordinate source",
           flagColor: "Flag color",
@@ -5469,6 +5488,9 @@ export default function MapPage() {
               barangayRiskLevels={barangayRiskLevels}
               opsRankings={opsRankings}
               selectedFlagId={selectedFlag}
+              hasActiveFilters={Boolean(search.trim() || filterBarangay !== "all"
+                || filterColor !== "all" || filterSource !== "all"
+                || filterRegistryLink !== "all" || hotspotGroup.active)}
               onMarkerClick={handleMarkerClick}
               onMapClick={handleMapClick}
               onDataClick={handleDataClick}
