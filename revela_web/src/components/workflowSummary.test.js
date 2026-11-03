@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildWorkflowSummaryModel,
   createWorkflowOperationId,
+  filterWorkflowSummaryRecords,
   paginateWorkflowRecords,
 } from "./workflowSummary.js";
 
@@ -14,12 +15,12 @@ test("Snap Pins summary counts only this run's exact updated records", () => {
   }));
   const summary = buildWorkflowSummaryModel("snap", { records, snapped: 6 });
   assert.deepEqual(summary.counts, [
-    { label: "Updated / snapped", count: 6 },
-    { label: "No match", count: 0 },
-    { label: "Unchanged", count: 0 },
-    { label: "Unchanged / cached", count: 0 },
-    { label: "Skipped by quota", count: 0 },
-    { label: "Failed", count: 0 },
+    { label: "Updated / snapped", count: 6, keys: ["snapped"] },
+    { label: "No match", count: 0, keys: ["no_match"] },
+    { label: "Unchanged", count: 0, keys: ["unchanged"] },
+    { label: "Unchanged / cached", count: 0, keys: ["cached"] },
+    { label: "Skipped by quota", count: 0, keys: ["skipped_quota"] },
+    { label: "Failed", count: 0, keys: ["api_error", "failed"] },
   ]);
   assert.deepEqual(summary.records.map((record) => record.record_id), [
     "B-1", "B-2", "B-3", "B-4", "B-5", "B-6",
@@ -39,14 +40,14 @@ test("Re-verify keeps no-match records and failed/skipped outcomes distinct", ()
     ],
   });
   assert.deepEqual(summary.counts, [
-    { label: "Reverified / updated", count: 0 },
-    { label: "Sent for review", count: 0 },
-    { label: "Already matched", count: 0 },
-    { label: "Unchanged", count: 0 },
-    { label: "No match", count: 6 },
-    { label: "Skipped by quota", count: 1 },
-    { label: "Not processed", count: 0 },
-    { label: "Failed", count: 1 },
+    { label: "Reverified / updated", count: 0, keys: ["reverified"] },
+    { label: "Sent for review", count: 0, keys: ["review"] },
+    { label: "Already matched", count: 0, keys: ["matched"] },
+    { label: "Unchanged", count: 0, keys: ["unchanged"] },
+    { label: "No match", count: 6, keys: ["no_match"] },
+    { label: "Skipped by quota", count: 1, keys: ["skipped_quota"] },
+    { label: "Not processed", count: 0, keys: ["not_processed"] },
+    { label: "Failed", count: 1, keys: ["failed"] },
   ]);
   assert.equal(summary.records.filter((row) => row.outcome === "no_match").length, 6);
 });
@@ -68,11 +69,11 @@ test("detection zero-result and partial summaries stay honest", () => {
     ],
   });
   assert.deepEqual(partial.counts, [
-    { label: "Newly detected", count: 1 },
-    { label: "Matched to registry", count: 1 },
-    { label: "Already flagged", count: 1 },
-    { label: "Reconciled", count: 0 },
-    { label: "Failed", count: 0 },
+    { label: "Newly detected", count: 1, keys: ["new_detected"] },
+    { label: "Matched to registry", count: 1, keys: ["matched"] },
+    { label: "Already flagged", count: 1, keys: ["already_flagged"] },
+    { label: "Reconciled", count: 0, keys: ["reconciled"] },
+    { label: "Failed", count: 0, keys: ["failed"] },
   ]);
   assert.equal(partial.checked, 10);
 });
@@ -86,6 +87,18 @@ test("workflow summary pagination bounds large record lists", () => {
   assert.equal(last.page, 6);
   assert.equal(last.records.length, 3);
   assert.deepEqual(last.records.map((row) => row.id), [100, 101, 102]);
+});
+
+test("workflow summary outcome filters select only matching captured records", () => {
+  const rows = [
+    { id: 1, outcome: "snapped" },
+    { id: 2, outcome: "no_match" },
+    { id: 3, outcome: "api_error" },
+    { id: 4, outcome: "failed" },
+  ];
+  assert.deepEqual(filterWorkflowSummaryRecords(rows, ["snapped"]).map(({ id }) => id), [1]);
+  assert.deepEqual(filterWorkflowSummaryRecords(rows, ["api_error", "failed"]).map(({ id }) => id), [3, 4]);
+  assert.deepEqual(filterWorkflowSummaryRecords(rows).map(({ id }) => id), [1, 2, 3, 4]);
 });
 
 test("operation IDs are UUIDs and use secure random bytes fallback", () => {

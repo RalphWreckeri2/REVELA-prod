@@ -60,6 +60,7 @@ import FilterDropdown from "../components/FilterDropdown";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
   businessSourceLabel, businessDetailsInfo, matchesMapFilters, paginateRecords,
+  findUniqueMapSearchMatch, mapFiltersForRecord,
 } from "../components/businessCompliance";
 import { AuthContext } from "../context/authContext";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
@@ -108,6 +109,7 @@ import {
 import Swal from "sweetalert2";
 import {
   buildWorkflowSummaryModel,
+  filterWorkflowSummaryRecords,
   createWorkflowOperationId,
   paginateWorkflowRecords,
   WORKFLOW_SUMMARY_PAGE_SIZE,
@@ -3005,13 +3007,13 @@ export default function MapPage() {
     const result = resultData || outcome;
     const model = buildWorkflowSummaryModel(operation, result);
     const countMarkup = model.counts
-      .map(({ label, count }) => {
+      .map(({ label, count, keys }) => {
         const key = label === "Updated / snapped" || label === "Reconciled" || label === "Reverified / updated"
           ? "success"
           : label === "No match" || label === "Sent for review"
             ? "warning"
             : "neutral";
-        return `<div class="workflow-summary-count workflow-summary-count--${key}"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`;
+        return `<button type="button" class="workflow-summary-count workflow-summary-count--${key} workflow-summary-count--filterable" data-outcome-keys="${escapeHtml(keys.join(","))}" aria-pressed="false" title="Filter summary by ${escapeHtml(label)}"><strong>${count}</strong><span>${escapeHtml(label)}</span></button>`;
       })
       .join("");
     const contextCountsMarkup = model.contextCounts
@@ -3073,14 +3075,10 @@ export default function MapPage() {
         const label = popup.querySelector(".workflow-summary-page-label");
         const previous = popup.querySelector(".workflow-page-previous");
         const next = popup.querySelector(".workflow-page-next");
+        const countButtons = [...popup.querySelectorAll(".workflow-summary-count[data-outcome-keys]")];
         let currentPage = 1;
-        const firstRecord = model.records[0];
-        const firstRecordHasChanges = firstRecord
-          && (Object.keys(firstRecord.before || {}).length
-            || Object.keys(firstRecord.after || {}).length);
-        let expandedRecordId = firstRecordHasChanges
-          ? String(firstRecord.businessID || firstRecord.record_id || firstRecord.logID || firstRecord.placeID || 0)
-          : null;
+        let activeOutcomeKeys = null;
+        let expandedRecordId = null;
         const labelField = (field) => ({
           coordSource: "Coordinate source",
           flagColor: "Flag color",
@@ -3088,11 +3086,12 @@ export default function MapPage() {
         }[field] || field.replaceAll(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (letter) => letter.toUpperCase()));
         const formatValue = (value) => value === null || value === undefined || value === "" ? "—" : escapeHtml(value);
         const renderPage = () => {
+          const filteredRecords = filterWorkflowSummaryRecords(model.records, activeOutcomeKeys);
           const page = paginateWorkflowRecords(
-            model.records, currentPage, WORKFLOW_SUMMARY_PAGE_SIZE,
+            filteredRecords, currentPage, WORKFLOW_SUMMARY_PAGE_SIZE,
           );
           currentPage = page.page;
-          body.innerHTML = page.records.map((record, index) => {
+          body.innerHTML = page.records.length ? page.records.map((record, index) => {
             const address = [
               record.barangayName
                 || flags.find((flag) => String(flag.logID) === String(record.logID || record.record_id))?.barangayName
@@ -3120,11 +3119,31 @@ export default function MapPage() {
                 <td><span class="workflow-summary-outcome workflow-summary-outcome--${escapeHtml(outcome)}">${escapeHtml(outcomeLabel)}</span><span class="workflow-summary-explanation">${escapeHtml(record.explanation || record.reason || "No explanation was recorded.")}</span></td>
                 <td><button type="button" class="workflow-summary-details-toggle" data-record-id="${escapeHtml(recordId)}" aria-expanded="${expanded}">${expanded ? "Hide" : "View"}</button></td>
               </tr>${expanded ? `<tr class="workflow-summary-details-row"><td colspan="4">${details}</td></tr>` : ""}`;
-          }).join("");
+          }).join("") : `<tr><td class="workflow-summary-filter-empty" colspan="4">No businesses in this outcome. Click the selected summary card again to clear the filter.</td></tr>`;
           label.textContent = `${page.total ? (currentPage - 1) * WORKFLOW_SUMMARY_PAGE_SIZE + 1 : 0}–${Math.min(currentPage * WORKFLOW_SUMMARY_PAGE_SIZE, page.total)} of ${page.total}`;
           previous.disabled = currentPage <= 1;
           next.disabled = currentPage >= page.pageCount;
         };
+        countButtons.forEach((button) => {
+          button.addEventListener("click", () => {
+            const keys = button.dataset.outcomeKeys.split(",").filter(Boolean);
+            const isActive = activeOutcomeKeys
+              && keys.length === activeOutcomeKeys.length
+              && keys.every((key) => activeOutcomeKeys.includes(key));
+            activeOutcomeKeys = isActive ? null : keys;
+            currentPage = 1;
+            expandedRecordId = null;
+            countButtons.forEach((candidate) => {
+              const candidateKeys = candidate.dataset.outcomeKeys.split(",").filter(Boolean);
+              const selected = Boolean(activeOutcomeKeys
+                && candidateKeys.length === activeOutcomeKeys.length
+                && candidateKeys.every((key) => activeOutcomeKeys.includes(key)));
+              candidate.classList.toggle("is-active", selected);
+              candidate.setAttribute("aria-pressed", String(selected));
+            });
+            renderPage();
+          });
+        });
         next.addEventListener("click", () => {
           currentPage += 1;
           expandedRecordId = null;
@@ -3253,6 +3272,7 @@ export default function MapPage() {
   const filterSource = BUSINESS_SOURCE_OPTIONS.some(option => option.value === mapParams.get("source")) ? mapParams.get("source") : "all";
   const filterRegistryLink = MAP_REGISTRY_LINK_OPTIONS.some(option => option.value === mapParams.get("registryLink")) ? mapParams.get("registryLink") : "all";
   const [locationsPage, setLocationsPage] = useState(1);
+  const autoSearchFiltersRef = useRef(null);
 
   const isAdmin = ["Admin", "SUPER_ADMIN", "System Administrator"].includes(user?.role);
   const moreActionsRef = useRef(null);
@@ -4057,7 +4077,8 @@ export default function MapPage() {
       showCancelButton: true,
       confirmButtonColor: '#6366f1',
       cancelButtonColor: 'var(--color-muted, #64748b)',
-      confirmButtonText: 'Run Reconcile'
+      confirmButtonText: 'Run Reconcile',
+      customClass: { cancelButton: "workflow-operation-cancel-button" },
     });
     if (!confirm.isConfirmed) return;
     reconcileProgressRef.current = { stage: 'running' };
@@ -4227,6 +4248,7 @@ export default function MapPage() {
       confirmButtonColor: '#059669',
       cancelButtonColor: 'var(--color-muted, #64748b)',
       confirmButtonText: 'Start Re-verify',
+      customClass: { cancelButton: "workflow-operation-cancel-button" },
     });
     if (!confirm.isConfirmed) return;
     try {
@@ -4433,7 +4455,8 @@ export default function MapPage() {
       showCancelButton: true,
       confirmButtonColor: '#059669',
       cancelButtonColor: 'var(--color-muted, #64748b)',
-      confirmButtonText: 'Start Snapping'
+      confirmButtonText: 'Start Snapping',
+      customClass: { cancelButton: "workflow-operation-cancel-button" },
     });
     if (!confirm.isConfirmed) return;
     try {
@@ -4924,12 +4947,60 @@ export default function MapPage() {
   ];
   const filteredCounts = filteredMapMetrics.colors;
   const clearViewFilters = () => {
+    autoSearchFiltersRef.current = null;
     setFilterBarangay("all"); setFilterColor("all");
     setSearch(""); setLocationsPage(1);
     const params = new URLSearchParams(location.search);
     params.delete("source"); params.delete("registryLink");
     navigate({ pathname: location.pathname, search: params.toString() });
   };
+
+  const applyUniqueSearchFilters = useEffectEvent(() => {
+    const matchedRecord = findUniqueMapSearchMatch(flags, search);
+    if (matchedRecord) {
+      const currentFilters = {
+        barangayID: filterBarangay,
+        status: filterColor,
+        source: filterSource,
+        registryLink: filterRegistryLink,
+      };
+      const baseline = autoSearchFiltersRef.current?.baseline ?? currentFilters;
+      const nextFilters = mapFiltersForRecord(matchedRecord);
+      autoSearchFiltersRef.current = { baseline, applied: nextFilters };
+      setFilterBarangay(nextFilters.barangayID);
+      setFilterColor(nextFilters.status);
+
+      const params = new URLSearchParams(location.search);
+      if (nextFilters.source === "all") params.delete("source");
+      else params.set("source", nextFilters.source);
+      if (nextFilters.registryLink === "all") params.delete("registryLink");
+      else params.set("registryLink", nextFilters.registryLink);
+      if (params.toString() !== location.search.replace(/^\?/, "")) {
+        navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+      }
+      return;
+    }
+
+    const previousAutoFilters = autoSearchFiltersRef.current;
+    if (!previousAutoFilters) return;
+    autoSearchFiltersRef.current = null;
+    setFilterBarangay(previousAutoFilters.baseline.barangayID);
+    setFilterColor(previousAutoFilters.baseline.status);
+
+    const params = new URLSearchParams(location.search);
+    if (previousAutoFilters.baseline.source === "all") params.delete("source");
+    else params.set("source", previousAutoFilters.baseline.source);
+    if (previousAutoFilters.baseline.registryLink === "all") params.delete("registryLink");
+    else params.set("registryLink", previousAutoFilters.baseline.registryLink);
+    if (params.toString() !== location.search.replace(/^\?/, "")) {
+      navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+    }
+  });
+
+  useEffect(() => {
+    const timer = setTimeout(() => applyUniqueSearchFilters(), 350);
+    return () => clearTimeout(timer);
+  }, [search, flags]);
 
   const panToSearchResults = useEffectEvent(() => {
     const q = search.trim();
@@ -5638,16 +5709,16 @@ export default function MapPage() {
 
             <div className="map-location-filters">
               <FilterDropdown label="Barangay" value={filterBarangay} options={barangayFilterOptions}
-                onChange={value => { setFilterBarangay(value); setLocationsPage(1); }} />
+                onChange={value => { autoSearchFiltersRef.current = null; setFilterBarangay(value); setLocationsPage(1); }} />
               <FilterDropdown label="Status" value={filterColor} options={STATUS_OPTIONS}
-                onChange={value => { setFilterColor(value); setLocationsPage(1); }} />
+                onChange={value => { autoSearchFiltersRef.current = null; setFilterColor(value); setLocationsPage(1); }} />
               <FilterDropdown label="Origin / Registry" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
-                onChange={value => { setLocationsPage(1);
+                onChange={value => { autoSearchFiltersRef.current = null; setLocationsPage(1);
                   const params = new URLSearchParams(location.search);
                   if (value === "all") params.delete("source"); else params.set("source", value);
                   navigate({ pathname: location.pathname, search: params.toString() }); }} />
               <FilterDropdown label="Registry Link" value={filterRegistryLink} options={MAP_REGISTRY_LINK_OPTIONS}
-                onChange={value => { setLocationsPage(1);
+                onChange={value => { autoSearchFiltersRef.current = null; setLocationsPage(1);
                   const params = new URLSearchParams(location.search);
                   if (value === "all") params.delete("registryLink"); else params.set("registryLink", value);
                   navigate({ pathname: location.pathname, search: params.toString() }); }} />

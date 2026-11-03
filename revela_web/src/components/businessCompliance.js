@@ -106,6 +106,36 @@ export function matchesMapFilters(record, {
     && matchesRegistryLink(record, registryLink);
 }
 
+export function findUniqueMapSearchMatch(records, search) {
+  if (!search.trim()) return null;
+  const matches = records.filter(record => matchesMapFilters(record, { search }));
+  return matches.length === 1 ? matches[0] : null;
+}
+
+export function mapFiltersForRecord(record) {
+  const color = record.color ?? record.flagColor;
+  const workflow = record.hasActiveInspection === true
+    || (record.verificationStatus != null && record.verificationStatus !== "Verified");
+  const status = workflow ? "in_inspection"
+    : color === "Yellow" && Boolean(record.reportedByUserID) ? "Yellow_Inspector"
+      : STATUS_OPTIONS.some(option => option.value === color) ? color : "all";
+  const origin = record.originSource ?? record.source ?? "unknown";
+  const source = isRegistryLinked(record) ? "registry"
+    : origin === "detection" ? "detection"
+      : origin === "manual" ? "manual"
+        : ["registry", "registry_detected"].includes(origin) ? "all" : "unclassified";
+  const registryLink = hasUnlinkedCompliance(record) ? "compliant_unlinked"
+    : isRegistryLinked(record) ? "linked" : "unlinked";
+  const recordedBarangayID = record.recordedBarangayID ?? record.barangayID;
+
+  return {
+    barangayID: recordedBarangayID == null ? "all" : String(recordedBarangayID),
+    status,
+    source,
+    registryLink,
+  };
+}
+
 export function paginateRecords(records, page = 1, pageSize = 10) {
   const pages = Math.max(1, Math.ceil(records.length / pageSize));
   const current = Math.max(1, Math.min(page, pages));
@@ -117,10 +147,10 @@ export function filterComplianceRecords(records, {
   search = "", barangayID = "all", registryLink = "all",
 } = {}) {
   const q = search.trim().toLowerCase().replace(/^#\s*/, "");
-  return records.filter(record => (!q
-    || String(record.businessName ?? "").toLowerCase().includes(q)
-    || String(record.businessID ?? "").toLowerCase().includes(q)
-    || String(record.detectionReference).toLowerCase().includes(q))
+  const searchTerms = q.split(/\s+/).filter(Boolean);
+  return records.filter(record => (searchTerms.length === 0 || searchTerms.every(term => [
+    record.businessName, record.detectedName, record.businessID, record.detectionReference,
+  ].some(value => String(value ?? "").toLowerCase().includes(term))))
     && (barangayID === "all" || String(record.barangayID) === String(barangayID))
     && matchesRegistryLink(record, registryLink));
 }

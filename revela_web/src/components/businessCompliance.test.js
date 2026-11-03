@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
   businessDetailsInfo, businessSourceLabel, hasUnlinkedCompliance, matchesMapFilters,
+  findUniqueMapSearchMatch, mapFiltersForRecord,
   paginateRecords, buildComplianceReport, complianceCsv, compliancePrintReport,
   formatManilaDate, UNLINKED_COMPLIANCE_TEXT, ADMIN_CONFIRMED_REPORT_TITLE,
   ADMIN_CONFIRMED_REPORT_SCOPE,
@@ -96,6 +97,59 @@ test("map search matches each word and searches Official Business IDs", () => {
   assert.equal(matchesMapFilters(record, { search: "vergara missing" }), false);
 });
 
+test("unique map search results adapt all four filters to the matched business", () => {
+  const record = verified({
+    name: "Golden Brewery Corporation",
+    color: "Red",
+    flagColor: "Red",
+    inspectionVerifiedCompliant: false,
+    originSource: "detection",
+    registryLinked: false,
+    barangayID: 8,
+  });
+  assert.equal(findUniqueMapSearchMatch([record], "golden brewery corporation"), record);
+  assert.deepEqual(mapFiltersForRecord(record), {
+    barangayID: "8",
+    status: "Red",
+    source: "detection",
+    registryLink: "unlinked",
+  });
+  assert.equal(findUniqueMapSearchMatch([
+    record,
+    verified({ id: 18, name: "Golden Star Store" }),
+  ], "golden"), null);
+  assert.equal(findUniqueMapSearchMatch([record], ""), null);
+});
+
+test("unique map search preserves workflow, inspector-origin, and registry facets", () => {
+  assert.deepEqual(mapFiltersForRecord(verified({
+    color: "Orange", verificationStatus: "Submitted", hasActiveInspection: true,
+    originSource: "manual", registryLinked: false, inspectionVerifiedCompliant: false,
+  })), {
+    barangayID: "1",
+    status: "in_inspection",
+    source: "manual",
+    registryLink: "unlinked",
+  });
+  assert.deepEqual(mapFiltersForRecord(verified({
+    originSource: "registry_detected", registryLinked: true,
+  })), {
+    barangayID: "1",
+    status: "Green",
+    source: "registry",
+    registryLink: "linked",
+  });
+  assert.deepEqual(mapFiltersForRecord(verified({
+    originSource: "registry_detected", registryLinked: false,
+    barangayID: 2, recordedBarangayID: 3,
+  })), {
+    barangayID: "3",
+    status: "Green",
+    source: "all",
+    registryLink: "compliant_unlinked",
+  });
+});
+
 test("Currently Being Inspected is a workflow predicate across colours", () => {
   for (const color of ["Green", "Orange", "Red", "Purple"]) {
     assert.equal(matchesMapFilters(verified({ color, verificationStatus: "Submitted" }), { status: "in_inspection" }), true);
@@ -174,6 +228,18 @@ test("report search finds a pin reference and pagination clamps after filtering"
   assert.equal(report.rows[0]["Pin Reference"], "35");
   assert.equal(paginateRecords(report.rows, 5).page, 1);
   assert.equal(buildComplianceReport(reportRecords, {}).count, 35);
+});
+
+test("compliance report search finds the registry name, linked ID, and original pin name", () => {
+  const record = {
+    detectionReference: 42, businessID: "REG-42",
+    businessName: "Elenest Event Center",
+    detectedName: "Elenest Event Center (Entrance)",
+  };
+  assert.equal(buildComplianceReport([record], { search: "Elenest Event" }).count, 1);
+  assert.equal(buildComplianceReport([record], { search: "Entrance" }).count, 1);
+  assert.equal(buildComplianceReport([record], { search: "Elenest Entrance" }).count, 1);
+  assert.equal(buildComplianceReport([record], { search: "REG-42" }).count, 1);
 });
 
 test("an empty registry-independent dataset yields a clear zero count and spreadsheet headers", () => {

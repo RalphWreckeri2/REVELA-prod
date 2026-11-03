@@ -16,7 +16,8 @@ def get_inspection_verified_compliant():
         all_rows = current_confirmation_rows(cursor, ladder=ladder)
         records = [{
                 "detectionReference": row["logID"],
-                "businessName": row["detectedName"],
+                "businessName": row.get("registryBusinessName") or row["detectedName"],
+                "detectedName": row["detectedName"],
                 "barangayID": row["barangayID"],
                 "barangayName": row["barangayName"],
                 "address": row["address"],
@@ -27,7 +28,8 @@ def get_inspection_verified_compliant():
         admin_confirmed_records = [{
                 "detectionReference": row["logID"],
                 "businessID": row["businessID"],
-                "businessName": row["detectedName"],
+                "businessName": row.get("registryBusinessName") or row["detectedName"],
+                "detectedName": row["detectedName"],
                 "barangayID": row["barangayID"],
                 "barangayName": row["barangayName"],
                 "address": row["address"],

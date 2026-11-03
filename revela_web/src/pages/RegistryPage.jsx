@@ -147,7 +147,7 @@ function formatCoord(v) {
 const REGISTRY_TABLE_COL_COUNT = 12;
 
 // ── Empty State ───────────────────────────────────────────────────────────────
-function EmptyState({ hasFilters, onUpload }) {
+function EmptyState({ hasFilters, onUpload, onClearFilters }) {
   if (hasFilters) {
     return (
       <tr>
@@ -157,6 +157,9 @@ function EmptyState({ hasFilters, onUpload }) {
             <span style={{ color: "var(--color-muted)", fontSize: 13 }}>
               No businesses match your current filters.
             </span>
+            <button type="button" className="ghost-btn" onClick={onClearFilters}>
+              Clear filters
+            </button>
           </div>
         </td>
       </tr>
@@ -577,6 +580,13 @@ export default function RegistryPage() {
   // These come from a dedicated summary endpoint in later sprints.
   // For now we show the total returned.
   const hasFilters = Boolean(debouncedSearch.trim()) || barangay !== "All Barangays" || status !== "All Status" || regType !== "All Types";
+  const clearRegistryFilters = () => {
+    setSearch("");
+    setBarangay("All Barangays");
+    setStatus("All Status");
+    setRegType("All Types");
+    setPage(1);
+  };
 
   return (
     <DashboardLayout user={{ initials: user?.fullName?.charAt(0) ?? "?", name: user?.fullName ?? "" }}>
@@ -748,7 +758,8 @@ export default function RegistryPage() {
               {loading ? (
                 <SkeletonTableRows columns={REGISTRY_TABLE_COL_COUNT} rows={8} />
               ) : businesses.length === 0 ? (
-                <EmptyState hasFilters={!!hasFilters} onUpload={() => setShowUpload(true)} />
+                <EmptyState hasFilters={!!hasFilters} onUpload={() => setShowUpload(true)}
+                  onClearFilters={clearRegistryFilters} />
               ) : (
                 businesses.map((b, i) => (
                   <tr

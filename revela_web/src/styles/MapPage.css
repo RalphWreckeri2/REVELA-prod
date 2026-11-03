@@ -2134,7 +2134,7 @@ html.theme-dark .api-usage-modal {
   height: min(740px, calc(100dvh - 24px));
   max-height: calc(100dvh - 24px) !important;
   box-sizing: border-box;
-  padding: 28px 30px 22px !important;
+  padding: 46px 30px 22px !important;
   border-radius: 22px !important;
   text-align: left !important;
 }
@@ -2152,13 +2152,23 @@ html.theme-dark .api-usage-modal {
 
 .workflow-summary-popup .swal2-title {
   align-self: flex-start;
-  padding: 0 32px 0 0;
+  width: 100%;
+  margin: 0 0 16px;
+  padding: 0 48px 0 0;
   font-size: 23px;
   font-weight: 700;
   text-align: left;
 }
 
 .workflow-summary-popup .swal2-close {
+  position: absolute !important;
+  top: 12px !important;
+  right: 14px !important;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  border-radius: 50%;
   color: var(--color-muted, #64748b);
 }
 
@@ -2222,6 +2232,28 @@ html.theme-dark .api-usage-modal {
   border-radius: 14px;
   background: var(--color-surface-muted, #f3f6f3);
   font-size: 12px;
+}
+
+.workflow-summary-count--filterable {
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.workflow-summary-count--filterable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.1);
+}
+
+.workflow-summary-count--filterable:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.workflow-summary-count--filterable.is-active {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 24%, transparent);
 }
 
 .workflow-summary-count--success {
@@ -2319,6 +2351,13 @@ html.theme-dark .api-usage-modal {
 
 .workflow-summary-record-row:last-child td {
   border-bottom: 0;
+}
+
+.workflow-summary-filter-empty {
+  height: 120px;
+  color: var(--color-muted);
+  text-align: center !important;
+  vertical-align: middle !important;
 }
 
 .workflow-summary-business-id,
@@ -2484,6 +2523,36 @@ html.theme-dark .workflow-summary-count--warning {
   border-color: rgba(251, 191, 36, 0.16);
   background: #292115;
   color: #f2cf7d;
+}
+
+html.theme-dark .workflow-summary-popup .swal2-close {
+  background: #202824 !important;
+  color: #e4e9e5 !important;
+}
+
+html.theme-dark .workflow-summary-popup .swal2-close:hover {
+  background: #2a342e !important;
+  color: #ffffff !important;
+}
+
+html.theme-dark .workflow-summary-count--filterable:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+html.theme-dark .workflow-summary-count--filterable.is-active {
+  border-color: #34d399;
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.25);
+}
+
+html.theme-dark .workflow-operation-cancel-button {
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  background: #202824 !important;
+  color: #e4e9e5 !important;
+}
+
+html.theme-dark .workflow-operation-cancel-button:hover {
+  background: #2a342e !important;
+  color: #ffffff !important;
 }
 
 html.theme-dark .workflow-summary-table-scroll {

@@ -65,14 +65,13 @@ export function buildWorkflowSummaryModel(operation, result = {}) {
   const config = WORKFLOW_SUMMARIES[operation];
   if (!config) throw new Error(`Unknown workflow operation: ${operation}`);
   const records = Array.isArray(result.records) ? result.records : [];
-  const counts = config.outcomes.map(([key, label]) => ({
-    key,
-    label,
-    count: records.filter((record) => record?.outcome === key).length,
-  }));
   const countByLabel = new Map();
-  for (const item of counts) {
-    countByLabel.set(item.label, (countByLabel.get(item.label) || 0) + item.count);
+  for (const [key, label] of config.outcomes) {
+    const count = records.filter((record) => record?.outcome === key).length;
+    const item = countByLabel.get(label) || { label, count: 0, keys: [] };
+    item.count += count;
+    item.keys.push(key);
+    countByLabel.set(label, item);
   }
   const runSummary = result.run_summary || {};
   const contextCounts = operation === "detection"
@@ -85,7 +84,7 @@ export function buildWorkflowSummaryModel(operation, result = {}) {
   return {
     title: config.title,
     records,
-    counts: [...countByLabel].map(([label, count]) => ({ label, count })),
+    counts: [...countByLabel.values()],
     contextCounts,
     contextNote: operation === "detection"
       ? "Detailed rows cover captured business outcomes. Non-business and duplicate scan results are summarized separately."
@@ -121,4 +120,10 @@ export function paginateWorkflowRecords(records, page, pageSize = WORKFLOW_SUMMA
     total: items.length,
     records: items.slice(start, start + safePageSize),
   };
+}
+
+export function filterWorkflowSummaryRecords(records, outcomeKeys = null) {
+  const items = Array.isArray(records) ? records : [];
+  if (!Array.isArray(outcomeKeys) || outcomeKeys.length === 0) return items;
+  return items.filter((record) => outcomeKeys.includes(record?.outcome));
 }

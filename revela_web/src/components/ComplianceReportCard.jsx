@@ -135,8 +135,8 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
       onClose={() => setOpen(false)} busy={loading} className="compliance-report-dialog">
       <div className="compliance-report-content">
         <p className="compliance-report-note">{isAdminConfirmed
-          ? "Pin Reference is the geospatial log reference; Official Business ID is the linked registry record. Confirmed By is the administrator account on the confirmation event. Dates use Asia/Manila."
-          : "Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila."}</p>
+          ? "Business Name is from the official registry; search also checks the detected pin name. Pin Reference is the geospatial log reference; Official Business ID is the linked registry record. Confirmed By is the administrator account on the confirmation event. Dates use Asia/Manila."
+          : "Business Name is from the official registry for linked records; search also checks the detected pin name. Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila."}</p>
         <div className="compliance-report-filters">
           <label className="compliance-report-search">Business name / Pin Reference
             <input type="search" placeholder="Search business name or pin reference" value={filters.search}

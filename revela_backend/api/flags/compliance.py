@@ -125,7 +125,8 @@ def current_confirmation_rows(cursor, *, ladder=False, barangay_ids=None):
                 AND ((later.subjectType = 'business' AND later.subjectID = CAST(r.businessID AS CHAR))
                   OR (later.subjectType = 'geospatial_log' AND later.subjectID = CAST(g.logID AS CHAR))))
         ORDER BY e.createdAt DESC, e.eventID DESC LIMIT 1)"""
-    cursor.execute(f"""SELECT r.businessID, g.logID, g.detectedName, g.barangayID,
+    cursor.execute(f"""SELECT r.businessID, r.businessName AS registryBusinessName,
+                    g.logID, g.detectedName, g.barangayID,
                     b.barangayName, COALESCE(NULLIF(g.nearestLandmark, ''), r.businessAddress, '') AS address,
                     {origin_source} AS originSource,
                     {_effective_flag_color_sql('g', ladder=ladder)} AS flagColor,

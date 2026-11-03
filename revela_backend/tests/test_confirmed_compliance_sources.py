@@ -88,10 +88,18 @@ def test_office_event_counts_without_report_and_retry_does_not_duplicate(db):
     assert report_snapshot["adminConfirmedData"][0]["confirmedBy"] == "Admin"
     assert report_snapshot["adminConfirmedData"][0]["confirmedByUserID"] == 2
     assert report_snapshot["adminConfirmedData"][0]["verifiedOn"]
+    assert report_snapshot["adminConfirmedData"][0]["businessName"] == "FIELD SHOP"
+    assert report_snapshot["adminConfirmedData"][0]["detectedName"] == "FIELD SHOP"
     result, error = registry.confirm_pin_compliance(30, "OFFICE-030", 2,
         registry_review_token=review["reviewToken"], confirm_establishment=True)
     assert error is None and result["alreadyConfirmed"]
     assert len(db.rows("SELECT * FROM enforcement_events")) == 1
+    db.db.execute("""UPDATE official_registry SET businessName='FIELD SHOP OFFICIAL'
+                     WHERE businessID='OFFICE-030'""")
+    db.commit()
+    renamed_record = compliance_report.get_inspection_verified_compliant()["adminConfirmedData"][0]
+    assert renamed_record["businessName"] == "FIELD SHOP OFFICIAL"
+    assert renamed_record["detectedName"] == "FIELD SHOP"
 
 
 def test_retry_repairs_missing_confirmation_event_without_duplicating_valid_event(db):
