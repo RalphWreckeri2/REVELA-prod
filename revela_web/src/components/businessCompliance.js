@@ -33,10 +33,17 @@ export const MAP_REGISTRY_LINK_OPTIONS = Object.freeze([
 ]);
 export const UNLINKED_COMPLIANCE_TEXT = "Inspection-verified compliant · Not yet in imported registry";
 export const COMPLIANCE_REPORT_TITLE = "Inspection-Verified Compliant Businesses";
-export const COMPLIANCE_REPORT_DESCRIPTION = "Current admin-verified Green inspections, including linked manual-origin pins and historical unlinked pin references. Linked businesses are classified by their latest valid confirmation.";
-export const COMPLIANCE_REPORT_SCOPE = "Distinct confirmed registry businesses with effective Green status and current admin-verification evidence. Office-confirmed businesses are counted separately; Green color alone is not sufficient.";
+export const ADMIN_CONFIRMED_REPORT_TITLE = "Admin-Confirmed Compliant Businesses";
+export const COMPLIANCE_REPORT_DESCRIPTION = "Distinct confirmed registry businesses with effective Green status and current admin-verification evidence. Office-confirmed businesses are counted separately; Green color alone is not sufficient.";
+export const ADMIN_CONFIRMED_REPORT_DESCRIPTION = "Distinct registry-linked businesses directly confirmed by an administrator with current verification evidence. Inspector dispatch and field inspection are not required.";
+export const COMPLIANCE_REPORT_SCOPE = "Distinct confirmed registry businesses with effective Green status and current verification evidence. Inspector-assisted verification and direct admin confirmation are reported separately; Green color alone is not sufficient.";
+export const ADMIN_CONFIRMED_REPORT_SCOPE = "Distinct registry-linked businesses directly confirmed by an administrator, with current administrative verification evidence. These records do not require inspector dispatch or field inspection.";
 export const COMPLIANCE_COLUMNS = Object.freeze([
   "Pin Reference", "Business Name", "Barangay", "Address", "Origin", "Verified On", "Registry Link",
+]);
+export const ADMIN_CONFIRMED_COLUMNS = Object.freeze([
+  "Pin Reference", "Business Name", "Barangay", "Address", "Origin",
+  "Official Business ID", "Confirmed By", "Verified On", "Registry Link",
 ]);
 
 export function businessSourceLabel(source) {
@@ -110,6 +117,7 @@ export function filterComplianceRecords(records, {
   const q = search.trim().toLowerCase().replace(/^#\s*/, "");
   return records.filter(record => (!q
     || String(record.businessName ?? "").toLowerCase().includes(q)
+    || String(record.businessID ?? "").toLowerCase().includes(q)
     || String(record.detectionReference).toLowerCase().includes(q))
     && (barangayID === "all" || String(record.barangayID) === String(barangayID))
     && matchesRegistryLink(record, registryLink));
@@ -125,8 +133,8 @@ export function formatManilaDate(value) {
   }).format(date)} (Asia/Manila)`;
 }
 
-export function complianceRow(record) {
-  return {
+export function complianceRow(record, reportType = "inspection") {
+  const row = {
     "Pin Reference": String(record.detectionReference),
     "Business Name": record.businessName ?? "",
     Barangay: record.barangayName ?? "",
@@ -135,18 +143,39 @@ export function complianceRow(record) {
     "Verified On": formatManilaDate(record.verifiedOn),
     "Registry Link": isRegistryLinked(record) ? "Linked to Registry" : "Not in Registry",
   };
+  if (reportType === "admin-confirmed") {
+    return {
+      "Pin Reference": row["Pin Reference"],
+      "Business Name": row["Business Name"],
+      Barangay: row.Barangay,
+      Address: row.Address,
+      Origin: row.Origin,
+      "Official Business ID": record.businessID ?? "",
+      "Confirmed By": record.confirmedBy ?? (
+        record.confirmedByUserID ? `User #${record.confirmedByUserID}` : "Unknown"
+      ),
+      "Verified On": row["Verified On"],
+      "Registry Link": row["Registry Link"],
+    };
+  }
+  return {
+    ...row,
+  };
 }
 
 // View List, CSV and PDF all consume this full filtered snapshot. Pagination
 // happens afterwards, exclusively for the screen table.
-export function buildComplianceReport(records, filters = {}, generatedAt = new Date().toISOString()) {
+export function buildComplianceReport(records, filters = {}, generatedAt = new Date().toISOString(),
+  { title = COMPLIANCE_REPORT_TITLE, reportType = "inspection",
+    scope = COMPLIANCE_REPORT_SCOPE } = {}) {
   const matching = filterComplianceRecords(records, filters);
   const barangay = records.find(record => String(record.barangayID) === String(filters.barangayID))?.barangayName;
   return {
-    title: COMPLIANCE_REPORT_TITLE, scope: COMPLIANCE_REPORT_SCOPE,
+    title, scope,
     date: formatManilaDate(generatedAt), count: matching.length,
     filtersLabel: `Search: ${filters.search?.trim() || "All"}; Barangay: ${filters.barangayID && filters.barangayID !== "all" ? filters.barangayName || barangay || filters.barangayID : "All"}; Registry Link: ${REGISTRY_LINK_OPTIONS.find(option => option.value === filters.registryLink)?.label || "All"}`,
-    columns: COMPLIANCE_COLUMNS, records: matching, rows: matching.map(complianceRow),
+    columns: reportType === "admin-confirmed" ? ADMIN_CONFIRMED_COLUMNS : COMPLIANCE_COLUMNS,
+    records: matching, rows: matching.map(record => complianceRow(record, reportType)),
   };
 }
 
@@ -157,11 +186,15 @@ export function complianceCsv(report) {
   return "\uFEFF" + (report.count === 0 ? csv.replace(/\r?\n$/, "") : csv);
 }
 
-export function compliancePrintReport(report, user) {
+export function compliancePrintReport(report, user, reportType = "inspection") {
   return {
-    type: "inspection-compliant", title: report.title, subtitle: report.scope,
+    type: reportType === "admin-confirmed" ? "admin-confirmed-compliant" : "inspection-compliant",
+    title: report.title, subtitle: report.scope,
     date: report.date, preparedBy: user?.fullName || "BPLO Staff",
-    office: "BPLO Mataasnakahoy", classification: "Operational Report · Current Compliance",
+    office: "BPLO Mataasnakahoy",
+    classification: reportType === "admin-confirmed"
+      ? "Operational Report · Direct Admin Confirmation"
+      : "Operational Report · Inspector-Assisted Verification",
     isLandscape: true, data: report,
   };
 }

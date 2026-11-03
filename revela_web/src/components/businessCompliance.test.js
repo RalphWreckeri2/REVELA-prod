@@ -5,7 +5,8 @@ import {
   STATUS_OPTIONS, BUSINESS_SOURCE_OPTIONS, MAP_REGISTRY_LINK_OPTIONS,
   businessDetailsInfo, businessSourceLabel, hasUnlinkedCompliance, matchesMapFilters,
   paginateRecords, buildComplianceReport, complianceCsv, compliancePrintReport,
-  formatManilaDate, UNLINKED_COMPLIANCE_TEXT,
+  formatManilaDate, UNLINKED_COMPLIANCE_TEXT, ADMIN_CONFIRMED_REPORT_TITLE,
+  ADMIN_CONFIRMED_REPORT_SCOPE,
 } from "./businessCompliance.js";
 
 const verified = (overrides = {}) => ({
@@ -119,10 +120,39 @@ test("View List, CSV and PDF share all filtered records, including beyond page o
   assert.equal(pdf.data.rows.at(-1).Origin, "Business Detection");
   assert.equal(pdf.data.count, csv.data.length);
   assert.match(pdf.title, /Inspection-Verified Compliant Businesses/);
-  assert.match(pdf.subtitle, /current admin-verification evidence/);
+  assert.match(pdf.subtitle, /current verification evidence/);
   assert.match(pdf.date, /Asia\/Manila/);
   assert.match(pdf.data.filtersLabel, /Barangay I.*Not in Registry/);
-  assert.ok(!report.columns.includes("Business ID"));
+  assert.deepEqual(report.columns, [
+    "Pin Reference", "Business Name", "Barangay", "Address", "Origin", "Verified On", "Registry Link",
+  ]);
+  assert.equal("Official Business ID" in report.rows[0], false);
+});
+
+test("direct confirmations have their own titled report, method, ID and complete export data", () => {
+  const records = [{
+    detectionReference: 42, businessID: "OFFICIAL-42", confirmedBy: "Admin One",
+    confirmedByUserID: 2, businessName: "Confirmed Shop",
+    barangayID: 1, barangayName: "Barangay I", originSource: "detection",
+    verifiedOn: "2026-10-16T01:02:03Z",
+    registryLinked: true,
+  }];
+  const report = buildComplianceReport(records, { search: "OFFICIAL-42" }, undefined, {
+    title: ADMIN_CONFIRMED_REPORT_TITLE, reportType: "admin-confirmed",
+    scope: ADMIN_CONFIRMED_REPORT_SCOPE,
+  });
+  assert.equal(report.title, ADMIN_CONFIRMED_REPORT_TITLE);
+  assert.deepEqual(report.columns, [
+    "Pin Reference", "Business Name", "Barangay", "Address", "Origin",
+    "Official Business ID", "Confirmed By", "Verified On", "Registry Link",
+  ]);
+  assert.equal(report.rows[0]["Official Business ID"], "OFFICIAL-42");
+  assert.equal(report.rows[0]["Confirmed By"], "Admin One");
+  assert.equal(complianceCsv(report).includes("OFFICIAL-42"), true);
+  const pdf = compliancePrintReport(report, {}, "admin-confirmed");
+  assert.equal(pdf.type, "admin-confirmed-compliant");
+  assert.match(pdf.classification, /Direct Admin Confirmation/);
+  assert.equal(pdf.subtitle, ADMIN_CONFIRMED_REPORT_SCOPE);
 });
 
 test("report search finds a pin reference and pagination clamps after filtering", () => {

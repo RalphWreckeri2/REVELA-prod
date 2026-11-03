@@ -24,6 +24,20 @@ def get_inspection_verified_compliant():
                 "verifiedOn": row["confirmedAt"],
                 "registryLinked": True,
             } for row in all_rows if row["confirmationSource"] == "inspection"]
+        admin_confirmed_records = [{
+                "detectionReference": row["logID"],
+                "businessID": row["businessID"],
+                "businessName": row["detectedName"],
+                "barangayID": row["barangayID"],
+                "barangayName": row["barangayName"],
+                "address": row["address"],
+                "originSource": row["originSource"],
+                "verificationMethod": "DIRECT_ADMIN_CONFIRMATION",
+                "confirmedBy": row["officeConfirmedBy"],
+                "confirmedByUserID": row["officeConfirmedByID"],
+                "verifiedOn": row["confirmedAt"],
+                "registryLinked": True,
+            } for row in all_rows if row["confirmationSource"] == "office"]
         # Keep the pre-existing legacy unlinked-pin operational list/filter.
         # These are pin references, not provably distinct registered businesses;
         # never add them to the canonical confirmed-business breakdown above.
@@ -47,7 +61,11 @@ def get_inspection_verified_compliant():
                 "originSource": row["originSource"],
                 "verifiedOn": row["verifiedGreenAt"], "registryLinked": False})
         records.sort(key=lambda row: (str(row["businessName"] or ""), row["detectionReference"]))
+        admin_confirmed_records.sort(
+            key=lambda row: (str(row["businessName"] or ""), row["detectionReference"]))
         return {"data": records, "total": len(records),
+                "adminConfirmedData": admin_confirmed_records,
+                "adminConfirmedTotal": len(admin_confirmed_records),
                 "confirmationSummary": confirmation_summary(all_rows),
                 "unlinkedVerifiedPinCount": sum(not row["registryLinked"] for row in records),
                 "generatedAt": utc_iso(datetime.now(timezone.utc))}

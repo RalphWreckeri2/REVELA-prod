@@ -64,7 +64,8 @@ test("complete dossier tables share one print palette while the official header 
 test("operational PDFs use compact neutral tables without changing the letterhead", () => {
   const unregistered = page.split("CASE 3: List of Unregistered Businesses")[1]?.split("CASE 4: Field Inspector Dispatch Plan")[0] ?? "";
   const dispatch = page.split("CASE 4: Field Inspector Dispatch Plan")[1]?.split("Official Signature Block")[0] ?? "";
-  assert.match(page, /className="operational-print-body inspection-print-body"/);
+  assert.match(page, /operational-print-body \$\{printReport\.type === "admin-confirmed-compliant"/);
+  assert.match(page, /admin-confirmed-print-body/);
   assert.match(unregistered, /className="operational-print-body unregistered-print-body"/);
   assert.match(dispatch, /className="operational-print-body dispatch-print-body"/);
   assert.doesNotMatch(unregistered + dispatch, /<th style=\{\{ background:|background: f\.Status|background: r\.RiskLevel/);
@@ -72,4 +73,12 @@ test("operational PDFs use compact neutral tables without changing the letterhea
   assert.match(page, /\.operational-print-body \.print-table th\s*\{[^}]*background: #eaf1ed !important/);
   assert.match(page, /className="print-header"/);
   assert.match(page, /className="print-footer"/);
+});
+
+test("direct admin confirmation is a separate exportable report from field inspection", () => {
+  assert.match(page, /id: "inspection-compliant"/);
+  assert.match(page, /id: "admin-confirmed"/);
+  assert.match(page, /ADMIN_CONFIRMED_REPORT_TITLE/);
+  assert.match(page, /reportType=\{report\.id === "admin-confirmed" \? "admin-confirmed" : "inspection"\}/);
+  assert.match(page, /admin-confirmed-compliant/);
 });

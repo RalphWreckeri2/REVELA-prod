@@ -37,7 +37,10 @@ import bpLogo from "../assets/bagongpilipinas.png";
 import sealImg from "../assets/seal.png";
 import ComplianceReportCard from "../components/ComplianceReportCard";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
-import { COMPLIANCE_REPORT_TITLE } from "../components/businessCompliance";
+import {
+  ADMIN_CONFIRMED_REPORT_TITLE,
+  COMPLIANCE_REPORT_TITLE,
+} from "../components/businessCompliance";
 import { registryFlagRateLabel } from "../components/wlcPolicy";
 
 // ── Color Palettes ─────────────────────────────────────────────────────────────
@@ -244,6 +247,10 @@ const OPERATIONAL_REPORTS = [
   {
     id: "inspection-compliant",
     title: COMPLIANCE_REPORT_TITLE,
+  },
+  {
+    id: "admin-confirmed",
+    title: ADMIN_CONFIRMED_REPORT_TITLE,
   },
   {
     id: "dispatch",
@@ -1840,8 +1847,10 @@ export default function ExportReportsPage() {
 
             {/* Operational reports remain independent of the registry census. */}
             <div style={{ display: "grid", gap: 16 }}>
-              {OPERATIONAL_REPORTS.map((report) => report.id === "inspection-compliant" ? (
-                <ComplianceReportCard key={report.id} token={token} user={user} onPrint={report => downloadReportPdf(report)} />
+              {OPERATIONAL_REPORTS.map((report) => ["inspection-compliant", "admin-confirmed"].includes(report.id) ? (
+                <ComplianceReportCard key={report.id} token={token} user={user}
+                  reportType={report.id === "admin-confirmed" ? "admin-confirmed" : "inspection"}
+                  onPrint={report => downloadReportPdf(report)} />
               ) : (
                 <div
                   key={report.id}
@@ -2183,6 +2192,15 @@ export default function ExportReportsPage() {
               .inspection-print-body .print-table th:nth-child(5) { width: 10%; }
               .inspection-print-body .print-table th:nth-child(6) { width: 17%; }
               .inspection-print-body .print-table th:nth-child(7) { width: 10%; }
+              .admin-confirmed-print-body .print-table th:nth-child(1) { width: 8%; }
+              .admin-confirmed-print-body .print-table th:nth-child(2) { width: 16%; }
+              .admin-confirmed-print-body .print-table th:nth-child(3) { width: 10%; }
+              .admin-confirmed-print-body .print-table th:nth-child(4) { width: 18%; }
+              .admin-confirmed-print-body .print-table th:nth-child(5) { width: 9%; }
+              .admin-confirmed-print-body .print-table th:nth-child(6) { width: 11%; }
+              .admin-confirmed-print-body .print-table th:nth-child(7) { width: 10%; }
+              .admin-confirmed-print-body .print-table th:nth-child(8) { width: 10%; }
+              .admin-confirmed-print-body .print-table th:nth-child(9) { width: 8%; }
               .dispatch-print-body .print-table th:nth-child(1) { width: 7%; }
               .dispatch-print-body .print-table th:nth-child(2) { width: 23%; }
               .dispatch-print-body .print-table th:nth-child(3) { width: 12%; }
@@ -2274,13 +2292,13 @@ export default function ExportReportsPage() {
             </div>
 
             {/* ── CASE 1: Single Demographic Chart Report ── */}
-            {printReport.type === "inspection-compliant" && (
-              <div className="operational-print-body inspection-print-body">
+            {["inspection-compliant", "admin-confirmed-compliant"].includes(printReport.type) && (
+              <div className={`operational-print-body ${printReport.type === "admin-confirmed-compliant" ? "admin-confirmed-print-body" : "inspection-print-body"}`}>
                 <p className="print-operational-note"><strong>Applied filters:</strong> {printReport.data.filtersLabel} · <strong>Record count:</strong> {printReport.data.count}</p>
-                <p className="print-operational-note">Pin Reference is the geospatial logID, not an official Business ID. Verified On is the admin verification time in Asia/Manila.</p>
+                <p className="print-operational-note">Pin Reference is the geospatial logID; Official Business ID is the registry record. Verified On is the verification time in Asia/Manila.</p>
                 <table className="print-table">
                   <thead><tr>{printReport.data.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
-                  <tbody>{printReport.data.rows.length === 0 ? <tr><td colSpan={6}>No matching current-compliance records.</td></tr>
+                  <tbody>{printReport.data.rows.length === 0 ? <tr><td colSpan={printReport.data.columns.length}>No matching current-compliance records.</td></tr>
                     : printReport.data.rows.map(row => <tr key={row["Pin Reference"]}>
                       {printReport.data.columns.map(column => <td key={column}>
                         {column === "Registry Link" && row[column] === "Linked to Registry" ? "Linked"

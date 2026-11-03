@@ -31,7 +31,11 @@ Keep the original browser and mobile CSV exports with the report as an appendix 
 supporting files. Cite those filenames (and the dataset snapshot and trial range)
 where the reported means, medians, ranges, and standard deviations appear. Calculate
 summary statistics from the successful comparable trials only, while retaining and
-disclosing incomplete or failed attempts separately; never discard those attempts
+disclosing incomplete or failed attempts separately; never discar3.4	System Design
+ 
+Figure 4: System Architecture Design
+The System Design defines the technical implementation and architectural blueprints for the REVELA system, systematically formulated to ensure compliance with the ISO/IEC 25010 Software Product Quality Model across functional suitability, performance efficiency, reliability, usability, and security. [
+d those attempts
 from the benchmark record. When relating benchmark results to an external panel
 rating, describe them as **consistent with** that rating rather than as proof of the
 rating. This repository contains the collection procedure, not the raw trial CSVs.

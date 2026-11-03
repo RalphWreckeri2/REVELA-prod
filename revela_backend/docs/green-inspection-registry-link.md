@@ -101,6 +101,12 @@ name/barangay-matched, or Place-ID-matched pin are refused.
 This records office-confirmed compliance but does not fabricate a Green
 inspector report or change inspection history.
 
+The event stores the registry `businessID` as its subject, the admin actor,
+UTC verification timestamp, and the original pin reference in its reason. The
+operational reports expose these rows as a separate Admin-Confirmed Compliant
+Businesses category. A retry of a valid legacy Green link adds the event only
+when no event exists for that business and pin; it does not duplicate evidence.
+
 ## Import and Sync Registry
 
 Both workflows match confirmed records by Business ID and share the same locked

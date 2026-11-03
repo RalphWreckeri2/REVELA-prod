@@ -2004,7 +2004,30 @@ def confirm_pin_compliance(log_id, business_id, actor_user_id, *,
             )
 
         if already_confirmed:
-            mysql.connection.rollback()
+            cursor.execute(
+                """SELECT eventID
+                   FROM enforcement_events
+                   WHERE subjectType = 'business'
+                     AND subjectID = %s
+                     AND eventType = %s
+                     AND reason LIKE CONCAT('% for original pin #', %s)
+                   ORDER BY eventID DESC
+                   LIMIT 1""",
+                (str(business_id), COMPLIANCE_CONFIRMED, log_id),
+            )
+            if not cursor.fetchone():
+                record_enforcement_event(
+                    cursor, business_id=business_id,
+                    event_type=COMPLIANCE_CONFIRMED,
+                    actor_user_id=actor_user_id,
+                    reason=(f"Office confirmation: Business ID {business_id} "
+                            f"linked to existing registry record for original pin #{log_id}"),
+                    previous_level=0, new_level=0,
+                    previous_black=0, new_black=0,
+                )
+                mysql.connection.commit()
+            else:
+                mysql.connection.rollback()
             cursor.close()
             return {"businessID": business_id, "logID": log_id,
                     "applicationStatus": "Active", "flagColor": "Green",

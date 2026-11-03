@@ -114,9 +114,10 @@ def current_confirmation_rows(cursor, *, ladder=False, barangay_ids=None):
     from api.registry.colors import _effective_flag_color_sql
 
     origin_source = origin_source_sql("g", cursor)
-    office_at = """(SELECT e.createdAt FROM enforcement_events e
+    office_event_id = """(SELECT e.eventID FROM enforcement_events e
         WHERE e.subjectType = 'business' AND e.subjectID = CAST(r.businessID AS CHAR)
           AND e.eventType = 'compliance_confirmed'
+          AND e.actorUserID IS NOT NULL
           AND e.reason LIKE CONCAT('% for original pin #', g.logID)
           AND NOT EXISTS (SELECT 1 FROM enforcement_events later
               WHERE later.eventType IN ('warning_issued', 'black_locked')
@@ -128,11 +129,18 @@ def current_confirmation_rows(cursor, *, ladder=False, barangay_ids=None):
                     b.barangayName, COALESCE(NULLIF(g.nearestLandmark, ''), r.businessAddress, '') AS address,
                     {origin_source} AS originSource,
                     {_effective_flag_color_sql('g', ladder=ladder)} AS flagColor,
-                    {office_at} AS officeAt,
+                    office_event.createdAt AS officeAt,
+                    office_event.actorUserID AS officeConfirmedByID,
+                    COALESCE(office_user.fullName,
+                             CONCAT('User #', office_event.actorUserID)) AS officeConfirmedBy,
                     {verified_green_at_sql('g', ladder=ladder)} AS inspectionAt
              FROM official_registry r
              JOIN geospatial_logs g ON g.logID = r.confirmedLogID AND g.businessID = r.businessID
-             LEFT JOIN barangays b ON b.barangayID = g.barangayID""")
+             LEFT JOIN barangays b ON b.barangayID = g.barangayID
+             LEFT JOIN enforcement_events office_event
+               ON office_event.eventID = {office_event_id}
+             LEFT JOIN users office_user
+               ON office_user.userID = office_event.actorUserID""")
     rows = []
     for row in cursor.fetchall():
         if row["flagColor"] != "Green" or (barangay_ids and row["barangayID"] not in barangay_ids):

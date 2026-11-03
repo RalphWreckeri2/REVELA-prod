@@ -146,7 +146,7 @@ try {
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Field reports')).click()");
     await waitFor("document.querySelector('.operational-report-card') && !document.querySelector('#chart-card-size')");
     assert.equal(await evaluate("Boolean(document.querySelector('.export-profile-menu'))"), false);
-    assert.equal(await evaluate("document.querySelectorAll('.operational-report-card').length"), 3);
+    assert.equal(await evaluate("document.querySelectorAll('.operational-report-card').length"), 4);
     assert.equal(await evaluate("Boolean(document.querySelector('.operational-report-details:not([open]) > summary'))"), true);
     if (width === 1440 && theme === "light") {
       await evaluate(`(() => {
@@ -156,7 +156,15 @@ try {
           if (path.endsWith('/flags/inspection-verified-compliant')) return Promise.resolve(Response.json({
             data: Array.from({ length: 2 }, (_, i) => ({ detectionReference: i + 1, businessName: 'Verified business ' + i,
               barangayID: 2, barangayName: 'Barangay II', address: 'Municipal Road, Mataasnakahoy', originSource: 'detection',
-              verifiedOn: '2026-10-25T14:00:00Z', registryLinked: i === 0 })), generatedAt: '2026-10-31T10:00:00Z'
+              verificationMethod: 'INSPECTOR_ASSISTED', businessID: 'FIELD-' + (i + 1),
+              verifiedOn: '2026-10-25T14:00:00Z', registryLinked: i === 0 })),
+            adminConfirmedData: [{ detectionReference: 3, businessName: 'Office-confirmed business',
+              businessID: 'OFFICE-3', barangayID: 2, barangayName: 'Barangay II',
+              confirmedBy: 'Admin User', confirmedByUserID: 1,
+              address: 'Municipal Road, Mataasnakahoy, Batangas', originSource: 'detection',
+              verifiedOn: '2026-10-25T14:00:00Z',
+              registryLinked: true }],
+            generatedAt: '2026-10-31T10:00:00Z'
           }));
           if (path.endsWith('/flags/') || path.endsWith('/flags')) return Promise.resolve(Response.json({ data: Array.from({ length: 224 }, (_, i) => ({
             flagColor: i % 10 === 0 ? 'Yellow' : 'Red', detectedName: 'Field candidate ' + (i + 1),
@@ -185,7 +193,8 @@ try {
         await waitFor("!document.querySelector('.print-report-container')");
       };
       const download = async label => {
-        const button = label === "Inspection-Verified Compliant Businesses" ? ".compliance-report-download" : ".primary-btn";
+        const button = ["Inspection-Verified Compliant Businesses", "Admin-Confirmed Compliant Businesses"].includes(label)
+          ? ".compliance-report-download" : ".primary-btn";
         await evaluate(`(() => { const card = [...document.querySelectorAll('.operational-report-card')].find(el => el.textContent.includes(${JSON.stringify(label)})); card.querySelector(${JSON.stringify(button)}).click(); })()`);
         await waitFor("document.querySelector('.swal2-radio input[value=pdf]')");
         await evaluate("document.querySelector('.swal2-radio input[value=pdf]').click(); document.querySelector('.swal2-confirm').click()");
@@ -195,8 +204,10 @@ try {
       await checkPdf(".unregistered-print-body", 224, "unregistered", 3);
       await download("Inspection-Verified Compliant Businesses");
       await checkPdf(".inspection-print-body", 2, "inspection-compliant", 4);
+      await download("Admin-Confirmed Compliant Businesses");
+      await checkPdf(".admin-confirmed-print-body", 1, "admin-confirmed-compliant", 5);
       await download("Field Inspector Dispatch Plan");
-      await checkPdf(".dispatch-print-body", 16, "dispatch", 5);
+      await checkPdf(".dispatch-print-body", 16, "dispatch", 6);
     }
     await evaluate("[...document.querySelectorAll('.export-report-view-nav button')].find(button => button.textContent.includes('Business profile')).click()");
     await waitFor("document.querySelector('#chart-card-size') && !document.querySelector('.operational-report-card')");

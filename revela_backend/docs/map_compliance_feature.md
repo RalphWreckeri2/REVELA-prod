@@ -18,6 +18,12 @@
   Businesses and the retained Dispatch Plan. It is independent of Section 1's
   registry-empty/loading/error state. View List has name/reference, barangay and
   registry-link filters, counts, pagination, clear/reset, retry and empty states.
+- A separate Admin-Confirmed Compliant Businesses report uses the same snapshot,
+  filters, pagination, CSV and PDF pipeline. Direct confirmations are not
+  classified as field inspections. The admin report includes the Official
+  Business ID and confirming admin account; the inspector report retains its
+  existing columns. Businesses with both histories are assigned once to the
+  latest valid confirmation category.
 - View List, CSV and the existing print/Save-as-PDF pipeline share one filtered
   report model. Exports refresh the same snapshot shown in the open list, and
   include every matching row, not just the visible page. CSV uses PapaParse with
@@ -64,8 +70,10 @@ report includes **source = detection** with either linkage state, and
 **source = manual** only when there is no valid registry link. Registry,
 registry-detected, unknown-origin and linked manual pins are excluded.
 Orange warnings and Black locks exclude rows through the existing color rule.
-Office-confirmed compliance can update a pin to Green, but does not fabricate
-Green inspection evidence and is not counted as an inspector-verified result.
+Office-confirmed compliance uses the existing `compliance_confirmed` event in
+`enforcement_events` as persistent admin-verification evidence; it does not
+fabricate Green inspection evidence and is reported separately from
+inspector-verified results.
 See `green-inspection-registry-link.md` for the compliance-confirmation flow.
 
 `Verified On` is the event's `eventTimestamp` (written by the existing

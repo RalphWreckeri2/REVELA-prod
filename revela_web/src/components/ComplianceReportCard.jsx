@@ -5,13 +5,18 @@ import FilterDropdown from "./FilterDropdown";
 import InspectionDialog from "./InspectionDialog";
 import { getInspectionVerifiedCompliantRequest } from "../services/api";
 import {
+  ADMIN_CONFIRMED_REPORT_DESCRIPTION, ADMIN_CONFIRMED_REPORT_SCOPE, ADMIN_CONFIRMED_REPORT_TITLE,
   buildComplianceReport, complianceCsv, compliancePrintReport, paginateRecords, REGISTRY_LINK_OPTIONS,
   COMPLIANCE_REPORT_TITLE, COMPLIANCE_REPORT_DESCRIPTION, COMPLIANCE_REPORT_SCOPE,
 } from "./businessCompliance";
 
 const DEFAULT_FILTERS = { search: "", barangayID: "all", registryLink: "all" };
 
-export default function ComplianceReportCard({ token, user, onPrint }) {
+export default function ComplianceReportCard({ token, user, onPrint, reportType = "inspection" }) {
+  const isAdminConfirmed = reportType === "admin-confirmed";
+  const title = isAdminConfirmed ? ADMIN_CONFIRMED_REPORT_TITLE : COMPLIANCE_REPORT_TITLE;
+  const description = isAdminConfirmed ? ADMIN_CONFIRMED_REPORT_DESCRIPTION : COMPLIANCE_REPORT_DESCRIPTION;
+  const scope = isAdminConfirmed ? ADMIN_CONFIRMED_REPORT_SCOPE : COMPLIANCE_REPORT_SCOPE;
   const [open, setOpen] = useState(false);
   const [records, setRecords] = useState([]);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
@@ -21,7 +26,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
   const [checkedAt, setCheckedAt] = useState(null);
   const [confirmationSummary, setConfirmationSummary] = useState(null);
   const [unlinkedVerifiedPinCount, setUnlinkedVerifiedPinCount] = useState(0);
-  const report = buildComplianceReport(records, filters, checkedAt);
+  const report = buildComplianceReport(records, filters, checkedAt, { title, reportType, scope });
   const visible = paginateRecords(report.rows, page, 10);
   const barangays = [{ value: "all", label: "All Barangays" }, ...[...new Map(records.map(record =>
     [String(record.barangayID), { value: String(record.barangayID), label: record.barangayName || "Unknown barangay" }],
@@ -35,8 +40,9 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
     setError("");
     try {
       const snapshot = await getInspectionVerifiedCompliantRequest(token);
-      if (!Array.isArray(snapshot?.data)) throw new Error("The report API returned no record list.");
-      setRecords(snapshot.data);
+      const reportRecords = isAdminConfirmed ? snapshot?.adminConfirmedData : snapshot?.data;
+      if (!Array.isArray(reportRecords)) throw new Error("The report API returned no record list.");
+      setRecords(reportRecords);
       setConfirmationSummary(snapshot.confirmationSummary || null);
       setUnlinkedVerifiedPinCount(snapshot.unlinkedVerifiedPinCount || 0);
       setCheckedAt(snapshot.generatedAt);
@@ -58,13 +64,14 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
     // Refresh eligibility and update the open list to this same export snapshot.
     const snapshot = await load();
     if (!snapshot) return false;
-    const exportReport = buildComplianceReport(snapshot.data, filters, snapshot.generatedAt);
+    const reportRecords = isAdminConfirmed ? snapshot.adminConfirmedData : snapshot.data;
+    const exportReport = buildComplianceReport(reportRecords, filters, snapshot.generatedAt, { title, reportType, scope });
     try {
       if (format === "csv") {
         saveAs(new Blob([complianceCsv(exportReport)], { type: "text/csv;charset=utf-8;" }),
-          `Inspection_Verified_Compliant_Businesses_${snapshot.generatedAt.slice(0, 10)}.csv`);
+          `${title.replaceAll(" ", "_")}_${snapshot.generatedAt.slice(0, 10)}.csv`);
       } else {
-        await onPrint(compliancePrintReport(exportReport, user));
+        await onPrint(compliancePrintReport(exportReport, user, reportType));
       }
       return true;
     } catch (err) {
@@ -74,7 +81,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
   };
   const chooseDownloadFormat = async () => {
     const { value: format } = await Swal.fire({
-      title: `Export ${COMPLIANCE_REPORT_TITLE}`,
+      title: `Export ${title}`,
       text: "Select your desired export file format:",
       input: "radio",
       inputOptions: {
@@ -94,7 +101,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
     await Swal.fire({
       icon: "success",
       title: "Export Complete!",
-      text: `${COMPLIANCE_REPORT_TITLE} exported as ${format.toUpperCase()}`,
+      text: `${title} exported as ${format.toUpperCase()}`,
       timer: 2000,
       showConfirmButton: false,
     });
@@ -106,13 +113,13 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
   return <>
     <div className="saas-card frosted-glass operational-report-card">
       <div>
-        <h3>{COMPLIANCE_REPORT_TITLE}</h3>
-        <p>{COMPLIANCE_REPORT_DESCRIPTION}</p>
+        <h3>{title}</h3>
+        <p>{description}</p>
         <details className="operational-report-details">
           <summary>Scope and export notes</summary>
           {confirmationSummary && <small>Office-confirmed: {confirmationSummary.office_confirmed} · Inspection-verified: {confirmationSummary.inspection_verified} · Combined distinct businesses: {confirmationSummary.total_confirmed}. Counts exclude Green businesses without qualifying confirmation history.</small>}
           {unlinkedVerifiedPinCount > 0 && <small>{unlinkedVerifiedPinCount} historical inspection-verified unlinked {unlinkedVerifiedPinCount === 1 ? "pin appears" : "pins appear"} in the report list, but not in distinct linked-business counts.</small>}
-          <small>{COMPLIANCE_REPORT_SCOPE}</small>
+          <small>{scope}</small>
           <small>Downloads use the View List filters. PDF downloads directly as a file.</small>
           {checkedAt && <small>Applied filters: {report.filtersLabel}</small>}
         </details>
@@ -124,12 +131,14 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
         {actions}
       </div>
     </div>
-    {open && <InspectionDialog title={COMPLIANCE_REPORT_TITLE} description={COMPLIANCE_REPORT_SCOPE}
+    {open && <InspectionDialog title={title} description={scope}
       onClose={() => setOpen(false)} busy={loading} className="compliance-report-dialog">
       <div className="compliance-report-content">
-        <p className="compliance-report-note">Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila.</p>
+        <p className="compliance-report-note">{isAdminConfirmed
+          ? "Pin Reference is the geospatial log reference; Official Business ID is the linked registry record. Confirmed By is the administrator account on the confirmation event. Dates use Asia/Manila."
+          : "Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila."}</p>
         <div className="compliance-report-filters">
-          <label className="compliance-report-search">Business name / reference
+          <label className="compliance-report-search">Business name / Pin Reference
             <input type="search" placeholder="Search business name or pin reference" value={filters.search}
               disabled={loading} onChange={event => changeFilter({ search: event.target.value })} />
           </label>
@@ -149,7 +158,7 @@ export default function ComplianceReportCard({ token, user, onPrint }) {
         {error ? <div role="alert" className="compliance-report-empty"><p>{error}</p>
           <button type="button" className="secondary-btn" onClick={() => void load()}>Retry</button></div>
           : loading ? <p className="compliance-report-empty">Loading current-compliance evidence…</p>
-            : report.count === 0 ? <p className="compliance-report-empty">No inspection-verified compliant businesses match these filters.</p>
+            : report.count === 0 ? <p className="compliance-report-empty">No {isAdminConfirmed ? "admin-confirmed" : "inspection-verified"} compliant businesses match these filters.</p>
               : <>
                 <div className="compliance-report-table-scroll"><table className="compliance-report-table">
                   <thead><tr>{report.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>

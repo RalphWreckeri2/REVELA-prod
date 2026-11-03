@@ -80,11 +80,60 @@ def test_office_event_counts_without_report_and_retry_does_not_duplicate(db):
     assert confirmation_summary(rows) == {"office_confirmed": 1, "inspection_verified": 0,
         "total_confirmed": 1, "count_unit": "distinct confirmed registry businesses"}
     assert db.rows("SELECT * FROM inspection_reports") == []
-    assert compliance_report.get_inspection_verified_compliant()["total"] == 0
+    report_snapshot = compliance_report.get_inspection_verified_compliant()
+    assert report_snapshot["total"] == 0
+    assert report_snapshot["adminConfirmedTotal"] == 1
+    assert report_snapshot["adminConfirmedData"][0]["businessID"] == "OFFICE-030"
+    assert report_snapshot["adminConfirmedData"][0]["verificationMethod"] == "DIRECT_ADMIN_CONFIRMATION"
+    assert report_snapshot["adminConfirmedData"][0]["confirmedBy"] == "Admin"
+    assert report_snapshot["adminConfirmedData"][0]["confirmedByUserID"] == 2
+    assert report_snapshot["adminConfirmedData"][0]["verifiedOn"]
     result, error = registry.confirm_pin_compliance(30, "OFFICE-030", 2,
         registry_review_token=review["reviewToken"], confirm_establishment=True)
     assert error is None and result["alreadyConfirmed"]
     assert len(db.rows("SELECT * FROM enforcement_events")) == 1
+
+
+def test_retry_repairs_missing_confirmation_event_without_duplicating_valid_event(db):
+    seed(db)
+    review, error = registry.preview_pin_compliance(30, "OFFICE-030")
+    assert error is None
+    office_confirm(db)
+    db.db.execute("DELETE FROM enforcement_events")
+    db.commit()
+
+    result, error = registry.confirm_pin_compliance(30, "OFFICE-030", 2,
+        registry_review_token=review["reviewToken"], confirm_establishment=True)
+
+    assert error is None and result["alreadyConfirmed"]
+    assert db.rows("""SELECT subjectID, eventType, actorUserID, reason
+                      FROM enforcement_events""") == [{
+        "subjectID": "OFFICE-030",
+        "eventType": "compliance_confirmed",
+        "actorUserID": 2,
+        "reason": "Office confirmation: Business ID OFFICE-030 linked to existing registry record for original pin #30",
+    }]
+    assert compliance_report.get_inspection_verified_compliant()["adminConfirmedTotal"] == 1
+
+
+def test_confirmation_event_failure_rolls_back_registry_link_and_green_status(db):
+    seed(db)
+    review, error = registry.preview_pin_compliance(30, "OFFICE-030")
+    assert error is None
+    db.db.execute("""CREATE TRIGGER fail_compliance_event
+                     BEFORE INSERT ON enforcement_events
+                     WHEN NEW.eventType = 'compliance_confirmed'
+                     BEGIN SELECT RAISE(FAIL, 'event write failed'); END""")
+    db.commit()
+
+    result, error = registry.confirm_pin_compliance(30, "OFFICE-030", 2,
+        registry_review_token=review["reviewToken"], confirm_establishment=True)
+
+    assert result is None and "event write failed" in str(error)
+    assert db.rows("SELECT businessID, flagColor FROM geospatial_logs WHERE logID=30") == [
+        {"businessID": None, "flagColor": "Yellow"}]
+    assert db.rows("SELECT * FROM official_registry WHERE businessID='OFFICE-030'") == []
+    assert db.rows("SELECT * FROM enforcement_events") == []
 
 
 def test_later_verified_inspection_reclassifies_office_without_double_count(db):
@@ -101,6 +150,9 @@ def test_later_verified_inspection_reclassifies_office_without_double_count(db):
     assert confirmation_summary(rows)["total_confirmed"] == 1
     assert confirmation_summary(rows)["inspection_verified"] == 1
     assert len(db.rows("SELECT * FROM enforcement_events")) == 1
+    report = compliance_report.get_inspection_verified_compliant()
+    assert report["total"] == 1
+    assert report["adminConfirmedTotal"] == 0
 
 
 def test_green_without_confirmation_event_is_unclassified(db):
@@ -111,3 +163,18 @@ def test_green_without_confirmation_event_is_unclassified(db):
     db.db.execute("UPDATE geospatial_logs SET businessID='OFFICE-030',flagColor='Green'")
     db.commit()
     assert snapshot(db) == []
+    report = compliance_report.get_inspection_verified_compliant()
+    assert report["total"] == 0
+    assert report["adminConfirmedTotal"] == 0
+
+
+def test_direct_confirmation_without_admin_actor_is_not_report_evidence(db):
+    seed(db)
+    office_confirm(db)
+    db.db.execute("UPDATE enforcement_events SET actorUserID=NULL")
+    db.commit()
+
+    report = compliance_report.get_inspection_verified_compliant()
+
+    assert report["adminConfirmedData"] == []
+    assert report["adminConfirmedTotal"] == 0
