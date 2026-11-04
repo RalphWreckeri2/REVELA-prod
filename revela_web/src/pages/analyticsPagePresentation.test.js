@@ -24,6 +24,11 @@ test("analytics switch spans one compact row with two clear active states", () =
   assert.match(stylesheet, /@container analytics-content \(max-width: 479px\)\s*\{\s*\.analytics-tab-btn\s*\{ padding-inline: 6px; \}/);
 });
 
+test("floating quick nav stays centered when the AI Analyst panel is open", () => {
+  assert.doesNotMatch(stylesheet, /:has\(\.analytics-assistant-panel[^)]*\)\s+\.analytics-quick-nav\s*\{[^}]*left:/);
+  assert.match(stylesheet, /\.analytics-tools:has\(\.analytics-assistant-panel\)\s+\.analytics-assistant\s*\{[^}]*bottom:\s*80px/);
+});
+
 test("Overview KPI cards share the content width and use balanced sizing", () => {
   assert.match(mapStylesheet, /\.map-overview-topbar\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(mapStylesheet, /\.map-overview-total\s*\{[^}]*box-sizing:\s*border-box;[^}]*min-height:\s*88px;[^}]*padding:\s*14px 16px;/);

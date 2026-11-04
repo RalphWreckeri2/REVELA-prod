@@ -945,7 +945,7 @@ html.theme-dark .analytics-quick-nav-btn:focus-visible {
   display: flex;
   flex-direction: column;
   width: min(460px, calc(100vw - var(--sidebar-width, 260px) - 48px));
-  height: min(610px, calc(100dvh - var(--navbar-height) - 44px));
+  height: min(610px, calc(100dvh - var(--navbar-height) - 104px));
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -957,16 +957,12 @@ html.theme-dark .analytics-quick-nav-btn:focus-visible {
 }
 .analytics-assistant-panel.is-reading {
   width: min(740px, calc(100vw - var(--sidebar-width, 260px) - 48px));
-  height: min(780px, calc(100dvh - var(--navbar-height) - 44px));
+  height: min(780px, calc(100dvh - var(--navbar-height) - 104px));
 }
-/* Reserve space when the assistant panel is open. */
-.analytics-tools:has(.analytics-assistant-panel) .analytics-quick-nav {
-  left: calc((100vw + var(--sidebar-width, 260px) - 500px) / 2);
-  max-width: max(0px, calc(100vw - var(--sidebar-width, 260px) - 500px));
-}
-.analytics-tools:has(.analytics-assistant-panel.is-reading) .analytics-quick-nav {
-  left: calc((100vw + var(--sidebar-width, 260px) - 780px) / 2);
-  max-width: max(0px, calc(100vw - var(--sidebar-width, 260px) - 780px));
+/* Keep the quick nav centered in the content area. Lift the assistant panel
+   above the floating dock so the two never overlap, even on narrow desktops. */
+.analytics-tools:has(.analytics-assistant-panel) .analytics-assistant {
+  bottom: 80px;
 }
 .ai-chat-header {
   display: flex;
@@ -1196,10 +1192,8 @@ html.theme-dark .analytics-quick-nav-btn:focus-visible {
 @media (max-width: 900px) {
   .analytics-quick-nav-btn { padding: 8px 11px; }
 }
-@media (max-width: 1100px) {
-  .analytics-tools:has(.analytics-assistant-panel) .analytics-quick-nav { display: none; }
-}
 @media (max-width: 768px) {
+  .analytics-tools:has(.analytics-assistant-panel) .analytics-quick-nav { display: none; }
   .analytics-operations-grid { grid-template-columns: minmax(0, 1fr); }
   .analytics-recommendation-list { padding: 16px 12px; }
   .analytics-recommendation-table { overflow-x: auto; overscroll-behavior-inline: contain; }
