@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { useAuth } from "../context/authContext";
-import { SkeletonTableRows } from "../components/LoadingSkeleton";
+import { SkeletonBlock, SkeletonTableRows } from "../components/LoadingSkeleton";
 import {
   getUsersRequest,
   createUserRequest,
@@ -587,10 +587,10 @@ export default function UserManagementPage() {
       )}
 
       {/* Stat Cards */}
-      <div className="um-stats-grid">
-        <StatCard icon={Icons.users} value={stats.total} label="Total Users" variant="green" />
-        <StatCard icon={Icons.shield} value={stats.admins} label="Administrators" variant="gold" />
-        <StatCard icon={Icons.clipboard} value={stats.inspectors} label="Inspectors" variant="blue" />
+      <div className="um-stats-grid" aria-busy={loading && !hasUsers}>
+        <StatCard icon={Icons.users} value={loading && !hasUsers ? <SkeletonBlock as="span" statusLabel="Loading user counts" style={{ width: 44, height: 28 }} /> : stats.total} label="Total Users" variant="green" />
+        <StatCard icon={Icons.shield} value={loading && !hasUsers ? <SkeletonBlock as="span" style={{ width: 44, height: 28 }} /> : stats.admins} label="Administrators" variant="gold" />
+        <StatCard icon={Icons.clipboard} value={loading && !hasUsers ? <SkeletonBlock as="span" style={{ width: 44, height: 28 }} /> : stats.inspectors} label="Inspectors" variant="blue" />
         {stats.pendingResets > 0 && (
           <StatCard icon={Icons.alertTriangle} value={stats.pendingResets} label="Pending Resets" variant="red" />
         )}

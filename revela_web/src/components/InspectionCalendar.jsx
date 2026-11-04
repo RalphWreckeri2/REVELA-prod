@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import { getInspectionCalendarRequest, getInspectionsRequest } from "../services/api";
 import { useAppDataRefresh, useSessionDataset } from "./useAppDataRefresh";
+import { SkeletonBlock, SkeletonList } from "./LoadingSkeleton";
 import { deadlineGroups, deadlineStatusCounts, loadLatestAssignments, manilaToday } from "./deadlineCalendar";
 import "../styles/InspectionCalendar.css";
 
@@ -165,7 +166,7 @@ const Icon = {
 };
 
 /** The mini-calendar and month view share selection, counts, and keyboard behavior. */
-function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCounts, hasCounts, compact = false, onSelectDate, countLabel = eventCountLabel, deadlines = false }) {
+function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCounts, hasCounts, countsLoading = false, compact = false, onSelectDate, countLabel = eventCountLabel, deadlines = false }) {
   const dayCount = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
 
   const handleDateKey = (event, day) => {
@@ -222,7 +223,9 @@ function MonthDates({ visibleMonth, monthCells, selectedDate, todayIso, dayCount
             aria-label={`${formatLongDate(date)}${isToday ? " (today)" : ""}, ${countDescription}`}
           >
             <span className="inspection-calendar-day-number">{day}</span>
-            {(count > 0 || (deadlines && !hasCounts && !compact)) && (
+            {!compact && countsLoading ? (
+              <SkeletonBlock className="inspection-calendar-day-count-skeleton" />
+            ) : (count > 0 || (deadlines && !hasCounts && !compact)) && (
               <span className="inspection-calendar-day-events" aria-hidden="true">
                 {compact ? null : hasCounts ? countLabel(count) : "—"}
               </span>
@@ -380,7 +383,7 @@ export default function InspectionCalendar({ token, initialDate }) {
   const refreshCalendar = refreshView;
   const sharedDateProps = {
     visibleMonth, monthCells, selectedDate, todayIso, dayCounts,
-    hasCounts, onSelectDate: setSelectedDate, deadlines,
+    hasCounts, countsLoading: loading && !hasCounts, onSelectDate: setSelectedDate, deadlines,
     countLabel: deadlines ? deadlineCountLabel : eventCountLabel,
   };
 
@@ -436,11 +439,11 @@ export default function InspectionCalendar({ token, initialDate }) {
             <dl>
               <div>
                 <dt>{deadlines ? "Recorded deadlines" : "Lifecycle events"}</dt>
-                <dd>{hasCounts ? deadlines ? monthlyDeadlines : monthlyEvents : "—"}</dd>
+                 <dd>{hasCounts ? deadlines ? monthlyDeadlines : monthlyEvents : loading ? <SkeletonBlock statusLabel="Loading calendar totals" className="inspection-calendar-total-skeleton" /> : "—"}</dd>
               </div>
               <div>
                 <dt>{deadlines ? "Days with deadlines" : "Active days"}</dt>
-                <dd>{hasCounts ? dayCounts.size : "—"}</dd>
+                 <dd>{hasCounts ? dayCounts.size : loading ? <SkeletonBlock className="inspection-calendar-total-skeleton" /> : "—"}</dd>
               </div>
             </dl>
             <p>{deadlines ? "Submitted and Verified remain on their recorded deadline date until that deadline is replaced." : "An inspection can have multiple events. UTC recording dates."}</p>
@@ -543,7 +546,8 @@ export default function InspectionCalendar({ token, initialDate }) {
         >
           {deadlineReady ? <DeadlineAssignments key={selectedDate} date={selectedDate} reports={selectedAssignments} /> : <>
             <h2 id="inspection-calendar-deadline-selected-label">{formatLongDate(selectedDate)}</h2>
-            <p className={`inspection-calendar-state${error ? " is-error" : ""}`} role="status">{error || "Loading latest recorded assignments…"} {progress} No final deadline count is available.</p>
+             {loading ? <div role="status" aria-label="Loading selected-day assignments" aria-busy="true"><SkeletonList rows={3} />{progress && <p className="inspection-calendar-state">{progress}</p>}</div>
+               : <p className="inspection-calendar-state is-error" role="status">{error || "No final deadline count is available."}</p>}
           </>}
         </section> : <section
           id="inspection-calendar-selected-activity"
@@ -583,7 +587,7 @@ export default function InspectionCalendar({ token, initialDate }) {
           )}
 
           {loading ? (
-            <p className="inspection-calendar-state" role="status">Loading activity for this date…</p>
+             <div role="status" aria-label="Loading selected-day activity" aria-busy="true"><SkeletonList rows={3} /></div>
           ) : error ? (
             <p className="inspection-calendar-state is-error">Activity for this date could not be loaded. Use Retry above to try again.</p>
           ) : activities.length ? (

@@ -1,6 +1,6 @@
-export function SkeletonBlock({ className = "", style, statusLabel }) {
+export function SkeletonBlock({ as: Element = "div", className = "", style, statusLabel }) {
   return (
-    <div
+    <Element
       aria-hidden={statusLabel ? undefined : "true"}
       aria-label={statusLabel}
       aria-busy={statusLabel ? "true" : undefined}

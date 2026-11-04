@@ -623,13 +623,13 @@ export default function RegistryPage() {
       {/* Summary Strip */}
       <div style={styles.summaryStrip}>
         {[
-          { label: "Total Businesses", value: loading ? "—" : total, color: "var(--color-ink)" },
-          { label: "Showing", value: loading ? "—" : businesses.length, color: "var(--color-primary)" },
-          { label: "Current Page", value: loading ? "—" : `${page} / ${totalPages}`, color: "var(--color-muted)" },
-          { label: "Page Size", value: loading ? "—" : pageSize, color: "var(--color-muted)" },
+          { label: "Total Businesses", value: total, color: "var(--color-ink)" },
+          { label: "Showing", value: businesses.length, color: "var(--color-primary)" },
+          { label: "Current Page", value: `${page} / ${totalPages}`, color: "var(--color-muted)" },
+          { label: "Page Size", value: pageSize, color: "var(--color-muted)" },
         ].map(s => (
           <div key={s.label} className="frosted-glass saas-card" style={styles.summaryCard}>
-            <span style={{ ...styles.summaryValue, color: s.color }}>{s.value}</span>
+            <span style={{ ...styles.summaryValue, color: s.color }}>{loading ? <SkeletonBlock as="span" statusLabel={s.label === "Total Businesses" ? "Loading registry summary" : undefined} style={{ width: 58, height: 24 }} /> : s.value}</span>
             <span style={styles.summaryLabel}>{s.label}</span>
           </div>
         ))}
@@ -724,7 +724,7 @@ export default function RegistryPage() {
 
           <span style={styles.resultCount}>
             {loading
-              ? <SkeletonBlock statusLabel="Loading registry results" style={{ width: 88 }} />
+               ? <SkeletonBlock as="span" statusLabel="Loading registry results" style={{ width: 88 }} />
               : `${total} result${total !== 1 ? "s" : ""}`}
           </span>
         </div>

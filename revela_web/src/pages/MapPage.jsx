@@ -2165,7 +2165,7 @@ function MapCanvas({
   if (!isLoaded) {
     return (
       <div style={styles.mapCanvas}>
-        <div style={styles.mapFallback}>Loading Google Maps…</div>
+        <SkeletonBlock statusLabel="Loading Google Maps" style={{ width: "100%", height: "100%", borderRadius: 12 }} />
       </div>
     );
   }
@@ -3006,22 +3006,25 @@ export default function MapPage() {
 
     const result = resultData || outcome;
     const model = buildWorkflowSummaryModel(operation, result);
-    const countMarkup = model.counts
-      .map(({ label, count, keys }) => {
-        const key = label === "Updated / snapped" || label === "Reconciled" || label === "Reverified / updated"
-          ? "success"
-          : label === "No match" || label === "Sent for review"
-            ? "warning"
-            : "neutral";
-        return `<button type="button" class="workflow-summary-count workflow-summary-count--${key} workflow-summary-count--filterable" data-outcome-keys="${escapeHtml(keys.join(","))}" aria-pressed="false" title="Filter summary by ${escapeHtml(label)}"><strong>${count}</strong><span>${escapeHtml(label)}</span></button>`;
-      })
+    const toneForLabel = (label) => {
+      if (["Reconciled", "Updated / snapped", "Reverified / updated"].includes(label)) return "success";
+      if (["No match", "Sent for review", "Skipped by quota", "Not processed", "Failed"].includes(label)) return "warning";
+      return "neutral";
+    };
+    const otherCountsMarkup = model.counts
+      .filter((count) => count !== model.primary && count.count > 0)
+      .map(({ label, count, keys }) => `<button type="button" class="workflow-summary-chip workflow-summary-chip--${toneForLabel(label)}" data-outcome-keys="${escapeHtml(keys.join(","))}" aria-pressed="false" title="Filter summary by ${escapeHtml(label)}"><strong>${count}</strong><span>${escapeHtml(label)}</span></button>`)
       .join("");
-    const contextCountsMarkup = model.contextCounts
-      .map(([label, count]) => `<div class="workflow-summary-count"><span>${escapeHtml(label)}</span><strong>${count}</strong></div>`)
-      .join("");
-    const emptyMessage = operation === "detection"
-      ? model.emptyMessage
-      : model.emptyMessage;
+    const allRecordsMarkup = model.records.length > 0
+      ? `<button type="button" class="workflow-summary-chip workflow-summary-chip--all" data-outcome-all="true" aria-pressed="false" title="Show all records"><strong>${model.records.length}</strong><span>All records</span></button>`
+      : "";
+    const countMarkup = `<div class="workflow-summary-overview">
+      <button type="button" class="workflow-summary-primary workflow-summary-primary--${operation === "detection" ? model.primary.count > 0 ? "detection" : "clear" : "success"}" data-outcome-keys="${escapeHtml(model.primaryKeys.join(","))}" aria-pressed="false" title="Filter summary by ${escapeHtml(model.primary.label)}"><strong>${model.primary.count}</strong><span>${escapeHtml(model.primary.label)}</span></button>
+      <div class="workflow-summary-chips">${otherCountsMarkup}${allRecordsMarkup}</div>
+    </div>`;
+    const contextLine = model.contextCounts.length
+      ? `<details class="workflow-summary-breakdown"><summary>Scan breakdown</summary><p class="workflow-summary-context">${model.contextCounts.map(([label, count]) => `<strong>${count}</strong> ${escapeHtml(label.toLowerCase())}`).join(" · ")}</p></details>`
+      : "";
     const unavailableMessage = detailsUnavailable && !model.hasCapturedDetails
       ? "<p class=\"workflow-summary-note\">Detailed run results could not be retrieved. No unrelated saved records are being shown.</p>"
       : !detailsUnavailable && !model.hasCapturedDetails && model.checked > 0
@@ -3031,14 +3034,15 @@ export default function MapPage() {
       ? `<p class="workflow-summary-note">Run note: ${escapeHtml(model.error)}</p>`
       : "";
     const rowsMarkup = model.hasCapturedDetails
-      ? `<div class="workflow-summary-table-scroll">
+      ? `<div class="workflow-summary-filter-message workflow-summary-empty" hidden></div>
+         <div class="workflow-summary-table-scroll">
           <table class="workflow-summary-table">
             <colgroup><col class="workflow-col-business"><col class="workflow-col-address"><col class="workflow-col-outcome"><col class="workflow-col-details"></colgroup>
             <thead><tr><th>Business</th><th>Barangay / address</th><th>Outcome</th><th>Details</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>`
-      : `<div class="workflow-summary-empty">${escapeHtml(emptyMessage)}</div>`;
+      : `<div class="workflow-summary-empty">${escapeHtml(model.emptyMessage)}</div>`;
     const footerMarkup = `<div class="workflow-summary-footer">
       ${model.hasCapturedDetails
         ? `<div class="workflow-summary-pagination">
@@ -3050,35 +3054,58 @@ export default function MapPage() {
     </div>`;
     const subtitleParts = [];
     if (model.checked) subtitleParts.push(`${model.checked} ${model.activityLabel}`);
-    if (model.operationId) subtitleParts.push(`Run ${model.operationId}`);
+    const runIdMarkup = model.operationId
+      ? `<details class="workflow-summary-run-info"><summary>Run ID</summary><span>${escapeHtml(model.operationId)}</span></details>`
+      : "";
     await Swal.fire({
       title: `${model.title}`,
       html: `<div class="workflow-summary-modal">
         ${subtitleParts.length ? `<p class="workflow-summary-subtitle">${subtitleParts.map(escapeHtml).join(" · ")}</p>` : ""}
-        <div class="workflow-summary-counts workflow-summary-counts--${escapeHtml(operation)}">${countMarkup || '<div class="workflow-summary-count workflow-summary-count--neutral"><span>Results</span><strong>0</strong></div>'}</div>
-        ${contextCountsMarkup ? `<div class="workflow-summary-counts workflow-summary-counts--context">${contextCountsMarkup}</div>` : ""}
-        ${model.contextNote ? `<p class="workflow-summary-note">${escapeHtml(model.contextNote)}</p>` : ""}
+        ${countMarkup}
+        ${contextLine}
         ${errorMarkup}
         ${unavailableMessage}
         ${rowsMarkup}
+        ${runIdMarkup}
         ${footerMarkup}
       </div>`,
       width: "min(1180px, 96vw)",
       heightAuto: false,
       showCloseButton: true,
       showConfirmButton: false,
-      customClass: { popup: "workflow-summary-popup" },
+      customClass: { popup: `workflow-summary-popup${!model.hasCapturedDetails || model.primary.count === 0 ? " workflow-summary-popup--compact" : ""}` },
       didOpen: (popup) => {
         popup.querySelector(".workflow-summary-close")?.addEventListener("click", () => Swal.close());
         if (!model.hasCapturedDetails) return;
         const body = popup.querySelector(".workflow-summary-table tbody");
+        const table = popup.querySelector(".workflow-summary-table-scroll");
+        const emptyState = popup.querySelector(".workflow-summary-filter-message");
+        const pagination = popup.querySelector(".workflow-summary-pagination");
         const label = popup.querySelector(".workflow-summary-page-label");
         const previous = popup.querySelector(".workflow-page-previous");
         const next = popup.querySelector(".workflow-page-next");
-        const countButtons = [...popup.querySelectorAll(".workflow-summary-count[data-outcome-keys]")];
+        const countButtons = [...popup.querySelectorAll(".workflow-summary-overview [data-outcome-keys]")];
+        const allRecordsButton = popup.querySelector("[data-outcome-all]");
         let currentPage = 1;
-        let activeOutcomeKeys = null;
+        let activeOutcomeKeys = model.defaultOutcomeKeys ? [...model.defaultOutcomeKeys] : null;
         let expandedRecordId = null;
+        const sameKeys = (left, right) => Boolean(
+          left && right && left.length === right.length && left.every((key) => right.includes(key)),
+        );
+        const isDefaultFilter = () => sameKeys(activeOutcomeKeys, model.defaultOutcomeKeys);
+        const syncFilterState = () => {
+          countButtons.forEach((candidate) => {
+            const candidateKeys = candidate.dataset.outcomeKeys.split(",").filter(Boolean);
+            const selected = sameKeys(activeOutcomeKeys, candidateKeys);
+            candidate.classList.toggle("is-active", selected);
+            candidate.setAttribute("aria-pressed", String(selected));
+          });
+          if (allRecordsButton) {
+            const selected = !activeOutcomeKeys;
+            allRecordsButton.classList.toggle("is-active", selected);
+            allRecordsButton.setAttribute("aria-pressed", String(selected));
+          }
+        };
         const labelField = (field) => ({
           coordSource: "Coordinate source",
           flagColor: "Flag color",
@@ -3091,6 +3118,16 @@ export default function MapPage() {
             filteredRecords, currentPage, WORKFLOW_SUMMARY_PAGE_SIZE,
           );
           currentPage = page.page;
+          const hasRows = page.total > 0;
+          table.hidden = !hasRows;
+          emptyState.hidden = hasRows;
+          pagination.hidden = !hasRows;
+          popup.classList.toggle("workflow-summary-popup--compact", !hasRows);
+          if (!hasRows) {
+            emptyState.textContent = activeOutcomeKeys
+              ? (isDefaultFilter() ? model.defaultEmptyMessage : "No records in this outcome. Select All records to view every record.")
+              : model.emptyMessage;
+          }
           body.innerHTML = page.records.length ? page.records.map((record, index) => {
             const address = [
               record.barangayName
@@ -3101,25 +3138,28 @@ export default function MapPage() {
             const recordId = String(record.businessID || record.record_id || record.logID || record.placeID || index);
             const expanded = recordId === expandedRecordId;
             const outcome = String(record.outcome || "recorded");
-            const outcomeLabel = model.counts.find(({ label }) => label.toLowerCase() === outcome.replaceAll("_", " "))?.label
+            const outcomeLabel = model.counts.find(({ keys }) => keys.includes(outcome))?.label
               || outcome.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
             const fields = [...new Set([
               ...Object.keys(record.before || {}),
               ...Object.keys(record.after || {}),
             ])].filter((field) => record.before?.[field] !== null || record.after?.[field] !== null);
-            const details = fields.length
-              ? `<div class="workflow-summary-detail-grid">
-                  <strong>Field</strong><strong>Before</strong><strong>After</strong>
-                  ${fields.map((field) => `<span>${escapeHtml(labelField(field))}</span><span>${formatValue(record.before?.[field])}</span><strong>${formatValue(record.after?.[field])}</strong>`).join("")}
-                </div>`
-              : `<p class="workflow-summary-detail-empty">No field-level changes were recorded.</p>`;
+            const explanation = record.explanation || record.reason;
+            const details = `
+              ${explanation ? `<p class="workflow-summary-detail-reason">${escapeHtml(explanation)}</p>` : ""}
+              ${fields.length
+                ? `<div class="workflow-summary-detail-grid">
+                    <strong>Field</strong><strong>Before</strong><strong>After</strong>
+                    ${fields.map((field) => `<span>${escapeHtml(labelField(field))}</span><span>${formatValue(record.before?.[field])}</span><strong>${formatValue(record.after?.[field])}</strong>`).join("")}
+                  </div>`
+                : explanation ? "" : `<p class="workflow-summary-detail-empty">No field-level changes were recorded.</p>`}`;
             return `<tr class="workflow-summary-record-row">
                 <td><strong>${escapeHtml(record.businessName || "Unnamed business")}</strong><span class="workflow-summary-business-id">${escapeHtml(record.businessID || record.placeID || ((record.logID || record.record_id) ? `ID ${record.logID || record.record_id}` : ""))}</span></td>
                 <td>${escapeHtml(address)}</td>
-                <td><span class="workflow-summary-outcome workflow-summary-outcome--${escapeHtml(outcome)}">${escapeHtml(outcomeLabel)}</span><span class="workflow-summary-explanation">${escapeHtml(record.explanation || record.reason || "No explanation was recorded.")}</span></td>
+                <td><span class="workflow-summary-outcome workflow-summary-outcome--${escapeHtml(outcome)}">${escapeHtml(outcomeLabel)}</span></td>
                 <td><button type="button" class="workflow-summary-details-toggle" data-record-id="${escapeHtml(recordId)}" aria-expanded="${expanded}">${expanded ? "Hide" : "View"}</button></td>
               </tr>${expanded ? `<tr class="workflow-summary-details-row"><td colspan="4">${details}</td></tr>` : ""}`;
-          }).join("") : `<tr><td class="workflow-summary-filter-empty" colspan="4">No businesses in this outcome. Click the selected summary card again to clear the filter.</td></tr>`;
+          }).join("") : "";
           label.textContent = `${page.total ? (currentPage - 1) * WORKFLOW_SUMMARY_PAGE_SIZE + 1 : 0}–${Math.min(currentPage * WORKFLOW_SUMMARY_PAGE_SIZE, page.total)} of ${page.total}`;
           previous.disabled = currentPage <= 1;
           next.disabled = currentPage >= page.pageCount;
@@ -3127,22 +3167,20 @@ export default function MapPage() {
         countButtons.forEach((button) => {
           button.addEventListener("click", () => {
             const keys = button.dataset.outcomeKeys.split(",").filter(Boolean);
-            const isActive = activeOutcomeKeys
-              && keys.length === activeOutcomeKeys.length
-              && keys.every((key) => activeOutcomeKeys.includes(key));
+            const isActive = sameKeys(activeOutcomeKeys, keys);
             activeOutcomeKeys = isActive ? null : keys;
             currentPage = 1;
             expandedRecordId = null;
-            countButtons.forEach((candidate) => {
-              const candidateKeys = candidate.dataset.outcomeKeys.split(",").filter(Boolean);
-              const selected = Boolean(activeOutcomeKeys
-                && candidateKeys.length === activeOutcomeKeys.length
-                && candidateKeys.every((key) => activeOutcomeKeys.includes(key)));
-              candidate.classList.toggle("is-active", selected);
-              candidate.setAttribute("aria-pressed", String(selected));
-            });
+            syncFilterState();
             renderPage();
           });
+        });
+        allRecordsButton?.addEventListener("click", () => {
+          activeOutcomeKeys = null;
+          currentPage = 1;
+          expandedRecordId = null;
+          syncFilterState();
+          renderPage();
         });
         next.addEventListener("click", () => {
           currentPage += 1;
@@ -3162,6 +3200,7 @@ export default function MapPage() {
             : button.getAttribute("data-record-id");
           renderPage();
         });
+        syncFilterState();
         renderPage();
       },
     });
@@ -5701,7 +5740,7 @@ export default function MapPage() {
               )}
               <span style={styles.countBadge} aria-live="polite">
                 {loadingFlags
-                  ? <SkeletonBlock statusLabel="Loading location count" style={{ width: 20, height: 13 }} />
+                   ? <SkeletonBlock as="span" statusLabel="Loading location count" style={{ width: 20, height: 13 }} />
                   : flagsError && !hasFlags ? "—" : visibleFlags.length}
               </span>
             </div>
@@ -5711,6 +5750,7 @@ export default function MapPage() {
               <FilterDropdown label="Barangay" value={filterBarangay} options={barangayFilterOptions}
                 onChange={value => { autoSearchFiltersRef.current = null; setFilterBarangay(value); setLocationsPage(1); }} />
               <FilterDropdown label="Status" value={filterColor} options={STATUS_OPTIONS}
+                getOptionColor={option => FLAG_COLORS[option.value]?.marker}
                 onChange={value => { autoSearchFiltersRef.current = null; setFilterColor(value); setLocationsPage(1); }} />
               <FilterDropdown label="Origin / Registry" value={filterSource} options={BUSINESS_SOURCE_OPTIONS}
                 onChange={value => { autoSearchFiltersRef.current = null; setLocationsPage(1);

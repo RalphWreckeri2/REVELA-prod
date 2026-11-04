@@ -43,6 +43,19 @@ import {
 } from "../components/businessCompliance";
 import { registryFlagRateLabel } from "../components/wlcPolicy";
 
+function ReportChartSkeleton({ variant = "bars" }) {
+  return <div className={`export-chart-skeleton export-chart-skeleton--${variant}`} role="status" aria-label="Loading report chart" aria-busy="true">
+    {variant === "donut" ? <SkeletonBlock className="export-chart-skeleton-ring" /> : variant === "horizontal" ? <div className="export-chart-skeleton-horizontal">
+      {[68, 90, 48, 75].map((width, index) => <div key={index}><SkeletonBlock style={{ width: "25%", height: 12 }} /><SkeletonBlock style={{ width: `${width}%`, height: 18 }} /></div>)}
+    </div> : <div className="export-chart-skeleton-bars">
+      {[55, 80, 42, 68, 92, 60].map((height, index) => <SkeletonBlock key={index} style={{ height: `${height}%` }} />)}
+    </div>}
+    <div className="export-chart-skeleton-labels" aria-hidden="true">
+      {[0, 1, 2, 3].map(index => <SkeletonBlock key={index} />)}
+    </div>
+  </div>;
+}
+
 // ── Color Palettes ─────────────────────────────────────────────────────────────
 const SIZE_COLORS = ["#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
 const TYPE_COLORS = ["#14b8a6", "#f97316", "#ec4899", "#8b5cf6", "#3b82f6", "#6366f1"];
@@ -1267,7 +1280,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton variant="donut" />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sizeData.length === 0 ? (
@@ -1299,7 +1312,7 @@ export default function ExportReportsPage() {
                   )}
                 </div>
 
-                <DoughnutLegend data={sizeData} total={totalBySize} emptyMessage="No business size records available." />
+                 {loadingAnalytics ? <SkeletonBlock style={{ width: "75%", height: 14, marginTop: 14 }} /> : <DoughnutLegend data={sizeData} total={totalBySize} emptyMessage="No business size records available." />}
               </div>
 
               {/* ── CHART 2: Business Legal Structure (Ownership Type) ── */}
@@ -1344,7 +1357,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton variant="donut" />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : typeData.length === 0 ? (
@@ -1376,7 +1389,7 @@ export default function ExportReportsPage() {
                   )}
                 </div>
 
-                <DoughnutLegend data={typeData} total={totalByType} emptyMessage="No legal structure records available." />
+                 {loadingAnalytics ? <SkeletonBlock style={{ width: "75%", height: 14, marginTop: 14 }} /> : <DoughnutLegend data={typeData} total={totalByType} emptyMessage="No legal structure records available." />}
               </div>
 
               {/* ── CHART 2B: Registration Lifecycle (New vs Renewal) ── */}
@@ -1410,7 +1423,7 @@ export default function ExportReportsPage() {
 
                 <div style={{ height: 210, width: "100%", position: "relative" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton variant="donut" />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : regTypeData.length === 0 ? (
@@ -1446,7 +1459,7 @@ export default function ExportReportsPage() {
                   )}
                 </div>
 
-                <DoughnutLegend data={regTypeData} total={totalByRegType} emptyMessage="No registration lifecycle records available." />
+                 {loadingAnalytics ? <SkeletonBlock style={{ width: "75%", height: 14, marginTop: 14 }} /> : <DoughnutLegend data={regTypeData} total={totalByRegType} emptyMessage="No registration lifecycle records available." />}
               </div>
 
               {/* ── CHART 3: Dominant Economic Sectors ── */}
@@ -1491,7 +1504,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: Math.max(320, chartSectorData.length * 58 + 40), width: "100%" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton variant="horizontal" />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : sectoralData.length === 0 ? (
@@ -1578,7 +1591,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 220, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton variant="horizontal" />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : barangaySpreadData.length === 0 ? (
@@ -1654,7 +1667,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : complianceBySizeData.length === 0 ? (
@@ -1690,7 +1703,7 @@ export default function ExportReportsPage() {
                 >
                   {complianceBySizeData.length === 0 ? (
                     <div style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", textAlign: "center" }}>
-                      No compliance status records available.
+                       {loadingAnalytics ? <SkeletonBlock style={{ width: "75%", height: 14, margin: "0 auto" }} /> : "No compliance status records available."}
                     </div>
                   ) : (
                     <>
@@ -1752,7 +1765,7 @@ export default function ExportReportsPage() {
                 {/* Chart Visual / Empty State */}
                 <div style={{ height: 210, width: "100%" }}>
                   {loadingAnalytics ? (
-                    <SkeletonBlock style={{ width: "100%", height: "100%", borderRadius: 10 }} />
+                     <ReportChartSkeleton variant="timeline" />
                    ) : analyticsError && !analyticsData ? (
                     <ChartEmptyState title="Report Data Unavailable" message={analyticsError} showIllustration={false} />
                   ) : !hasTimelineData ? (

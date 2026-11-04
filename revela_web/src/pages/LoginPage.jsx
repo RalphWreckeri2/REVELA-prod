@@ -15,11 +15,11 @@ import AboutCreditsModal from "../components/AboutCreditsModal";
 import AnimatePresence from "../components/AnimatePresence";
 
 // ── Reusable alert banner ─────────────────────────────────────────────────────
-function Alert({ type, message }) {
+function Alert({ type, message, onDismiss }) {
   if (!message) return null;
   const isError = type === "error";
   return (
-    <div className={`message-alert message-alert--${type}`}>
+    <div className={`message-alert message-alert--${type}`} role={isError ? "alert" : "status"}>
       {isError ? (
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
           <circle cx="8" cy="8" r="7" />
@@ -31,7 +31,8 @@ function Alert({ type, message }) {
           <path d="M5 8l2 2 4-4" />
         </svg>
       )}
-      {message}
+      <span>{message}</span>
+      {onDismiss && <button type="button" className="message-alert-dismiss" aria-label="Dismiss message" onClick={onDismiss}>×</button>}
     </div>
   );
 }
@@ -97,6 +98,7 @@ function LegalDocModal({ title, children, onClose, isClosing }) {
 }
 
 const ALLOWED_ROLES = ["Admin", "SUPER_ADMIN", "System Administrator"];
+const ERROR_NOTICE_DURATION_MS = 10000;
 
 export default function LoginPage() {
   const { login, completeLogin, logout } = useAuth();
@@ -139,6 +141,18 @@ export default function LoginPage() {
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotError, setForgotError] = useState(null);
   const [forgotSuccess, setForgotSuccess] = useState(null);
+
+  useEffect(() => {
+    if (!loginError) return undefined;
+    const timer = window.setTimeout(() => setLoginError(null), ERROR_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [loginError]);
+
+  useEffect(() => {
+    if (!forgotError) return undefined;
+    const timer = window.setTimeout(() => setForgotError(null), ERROR_NOTICE_DURATION_MS);
+    return () => window.clearTimeout(timer);
+  }, [forgotError]);
 
   // ── Legal docs state ──
   const [showTermsDoc, setShowTermsDoc] = useState(false);
@@ -415,7 +429,7 @@ export default function LoginPage() {
           <h2 className="form-heading" ref={headingRef} tabIndex={-1}>{loginStep === "credentials" ? "Welcome back" : "Two-Step Verification"}</h2>
           <p className="form-sub">{loginStep === "credentials" ? "Sign in to access the compliance dashboard" : "Secure your account"}</p>
 
-          <Alert type="error" message={loginError} />
+          <Alert type="error" message={loginError} onDismiss={() => setLoginError(null)} />
 
           {loginStep === "credentials" && (
             <>
@@ -491,7 +505,7 @@ export default function LoginPage() {
                     </button>
                   </div>
 
-                  <Alert type="error" message={forgotError} />
+                  <Alert type="error" message={forgotError} onDismiss={() => setForgotError(null)} />
                   <Alert type="success" message={forgotSuccess} />
 
                   {/* ── Step 1: Enter email/phone ── */}

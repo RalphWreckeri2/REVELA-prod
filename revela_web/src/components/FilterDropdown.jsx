@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import "../styles/FilterDropdown.css";
 
 /** The Map's custom combobox design, shared with the operational report. */
-export default function FilterDropdown({ label, value, options, onChange, disabled = false }) {
+export default function FilterDropdown({ label, value, options, onChange, disabled = false, getOptionColor }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -10,6 +10,7 @@ export default function FilterDropdown({ label, value, options, onChange, disabl
   const trigger = useRef(null);
   const activeOption = useRef(null);
   const selected = Math.max(0, options.findIndex(option => option.value === value));
+  const selectedColor = getOptionColor?.(options[selected]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -69,20 +70,29 @@ export default function FilterDropdown({ label, value, options, onChange, disabl
         aria-activedescendant={open ? `${id}-option-${active}` : undefined}
         disabled={disabled} onKeyDown={onKeyDown}
         onClick={() => { setActive(selected); setOpen(current => !current); }}>
-        <span id={`${id}-value`}>{options[selected].label}</span>
+        <span id={`${id}-value`} className="filter-dropdown-value">
+          {selectedColor && <span className="filter-dropdown-dot" style={{ backgroundColor: selectedColor }} aria-hidden="true" />}
+          <span>{options[selected].label}</span>
+        </span>
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
       </button>
       {open && <div id={`${id}-options`} role="listbox" aria-labelledby={`${id}-label`} className="filter-dropdown-menu">
-        {options.map((option, index) => (
-          <div key={option.value} id={`${id}-option-${index}`} role="option"
-            ref={index === active ? activeOption : undefined}
-            aria-selected={option.value === value}
-            className={`filter-dropdown-option${index === active ? " active" : ""}`}
-            onPointerDown={event => event.preventDefault()}
-            onMouseEnter={() => setActive(index)} onClick={() => choose(index)}>
-            <span>{option.label}</span><span aria-hidden="true">{option.value === value ? "✓" : ""}</span>
-          </div>
-        ))}
+        {options.map((option, index) => {
+          const color = getOptionColor?.(option);
+          return (
+            <div key={option.value} id={`${id}-option-${index}`} role="option"
+              ref={index === active ? activeOption : undefined}
+              aria-selected={option.value === value}
+              className={`filter-dropdown-option${index === active ? " active" : ""}`}
+              onPointerDown={event => event.preventDefault()}
+              onMouseEnter={() => setActive(index)} onClick={() => choose(index)}>
+              <span className="filter-dropdown-value">
+                {getOptionColor && <span className={`filter-dropdown-dot${color ? "" : " filter-dropdown-dot--empty"}`} style={color ? { backgroundColor: color } : undefined} aria-hidden="true" />}
+                <span>{option.label}</span>
+              </span><span aria-hidden="true">{option.value === value ? "✓" : ""}</span>
+            </div>
+          );
+        })}
       </div>}
     </div>
   );

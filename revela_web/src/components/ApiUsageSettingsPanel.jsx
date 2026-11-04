@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { SkeletonBlock, SkeletonDetails } from "./LoadingSkeleton";
 import Swal from "sweetalert2";
 import {
   getApiUsageReportRequest,
@@ -643,20 +644,20 @@ export default function ApiUsageSettingsPanel({
                 <div className="api-usage-overview-card">
                   <span>Requests used today</span>
                   <strong>
-                    {usage ? formatNumber(usageTotals.usedToday) : loading ? "…" : "—"}
+                     {usage ? formatNumber(usageTotals.usedToday) : loading ? <SkeletonBlock as="span" statusLabel="Loading API usage" style={{ width: 64, height: 28 }} /> : "—"}
                   </strong>
                   <small>Across all lookup types</small>
                 </div>
                 <div className="api-usage-overview-card">
                   <span>Requests used this month</span>
                   <strong>
-                    {usage ? formatNumber(usageTotals.usedMonth) : loading ? "…" : "—"}
+                     {usage ? formatNumber(usageTotals.usedMonth) : loading ? <SkeletonBlock as="span" style={{ width: 64, height: 28 }} /> : "—"}
                   </strong>
                   <small>Across all lookup types</small>
                 </div>
                 <div className="api-usage-overview-card">
                   <span>Run Detection scans left</span>
-                  <strong>{hasScanQuota ? formatNumber(scans.remaining) : loading ? "…" : "—"}</strong>
+                   <strong>{hasScanQuota ? formatNumber(scans.remaining) : loading ? <SkeletonBlock as="span" style={{ width: 64, height: 28 }} /> : "—"}</strong>
                   <small>
                     {hasScanQuota
                       ? `${formatNumber(scans.used)} of ${formatNumber(scans.limit)} used this month`
@@ -686,9 +687,13 @@ export default function ApiUsageSettingsPanel({
                 description="Each type has its own allowance, so what is left for one type is never used by another."
               >
                 {!usage ? (
-                  <p className="api-usage-empty" role="status">
-                    {loading ? "Loading usage…" : "Usage is unavailable. Refresh to try again."}
-                  </p>
+                  loading ? <div role="status" aria-label="Loading monthly API allowances" aria-busy="true" className="api-usage-methods">
+                    {[0, 1, 2, 3].map(index => <div key={index} className="api-usage-method-card" style={{ display: "grid", gap: 14 }}>
+                      <SkeletonBlock style={{ width: "55%", height: 18 }} />
+                      <SkeletonBlock style={{ width: "32%", height: 24 }} />
+                      <SkeletonBlock style={{ width: "100%", height: 10 }} />
+                    </div>)}
+                  </div> : <p className="api-usage-empty" role="status">Usage is unavailable. Refresh to try again.</p>
                 ) : (
                   <div className="api-usage-methods">
                     {methods.map((method) => {
@@ -740,7 +745,8 @@ export default function ApiUsageSettingsPanel({
 
               {/* Settings stay in parent state when section content unmounts. */}
               {isSuperAdmin && selectedSection.id !== "overview" && !(selectedSection.id === "limits" ? quota : selectedSection.id === "testing" ? testMode : usage) && (
-                <p className="api-usage-empty" role="status">{loading ? "Loading settings…" : "Settings are unavailable. Refresh to try again."}</p>
+                 loading ? <div role="status" aria-label="Loading API settings" aria-busy="true"><SkeletonDetails rows={5} /></div>
+                   : <p className="api-usage-empty" role="status">Settings are unavailable. Refresh to try again.</p>
               )}
               {isSuperAdmin && selectedSection.id === "limits" && quota && (<>
                   <Section

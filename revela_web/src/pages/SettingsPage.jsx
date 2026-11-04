@@ -43,6 +43,7 @@ import CookiePolicyPage from "../components/CookiePolicyPage";
 import AboutCreditsModal from "../components/AboutCreditsModal";
 import InstructionalManualModal from "../components/InstructionalManualModal";
 import BackupStatusPanel from "../components/BackupStatusPanel";
+import { SkeletonBlock, SkeletonDetails } from "../components/LoadingSkeleton";
 import { backupStatusPresentation } from "../components/backupStatusView";
 import AnimatePresence from "../components/AnimatePresence";
 import { createPortal } from "react-dom";
@@ -369,11 +370,11 @@ function MapPickerModal({ isDark, center, marker, onPick, onClose, isClosing }) 
             >
               {marker && <Marker position={marker} />}
             </GoogleMap>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--color-muted)", fontSize: 13, padding: 24, textAlign: "center" }}>
-              {loadError ? "Failed to load Google Maps. Please check your connection or API key." : "Loading map…"}
-            </div>
-          )}
+           ) : loadError ? (
+             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--color-muted)", fontSize: 13, padding: 24, textAlign: "center" }}>
+               Failed to load Google Maps. Please check your connection or API key.
+             </div>
+           ) : <SkeletonBlock statusLabel="Loading location picker map" style={{ width: "100%", height: "100%" }} />}
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
@@ -977,7 +978,7 @@ export default function SettingsPage() {
     {preferencesDirty && <span className="settings-draft-summary">Draft: appearance {activeTheme} · Email {emailAlerts ? "On" : "Off"}</span>}
   </>;
   const policyHeaderSummary = <>
-    <span>{savedPolicy ? `Saved: ${policySummary(savedPolicy)}` : policyLoading ? "Loading saved system-wide policy…" : "Saved policy unavailable; displayed inputs are unconfirmed."}</span>
+    <span>{savedPolicy ? `Saved: ${policySummary(savedPolicy)}` : policyLoading ? <SkeletonBlock as="span" statusLabel="Loading system policy" style={{ width: 260, maxWidth: "100%", height: 14 }} /> : "Saved policy unavailable; displayed inputs are unconfirmed."}</span>
     {policyDirty && <span className="settings-draft-summary">Draft: {policySummary(wlcConfig)}</span>}
     {sectorRiskPolicyDirty && <span className="settings-draft-summary">Draft: sector risk scores changed</span>}
   </>;
@@ -1125,7 +1126,7 @@ export default function SettingsPage() {
           </div>
           <div style={{ display: "grid", gap: 16 }}>
             {/* Linked Sliders */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "16px 0", borderTop: "1px solid var(--color-border-soft)", borderBottom: "1px solid var(--color-border-soft)", margin: "8px 0" }}>
+            {policyLoading ? <SkeletonDetails rows={5} /> : <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "16px 0", borderTop: "1px solid var(--color-border-soft)", borderBottom: "1px solid var(--color-border-soft)", margin: "8px 0" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <label style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>Linked Priority Weights</label>
@@ -1164,10 +1165,10 @@ export default function SettingsPage() {
                   <div style={{ width: 40, textAlign: "right", fontSize: 13, fontWeight: 700, color: "var(--color-ink)" }}>{wlcConfig[w.key]}%</div>
                 </div>
               ))}
-            </div>
+            </div>}
 
             {/* BPLO Location */}
-            <div>
+            {policyLoading ? <SkeletonDetails rows={2} /> : <div>
               <div style={{ marginBottom: 12, marginTop: 16 }}>
                 <label style={{ fontSize: 13, fontWeight: 700, color: "var(--color-ink)", display: "block", marginBottom: 8 }}>BPLO Base Station Coordinates</label>
                 <div style={{ display: "flex", gap: 10 }}>
@@ -1191,7 +1192,7 @@ export default function SettingsPage() {
                   <div style={{ fontSize: 14, fontWeight: 600, color: "var(--color-ink)", fontFamily: "monospace" }}>{wlcConfig.bplo_lng || "—"}</div>
                 </div>
               </div>
-            </div>
+            </div>}
 
             <section className="settings-sector-policy-card" aria-labelledby="sector-risk-policy-title">
               <div className="settings-sector-policy-heading">
@@ -1209,7 +1210,7 @@ export default function SettingsPage() {
                 </p>
               )}
               {sectorRiskPolicyLoading ? (
-                <p className="settings-sector-policy-state" role="status">Loading the saved sector risk policy…</p>
+                <div role="status" aria-label="Loading sector risk policy" aria-busy="true"><SkeletonDetails rows={5} /></div>
               ) : (
                 <div className="settings-sector-policy-fields">
                   {SECTOR_RISK_CATEGORIES.map((category, index) => {
@@ -1408,7 +1409,7 @@ export default function SettingsPage() {
 
         {/* Evidence Storage & Archival */}
         <SettingsSection id="settings-evidence" title="Inspection Evidence Storage & Archival"
-          summary={storageStats ? `${storageStats.totalDiskMB} MB · ${storageStats.totalFilesOnDisk} evidence files${selectedStorage ? ` · ${selectedStorage.label}: ${selectedStorage.reportCount} reports / ${selectedStorage.photoCount} photos eligible` : ""}` : storageLoading ? "Loading evidence usage…" : "Evidence usage unavailable"}
+          summary={storageStats ? `${storageStats.totalDiskMB} MB · ${storageStats.totalFilesOnDisk} evidence files${selectedStorage ? ` · ${selectedStorage.label}: ${selectedStorage.reportCount} reports / ${selectedStorage.photoCount} photos eligible` : ""}` : storageLoading ? <SkeletonBlock as="span" statusLabel="Loading evidence usage" style={{ width: 210, maxWidth: "100%", height: 14 }} /> : "Evidence usage unavailable"}
           status={cleaningStorage ? { text: "Clearing…" } : downloadingArchive ? { text: "Downloading…" } : storageLoading ? { text: "Loading…" } : storageError ? { text: "Storage error", tone: "error" } : storageWarning ? { text: "Cleanup pending", tone: "warning" } : null}>
           <div style={{ marginBottom: 16 }}>
             {storageError && <p className="settings-error" role="alert">{storageError}</p>}
@@ -1451,7 +1452,7 @@ export default function SettingsPage() {
                 Current Server Storage
               </div>
               <div style={{ fontSize: 22, fontWeight: 800, color: "var(--color-ink)" }}>
-                {storageStats ? `${storageStats.totalDiskMB} MB` : "—"}
+                 {storageStats ? `${storageStats.totalDiskMB} MB` : storageLoading ? <SkeletonBlock style={{ width: 80, height: 24 }} /> : "—"}
               </div>
               <div style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 2 }}>
                 {storageStats ? `${storageStats.totalFilesOnDisk} evidence file(s) on disk` : "Scanning disk..."}
@@ -1468,9 +1469,9 @@ export default function SettingsPage() {
                 Selected Filter Eligible
               </div>
               <div style={{ fontSize: 20, fontWeight: 800, color: "var(--color-primary, #10b981)" }}>
-                {storageStats?.categories?.[selectedFilter]
-                  ? `${storageStats.categories[selectedFilter].reportCount} report(s) (${storageStats.categories[selectedFilter].photoCount} photos)`
-                  : "—"}
+                 {storageStats?.categories?.[selectedFilter]
+                   ? `${storageStats.categories[selectedFilter].reportCount} report(s) (${storageStats.categories[selectedFilter].photoCount} photos)`
+                   : storageLoading ? <SkeletonBlock style={{ width: 118, height: 24 }} /> : "—"}
               </div>
               <div style={{ fontSize: 12, color: "var(--color-muted)", marginTop: 2 }}>
                 {storageStats?.categories?.[selectedFilter] ? `~${storageStats.categories[selectedFilter].estimatedMB} MB server storage` : "Calculating..."}

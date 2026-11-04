@@ -180,10 +180,10 @@ function HeroBanner({ user }) {
           <div className="hero-card hero-weather-card" aria-busy={weatherState === "loading"}>
             <div className="hero-card-title">Weather in Mataasnakahoy</div>
             <div className="hero-weather-row">
-              <span className="hero-temp">{weather?.temperature ?? "—"}</span>
+              <span className="hero-temp">{weather?.temperature ?? (weatherState === "loading" ? <SkeletonBlock as="span" statusLabel="Loading weather" style={{ width: 58, height: 30 }} /> : "—")}</span>
               <span className={`hero-weather-icon is-${weather?.icon ?? "unknown"}`}><WeatherIcon kind={weather?.icon ?? "unknown"} /></span>
             </div>
-            <p className="hero-cond">{weather?.description ?? (weatherState === "loading" ? "Loading weather…" : "Weather unavailable")}</p>
+            <p className="hero-cond">{weather?.description ?? (weatherState === "loading" ? <SkeletonBlock as="span" style={{ width: "75%", height: 14 }} /> : "Weather unavailable")}</p>
             <p className="hero-card-loc">Mataasnakahoy</p>
             {weather?.observation && <p className="hero-card-foot">Observed {weather.observation}</p>}
           </div>
@@ -198,7 +198,7 @@ function ActionCard({ label, value, to, note, state, suffix = "", empty = "No da
   const shown = !state.hasResult ? state.error ? "Could not load" : "Loading…"
     : formatValue ? formatValue(value) : value === null || value === undefined ? empty : `${formatOverviewNumber(value)}${suffix}`;
   return <Link className={`overview-action-card is-${tone}`} to={to} aria-label={`${label}: ${shown}. ${note}`}>
-    <span className="overview-action-label">{label}</span><strong>{shown}</strong>
+    <span className="overview-action-label">{label}</span><strong>{state.loading && !state.hasResult ? <SkeletonBlock as="span" style={{ width: "62%", height: 28 }} /> : shown}</strong>
     <small>{note}{state.error && state.hasResult ? " · Last loaded data" : ""}</small>
     <OverviewIcon kind="arrow" className="overview-action-arrow" />
   </Link>;
@@ -273,12 +273,12 @@ function InspectionSnapshot({ data, state }) {
       <nav aria-label="Open assignment age ranges" className="overview-age-segments">
         {["0-3", "4-7", "8-14"].map(group => {
           const count = !state.hasResult ? state.error ? "Unavailable" : "Loading…" : formatOverviewNumber(groups[group]);
-          return <Link key={group} className="overview-age-chip" to={workloadPath(`age_${group}`)} aria-label={`${group} days: ${count} open assignments`}>
-            <span>{group.replace("-", "–")} days</span><strong>{count}</strong>
-          </Link>;
+           return <Link key={group} className="overview-age-chip" to={workloadPath(`age_${group}`)} aria-label={`${group} days: ${count} open assignments`}>
+             <span>{group.replace("-", "–")} days</span><strong>{state.loading && !state.hasResult ? <SkeletonBlock as="span" style={{ width: 28, height: 18 }} /> : count}</strong>
+           </Link>;
         })}
       </nav>
-      <Link className="overview-age-unavailable" to={workloadPath("age_unavailable")}>Age unavailable <strong>{!state.hasResult ? state.error ? "Unavailable" : "Loading…" : formatOverviewNumber(data?.age_unavailable)}</strong><OverviewIcon kind="arrow" /></Link>
+       <Link className="overview-age-unavailable" to={workloadPath("age_unavailable")}>Age unavailable <strong>{state.loading && !state.hasResult ? <SkeletonBlock as="span" style={{ width: 28, height: 18 }} /> : !state.hasResult ? "Unavailable" : formatOverviewNumber(data?.age_unavailable)}</strong><OverviewIcon kind="arrow" /></Link>
     </div>
     {data && <details className="overview-explanation overview-quality">
       <summary>{qualityItems.length ? `Data notes · ${qualityItems.join(" · ")}` : "Data notes · nothing needs checking"}</summary>
@@ -489,8 +489,8 @@ function MiniMapWidget({ flags, state, isDark, onOpenMap, isLoaded, loadError })
               : "No VITE_GOOGLE_MAPS_API_KEY configured in .env"
             }</small>
           </div>
-        ) : !isLoaded ? (
-          <div style={miniMapFallback}>Loading map…</div>
+         ) : !isLoaded ? (
+           <SkeletonBlock statusLabel="Loading map preview" style={{ width: "100%", height: "100%", borderRadius: 12 }} />
         ) : (
           <GoogleMap
             mapContainerStyle={{ width: "100%", height: "100%" }}
@@ -683,8 +683,12 @@ function VisualCalendarWidget({ inspections, state, navigate }) {
             <button className="overview-inline-action" type="button" onClick={() => setSelectedDay(null)}>Clear date</button>
           )}
         </div>
-        <div className="calendar-widget-task-list" aria-labelledby="overview-selected-deadlines">
-          {state.hasResult && displayedTasks.length === 0 ? (
+         <div className="calendar-widget-task-list" aria-labelledby="overview-selected-deadlines">
+           {state.loading && !state.hasResult ? (
+             <div role="status" aria-label="Loading assignment deadlines" aria-busy="true" className="overview-deadline-skeleton">
+               {[0, 1, 2].map(index => <SkeletonBlock key={index} style={{ width: "100%", height: 64, borderRadius: 10 }} />)}
+             </div>
+           ) : state.hasResult && displayedTasks.length === 0 ? (
             selectedDate ? <p className="overview-empty">No outstanding deadlines for this date in the loaded records.</p> : (
               <div className="overview-deadline-empty" role="status">
                 <span className="overview-deadline-empty-icon" aria-hidden="true">✓</span>

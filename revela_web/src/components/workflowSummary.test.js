@@ -99,6 +99,28 @@ test("detection summary shows newly detected businesses before other outcomes", 
   ]);
 });
 
+test("detection summary focuses on newly detected businesses by default", () => {
+  const summary = buildWorkflowSummaryModel("detection", {
+    total_checked: 150,
+    run_summary: { non_business: 9, closed_results: 3, duplicates: 605 },
+    records: [
+      { record_id: "MATCHED-1", outcome: "matched" },
+      { record_id: "FLAGGED-1", outcome: "already_flagged" },
+    ],
+  });
+  assert.deepEqual(summary.defaultOutcomeKeys, ["new_detected"]);
+  assert.equal(summary.primary.label, "Newly detected");
+  assert.equal(summary.primary.count, 0);
+  assert.match(summary.defaultEmptyMessage, /No new businesses detected/);
+  assert.equal(filterWorkflowSummaryRecords(summary.records, summary.defaultOutcomeKeys).length, 0);
+  assert.deepEqual(filterWorkflowSummaryRecords(summary.records, ["matched"]).map(({ record_id }) => record_id), ["MATCHED-1"]);
+  assert.deepEqual(summary.contextCounts, [
+    ["Non-business Places", 9],
+    ["Closed Places results", 3],
+    ["Duplicate results", 605],
+  ]);
+});
+
 test("workflow summary pagination bounds large record lists", () => {
   const rows = Array.from({ length: 103 }, (_, index) => ({ id: index }));
   const first = paginateWorkflowRecords(rows, 1, 20);

@@ -3,6 +3,8 @@ export const WORKFLOW_SUMMARY_PAGE_SIZE = 20;
 const WORKFLOW_SUMMARIES = {
   detection: {
     title: "Run Detection Summary",
+    primaryOutcome: "new_detected",
+    defaultEmptyMessage: "No new businesses detected in this run. Select a result above to review its records.",
     outcomes: [
       ["new_detected", "Newly detected"],
       ["matched", "Matched to registry"],
@@ -13,6 +15,8 @@ const WORKFLOW_SUMMARIES = {
   },
   reconcile: {
     title: "Reconcile Summary",
+    primaryOutcome: "reconciled",
+    defaultEmptyMessage: "No Red flags were reconciled in this run. Use the summary chips above to view no-match or unchanged records.",
     outcomes: [
       ["reconciled", "Reconciled"],
       ["no_match", "No match"],
@@ -22,6 +26,8 @@ const WORKFLOW_SUMMARIES = {
   },
   snap: {
     title: "Snap Pins Summary",
+    primaryOutcome: "snapped",
+    defaultEmptyMessage: "No pins were updated in this run. Use the summary chips above to view cached, no-match, or failed records.",
     outcomes: [
       ["snapped", "Updated / snapped"],
       ["no_match", "No match"],
@@ -34,6 +40,8 @@ const WORKFLOW_SUMMARIES = {
   },
   reverify: {
     title: "Re-verify Summary",
+    primaryOutcome: "reverified",
+    defaultEmptyMessage: "No pins were re-verified or moved in this run. Use the summary chips above to view review, no-match, or unchanged records.",
     outcomes: [
       ["reverified", "Reverified / updated"],
       ["review", "Sent for review"],
@@ -92,14 +100,17 @@ export function buildWorkflowSummaryModel(operation, result = {}) {
       ["Duplicate results", Number(runSummary.duplicates || 0)],
     ].filter(([, count]) => count > 0)
     : [];
+  const counts = [...countByLabel.values()];
+  const primaryCount = counts.find(({ keys }) => keys.includes(config.primaryOutcome)) || counts[0];
   return {
     title: config.title,
     records: orderedRecords,
-    counts: [...countByLabel.values()],
+    counts,
+    primary: primaryCount,
+    primaryKeys: [config.primaryOutcome],
+    defaultOutcomeKeys: [config.primaryOutcome],
+    defaultEmptyMessage: config.defaultEmptyMessage,
     contextCounts,
-    contextNote: operation === "detection"
-      ? "Detailed rows cover captured business outcomes. Newly detected businesses are listed first; non-business and duplicate scan results are summarized separately."
-      : "",
     checked: Number(result.total_checked ?? result.total ?? result.total_candidates ?? 0),
     activityLabel: operation === "detection"
       ? "Places checked"

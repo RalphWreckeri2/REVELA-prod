@@ -12,3 +12,6 @@
 .inspection-calendar-deadline-meta dd { margin: 0; color: var(--color-ink); overflow-wrap: anywhere; }
 .inspection-calendar-assignment-name { margin: 0; color: var(--color-ink); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
 .inspection-calendar-show-more { margin-top: 14px; min-height: 40px; }
+.inspection-calendar-day-count-skeleton { width: min(72px, 85%); height: 16px; margin-top: 6px; }
+.inspection-calendar-total-skeleton { width: 44px; height: 22px; }
+.inspection-calendar-activities .ui-skeleton-list { margin-top: 16px; }

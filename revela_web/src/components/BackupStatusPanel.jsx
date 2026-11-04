@@ -1,4 +1,5 @@
 import { formatBackupDate, formatBackupSize } from "./backupStatusView";
+import { SkeletonBlock, SkeletonTableRows } from "./LoadingSkeleton";
 
 export default function BackupStatusPanel({
   data, loading, error, actionError, actionLoading, notice,
@@ -49,7 +50,7 @@ export default function BackupStatusPanel({
       <dl className="database-backup-metrics">
         <div className="database-backup-metric">
           <dt>Last successful backup</dt>
-          <dd>{loading ? "Loading…" : !data ? "Unavailable" : lastBackup ? <>
+          <dd>{loading ? <SkeletonBlock statusLabel="Loading last backup" style={{ width: 125, height: 18 }} /> : !data ? "Unavailable" : lastBackup ? <>
             <span>{formatBackupDate(lastBackup.completedAt)}</span>
             <span className="database-backup-detail">{formatBackupSize(lastBackup.sizeBytes)} · {lastBackup.trigger === "manual" ? "Manual" : "Automatic"}</span>
           </> : "No successful backup yet"}</dd>
@@ -57,7 +58,7 @@ export default function BackupStatusPanel({
         <div className="database-backup-metric">
           <dt>Automatic backup</dt>
           <dd className="database-backup-automatic-status">
-            <span className="database-backup-automatic-label">{automaticBackupStatus}</span>
+             <span className="database-backup-automatic-label">{loading ? <SkeletonBlock style={{ width: 72, height: 18 }} /> : automaticBackupStatus}</span>
             {!loading && data && automaticBackupStatus !== "On" && (
               <>
                 <span className="database-backup-detail database-backup-warning">{automaticBackupReason}</span>
@@ -74,8 +75,8 @@ export default function BackupStatusPanel({
         </div>
         <div className="database-backup-metric">
           <dt>Retention</dt>
-          <dd>{loading ? "Loading…" : !data ? "Unavailable" : data.retention.cleanupEnabled ? "Active" : "Not active"}
-            <details className="database-backup-policy">
+          <dd>{loading ? <SkeletonBlock style={{ width: 72, height: 18 }} /> : !data ? "Unavailable" : data.retention.cleanupEnabled ? "Active" : "Not active"}
+            {!loading && <details className="database-backup-policy">
               <summary>View proposed policy</summary>
               <div>
                 <p>Weekly backup: Friday at <strong>7:00 PM Asia/Manila</strong>.</p>
@@ -83,7 +84,7 @@ export default function BackupStatusPanel({
                 <p>Manual backups are retained separately for a proposed 30 days. Cleanup stays disabled until approved.</p>
                 <p>{data?.retention?.cleanupEnabled ? "Cleanup is enabled." : "Cleanup is disabled."} Automatic scheduling also requires runtime verification, a restore test, and cost approval.</p>
               </div>
-            </details>
+            </details>}
           </dd>
         </div>
       </dl>
@@ -97,7 +98,7 @@ export default function BackupStatusPanel({
           <table className="database-backup-table">
             <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Type</th><th scope="col">Result</th><th scope="col">Size</th><th scope="col" aria-label="Actions"></th></tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={5} className="database-backup-empty">Loading backup history…</td></tr>
+               {loading ? <SkeletonTableRows columns={5} rows={3} />
                 : !data || data.history === null ? <tr><td colSpan={5} className="database-backup-empty">{data?.historyUnavailableReason || "Backup history is unavailable until backend status can be verified."}</td></tr>
                   : data.history.length === 0 ? <tr><td colSpan={5} className="database-backup-empty">No backup runs have been reported by the backend.</td></tr>
                     : data.history.map(backup => <tr key={backup.id}>
