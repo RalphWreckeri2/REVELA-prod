@@ -550,8 +550,17 @@ def inspection_workload():
     report_id = request.args.get("reportID", type=int)
     barangay_id = request.args.get("barangayID", type=int)
     status = request.args.get("status")
+    inspection_result = request.args.get("inspectionResult")
+    deadline_filter = request.args.get("deadline")
+    search = request.args.get("search", "").strip()
     if status and status not in ("Assigned", "Reassigned", "Submitted", "Verified", "In Progress"):
         return jsonify({"error": "Invalid status"}), 400
+    if inspection_result and inspection_result not in ("Red", "Yellow", "Green", "Orange", "Black", "Purple"):
+        return jsonify({"error": "Invalid inspection result"}), 400
+    if deadline_filter and deadline_filter not in ("overdue", "today", "upcoming", "missing"):
+        return jsonify({"error": "Invalid deadline filter"}), 400
+    if len(search) > 200:
+        return jsonify({"error": "Search query must be 200 characters or fewer"}), 400
     deadline_date = None
     if view == "deadline_day":
         try:
@@ -568,7 +577,10 @@ def inspection_workload():
             scoped = [r for r in rows if barangay_id is None or r["barangayID"] == barangay_id]
             hidden = hidden_open_count(cursor, barangay_id)
             return jsonify(build_summary(scoped, as_of, hidden)), 200
-        total, ids = list_page(cursor, as_of, view, page, limit, barangay_id, report_id, deadline_date, status)
+        total, ids = list_page(
+            cursor, as_of, view, page, limit, barangay_id, report_id, deadline_date, status,
+            inspection_result, deadline_filter, search,
+        )
     finally:
         cursor.close()
     result, error = get_all_inspections(report_ids=ids, per_page=max(len(ids), 1))

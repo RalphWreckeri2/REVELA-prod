@@ -648,7 +648,7 @@ export default function RegistryPage() {
           <Icon.Search />
           <input
             type="text"
-            placeholder="Search name, ID, type, address…"
+            placeholder="Search name, ID, type, status, barangay, address…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             style={{ paddingRight: search ? 30 : 12 }}

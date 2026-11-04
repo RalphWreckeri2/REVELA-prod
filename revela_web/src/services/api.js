@@ -454,11 +454,12 @@ export async function getSectorComplianceRequest(token, params = {}) {
   }
 }
 
-export async function cancelRegistryImport(token) {
+export async function cancelRegistryImport(token, { keepalive = false } = {}) {
   if (!token) throw new Error("Missing authentication token.");
   try {
     const res = await fetch(`${BASE_URL}/registry/cancel`, {
       method: "POST",
+      keepalive,
       headers: { Authorization: `Bearer ${token}` },
     });
     return await handleResponse(res);
@@ -755,11 +756,12 @@ export async function runDetectionRequest(token, mode = "quick", options = {}) {
   }
 }
 
-export async function cancelRunDetection(token) {
+export async function cancelRunDetection(token, { keepalive = false } = {}) {
   if (!token) throw new Error("Missing authentication token.");
   try {
     const res = await fetch(`${BASE_URL}/flags/cancel-detection`, {
       method: "POST",
+      keepalive,
       headers: { Authorization: `Bearer ${token}` },
     });
     return await handleResponse(res);

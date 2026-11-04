@@ -1044,9 +1044,14 @@ export default function InspectionPage() {
   const [filterBarangay, setFilterBarangay] = useState("");
   const [filterResult, setFilterResult] = useState("");
   const [filterDeadline, setFilterDeadline] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("search") || "");
   const [barangayOptions, setBarangayOptions] = useState([]);
   const [barangayOptionsError, setBarangayOptionsError] = useState("");
   useEffect(() => { setSearch(searchParams.get("search") || ""); }, [searchParams]);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   useEffect(() => {
     if (!token) return undefined;
     let active = true;
@@ -1060,9 +1065,9 @@ export default function InspectionPage() {
         if (!rows) throw new Error("The barangay list response was invalid.");
         if (active) {
           setBarangayOptions(rows
-            .map(row => row?.barangayName)
-            .filter(name => typeof name === "string" && name.trim())
-            .sort((a, b) => a.localeCompare(b)));
+            .filter(row => row?.barangayID != null && typeof row?.barangayName === "string" && row.barangayName.trim())
+            .map(row => ({ id: String(row.barangayID), name: row.barangayName.trim() }))
+            .sort((a, b) => a.name.localeCompare(b.name)));
           setBarangayOptionsError("");
         }
       })
@@ -1074,7 +1079,9 @@ export default function InspectionPage() {
       });
     return () => { active = false; };
   }, [token]);
-  const requestKey = `inspections:${isAdmin ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}` : "tasks"}`;
+  const requestKey = `inspections:${isAdmin
+    ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}:${filterBarangay}:${filterResult}:${filterDeadline}:${debouncedSearch}`
+    : "tasks"}`;
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
   const reports = reportData?.data ?? [];
   const total = reportData?.total ?? 0;
@@ -1096,7 +1103,14 @@ export default function InspectionPage() {
       let result;
       if (isAdmin) {
         result = await getInspectionWorkloadRequest(
-          { status: filterStatus || undefined, view, page, reportID, deadlineDate, limit: WORKLOAD_PAGE_SIZE },
+          {
+            status: filterStatus || undefined, view, page, reportID, deadlineDate,
+            barangayID: filterBarangay || undefined,
+            inspectionResult: filterResult || undefined,
+            deadline: filterDeadline || undefined,
+            search: debouncedSearch || undefined,
+            limit: WORKLOAD_PAGE_SIZE,
+          },
           token
         );
         if (currentRequestKey.current !== key || sequence !== reportRequestSequence.current) return false;
@@ -1118,28 +1132,32 @@ export default function InspectionPage() {
     } finally {
       if (currentRequestKey.current === key && sequence === reportRequestSequence.current) setLoading(false);
     }
-  }, [token, isAdmin, filterStatus, requestKey, hasReports, setReportData, view, page, reportID, deadlineDate]);
+  }, [token, isAdmin, filterStatus, requestKey, hasReports, setReportData, view, page, reportID, deadlineDate,
+    filterBarangay, filterResult, filterDeadline, debouncedSearch]);
   useAppDataRefresh(requestKey, async reason => {
     const ok = await fetchReports(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };
   });
 
   // ── Derived ──────────────────────────────────────────────────────────────────
-  const filteredReports = reports.filter(report => matchesDispatchFilters(report, {
-    search,
-    barangay: filterBarangay,
-    flag: filterResult,
-    deadline: filterDeadline,
-  }));
+  const filteredReports = isAdmin
+    ? reports
+    : reports.filter(report => matchesDispatchFilters(report, {
+      search,
+      barangay: barangayOptions.find(option => option.id === filterBarangay)?.name || "",
+      flag: filterResult,
+      deadline: filterDeadline,
+    }));
   const resultOptions = inspectionResultOptions(reports);
   const hasLocalFilters = Boolean(search.trim() || filterBarangay || filterResult || filterDeadline);
   const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
-  const hasWorkloadFilter = view !== "all" || Boolean(reportID);
-  const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus) || hasLocalFilters;
+  const hasWorkloadQuery = view !== "all" || Boolean(reportID);
+  const hasWorkloadFilter = hasWorkloadQuery || hasLocalFilters;
+  const hasActiveFilter = hasWorkloadFilter || Boolean(filterStatus);
   const workloadFilterName = view === "all" && reportID
     ? "Selected inspection report"
     : workloadFilterLabel(view, deadlineDate);
-  const workloadResult = hasLocalFilters
+  const workloadResult = hasLocalFilters && !isAdmin
     ? filteredWorkloadResultLabel(filteredReports.length, reports.length, total)
     : workloadResultLabel(total, page, WORKLOAD_PAGE_SIZE);
   const updatedLabel = dashboardUpdatedLabel(reportData?.as_of);
@@ -1177,7 +1195,7 @@ export default function InspectionPage() {
       reportID: null,
       deadlineDate: null,
       status: null,
-      page: null,
+      page: 1,
     });
   };
 
@@ -1217,8 +1235,8 @@ export default function InspectionPage() {
           </div>
           <div className="dispatch-search-input">
             <Icon.Search />
-            <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, or area..." value={search} onChange={event => { setSearch(event.target.value); changeParams({ search: event.target.value }); }} />
-            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); changeParams({ search: null }); searchRef.current.focus(); }}><Icon.X /></button>}
+            <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, area, result, or deadline..." value={search} onChange={event => { setSearch(event.target.value); changeParams({ search: event.target.value, page: 1 }); }} />
+            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); changeParams({ search: null, page: 1 }); searchRef.current.focus(); }}><Icon.X /></button>}
           </div>
         </div>
         <span className="dispatch-filter-icon" aria-hidden="true"><Icon.Filter /></span>
@@ -1226,19 +1244,19 @@ export default function InspectionPage() {
           className="dispatch-filter-select"
           aria-label="Filter inspections by barangay"
           value={filterBarangay}
-          onChange={event => setFilterBarangay(event.target.value)}
+          onChange={event => { setFilterBarangay(event.target.value); changeParams({ page: 1 }); }}
         >
           <option value="">All Barangays</option>
-          {filterBarangay && !barangayOptions.includes(filterBarangay) && (
+          {filterBarangay && !barangayOptions.some(option => option.id === filterBarangay) && (
             <option value={filterBarangay}>{filterBarangay}</option>
           )}
-          {barangayOptions.map(barangay => <option key={barangay} value={barangay}>{barangay}</option>)}
+          {barangayOptions.map(barangay => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
         </select>
         <select
           className="dispatch-filter-select"
           aria-label="Filter inspections by submitted result"
           value={filterResult}
-          onChange={event => setFilterResult(event.target.value)}
+          onChange={event => { setFilterResult(event.target.value); changeParams({ page: 1 }); }}
         >
           <option value="">All Submitted Results</option>
           {filterResult && !resultOptions.includes(filterResult) && (
@@ -1250,7 +1268,7 @@ export default function InspectionPage() {
           className="dispatch-filter-select"
           aria-label="Filter inspections by deadline"
           value={filterDeadline}
-          onChange={event => setFilterDeadline(event.target.value)}
+          onChange={event => { setFilterDeadline(event.target.value); changeParams({ page: 1 }); }}
         >
           <option value="">All Deadlines</option>
           <option value="overdue">Overdue</option>
@@ -1267,7 +1285,7 @@ export default function InspectionPage() {
         <section className="dispatch-workload-context" aria-label="Inspection filter context">
           <span className="dispatch-workload-context-icon" aria-hidden="true"><Icon.Dashboard /></span>
           <div className="dispatch-workload-context-copy">
-            <span className="dispatch-workload-context-eyebrow">{hasWorkloadFilter ? "From dashboard" : "Inspection results"}</span>
+            <span className="dispatch-workload-context-eyebrow">{hasWorkloadQuery ? "From dashboard" : "Inspection results"}</span>
             <div className="dispatch-workload-context-title">
               <strong>{workloadFilterName}</strong>
               {filterStatus && <span className="dispatch-workload-chip">{filterStatus}</span>}
