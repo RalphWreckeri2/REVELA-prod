@@ -3022,9 +3022,9 @@ export default function MapPage() {
     const emptyMessage = operation === "detection"
       ? model.emptyMessage
       : model.emptyMessage;
-    const unavailableMessage = detailsUnavailable
+    const unavailableMessage = detailsUnavailable && !model.hasCapturedDetails
       ? "<p class=\"workflow-summary-note\">Detailed run results could not be retrieved. No unrelated saved records are being shown.</p>"
-      : !model.hasCapturedDetails && model.checked > 0
+      : !detailsUnavailable && !model.hasCapturedDetails && model.checked > 0
         ? `<p class="workflow-summary-note">No detailed records were captured for this run. ${operation === "detection" ? `${model.checked} places were checked, but no new businesses were flagged.` : ""}</p>`
         : "";
     const errorMarkup = model.error
@@ -3181,7 +3181,7 @@ export default function MapPage() {
       text: outcome.message || outcome.status || "The operation finished. Open its run-specific summary to review the captured results.",
       showDenyButton: true,
       confirmButtonText: "Close",
-      denyButtonText: "View summary",
+      denyButtonText: "View details",
       confirmButtonColor: "#059669",
       denyButtonColor: "#4f46e5",
       customClass: { popup: "workflow-completion-popup" },
@@ -3934,7 +3934,7 @@ export default function MapPage() {
             ? `${count} new flag${count !== 1 ? "s" : ""} saved so far. The scan has not checked all grid points.`
             : count > 0
               ? "New Red Flags have been plotted on the municipal map and queued for field verification."
-              : `No new businesses flagged this run. ${totalChecked} returned places were checked; see View summary for captured matched and already-flagged results.`}
+              : `No new businesses flagged this run. ${totalChecked} returned places were checked; see View details for captured matched and already-flagged results.`}
               </div>
             </div>
             ${showWarning ? `
@@ -3963,7 +3963,7 @@ export default function MapPage() {
         `,
         confirmButtonColor: "#6366f1",
         confirmButtonText: "Close",
-        denyButtonText: "View summary",
+        denyButtonText: "View details",
         showDenyButton: true,
         showCancelButton: count > 0,
         cancelButtonText: "View detected on map",

@@ -78,6 +78,27 @@ test("detection zero-result and partial summaries stay honest", () => {
   assert.equal(partial.checked, 10);
 });
 
+test("detection summary shows newly detected businesses before other outcomes", () => {
+  const summary = buildWorkflowSummaryModel("detection", {
+    records: [
+      { record_id: "RECONCILED-1", outcome: "reconciled" },
+      { record_id: "MATCHED-1", outcome: "matched" },
+      { record_id: "NEW-1", outcome: "new_detected" },
+      { record_id: "ALREADY-1", outcome: "already_flagged" },
+      { record_id: "NEW-2", outcome: "new_detected" },
+      { record_id: "FAILED-1", outcome: "failed" },
+    ],
+  });
+  assert.deepEqual(summary.records.map((record) => record.record_id), [
+    "NEW-1",
+    "NEW-2",
+    "MATCHED-1",
+    "ALREADY-1",
+    "RECONCILED-1",
+    "FAILED-1",
+  ]);
+});
+
 test("workflow summary pagination bounds large record lists", () => {
   const rows = Array.from({ length: 103 }, (_, index) => ({ id: index }));
   const first = paginateWorkflowRecords(rows, 1, 20);

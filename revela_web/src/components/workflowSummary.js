@@ -65,6 +65,17 @@ export function buildWorkflowSummaryModel(operation, result = {}) {
   const config = WORKFLOW_SUMMARIES[operation];
   if (!config) throw new Error(`Unknown workflow operation: ${operation}`);
   const records = Array.isArray(result.records) ? result.records : [];
+  const outcomeOrder = new Map(
+    config.outcomes.map(([key], index) => [key, index]),
+  );
+  const orderedRecords = records
+    .map((record, index) => ({ record, index }))
+    .sort((left, right) => {
+      const leftOrder = outcomeOrder.get(left.record?.outcome) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = outcomeOrder.get(right.record?.outcome) ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder || left.index - right.index;
+    })
+    .map(({ record }) => record);
   const countByLabel = new Map();
   for (const [key, label] of config.outcomes) {
     const count = records.filter((record) => record?.outcome === key).length;
@@ -83,11 +94,11 @@ export function buildWorkflowSummaryModel(operation, result = {}) {
     : [];
   return {
     title: config.title,
-    records,
+    records: orderedRecords,
     counts: [...countByLabel.values()],
     contextCounts,
     contextNote: operation === "detection"
-      ? "Detailed rows cover captured business outcomes. Non-business and duplicate scan results are summarized separately."
+      ? "Detailed rows cover captured business outcomes. Newly detected businesses are listed first; non-business and duplicate scan results are summarized separately."
       : "",
     checked: Number(result.total_checked ?? result.total ?? result.total_candidates ?? 0),
     activityLabel: operation === "detection"
