@@ -1044,6 +1044,7 @@ export default function InspectionPage() {
   const [filterBarangay, setFilterBarangay] = useState("");
   const [filterResult, setFilterResult] = useState("");
   const [filterDeadline, setFilterDeadline] = useState("");
+  const [autoFilterOverrides, setAutoFilterOverrides] = useState({});
   const [debouncedSearch, setDebouncedSearch] = useState(() => searchParams.get("search") || "");
   const [barangayOptions, setBarangayOptions] = useState([]);
   const [barangayOptionsError, setBarangayOptionsError] = useState("");
@@ -1149,6 +1150,29 @@ export default function InspectionPage() {
       deadline: filterDeadline,
     }));
   const resultOptions = inspectionResultOptions(reports);
+  const searchMatch = hasReports
+    && !loading
+    && Boolean(search.trim())
+    && search.trim() === debouncedSearch.trim()
+    && total === 1
+    && reports.length === 1
+    ? reports[0]
+    : null;
+  const inferredBarangayID = searchMatch?.barangayID != null
+    ? String(searchMatch.barangayID)
+    : "";
+  const inferredResult = searchMatch?.inspectionResult || "";
+  const inferredDeadline = searchMatch
+    ? ["overdue", "today", "upcoming", "missing"].find(deadline =>
+      matchesDispatchFilters(searchMatch, { deadline, now: new Date() })
+    ) || ""
+    : "";
+  const selectedBarangay = filterBarangay
+    || (!autoFilterOverrides.barangay ? inferredBarangayID : "");
+  const selectedResult = filterResult
+    || (!autoFilterOverrides.result ? inferredResult : "");
+  const selectedDeadline = filterDeadline
+    || (!autoFilterOverrides.deadline ? inferredDeadline : "");
   const hasLocalFilters = Boolean(search.trim() || filterBarangay || filterResult || filterDeadline);
   const workloadPages = Math.max(1, Math.ceil(total / WORKLOAD_PAGE_SIZE));
   const hasWorkloadQuery = view !== "all" || Boolean(reportID);
@@ -1189,6 +1213,7 @@ export default function InspectionPage() {
     setFilterBarangay("");
     setFilterResult("");
     setFilterDeadline("");
+    setAutoFilterOverrides({});
     changeParams({
       search: null,
       view: null,
@@ -1235,40 +1260,43 @@ export default function InspectionPage() {
           </div>
           <div className="dispatch-search-input">
             <Icon.Search />
-            <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, area, result, or deadline..." value={search} onChange={event => { setSearch(event.target.value); changeParams({ search: event.target.value, page: 1 }); }} />
-            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); changeParams({ search: null, page: 1 }); searchRef.current.focus(); }}><Icon.X /></button>}
+            <input ref={searchRef} id="dispatch-search" type="text" placeholder="Search name, ID, area, result, or deadline..." value={search} onChange={event => { setSearch(event.target.value); setAutoFilterOverrides({}); changeParams({ search: event.target.value, page: 1 }); }} />
+            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear Dispatch search" title="Clear search" onClick={() => { setSearch(""); setAutoFilterOverrides({}); changeParams({ search: null, page: 1 }); searchRef.current.focus(); }}><Icon.X /></button>}
           </div>
         </div>
         <span className="dispatch-filter-icon" aria-hidden="true"><Icon.Filter /></span>
         <select
           className="dispatch-filter-select"
           aria-label="Filter inspections by barangay"
-          value={filterBarangay}
-          onChange={event => { setFilterBarangay(event.target.value); changeParams({ page: 1 }); }}
+          value={selectedBarangay}
+          onChange={event => { setFilterBarangay(event.target.value); setAutoFilterOverrides(current => ({ ...current, barangay: true })); changeParams({ page: 1 }); }}
         >
           <option value="">All Barangays</option>
-          {filterBarangay && !barangayOptions.some(option => option.id === filterBarangay) && (
-            <option value={filterBarangay}>{filterBarangay}</option>
+          {selectedBarangay && !barangayOptions.some(option => option.id === selectedBarangay) && (
+            <option value={selectedBarangay}>
+              {barangayOptions.find(option => option.id === selectedBarangay)?.name
+                || (selectedBarangay === inferredBarangayID ? searchMatch?.barangayName : selectedBarangay)}
+            </option>
           )}
           {barangayOptions.map(barangay => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
         </select>
         <select
           className="dispatch-filter-select"
           aria-label="Filter inspections by submitted result"
-          value={filterResult}
-          onChange={event => { setFilterResult(event.target.value); changeParams({ page: 1 }); }}
+          value={selectedResult}
+          onChange={event => { setFilterResult(event.target.value); setAutoFilterOverrides(current => ({ ...current, result: true })); changeParams({ page: 1 }); }}
         >
           <option value="">All Submitted Results</option>
-          {filterResult && !resultOptions.includes(filterResult) && (
-            <option value={filterResult}>{getFriendlyFlagLabel(filterResult)}</option>
+          {selectedResult && !resultOptions.includes(selectedResult) && (
+            <option value={selectedResult}>{getFriendlyFlagLabel(selectedResult)}</option>
           )}
           {resultOptions.map(result => <option key={result} value={result}>{getFriendlyFlagLabel(result)}</option>)}
         </select>
         <select
           className="dispatch-filter-select"
           aria-label="Filter inspections by deadline"
-          value={filterDeadline}
-          onChange={event => { setFilterDeadline(event.target.value); changeParams({ page: 1 }); }}
+          value={selectedDeadline}
+          onChange={event => { setFilterDeadline(event.target.value); setAutoFilterOverrides(current => ({ ...current, deadline: true })); changeParams({ page: 1 }); }}
         >
           <option value="">All Deadlines</option>
           <option value="overdue">Overdue</option>

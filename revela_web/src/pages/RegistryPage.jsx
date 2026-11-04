@@ -428,6 +428,7 @@ export default function RegistryPage() {
   const [barangay, setBarangay] = useState("All Barangays");
   const [status, setStatus] = useState("All Status");
   const [regType, setRegType] = useState("All Types");
+  const [autoFilterOverrides, setAutoFilterOverrides] = useState({});
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
 
@@ -580,11 +581,45 @@ export default function RegistryPage() {
   // These come from a dedicated summary endpoint in later sprints.
   // For now we show the total returned.
   const hasFilters = Boolean(debouncedSearch.trim()) || barangay !== "All Barangays" || status !== "All Status" || regType !== "All Types";
+  const searchMatch = !loading
+    && Boolean(search.trim())
+    && search.trim() === debouncedSearch.trim()
+    && total === 1
+    && businesses.length === 1
+    ? businesses[0]
+    : null;
+  const inferredBarangayID = searchMatch?.barangayID != null
+    ? String(searchMatch.barangayID)
+    : null;
+  const inferredStatus = STATUS_FILTERS.find(option =>
+    option !== "All Status"
+      && option.toLowerCase() === String(searchMatch?.applicationStatus ?? "").toLowerCase()
+  );
+  const inferredRegType = REG_TYPE_FILTERS.find(option =>
+    option !== "All Types"
+      && option.toLowerCase() === String(searchMatch?.registrationType ?? "").toLowerCase()
+  );
+  const selectedBarangay = barangay !== "All Barangays"
+    ? barangay
+    : !autoFilterOverrides.barangay && inferredBarangayID
+      ? inferredBarangayID
+      : "All Barangays";
+  const selectedStatus = status !== "All Status"
+    ? status
+    : !autoFilterOverrides.status && inferredStatus
+      ? inferredStatus
+      : "All Status";
+  const selectedRegType = regType !== "All Types"
+    ? regType
+    : !autoFilterOverrides.regType && inferredRegType
+      ? inferredRegType
+      : "All Types";
   const clearRegistryFilters = () => {
     setSearch("");
     setBarangay("All Barangays");
     setStatus("All Status");
     setRegType("All Types");
+    setAutoFilterOverrides({});
     setPage(1);
   };
 
@@ -650,13 +685,19 @@ export default function RegistryPage() {
             type="text"
             placeholder="Search name, ID, type, status, barangay, address…"
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => {
+              setSearch(e.target.value);
+              setAutoFilterOverrides({});
+            }}
             style={{ paddingRight: search ? 30 : 12 }}
           />
           {search && (
             <button
               type="button"
-              onClick={() => setSearch("")}
+              onClick={() => {
+                setSearch("");
+                setAutoFilterOverrides({});
+              }}
               style={{
                 position: "absolute",
                 right: 10,
@@ -682,8 +723,11 @@ export default function RegistryPage() {
 
           <select
             style={{ ...styles.select, maxWidth: "100%" }}
-            value={barangay}
-            onChange={e => setBarangay(e.target.value)}
+            value={selectedBarangay}
+            onChange={e => {
+              setBarangay(e.target.value);
+              setAutoFilterOverrides(current => ({ ...current, barangay: true }));
+            }}
           >
             <option value="All Barangays">All Barangays</option>
             {barangays.map(b => (
@@ -691,20 +735,31 @@ export default function RegistryPage() {
                 {b.barangayName}
               </option>
             ))}
+            {inferredBarangayID && !barangays.some(b => String(b.barangayID) === inferredBarangayID) && (
+              <option value={inferredBarangayID}>{searchMatch.barangayName || inferredBarangayID}</option>
+            )}
           </select>
 
           <select
             style={{ ...styles.select, maxWidth: "100%" }}
-            value={status}
-            onChange={e => { setStatus(e.target.value); setPage(1); }}
+            value={selectedStatus}
+            onChange={e => {
+              setStatus(e.target.value);
+              setAutoFilterOverrides(current => ({ ...current, status: true }));
+              setPage(1);
+            }}
           >
             {STATUS_FILTERS.map(s => <option key={s}>{s}</option>)}
           </select>
 
           <select
             style={{ ...styles.select, maxWidth: "100%" }}
-            value={regType}
-            onChange={e => { setRegType(e.target.value); setPage(1); }}
+            value={selectedRegType}
+            onChange={e => {
+              setRegType(e.target.value);
+              setAutoFilterOverrides(current => ({ ...current, regType: true }));
+              setPage(1);
+            }}
           >
             {REG_TYPE_FILTERS.map(t => <option key={t}>{t}</option>)}
           </select>
