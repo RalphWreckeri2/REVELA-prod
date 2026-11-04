@@ -2933,7 +2933,7 @@ export default function MapPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [runDetectionLoading, setRunDetectionLoading] = useState(false);
   const [runDetectionMode, setRunDetectionMode] = useState("quick");
-  const [detectionControlsCollapsed, setDetectionControlsCollapsed] = useState(false);
+  const [detectionControlsCollapsed, setDetectionControlsCollapsed] = useState(true);
   const [detectionModeOpen, setDetectionModeOpen] = useState(false);
   const [cancellingDetection, setCancellingDetection] = useState(false);
   const [detectionProgress, setDetectionProgress] = useState(null);
