@@ -22,14 +22,65 @@ export function registryFlagRateLabel(rate) {
     ? `${rate.toFixed(1)}%` : "N/A";
 }
 
+function finiteCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) ? count : 0;
+}
+
+/**
+ * Split a barangay row into dispatchable Red/Yellow targets and the flags that
+ * cannot be dispatched.  Dispatchable counts exclude records with Assigned,
+ * Reassigned or In Progress inspections.  Black is risk context only.
+ */
+export function dispatchableBreakdown(row = {}) {
+  const totalRed = finiteCount(row.red_count);
+  const totalYellow = finiteCount(row.yellow_count);
+  const totalBlack = finiteCount(row.black_count);
+  const hasDispatchableRed = row.dispatchable_red_count !== undefined && row.dispatchable_red_count !== null;
+  const hasDispatchableYellow = row.dispatchable_yellow_count !== undefined && row.dispatchable_yellow_count !== null;
+  let red = hasDispatchableRed ? finiteCount(row.dispatchable_red_count) : null;
+  let yellow = hasDispatchableYellow ? finiteCount(row.dispatchable_yellow_count) : null;
+  const dispatchable = row.dispatchable_count !== undefined && row.dispatchable_count !== null
+    ? finiteCount(row.dispatchable_count)
+    : (red ?? totalRed) + (yellow ?? totalYellow);
+
+  // Older callers only send dispatchable_count plus totals.  Keep the visible
+  // breakdown internally consistent instead of showing a larger Red/Yellow sum.
+  if (red === null && yellow === null) {
+    red = Math.min(totalRed, dispatchable);
+    yellow = Math.min(totalYellow, Math.max(0, dispatchable - red));
+  } else if (red === null) {
+    red = Math.max(0, dispatchable - yellow);
+  } else if (yellow === null) {
+    yellow = Math.max(0, dispatchable - red);
+  }
+
+  return {
+    dispatchable,
+    red,
+    yellow,
+    black: totalBlack,
+    totalRed,
+    totalYellow,
+    totalBlack,
+    assignedRed: Math.max(0, totalRed - red),
+    assignedYellow: Math.max(0, totalYellow - yellow),
+  };
+}
+
 export function hasDispatchableWlcTargets(row) {
-  return (row.dispatchable_count ?? ((row.red_count || 0) + (row.yellow_count || 0))) > 0;
+  return dispatchableBreakdown(row).dispatchable > 0;
 }
 
 export function wlcEligibilityLabel(row) {
-  if (hasDispatchableWlcTargets(row)) return `${row.dispatchable_count ?? ((row.red_count || 0) + (row.yellow_count || 0))} eligible for new dispatch`;
+  const { dispatchable, red, yellow, black } = dispatchableBreakdown(row);
+  if (dispatchable > 0) {
+    return `Red ${red} + Yellow ${yellow} = ${dispatchable} eligible for new dispatch${black > 0 ? ` · ${black} Black for administrative review` : ""}`;
+  }
   if (!row.flagged_count) return "No active flags";
-  if (!(row.red_count || row.yellow_count)) return "Black-only — administrative review, no inspection dispatch";
+  if (!(Number(row.red_count || 0) + Number(row.yellow_count || 0))) {
+    return `${black} Black-only — administrative review, no inspection dispatch`;
+  }
   return "Already assigned — no new dispatchable targets";
 }
 

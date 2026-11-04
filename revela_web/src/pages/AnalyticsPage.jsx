@@ -33,7 +33,7 @@ import {
 import { analyticsDetectionScanSummary } from "../components/hotspotPresentation";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useSessionDataset } from "../components/useAppDataRefresh";
-import { DEFAULT_WLC_WEIGHTS, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
+import { DEFAULT_WLC_WEIGHTS, dispatchableBreakdown, wlcPolicyError, registryFlagRateLabel, opsRadarData, wlcEligibilityLabel } from "../components/wlcPolicy";
 import { useAuth } from "../context/authContext";
 import {
   getWlcConfigRequest,
@@ -2252,7 +2252,7 @@ export default function AnalyticsPage() {
                     <span className="analytics-recommendation-priority-label">
                       Priority
                       <AnalyticsInfoTip label="About priority">
-                        Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
+                        Priority is a relative inspection order based on weighted Red, Yellow, and Black flag counts, plus straight-line distance from the BPLO office to the average location of dispatchable Red and Yellow records. Red and Yellow are dispatchable; Black is administrative review only. When locations are unavailable, proximity uses a neutral value. Any sector score is a configured policy input, not measured industry risk.
                       </AnalyticsInfoTip>
                     </span>
                     <span className="analytics-recommendation-dispatch-label">Dispatch</span>
@@ -2261,14 +2261,16 @@ export default function AnalyticsPage() {
                     <div className="analytics-recommendation-rows">
                 {visibleRecommendations.map(row => {
                   const dispatch = row.dispatch;
+                  const flags = dispatchableBreakdown(row);
+                  const reason = recommendationReason(row);
                   return (
                     <details key={row.barangayID} className="analytics-recommendation-row">
                       <summary>
                         <span className="analytics-recommendation-rank">#{row.rank}</span>
                         <span className="analytics-recommendation-place">
                           <strong>{row.barangayName}</strong>
-                          <span className="analytics-recommendation-reason">
-                            {recommendationReason(row)}
+                          <span className="analytics-recommendation-reason" title={reason}>
+                            {reason}
                           </span>
                         </span>
                         <span className="analytics-recommendation-priority"
@@ -2289,7 +2291,15 @@ export default function AnalyticsPage() {
                                 <dd>{row.priority_label || row.risk_level || "No priority"}</dd>
                               </div>
                               <div>
-                                <dt>Unregistered flags</dt>
+                                <dt>Dispatchable flags</dt>
+                                <dd>Red {flags.red} + Yellow {flags.yellow} = {flags.dispatchable}</dd>
+                              </div>
+                              <div>
+                                <dt>Not dispatchable</dt>
+                                <dd>{flags.assignedRed} Red assigned · {flags.assignedYellow} Yellow assigned · {flags.black} Black (admin review)</dd>
+                              </div>
+                              <div>
+                                <dt>Unregistered Red</dt>
                                 <dd>{Number(row.unregistered_candidate_count || 0).toLocaleString()}</dd>
                               </div>
                               <div>
@@ -2582,7 +2592,7 @@ export default function AnalyticsPage() {
                               <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                 <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg>
                                 {rec.flagged_count ?? 0} flag{(rec.flagged_count ?? 0) !== 1 ? "s" : ""}
-                                {typeof rec.dispatchable_count === "number" && ` · ${rec.dispatchable_count} eligible for new dispatch`}
+                                {typeof rec.dispatchable_count === "number" && ` · Red ${rec.dispatchable_red_count ?? 0} + Yellow ${rec.dispatchable_yellow_count ?? 0} = ${rec.dispatchable_count} eligible`}
                               </span>
                             </div>
                           </div>
@@ -2596,9 +2606,9 @@ export default function AnalyticsPage() {
                           <div style={{ padding: "0 20px 20px 20px", borderTop: "1px solid rgba(99,102,241,0.08)" }}>
                             {/* Flag Badges */}
                             <div style={{ display: "flex", gap: 8, marginTop: 14, marginBottom: 14, flexWrap: "wrap" }}>
-                               {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Registration / renewal checks</span>}
-                               {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Suspicious</span>}
-                               {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black-flagged records</span>}
+                               {rec.red_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" /><circle cx="12" cy="10" r="3" /></svg> {rec.red_count} Red flags ({rec.dispatchable_red_count ?? rec.red_count} dispatchable)</span>}
+                               {rec.yellow_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg> {rec.yellow_count} Yellow flags ({rec.dispatchable_yellow_count ?? rec.yellow_count} dispatchable)</span>}
+                               {rec.black_count > 0 && <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, padding: "4px 10px", borderRadius: 8, background: "var(--color-card-alt)", color: "var(--color-muted)" }}><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="15" y1="9" x2="9" y2="15" /><line x1="9" y1="9" x2="15" y2="15" /></svg> {rec.black_count} Black flags (admin review)</span>}
                             </div>
 
                             {/* Score Breakdown */}

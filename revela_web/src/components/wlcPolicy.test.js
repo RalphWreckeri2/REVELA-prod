@@ -76,11 +76,13 @@ test("analytics and policy settings disclose PSIC sector mapping and neutral fal
 test("field queues skip Black-only and fully assigned barangays while retaining WLC risk context", () => {
   const black = { flagged_count: 10, red_count: 0, yellow_count: 0, black_count: 10, dispatchable_count: 0 };
   const assigned = { flagged_count: 5, red_count: 5, yellow_count: 0, dispatchable_count: 0 };
-  const eligible = { flagged_count: 5, red_count: 3, yellow_count: 2, dispatchable_count: 1 };
+  const eligible = { flagged_count: 5, red_count: 3, yellow_count: 2, dispatchable_red_count: 1, dispatchable_yellow_count: 1, dispatchable_count: 2 };
+  const mixed = { ...eligible, black_count: 1, flagged_count: 6 };
   assert.equal(hasDispatchableWlcTargets(black), false);
   assert.match(wlcEligibilityLabel(black), /administrative review/);
   assert.equal(hasDispatchableWlcTargets(assigned), false);
   assert.match(wlcEligibilityLabel(assigned), /Already assigned/);
   assert.equal(hasDispatchableWlcTargets(eligible), true);
-  assert.equal(wlcEligibilityLabel(eligible), "1 eligible for new dispatch");
+  assert.equal(wlcEligibilityLabel(eligible), "Red 1 + Yellow 1 = 2 eligible for new dispatch");
+  assert.equal(wlcEligibilityLabel(mixed), "Red 1 + Yellow 1 = 2 eligible for new dispatch · 1 Black for administrative review");
 });

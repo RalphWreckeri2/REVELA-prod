@@ -145,7 +145,12 @@ test("active recommendation list excludes no-flag barangays and counts them", ()
 test("recommendation wording uses requested reason and allocation phrases", () => {
   assert.equal(recommendationReason({
     red_count: 42, unregistered_candidate_count: 42, yellow_count: 0, distance_km: 0.9,
-  }), "Red 42 (42 not in registry) · Yellow 0 · 0.9 km from BPLO");
+  }), "Red 42 + Yellow 0 = 42 eligible · Black 0 · 0.9 km from BPLO");
+  assert.equal(recommendationReason({
+    red_count: 44, yellow_count: 1, black_count: 1,
+    dispatchable_red_count: 43, dispatchable_yellow_count: 1, dispatchable_count: 44,
+    distance_km: 1.1,
+  }), "Red 43 + Yellow 1 = 44 eligible · 1 already assigned · Black 1 admin review · 1.1 km from BPLO");
   assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 1 }), "1 inspector allocated");
   assert.equal(recommendationAllocationLabel({ allocation_status: "ready", inspectors: 2 }), "2 inspectors allocated");
   assert.equal(recommendationAllocationLabel({ allocation_status: "deferred", inspectors: 0 }), "Waiting for a free inspector");
@@ -178,7 +183,9 @@ test("expanded recommendations show executive metrics without raw score weights"
     analyticsPageSource.indexOf('className="analytics-recommendation-toggle"'),
   );
   assert.match(recommendationDisclosure, /Priority level/);
-  assert.match(recommendationDisclosure, /Unregistered flags/);
+  assert.match(recommendationDisclosure, /Dispatchable flags/);
+  assert.match(recommendationDisclosure, /Not dispatchable/);
+  assert.match(recommendationDisclosure, /Unregistered Red/);
   assert.match(recommendationDisclosure, /Distance from BPLO/);
   assert.match(recommendationDisclosure, /Action steps/);
   assert.match(recommendationDisclosure, /dispatch\.actionSteps/);

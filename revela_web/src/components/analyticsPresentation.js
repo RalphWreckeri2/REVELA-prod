@@ -1,3 +1,5 @@
+import { dispatchableBreakdown } from "./wlcPolicy.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const INSPECTION_STATUS_STACKS = [
@@ -96,16 +98,17 @@ export function activeFlagRecommendations(rows = []) {
 }
 
 export function recommendationReason(row) {
-  const red = Number(row.red_count || 0);
-  const unregistered = Number(row.unregistered_candidate_count || 0);
-  const yellow = Number(row.yellow_count || 0);
+  const { dispatchable, red, yellow, black, assignedRed, assignedYellow } = dispatchableBreakdown(row);
   const distance = Number(row.distance_km);
   const distanceLabel = row.distance_km !== null
     && row.distance_km !== undefined
     && Number.isFinite(distance)
     ? `${distance.toFixed(1)} km from BPLO`
     : "Distance unavailable";
-  return `Red ${red} (${unregistered} not in registry) · Yellow ${yellow} · ${distanceLabel}`;
+  const assigned = assignedRed + assignedYellow;
+  const assignedLabel = assigned > 0 ? ` · ${assigned} already assigned` : "";
+  const blackLabel = black > 0 ? `Black ${black} admin review` : "Black 0";
+  return `Red ${red} + Yellow ${yellow} = ${dispatchable} eligible${assignedLabel} · ${blackLabel} · ${distanceLabel}`;
 }
 
 export function recommendationAllocationLabel(dispatch, exclusionReason) {

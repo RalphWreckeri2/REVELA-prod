@@ -5,7 +5,7 @@ const MAP_COLORS = ["Green", "Orange", "Red", "Yellow", "Purple", "Black"];
 export const MAP_LOCATION_METRIC_DEFINITIONS = Object.freeze({
   matchingLocations: "Distinct map records with valid real coordinates after the active filters; approximate previews are excluded.",
   activeBusinesses: "Distinct official-registry business IDs represented by filtered map rows with effective Green status; grouped by the pin's recorded barangay, may include records without exact coordinates, and can differ from popup totals grouped by official registry barangay.",
-  flagColorLocations: "Distinct map records with valid real coordinates and this effective flag color; approximate previews are excluded. Red includes expired registered businesses and unregistered detections.",
+  flagColorLocations: "Distinct map records with valid real coordinates and this effective flag color; approximate previews are excluded. Red includes expired registered businesses and unregistered detections. Red and Yellow are dispatchable; Black is for administrative review.",
 });
 
 export function formatBarangayLocationMismatch(storedName, mapPositionName) {

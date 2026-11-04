@@ -15,7 +15,7 @@ import { useAuth } from "../context/authContext";
 import { useTheme } from "../context/themeContext";
 import { useAnalyticsData } from "../components/useAnalyticsData";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
-import { hasDispatchableWlcTargets } from "../components/wlcPolicy";
+import { dispatchableBreakdown, hasDispatchableWlcTargets } from "../components/wlcPolicy";
 import { getFlagsRequest, getInspectionsRequest, getInspectorsRequest, getRegistryRequest, getInspectionWorkloadRequest, markNotificationsReadRequest } from "../services/api";
 import {
   DEFAULT_MAP_CENTER,
@@ -312,13 +312,14 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
         ) : top5.map(b => {
           const category = typeof b.risk_level === "string" && b.risk_level.trim() ? b.risk_level : "Unavailable";
           const categoryClass = ["High", "Medium", "Low"].includes(category) ? category.toLowerCase() : "unknown";
+          const flags = dispatchableBreakdown(b);
           return (
             <li key={b.barangayID}>
               <Link className="overview-priority" to={`/analytics?tab=prescriptive&barangay_id=${encodeURIComponent(b.barangayID)}`} title="View Prescriptive Analytics">
                 <span className="overview-priority-rank" aria-label={`Rank ${formatOverviewNumber(b.rank)}`}>{formatOverviewNumber(b.rank)}</span>
                 <span className="overview-priority-main">
                   <span className="overview-priority-name">{shortBarangay(b.barangayName) || "Unknown barangay"}</span>
-                  <span className="overview-priority-meta">Priority score <strong>{formatOverviewNumber(b.ops_score)}</strong>/100 · {formatOverviewNumber(b.dispatchable_count ?? ((b.red_count || 0) + (b.yellow_count || 0)))} available for inspection</span>
+                  <span className="overview-priority-meta">Priority score <strong>{formatOverviewNumber(b.ops_score)}</strong>/100 · Red {formatOverviewNumber(flags.red)} + Yellow {formatOverviewNumber(flags.yellow)} = {formatOverviewNumber(flags.dispatchable)} available for inspection{flags.black > 0 ? ` · Black ${formatOverviewNumber(flags.black)} admin review` : ""}</span>
                 </span>
                 <span className={`overview-priority-category is-${categoryClass}`}>{category}</span>
               </Link>
@@ -328,7 +329,7 @@ function BarangayPrioritiesWidget({ opsRankings, state }) {
       </ol>
       <details className="overview-explanation">
         <summary>How priorities are ranked</summary>
-        <p>OPS combines weighted flag burden, optional sector scores and proximity. Red, Yellow and Black flags supply risk context. New field plans skip Black-only barangays and already-assigned targets; the remaining destinations retain their municipal ranks.</p>
+        <p>OPS combines weighted flag burden, optional sector scores and proximity. Red and Yellow flags are dispatchable; Black flags add risk context but go to administrative review. New field plans skip Black-only barangays and already-assigned targets; the remaining destinations retain their municipal ranks.</p>
         <p>High: 60–100 · Medium: 30–below 60 · Low: below 30. These are barangay priorities, not counts of unassigned tasks.</p>
       </details>
       <Link className="overview-section-link" to="/analytics?tab=prescriptive">Explore inspection priorities <OverviewIcon kind="arrow" /></Link>

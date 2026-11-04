@@ -5644,10 +5644,10 @@ export default function MapPage() {
               { label: "Matching Locations", value: filteredMapMetrics.matchingLocations, color: "var(--color-ink)" },
               { label: "Active Businesses", value: filteredMapMetrics.activeBusinesses, color: isDark ? "#4ade80" : "#22c55e", title: MAP_LOCATION_METRIC_DEFINITIONS.activeBusinesses },
               { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Unregistered (Red)", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Suspected Unregistered", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Red flags (expired / unregistered)", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Yellow flags (pending / suspected)", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
               { label: "Closed / Abandoned", value: filteredCounts.Purple, color: isDark ? "#c084fc" : "#7c3aed", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Critical Violations", value: filteredCounts.Black, color: "var(--color-ink)", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Black flags (revoked / blacklisted)", value: filteredCounts.Black, color: "var(--color-ink)", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
             ].map(s => (
               <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}
                 title={s.title || MAP_LOCATION_METRIC_DEFINITIONS.matchingLocations}>

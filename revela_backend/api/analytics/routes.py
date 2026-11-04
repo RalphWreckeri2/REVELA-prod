@@ -3672,11 +3672,20 @@ def analytics_chat():
                 "risk_level": r.get("risk_level"),
                 "flagged_count": r.get("flagged_count"),
                 "dispatchable_count": r.get("dispatchable_count"),
+                "dispatchable_red_count": r.get("dispatchable_red_count"),
+                "dispatchable_yellow_count": r.get("dispatchable_yellow_count"),
+                "red_count": r.get("red_count"),
+                "yellow_count": r.get("yellow_count"),
+                "black_count": r.get("black_count"),
                 "registry_active_flag_rate": r.get("registry_active_flag_rate"),
                 "unregistered_candidate_count": r.get("unregistered_candidate_count"),
             } for r in ops_rankings]
             summary_parts.append(
                 f"OPS Priority Rankings (WLC-based municipal ranks; the displayed list may be barangay-filtered): {json.dumps(slim_rankings)}")
+            summary_parts.append(
+                "OPS flag counts are distinct geospatial records. dispatchable_count = dispatchable_red_count + dispatchable_yellow_count; "
+                "Red and Yellow are dispatchable when they have no Assigned/Reassigned/In Progress inspection. "
+                "Black is included in the OPS risk score but is administrative review only, not field dispatch.")
 
         # WLC Config (weights)
         wlc_config = chart_data.get("wlcConfig", {})

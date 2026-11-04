@@ -25,17 +25,21 @@ def _urgency_color(label: str) -> str:
 
 
 def _flag_summary(brgy: Dict) -> str:
-    """Human sentence describing the flag composition."""
+    """Human sentence separating dispatchable flags from administrative review."""
+    total_red = int(brgy.get("red_count", 0) or 0)
+    total_yellow = int(brgy.get("yellow_count", 0) or 0)
+    red = int(brgy.get("dispatchable_red_count", total_red) or 0)
+    yellow = int(brgy.get("dispatchable_yellow_count", total_yellow) or 0)
+    black = int(brgy.get("black_count", 0) or 0)
+    assigned = max(0, total_red - red) + max(0, total_yellow - yellow)
+
     parts = []
-    red = brgy.get("red_count", 0)
-    yellow = brgy.get("yellow_count", 0)
-    black = brgy.get("black_count", 0)
-    if red:
-        parts.append(f"{red} Registration/renewal checks")
-    if yellow:
-        parts.append(f"{yellow} Suspicious")
+    if red or yellow:
+        parts.append(f"Red {red} + Yellow {yellow} eligible for new dispatch")
+    if assigned:
+        parts.append(f"{assigned} already assigned")
     if black:
-        parts.append(f"{black} Black-flagged")
+        parts.append(f"Black {black} for administrative review")
     if not parts:
         return "No active flags"
     return ", ".join(parts)
@@ -81,11 +85,11 @@ def _generate_action_steps(brgy: Dict, inspectors: int, urgency: str) -> List[st
         )
     if red:
         steps.append(
-            f"Verify registration or permit renewal for {red} red-flagged record{'s' if red != 1 else ''} on-site"
+            f"Verify registration or permit renewal for {red} Red-flagged record{'s' if red != 1 else ''} on-site"
         )
     if yellow:
         steps.append(
-            f"Investigate {yellow} suspicious entit{'ies' if yellow != 1 else 'y'} — requires closer inspection to confirm legitimacy"
+            f"Investigate {yellow} Yellow-flagged entit{'ies' if yellow != 1 else 'y'} — requires closer inspection to confirm legitimacy"
         )
 
     # Step 3 — timing
@@ -239,6 +243,8 @@ def generate_recommendations(
             "allocation_status": "ready" if inspectors else "deferred",
             "flagged_count": brgy.get("flagged_count", 0),
             "dispatchable_count": brgy.get("dispatchable_count", brgy.get("red_count", 0) + brgy.get("yellow_count", 0)),
+            "dispatchable_red_count": brgy.get("dispatchable_red_count", brgy.get("red_count", 0)),
+            "dispatchable_yellow_count": brgy.get("dispatchable_yellow_count", brgy.get("yellow_count", 0)),
             "dispatchable_business_count": capacities[len(recommendations)],
             "red_count":     brgy.get("red_count", 0),
             "yellow_count":  brgy.get("yellow_count", 0),
