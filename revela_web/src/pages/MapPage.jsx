@@ -106,6 +106,7 @@ import {
   decideRegistryReviewRequest,
   resolveRegistryReviewCandidateRequest,
 } from "../services/api";
+import { useBeforeUnloadWarning } from "../hooks/useBeforeUnloadWarning";
 import Swal from "sweetalert2";
 import {
   buildWorkflowSummaryModel,
@@ -2962,12 +2963,16 @@ export default function MapPage() {
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const detectionRequestActiveRef = useRef(false);
+  const longRunningOperationActive = Boolean(
+    runDetectionLoading ||
+    reconcileProgress?.stage === "running" ||
+    snapProgress?.stage === "running"
+  );
+  // Warn while any map workflow is active. Reconcile, snap and re-verify keep
+  // running if the page unloads; detection additionally cancels on pagehide
+  // below to preserve its existing rollback behavior.
+  useBeforeUnloadWarning(longRunningOperationActive);
   useEffect(() => {
-    const confirmDetectionPageExit = (event) => {
-      if (!detectionRequestActiveRef.current) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
     const cancelDetectionOnPageExit = () => {
       if (!detectionRequestActiveRef.current) return;
       detectionRequestActiveRef.current = false;
@@ -2975,10 +2980,8 @@ export default function MapPage() {
         console.error("Failed to cancel detection during page exit:", err);
       });
     };
-    window.addEventListener("beforeunload", confirmDetectionPageExit);
     window.addEventListener("pagehide", cancelDetectionOnPageExit);
     return () => {
-      window.removeEventListener("beforeunload", confirmDetectionPageExit);
       window.removeEventListener("pagehide", cancelDetectionOnPageExit);
     };
   }, [token]);
