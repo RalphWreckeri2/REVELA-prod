@@ -3,6 +3,7 @@ import { saveAs } from "file-saver";
 import Swal from "sweetalert2";
 import FilterDropdown from "./FilterDropdown";
 import InspectionDialog from "./InspectionDialog";
+import { SkeletonTableRows } from "./LoadingSkeleton";
 import { getInspectionVerifiedCompliantRequest } from "../services/api";
 import {
   ADMIN_CONFIRMED_REPORT_DESCRIPTION, ADMIN_CONFIRMED_REPORT_SCOPE, ADMIN_CONFIRMED_REPORT_TITLE,
@@ -157,7 +158,14 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
         </div>
         {error ? <div role="alert" className="compliance-report-empty"><p>{error}</p>
           <button type="button" className="secondary-btn" onClick={() => void load()}>Retry</button></div>
-          : loading ? <p className="compliance-report-empty">Loading current-compliance evidence…</p>
+          : loading ? (
+            <div className="compliance-report-table-scroll" role="status" aria-label="Loading current-compliance evidence" aria-busy="true">
+              <table className="compliance-report-table">
+                <thead><tr>{report.columns.map(column => <th key={column} scope="col">{column}</th>)}</tr></thead>
+                <tbody><SkeletonTableRows columns={report.columns.length} rows={7} /></tbody>
+              </table>
+            </div>
+          )
             : report.count === 0 ? <p className="compliance-report-empty">No {isAdminConfirmed ? "admin-confirmed" : "inspection-verified"} compliant businesses match these filters.</p>
               : <>
                 <div className="compliance-report-table-scroll"><table className="compliance-report-table">

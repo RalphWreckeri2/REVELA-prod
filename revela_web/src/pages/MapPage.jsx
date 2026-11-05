@@ -2861,7 +2861,10 @@ function DispatchModal({ flag, token, onClose, onSuccess }) {
         )}
         <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Select Inspector</label>
         {fetching ? (
-          <p style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading inspectors…</p>
+          <SkeletonBlock
+            statusLabel="Loading inspectors"
+            style={{ width: "100%", height: 40, marginBottom: 8, borderRadius: 8 }}
+          />
         ) : (
           <select style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-modal-bg)", cursor: "pointer", marginBottom: 4 }} value={selectedUID} onChange={e => setSelectedUID(e.target.value)} disabled={inspectors.length === 0}>
             <option value="">Choose an inspector…</option>
