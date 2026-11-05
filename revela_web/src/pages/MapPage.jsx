@@ -106,7 +106,6 @@ import {
   decideRegistryReviewRequest,
   resolveRegistryReviewCandidateRequest,
 } from "../services/api";
-import { useBeforeUnloadWarning } from "../hooks/useBeforeUnloadWarning";
 import Swal from "sweetalert2";
 import {
   buildWorkflowSummaryModel,
@@ -2861,10 +2860,7 @@ function DispatchModal({ flag, token, onClose, onSuccess }) {
         )}
         <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--color-ink)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Select Inspector</label>
         {fetching ? (
-          <SkeletonBlock
-            statusLabel="Loading inspectors"
-            style={{ width: "100%", height: 40, marginBottom: 8, borderRadius: 8 }}
-          />
+          <p style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading inspectors…</p>
         ) : (
           <select style={{ width: "100%", padding: "10px 12px", border: "1px solid var(--color-border)", borderRadius: 8, fontSize: 14, fontFamily: "var(--font-base)", color: "var(--color-ink)", background: "var(--color-modal-bg)", cursor: "pointer", marginBottom: 4 }} value={selectedUID} onChange={e => setSelectedUID(e.target.value)} disabled={inspectors.length === 0}>
             <option value="">Choose an inspector…</option>
@@ -2966,16 +2962,12 @@ export default function MapPage() {
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const detectionRequestActiveRef = useRef(false);
-  const longRunningOperationActive = Boolean(
-    runDetectionLoading ||
-    reconcileProgress?.stage === "running" ||
-    snapProgress?.stage === "running"
-  );
-  // Warn while any map workflow is active. Reconcile, snap and re-verify keep
-  // running if the page unloads; detection additionally cancels on pagehide
-  // below to preserve its existing rollback behavior.
-  useBeforeUnloadWarning(longRunningOperationActive);
   useEffect(() => {
+    const confirmDetectionPageExit = (event) => {
+      if (!detectionRequestActiveRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
     const cancelDetectionOnPageExit = () => {
       if (!detectionRequestActiveRef.current) return;
       detectionRequestActiveRef.current = false;
@@ -2983,8 +2975,10 @@ export default function MapPage() {
         console.error("Failed to cancel detection during page exit:", err);
       });
     };
+    window.addEventListener("beforeunload", confirmDetectionPageExit);
     window.addEventListener("pagehide", cancelDetectionOnPageExit);
     return () => {
+      window.removeEventListener("beforeunload", confirmDetectionPageExit);
       window.removeEventListener("pagehide", cancelDetectionOnPageExit);
     };
   }, [token]);

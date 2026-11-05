@@ -8,7 +8,6 @@ import {
   getAllFlagsRequest,
 } from "../services/api";
 import { hasMapCoordinates } from "./mapLocationMetrics.js";
-import { SkeletonList } from "./LoadingSkeleton";
 
 const FLAG_COLORS = {
   Red: { bg: "#fee2e2", text: "#b91c1c" },
@@ -185,7 +184,7 @@ export default function BatchDispatchModal({ barangays, token, onClose, onSucces
 
         <div style={{ overflowY: "auto", minHeight: 150, maxHeight: "36vh" }}>
           {fetching ? (
-            <SkeletonList rows={4} />
+            <p style={{ padding: 16, color: "var(--color-muted)", fontSize: 13 }}>Loading businesses...</p>
           ) : !selectedBarangayID ? (
             <p style={{ padding: 16, color: "var(--color-muted)", fontSize: 13 }}>Choose a barangay to see its eligible businesses.</p>
           ) : eligibleFlags.length === 0 ? (

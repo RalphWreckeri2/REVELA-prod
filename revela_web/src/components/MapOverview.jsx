@@ -10,7 +10,6 @@ import {
 } from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
 import { OverviewMapSkeleton } from "./AnalyticsLoadingLayouts";
-import { SkeletonBlock } from "./LoadingSkeleton";
 import { REVELA_MAP_ID } from "../utils/mapStyles";
 import { useTheme } from "../context/themeContext";
 import { FLAG_COLORS } from "./flagColors";
@@ -1502,15 +1501,7 @@ export default function MapOverview({ token, filters }) {
                     </div>
                     <div className="map-overview-cluster-pin-list" aria-label="Locations in selected hotspot group">
                       {token && (!clusterPinsAreCurrent || clusterPinsState.loading) ? (
-                        <div className="map-overview-cluster-pin-skeleton" role="status" aria-label="Loading location details" aria-busy="true">
-                          {Array.from({ length: 4 }, (_, index) => (
-                            <article className="map-overview-cluster-pin" key={index}>
-                              <SkeletonBlock className="map-overview-cluster-skeleton-title" />
-                              <SkeletonBlock className="map-overview-cluster-skeleton-line" />
-                              <SkeletonBlock className="map-overview-cluster-skeleton-line map-overview-cluster-skeleton-line--short" />
-                            </article>
-                          ))}
-                        </div>
+                        <p role="status">Loading location details…</p>
                       ) : clusterPinsAreCurrent && clusterPinsState.error ? (
                         <div>
                           <p role="alert">{clusterPinsState.error}</p>
@@ -1589,11 +1580,7 @@ export default function MapOverview({ token, filters }) {
                   Registry records are included whether or not they have coordinates or a map pin.
                 </p>
                 {registryStatusLoading && (
-                  <div className="map-overview-registry-status-skeleton" role="status" aria-label="Loading registry status breakdown" aria-busy="true">
-                    <SkeletonBlock />
-                    <SkeletonBlock />
-                    <SkeletonBlock />
-                  </div>
+                  <p role="status">Loading registry status breakdown…</p>
                 )}
                 {registryStatusError && (
                   <div className="map-overview-error-inline" role="alert">

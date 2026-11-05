@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useContext, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
-import { SkeletonBlock, SkeletonKanbanBoard } from "../components/LoadingSkeleton";
+import { SkeletonKanbanBoard } from "../components/LoadingSkeleton";
 import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
 import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
@@ -306,10 +306,7 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 
         <label htmlFor="dispatch-assign-inspector" style={s.fieldLabel}>Select Inspector</label>
         {fetching ? (
-          <SkeletonBlock
-            statusLabel="Loading inspectors"
-            style={{ width: "100%", height: 40, marginBottom: 14, borderRadius: 8 }}
-          />
+          <p style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading inspectors…</p>
         ) : (
           <select
             id="dispatch-assign-inspector"

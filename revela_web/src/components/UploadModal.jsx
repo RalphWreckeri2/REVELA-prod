@@ -22,7 +22,6 @@ import Papa from "papaparse";
 import { useState, useEffect, useRef } from "react";
 import Swal from "sweetalert2";
 import { uploadRegistryFile, syncRegistryFile, cancelRegistryImport } from "../services/api";
-import { useBeforeUnloadWarning } from "../hooks/useBeforeUnloadWarning";
 
 // ── Icons (self-contained so this file is independently droppable) ─────────────
 const Icon = {
@@ -147,11 +146,13 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
   const [error,         setError]         = useState("");
   const [showColumns,   setShowColumns]   = useState(false);
   const importRequestActiveRef = useRef(false);
-  // Warn while an import/sync is active. The pagehide handler below keeps the
-  // existing behaviour of cancelling the server-side import if the user leaves.
-  useBeforeUnloadWarning(loading);
 
   useEffect(() => {
+    const confirmImportPageExit = (event) => {
+      if (!importRequestActiveRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
     const cancelImportOnPageExit = () => {
       if (!importRequestActiveRef.current) return;
       importRequestActiveRef.current = false;
@@ -159,8 +160,10 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
         console.error("Failed to cancel registry import during page exit:", err);
       });
     };
+    window.addEventListener("beforeunload", confirmImportPageExit);
     window.addEventListener("pagehide", cancelImportOnPageExit);
     return () => {
+      window.removeEventListener("beforeunload", confirmImportPageExit);
       window.removeEventListener("pagehide", cancelImportOnPageExit);
     };
   }, [token]);
