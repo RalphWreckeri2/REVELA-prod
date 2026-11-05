@@ -68,6 +68,7 @@ class HotspotPopulationMySQLTests(unittest.TestCase):
                 (4, "UNLINKED-ID", "Business ID Red", "Red", 0, 13.00003, 121.00000, "detection"),
                 (5, None, "Black-locked pin", "Red", 1, 13.00004, 121.00000, "detection"),
                 (6, None, "Missing coordinates", "Red", 0, None, None, "detection"),
+                (7, None, "Expired registry pin", "Red", 0, 13.00005, 121.00000, "registry"),
             ])
         cls.db.commit()
 
@@ -129,7 +130,7 @@ class HotspotPopulationMySQLTests(unittest.TestCase):
         }
         self.assertEqual(objective_flags, ["Red", "Black"])
         self.assertEqual(candidate_flags, ["Red"])
-        self.assertEqual(objective_eligible, {1, 2, 3, 4, 5})
+        self.assertEqual(objective_eligible, {1, 2, 3, 4, 5, 7})
         self.assertEqual(candidate_eligible, {1})
         self.assertEqual(
             next(row for row in objective_rows if row["logID"] == 5)["flagColor"],
@@ -140,6 +141,10 @@ class HotspotPopulationMySQLTests(unittest.TestCase):
             "registry_linked",
         )
         self.assertNotIn(5, {row["logID"] for row in candidate_rows})
+        self.assertEqual(
+            next(row for row in candidate_rows if row["logID"] == 7)["disposition"],
+            "not_detection",
+        )
         objective_counts = count_hotspot_dispositions(
             objective_rows,
             population=HOTSPOT_POPULATION_OBJECTIVE,

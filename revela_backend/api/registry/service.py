@@ -1036,13 +1036,23 @@ def _registry_sync_business_fields_changed(existing, incoming):
     return False
 
 
-def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None, *, skip_open_unlinked=False, preserve_detected_name=False):
+def _valid_coordinate_pair(lat, lng):
+    try:
+        lat_value = float(lat)
+        lng_value = float(lng)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return -90 <= lat_value <= 90 and -180 <= lng_value <= 180
+
+
+def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=None, lng=None, address=None, business_id=None, *, skip_open_unlinked=False, preserve_detected_name=False, avoid_unlinked_duplicate=False, initial_flag_color=None):
     """
     Propagate a registry permit-status change to the business's map pin
     using the explicit businessID link.
-    If no map pin exists yet and coordinates are provided, auto-seed a new pin.
+    If no linked map pin exists yet and coordinates are provided, auto-seed a
+    new pin unless a matching unlinked detection is reserved for review.
     """
-    flag_color = _status_to_flag_color(status)
+    flag_color = initial_flag_color or _status_to_flag_color(status)
     name_clean = str(business_name).strip()
     ladder = ladder_columns_available(cursor)
     history_sql = "0" if ladder else """EXISTS (
@@ -1100,7 +1110,20 @@ def _sync_flag_color(cursor, barangay_id, business_name: str, status: str, lat=N
              existing_pin["logID"]),
         )
         return True
-    elif lat is not None and lng is not None:
+    if avoid_unlinked_duplicate:
+        cursor.execute(
+            """SELECT g.logID
+               FROM geospatial_logs g
+               WHERE g.businessID IS NULL
+                 AND g.barangayID = %s
+                 AND TRIM(g.detectedName) = TRIM(%s)
+               ORDER BY g.detectedDate DESC, g.logID DESC
+               LIMIT 1""",
+            (barangay_id, name_clean),
+        )
+        if cursor.fetchone():
+            return True
+    if _valid_coordinate_pair(lat, lng):
         _columns, _values, _params = with_source(
             cursor,
             """(barangayID, businessID, detectedName, latitude, longitude,
@@ -4555,6 +4578,19 @@ def check_and_expire_old_permits():
 
         if cnt > 0:
             current_year = __import__('datetime').date.today().year
+            warning_level_sql = "COALESCE(es.warningLevel, 0)" if ladder else "0"
+            cursor.execute(
+                f"""
+                SELECT r.businessID, r.barangayID, r.businessName,
+                       r.businessAddress, r.latitude, r.longitude,
+                       {warning_level_sql} AS warningLevel
+                FROM official_registry r
+                {registry_state_join}
+                WHERE {previous_year_predicate}
+                  AND r.applicationStatus = 'Active'{lock_guard}
+                """
+            )
+            expiring_businesses = cursor.fetchall() or []
 
             # 2. Update map flag colors in geospatial_logs to Red (Expired)
             # utf8mb4_unicode_ci handles case-insensitive matching — LOWER(TRIM())
@@ -4586,6 +4622,25 @@ def check_and_expire_old_permits():
                                         WHERE {previous_year_predicate}
                                             AND r.applicationStatus = 'Active'{lock_guard}"""
             )
+
+            # Ensure every expiring registry business with coordinates has a
+            # real linked map pin, even when it was never detected before.
+            for business in expiring_businesses:
+                _sync_flag_color(
+                    cursor,
+                    business["barangayID"],
+                    business["businessName"],
+                    "Expired",
+                    business["latitude"],
+                    business["longitude"],
+                    business["businessAddress"],
+                    business_id=business["businessID"],
+                    avoid_unlinked_duplicate=True,
+                    initial_flag_color=(
+                        "Orange" if int(business["warningLevel"] or 0) >= 1
+                        else "Red"
+                    ),
+                )
 
             # 4. Fetch admin userIDs
             cursor.execute(

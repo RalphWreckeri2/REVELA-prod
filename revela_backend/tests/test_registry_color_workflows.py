@@ -65,6 +65,77 @@ def test_expiry_uses_current_warning_level_not_old_history(level, expected):
         db.close()
 
 
+def test_registry_status_sync_seeds_missing_pin_from_verified_coordinates():
+    db = RegistryDB()
+    try:
+        db.seed(status="Expired", level=0, report=False)
+        db.db.execute("DELETE FROM geospatial_logs")
+        db.commit()
+        assert registry._sync_flag_color(
+            db.cursor(),
+            1,
+            "ACME",
+            "Expired",
+            13.9667,
+            121.1167,
+            business_id="B-1",
+        )
+        assert db.rows(
+            "SELECT businessID, flagColor, source, latitude, longitude "
+            "FROM geospatial_logs"
+        ) == [{
+            "businessID": "B-1",
+            "flagColor": "Red",
+            "source": "registry",
+            "latitude": 13.9667,
+            "longitude": 121.1167,
+        }]
+    finally:
+        db.close()
+
+
+def test_registry_status_sync_does_not_duplicate_matching_unlinked_detection():
+    db = RegistryDB()
+    try:
+        db.seed(status="Expired", level=0, report=False)
+        db.db.execute("DELETE FROM geospatial_logs")
+        db.db.execute(
+            """INSERT INTO geospatial_logs
+               (businessID, detectedName, barangayID, flagColor, latitude, longitude, source)
+               VALUES (NULL, 'ACME', 1, 'Red', 13.9667, 121.1167, 'detection')"""
+        )
+        db.commit()
+        assert registry._sync_flag_color(
+            db.cursor(), 1, "ACME", "Expired", 13.9667, 121.1167,
+            business_id="B-1", avoid_unlinked_duplicate=True,
+        )
+        assert db.rows("SELECT COUNT(*) AS count FROM geospatial_logs") == [{"count": 1}]
+        assert db.rows("SELECT businessID FROM geospatial_logs") == [{"businessID": None}]
+    finally:
+        db.close()
+
+
+def test_registry_status_sync_seeds_when_duplicate_check_finds_no_match():
+    db = RegistryDB()
+    try:
+        db.seed(status="Expired", level=0, report=False)
+        db.db.execute("DELETE FROM geospatial_logs")
+        db.commit()
+        assert registry._sync_flag_color(
+            db.cursor(), 1, "ACME", "Expired", 13.9667, 121.1167,
+            business_id="B-1", avoid_unlinked_duplicate=True,
+        )
+        assert db.rows(
+            "SELECT businessID, flagColor, source FROM geospatial_logs"
+        ) == [{
+            "businessID": "B-1",
+            "flagColor": "Red",
+            "source": "registry",
+        }]
+    finally:
+        db.close()
+
+
 @pytest.mark.parametrize("migrated", [True, False])
 def test_revoked_csv_is_imported_once_then_frozen(migrated):
     db = RegistryDB(ladder=migrated)

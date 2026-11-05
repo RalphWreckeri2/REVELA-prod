@@ -168,7 +168,13 @@ def build_hotspot_population_sql(
     extra_where_sql="",
     extra_params=(),
 ):
-    """Build disposition rows for one named population and effective flag set."""
+    """Build DBSCAN rows for one population and effective flag set.
+
+    The objective population deliberately has no source predicate: every
+    geospatial record with an effective configured flag and valid coordinates
+    can contribute, regardless of whether it came from registry, detection,
+    manual entry, or another source.
+    """
     if population not in HOTSPOT_POPULATIONS:
         raise ValueError(f"Unknown hotspot population: {population!r}.")
     flags = tuple(flags)

@@ -1541,14 +1541,10 @@ def _rankings_split_enabled():
         "1", "true", "yes", "on")
 
 
-# The actionable-pin predicate, shared by the original ON clause and the split
-# subquery so the two forms cannot drift.
-_PIN_ACTIONABLE_SQL = (
-    "(g.source IN ('registry', 'registry_detected') "
-    "OR g.placeID IS NOT NULL OR g.reportedByUserID IS NOT NULL "
-    "OR g.flagColor = 'Orange' "
-    "OR EXISTS (SELECT 1 FROM inspection_reports ir WHERE ir.targetID = g.logID))"
-)
+# OPS is source-agnostic. Effective Red/Yellow/Black counts and the existing
+# dispatch/coordinate/open-inspection rules determine eligibility; provenance
+# must not exclude a record.
+_OPS_PIN_SCOPE_SQL = "1 = 1"
 
 
 def _no_open_inspection_sql(alias="g"):
@@ -1598,7 +1594,7 @@ def _barangay_rankings_sql(effective_flag_color, geo_on_g, geo_on_g_p,
             COUNT(DISTINCT o.businessID)                             AS total_registered
         FROM barangays b
         LEFT JOIN geospatial_logs   g ON g.barangayID = b.barangayID
-            AND {_PIN_ACTIONABLE_SQL}{geo_on_g}
+            AND {_OPS_PIN_SCOPE_SQL}{geo_on_g}
         LEFT JOIN official_registry o ON o.barangayID = b.barangayID{reg_o}
         WHERE 1=1 {brgy_b}
         GROUP BY b.barangayID, b.barangayName
@@ -1696,7 +1692,7 @@ def _barangay_rankings_sql_split(effective_flag_color, geo_on_g, geo_on_g_p,
                     g.latitude,
                     g.longitude
                 FROM geospatial_logs g
-                WHERE {_PIN_ACTIONABLE_SQL}{geo_on_g}
+                WHERE {_OPS_PIN_SCOPE_SQL}{geo_on_g}
                 GROUP BY g.logID
             ) c
             GROUP BY c.barangayID
@@ -1753,7 +1749,7 @@ def _prescriptive_sector_sql(effective_flag_color):
                    {_registry_column_sql('g', 'businessID')} AS registry_business_id,
                    g.businessID, g.placeID
             FROM geospatial_logs g
-            WHERE {_PIN_ACTIONABLE_SQL}
+            WHERE {_OPS_PIN_SCOPE_SQL}
         ) c
         LEFT JOIN official_registry r
           ON r.businessID = COALESCE(c.registry_business_id, c.businessID)

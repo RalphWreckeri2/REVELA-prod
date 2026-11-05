@@ -3,6 +3,8 @@ from api.flags.service import (
     VIRTUAL_REGISTRY_LOG_ID_OFFSET,
     _match_registry_to_google,
     _registry_business_id_for_virtual_log_id,
+    _sync_business_address_barangay,
+    repair_confirmed_move_addresses,
     update_flag_location,
 )
 import os
@@ -20,6 +22,167 @@ class LockShieldTests(unittest.TestCase):
         schema_check = patch("api.registry.reverify._ensure_history_table")
         schema_check.start()
         self.addCleanup(schema_check.stop)
+
+    @patch("api.flags.service._get_barangay_id_by_coords", return_value=11)
+    @patch("api.flags.service.mysql")
+    def test_confirmed_registry_move_updates_barangay_in_address(
+        self, mock_mysql, mock_get_brgy
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.side_effect = [
+            {"businessID": "BIZ-MOVE"},
+            {
+                "businessID": "BIZ-MOVE",
+                "businessName": "Move Store",
+                "businessAddress": "12 Main Street, Barangay San Sebastian",
+                "barangayID": 14,
+                "latitude": 13.99,
+                "longitude": 121.10,
+                "coordSource": "manual",
+                "placeID": None,
+                "placeIDKind": None,
+                "matchScore": None,
+                "matchStatus": "approved",
+                "resolveKey": None,
+            },
+            {"blackLocked": 0, "applicationStatus": "Active"},
+        ]
+        cursor.fetchall.return_value = [
+            {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+            {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+        ]
+
+        success, error = update_flag_location(
+            log_id=-(VIRTUAL_REGISTRY_LOG_ID_OFFSET + 1),
+            lat=13.991,
+            lng=121.101,
+            confirm_barangay_id=11,
+        )
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        update = next(
+            call for call in cursor.execute.call_args_list
+            if "UPDATE official_registry" in call.args[0]
+        )
+        self.assertEqual(update.args[1][2], "12 Main Street, Barangay Kinalaglagan")
+        self.assertEqual(update.args[1][3], 11)
+
+    @patch("api.flags.service.mysql")
+    def test_legacy_move_address_repair_previews_and_applies(self, mock_mysql):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchall.side_effect = [
+            [{
+                "businessID": "BIZ-LEGACY",
+                "oldAddress": "12 Main Street, Barangay San Sebastian",
+                "businessAddress": "12 Main Street, Barangay San Sebastian",
+                "oldBarangayID": 14,
+                "newBarangayID": 11,
+                "businessName": "Legacy Store",
+            }],
+            [
+                {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+                {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+            ],
+        ]
+
+        result, error = repair_confirmed_move_addresses()
+
+        self.assertIsNone(error)
+        self.assertEqual(result["changedCount"], 1)
+        self.assertEqual(
+            result["changes"][0]["newAddress"],
+            "12 Main Street, Barangay Kinalaglagan",
+        )
+        mock_mysql.connection.rollback.assert_called_once()
+        self.assertFalse(any(
+            "UPDATE official_registry" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+
+    @patch("api.flags.service.mysql")
+    def test_legacy_move_address_repair_applies_and_recomputes_resolve_key(
+        self, mock_mysql
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchall.side_effect = [
+            [{
+                "businessID": "BIZ-LEGACY",
+                "oldAddress": "12 Main Street, Barangay San Sebastian",
+                "businessAddress": "12 Main Street, Barangay San Sebastian",
+                "oldBarangayID": 14,
+                "newBarangayID": 11,
+                "businessName": "Legacy Store",
+            }],
+            [
+                {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+                {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+            ],
+        ]
+        cursor.rowcount = 1
+
+        result, error = repair_confirmed_move_addresses(apply=True)
+
+        self.assertIsNone(error)
+        self.assertEqual(result["appliedCount"], 1)
+        self.assertEqual(result["skippedCount"], 0)
+        self.assertEqual(result["changes"][0]["status"], "applied")
+        update = next(
+            call for call in cursor.execute.call_args_list
+            if "UPDATE official_registry" in call.args[0]
+        )
+        self.assertIn("resolveKey=%s", update.args[0])
+        self.assertEqual(update.args[1][0], "12 Main Street, Barangay Kinalaglagan")
+        self.assertIsNotNone(update.args[1][1])
+        mock_mysql.connection.commit.assert_called_once()
+
+    @patch("api.flags.service.mysql")
+    def test_legacy_move_address_repair_reports_guarded_skip(self, mock_mysql):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchall.side_effect = [
+            [{
+                "businessID": "BIZ-LEGACY",
+                "oldAddress": "12 Main Street, Barangay San Sebastian",
+                "businessAddress": "12 Main Street, Barangay San Sebastian",
+                "oldBarangayID": 14,
+                "newBarangayID": 11,
+                "businessName": "Legacy Store",
+            }],
+            [
+                {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+                {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+            ],
+        ]
+        cursor.rowcount = 0
+
+        result, error = repair_confirmed_move_addresses(apply=True)
+
+        self.assertIsNone(error)
+        self.assertEqual(result["appliedCount"], 0)
+        self.assertEqual(result["skippedCount"], 1)
+        self.assertEqual(result["changes"][0]["status"], "skipped")
+        mock_mysql.connection.commit.assert_called_once()
+
+    @patch("api.flags.service.mysql")
+    def test_legacy_move_repair_does_not_match_barangay_name_prefix(
+        self, mock_mysql
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchall.return_value = [
+            {"barangayID": 14, "barangayName": "Barangay II-A"},
+            {"barangayID": 11, "barangayName": "Barangay II"},
+        ]
+
+        updated = _sync_business_address_barangay(
+            cursor, "BARANGAY II-A MATAASNAKAHOY BATANGAS", 14, 11
+        )
+
+        self.assertEqual(updated, "Barangay II MATAASNAKAHOY BATANGAS")
 
     @patch("api.flags.service.mysql")
     def test_virtual_registry_map_id_resolves_string_business_id(self, mock_mysql):
@@ -398,6 +561,98 @@ class LockShieldTests(unittest.TestCase):
             or "UPDATE official_registry" in call.args[0]
             for call in cursor.execute.call_args_list
         ))
+        mock_mysql.connection.commit.assert_not_called()
+
+    @patch("api.flags.service.is_black_locked", return_value=False)
+    @patch("api.flags.service._get_barangay_id_by_coords", return_value=11)
+    @patch("api.flags.service.mysql")
+    def test_confirmed_linked_pin_updates_registry_address(
+        self, mock_mysql, mock_get_brgy, mock_is_black_locked
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.side_effect = [
+            {
+                "detectedName": "Move Store",
+                "barangayID": 14,
+                "placeID": None,
+                "latitude": 13.99,
+                "longitude": 121.10,
+                "businessID": "BIZ-LINKED-MOVE",
+                "flagColor": "Red",
+            },
+            {"businessID": "BIZ-LINKED-MOVE", "barangayID": 14},
+            {
+                "businessID": "BIZ-LINKED-MOVE",
+                "businessName": "Move Store",
+                "businessAddress": "12 Main Street, Barangay San Sebastian",
+                "barangayID": 14,
+                "latitude": 13.99,
+                "longitude": 121.10,
+                "coordSource": "manual",
+                "placeID": None,
+                "placeIDKind": None,
+                "matchScore": None,
+                "matchStatus": "approved",
+            },
+        ]
+        cursor.fetchall.return_value = [
+            {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+            {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+        ]
+
+        success, error = update_flag_location(
+            log_id=84,
+            lat=13.991,
+            lng=121.101,
+            confirm_barangay_id=11,
+        )
+
+        self.assertTrue(success)
+        self.assertIsNone(error)
+        update = next(
+            call for call in cursor.execute.call_args_list
+            if "UPDATE official_registry" in call.args[0]
+        )
+        self.assertEqual(update.args[1][2], "12 Main Street, Barangay Kinalaglagan")
+        self.assertEqual(update.args[1][3], 11)
+
+    @patch("api.flags.service.is_black_locked", return_value=False)
+    @patch("api.flags.service._get_barangay_id_by_coords", return_value=11)
+    @patch("api.flags.service.mysql")
+    def test_linked_pin_returns_error_if_registry_row_disappears(
+        self, mock_mysql, mock_get_brgy, mock_is_black_locked
+    ):
+        cursor = MagicMock()
+        mock_mysql.connection.cursor.return_value = cursor
+        cursor.fetchone.side_effect = [
+            {
+                "detectedName": "Move Store",
+                "barangayID": 14,
+                "placeID": None,
+                "latitude": 13.99,
+                "longitude": 121.10,
+                "businessID": "BIZ-DELETED",
+                "flagColor": "Red",
+            },
+            {"businessID": "BIZ-DELETED", "barangayID": 14},
+            None,
+        ]
+        cursor.fetchall.return_value = [
+            {"barangayID": 14, "barangayName": "Barangay San Sebastian"},
+            {"barangayID": 11, "barangayName": "Barangay Kinalaglagan"},
+        ]
+
+        success, error = update_flag_location(
+            log_id=84,
+            lat=13.991,
+            lng=121.101,
+            confirm_barangay_id=11,
+        )
+
+        self.assertFalse(success)
+        self.assertEqual(error, "Linked registry business no longer exists")
+        mock_mysql.connection.rollback.assert_called_once()
         mock_mysql.connection.commit.assert_not_called()
 
     @patch("api.registry.service._sync_flag_color")

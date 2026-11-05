@@ -9,6 +9,7 @@ import hashlib
 import math
 import os
 import random
+import re
 import time
 import threading
 import traceback
@@ -2476,6 +2477,142 @@ def _get_barangay_id_by_coords(
     return nearest_id
 
 
+def _sync_business_address_barangay(cursor, address, old_barangay_id,
+                                    new_barangay_id):
+    """Replace the barangay portion of a registry address after a confirmed move."""
+    if not address or not new_barangay_id or old_barangay_id == new_barangay_id:
+        return address
+    cursor.execute(
+        "SELECT barangayID, barangayName FROM barangays "
+        "WHERE barangayID IN (%s, %s)",
+        (old_barangay_id, new_barangay_id),
+    )
+    names = {
+        row["barangayID"]: row["barangayName"]
+        for row in cursor.fetchall() or []
+    }
+    new_name = names.get(new_barangay_id)
+    old_name = names.get(old_barangay_id)
+    if not new_name:
+        return address
+    exact_new_name = (
+        rf"(?<![\w-]){re.escape(new_name)}(?![\w-])"
+    )
+    if re.search(exact_new_name, address, flags=re.IGNORECASE):
+        return address
+
+    old_patterns = []
+    if old_name:
+        old_patterns.append(
+            rf"(?<![\w-]){re.escape(old_name)}(?![\w-])"
+        )
+        suffix = re.sub(r"^\s*barangay\s+", "", old_name, flags=re.IGNORECASE)
+        if suffix != old_name:
+            old_patterns.extend((
+                rf"(?<![\w-])(?:barangay|brgy\.?|bgy\.?)\s+"
+                rf"{re.escape(suffix)}(?![\w-])",
+            ))
+    if old_patterns:
+        updated = re.sub(
+            "|".join(old_patterns), new_name, address, count=1,
+            flags=re.IGNORECASE,
+        )
+        if updated != address:
+            return updated
+
+    return f"{address.rstrip(' ,')}, {new_name}"
+
+
+def repair_confirmed_move_addresses(apply=False, limit=500):
+    """Repair legacy confirmed moves whose registry address kept the old barangay."""
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute(
+            """SELECT h.id AS historyID, h.businessID, h.oldAddress,
+                      h.oldBarangayID, h.newBarangayID, r.businessName,
+                      r.businessAddress
+               FROM registry_pin_history h
+               JOIN (
+                   SELECT businessID, MAX(id) AS historyID
+                   FROM registry_pin_history
+                   WHERE reviewType='manual_correction'
+                     AND outcome='manual_corrected'
+                     AND oldBarangayID IS NOT NULL
+                     AND newBarangayID IS NOT NULL
+                     AND oldBarangayID <> newBarangayID
+                   GROUP BY businessID
+               ) latest ON latest.historyID = h.id
+               JOIN official_registry r ON r.businessID = h.businessID
+               WHERE r.barangayID = h.newBarangayID
+                 AND r.businessAddress <=> h.oldAddress
+               ORDER BY h.id
+               LIMIT %s""",
+            (int(limit),),
+        )
+        candidates = cursor.fetchall() or []
+        changes = []
+        applied_count = 0
+        skipped_count = 0
+        for row in candidates:
+            updated_address = _sync_business_address_barangay(
+                cursor, row.get("businessAddress"), row.get("oldBarangayID"),
+                row.get("newBarangayID"),
+            )
+            if updated_address == row.get("businessAddress"):
+                continue
+            change = {
+                "businessID": row.get("businessID"),
+                "oldAddress": row.get("businessAddress"),
+                "newAddress": updated_address,
+                "oldBarangayID": row.get("oldBarangayID"),
+                "newBarangayID": row.get("newBarangayID"),
+            }
+            if apply:
+                from api.registry.places_resolver import compute_resolve_key
+                resolve_key = compute_resolve_key(
+                    row.get("businessName"), updated_address,
+                    row.get("newBarangayID"),
+                )
+                cursor.execute(
+                    """UPDATE official_registry
+                       SET businessAddress=%s, resolveKey=%s
+                       WHERE businessID=%s
+                         AND barangayID=%s
+                         AND businessAddress <=> %s""",
+                    (
+                        updated_address, resolve_key, row.get("businessID"),
+                        row.get("newBarangayID"), row.get("businessAddress"),
+                    ),
+                )
+                if cursor.rowcount == 1:
+                    applied_count += 1
+                    change["status"] = "applied"
+                    changes.append(change)
+                else:
+                    skipped_count += 1
+                    change["status"] = "skipped"
+                    changes.append(change)
+            else:
+                changes.append(change)
+        if apply:
+            mysql.connection.commit()
+        else:
+            mysql.connection.rollback()
+        return {
+            "mode": "applied" if apply else "preview",
+            "candidateCount": len(candidates),
+            "changedCount": len(changes),
+            "appliedCount": applied_count,
+            "skippedCount": skipped_count,
+            "changes": changes,
+        }, None
+    except Exception as exc:
+        mysql.connection.rollback()
+        return None, str(exc)
+    finally:
+        cursor.close()
+
+
 # ── Already flagged check ─────────────────────────────────────────────────────
 
 def _already_flagged(place_id):
@@ -3933,9 +4070,13 @@ def update_flag_location(
                 return False, confirmation_error
             old_lat, old_lng = row.get("latitude"), row.get("longitude")
             final_barangay_id = new_barangay_id or row.get("barangayID")
+            updated_address = _sync_business_address_barangay(
+                cursor, row.get("businessAddress"), row.get("barangayID"),
+                final_barangay_id,
+            )
             from api.registry.places_resolver import compute_resolve_key
             resolve_key = compute_resolve_key(
-                row.get("businessName"), row.get("businessAddress"),
+                row.get("businessName"), updated_address,
                 final_barangay_id,
             )
             coordinates_changed = (
@@ -3952,7 +4093,7 @@ def update_flag_location(
                     cursor, biz_id, "manual_corrected", "manual_correction",
                     resolve_key, old_row=row, new_lat=lat, new_lng=lng,
                     new_source="manual", candidate_source="manual",
-                    new_address=row.get("businessAddress"),
+                    new_address=updated_address,
                     new_barangay_id=final_barangay_id,
                     actor_user_id=actor_user_id,
                 )
@@ -3960,6 +4101,7 @@ def update_flag_location(
                 UPDATE official_registry
                 SET latitude = %s,
                     longitude = %s,
+                    businessAddress = %s,
                     barangayID = COALESCE(%s, barangayID),
                     coordSource = 'manual',
                     matchStatus = 'approved',
@@ -3968,7 +4110,7 @@ def update_flag_location(
                     placeIDKind = NULL,
                     resolveKey = %s
                 WHERE businessID = %s
-            """, (lat, lng, new_barangay_id, resolve_key, biz_id))
+            """, (lat, lng, updated_address, new_barangay_id, resolve_key, biz_id))
             mysql.connection.commit()
             cursor.close()
 
@@ -4079,10 +4221,14 @@ def update_flag_location(
             if registry_row:
                 final_barangay_id = new_barangay_id or registry_row.get(
                     "barangayID")
+                updated_address = _sync_business_address_barangay(
+                    cursor, registry_row.get("businessAddress"),
+                    registry_row.get("barangayID"), final_barangay_id,
+                )
                 from api.registry.places_resolver import compute_resolve_key
                 resolve_key = compute_resolve_key(
                     registry_row.get("businessName"),
-                    registry_row.get("businessAddress"),
+                    updated_address,
                     final_barangay_id,
                 )
                 old_lat = registry_row.get("latitude")
@@ -4102,14 +4248,19 @@ def update_flag_location(
                         "manual_correction", resolve_key, old_row=registry_row,
                         new_lat=lat, new_lng=lng, new_source="manual",
                         candidate_source="manual",
-                        new_address=registry_row.get("businessAddress"),
+                        new_address=updated_address,
                         new_barangay_id=final_barangay_id,
                         actor_user_id=actor_user_id,
                     )
+            else:
+                mysql.connection.rollback()
+                cursor.close()
+                return False, "Linked registry business no longer exists"
             cursor.execute("""
                 UPDATE official_registry
                 SET latitude = %s,
                     longitude = %s,
+                    businessAddress = %s,
                     barangayID = COALESCE(%s, barangayID),
                     coordSource = 'manual',
                     matchStatus = 'approved',
@@ -4118,7 +4269,7 @@ def update_flag_location(
                     placeIDKind = NULL,
                     resolveKey = %s
                 WHERE businessID = %s
-            """, (lat, lng, new_barangay_id, resolve_key, target_biz_id))
+            """, (lat, lng, updated_address, new_barangay_id, resolve_key, target_biz_id))
 
         mysql.connection.commit()
         cursor.close()

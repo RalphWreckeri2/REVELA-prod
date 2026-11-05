@@ -133,6 +133,14 @@ class PrescriptiveQueryTests(unittest.TestCase):
             self.assertEqual(rows[1]["unregistered_candidate_count"], 2)
             self.assertIsNone(rows[3]["avg_lat"])
 
+    def test_ops_scope_is_source_agnostic_and_excludes_no_color_by_scope(self):
+        for split in (False, True):
+            builder = routes._barangay_rankings_sql_split if split else routes._barangay_rankings_sql
+            sql, _ = builder(self.color, "", [], "", [], "", [])
+            self.assertNotIn("g.flagColor = 'Orange'", sql)
+            self.assertNotIn("g.source IN ('registry', 'registry_detected')", sql)
+            self.assertNotIn("g.reportedByUserID IS NOT NULL", sql)
+
     def test_registry_rate_deduplicates_businesses_and_respects_enforcement_color(self):
         section = self.section()
         rows = {row["barangayID"]: row for row in section["rankings"]}

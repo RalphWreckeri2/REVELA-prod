@@ -19,6 +19,7 @@ from api.flags.service import (
     PinDeletionConflict,
     reconcile_existing_flags,
     update_flag_location,
+    repair_confirmed_move_addresses,
     BarangayChangeConfirmationRequired,
     get_places_usage_today,
     YellowFlagSubmissionConflict,
@@ -29,6 +30,25 @@ from api.registry.locks import BlackBusinessDeletionForbidden
 from api.registry import service as registry_service
 from app import mysql
 flags_bp = Blueprint("flags", __name__)
+
+
+@flags_bp.route("/maintenance/repair-moved-addresses", methods=["POST"])
+@admin_required()
+def repair_moved_addresses_route():
+    """Preview or apply the legacy confirmed-move address repair."""
+    data = request.get_json(silent=True) or {}
+    apply = data.get("apply", False)
+    if not isinstance(apply, bool):
+        return jsonify({"error": "'apply' must be a boolean"}), 400
+    limit = data.get("limit", 500)
+    if not isinstance(limit, int) or limit < 1 or limit > 5000:
+        return jsonify({"error": "'limit' must be an integer from 1 to 5000"}), 400
+    result, error = repair_confirmed_move_addresses(apply=apply, limit=limit)
+    if error:
+        current_app.logger.error(
+            "Could not repair legacy moved-pin addresses: %s", error)
+        return jsonify({"error": error}), 500
+    return jsonify(result), 200
 
 
 @flags_bp.route("/inspection-verified-compliant", methods=["GET"])

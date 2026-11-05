@@ -91,6 +91,9 @@ logID, reports, and lifecycle history. New seed callers exclude unlinked pins
 with any non-Verified inspection, preserving in-flight pin/report data. Other
 callers retain their previous guards. No enforcement policy or source backfill
 was added, and older ambiguous/duplicate records are not retroactively repaired.
+The annual permit rollover also routes every expiring registry row with valid
+coordinates through `_sync_flag_color`, so an expired registry business gets a
+real linked `registry` geospatial pin when no prior detection pin exists.
 
 ## Verification and limitations
 
