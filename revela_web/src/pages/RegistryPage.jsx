@@ -104,7 +104,7 @@ const Icon = {
 };
 
 
-const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed"];
+const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed", "Warning"];
 const REG_TYPE_FILTERS = ["All Types", "NEW", "RENEWAL"];
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 const DEFAULT_PAGE_SIZE = 10;

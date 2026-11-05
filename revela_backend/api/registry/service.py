@@ -2722,6 +2722,27 @@ def _load_sync_protection_keys(cursor):
     return black_locked_ids, closed_ids
 
 
+def _load_sync_warning_ids(cursor):
+    """Preload businesses with an active warning that sync must not touch."""
+    if not ladder_columns_available(cursor):
+        return set()
+
+    cursor.execute("""
+        SELECT DISTINCT r.businessID
+        FROM official_registry r
+        JOIN enforcement_state es
+          ON es.subjectType = 'business'
+         AND es.subjectID = CAST(r.businessID AS CHAR)
+        WHERE COALESCE(es.warningLevel, 0) > 0
+          AND r.businessID IS NOT NULL
+    """)
+    return {
+        row.get("businessID")
+        for row in cursor.fetchall() or ()
+        if row.get("businessID") is not None
+    }
+
+
 def sync_registry(file, ext: str):
     """Parse CSV/Excel → geocode → upsert OFFICIAL_REGISTRY.
     Existing rows match on businessID and only changed business fields are
@@ -2763,6 +2784,7 @@ def sync_registry(file, ext: str):
         skipped_open_inspection = 0
         skipped_black_lock = 0
         skipped_closed = 0
+        skipped_warning = 0
         cleared_warnings = 0
         invalid_status_rows = 0
         invalid_status_values = {}
@@ -2802,6 +2824,7 @@ def sync_registry(file, ext: str):
         # before anything is written.
         try:
             black_locked_ids, closed_ids = _load_sync_protection_keys(cursor)
+            warning_ids = _load_sync_warning_ids(cursor)
         except SyncProtectionLookupError:
             raise
         except Exception as exc:
@@ -2915,6 +2938,13 @@ def sync_registry(file, ext: str):
                     errors.append(
                         f"Row {idx + 2}: permit is Closed — skipped "
                         "(reopen it from the registry page)")
+                    continue
+                if biz_id in warning_ids:
+                    skipped += 1
+                    skipped_warning += 1
+                    errors.append(
+                        f"Row {idx + 2}: business has an active warning "
+                        "— skipped")
                     continue
 
             # Status of Application (license/permit standing).
@@ -3461,6 +3491,7 @@ def sync_registry(file, ext: str):
             "skipped_open_inspection": skipped_open_inspection,
             "skipped_black_lock": skipped_black_lock,
             "skipped_closed": skipped_closed,
+            "skipped_warning": skipped_warning,
             "cleared_warnings": cleared_warnings,
             "invalid_status_rows": invalid_status_rows,
             "invalid_status_values": invalid_status_values,
@@ -4311,14 +4342,31 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
 
         conditions = []
         params = []
+        ladder_available = None
 
         if barangay_id:
             conditions.append("r.barangayID = %s")
             params.append(barangay_id)
 
-        if status and status in VALID_STATUSES:
-            conditions.append("r.applicationStatus = %s")
-            params.append(status)
+        if status:
+            normalized_status = status.strip().casefold()
+            if normalized_status == "warning":
+                ladder_available = ladder_columns_available(cursor)
+                if ladder_available:
+                    conditions.append(
+                        """EXISTS (
+                            SELECT 1
+                            FROM enforcement_state es_filter
+                            WHERE es_filter.subjectType = 'business'
+                              AND es_filter.subjectID = CAST(r.businessID AS CHAR)
+                              AND COALESCE(es_filter.warningLevel, 0) > 0
+                        )"""
+                    )
+                else:
+                    conditions.append("1 = 0")
+            elif status in VALID_STATUSES:
+                conditions.append("r.applicationStatus = %s")
+                params.append(status)
 
         if registration_type and registration_type.upper() in ("NEW", "RENEWAL"):
             conditions.append("UPPER(r.registrationType) = %s")
@@ -4365,8 +4413,10 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         # ladder_columns_available() is False until the ladder migration has
         # run, which keeps this query byte-identical to before on a database
         # that does not have warningLevel / blackLocked yet.
+        if ladder_available is None:
+            ladder_available = ladder_columns_available(cursor)
         effective_flag_color = _effective_flag_color_sql(
-            "g", ladder=ladder_columns_available(cursor))
+            "g", ladder=ladder_available)
         effective_flag_color = f"COALESCE(({effective_flag_color}), ({registry_row_color_sql('r', ladder=ladder_columns_available(cursor))}))"
         # warningLevel / blackLocked / blackDispatchUnlocked for the page's
         # Clear Warning and Unlock buttons. Zeros where the columns are absent.

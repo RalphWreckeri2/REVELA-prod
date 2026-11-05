@@ -67,6 +67,23 @@ def test_orange_level_one_escalates_on_map_and_registry_and_survives_sync(db):
     assert {row["flagColor"] for row in map_and_registry(db)} == {"Black"}
 
 
+def test_active_warning_is_preserved_and_skipped_by_sync(db):
+    db.seed(status="Active", level=1, color="Green", report=False)
+    before_registry = db.rows("SELECT * FROM official_registry")
+    before_state = db.rows("SELECT * FROM enforcement_state")
+
+    with patch.object(registry, "_log_registry_places_summary"):
+        summary, error = registry.sync_registry(BytesIO(
+            b"Business ID,businessName,barangay,Status\n"
+            b"B-1,UPDATED NAME,Barangay I,Active\n"), ".csv")
+
+    assert error is None
+    assert summary["skipped_warning"] == 1
+    assert summary["cleared_warnings"] == 0
+    assert db.rows("SELECT * FROM official_registry") == before_registry
+    assert db.rows("SELECT * FROM enforcement_state") == before_state
+
+
 @pytest.mark.parametrize("level", [0, 1, 2, 3])
 @pytest.mark.parametrize("status", ["Pending", "Expired"])
 def test_escalation_needs_neither_third_warning_nor_inspection(db, status, level):
