@@ -2,7 +2,7 @@ import { formatOverviewPeriod, formatOverviewUpdatedAt } from "./overviewPresent
 
 const SEARCH_FIELDS = [
   "detectedName", "barangayName", "inspectorName", "verificationStatus",
-  "inspectionResult", "reportID", "logID",
+  "inspectionResult", "reportID", "logID", "deadline",
 ];
 
 const INSPECTION_RESULT_ORDER = Object.freeze([
@@ -104,10 +104,9 @@ export function matchesDispatchFilters(report, {
 }
 
 export function inspectionResultOptions(reports = []) {
-  const results = new Set(
-    reports.map(report => report.inspectionResult).filter(Boolean),
-  );
-  const known = INSPECTION_RESULT_ORDER.filter(result => results.delete(result));
+  const results = new Set(reports.map(report => report.inspectionResult).filter(Boolean));
+  const known = [...INSPECTION_RESULT_ORDER];
+  known.forEach(result => results.delete(result));
   return [
     ...known,
     ...[...results].sort((a, b) => String(a).localeCompare(String(b))),

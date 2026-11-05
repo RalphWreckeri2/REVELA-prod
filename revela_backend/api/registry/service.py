@@ -4335,12 +4335,14 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                 "r.businessType LIKE %s OR "
                 "r.lineOfBusiness LIKE %s OR "
                 "r.businessAddress LIKE %s OR "
+                "r.registrationType LIKE %s OR "
+                "r.applicationStatus LIKE %s OR "
                 "b.barangayName LIKE %s"
                 ")"
             )
             like = f"%{clean_search}%"
             like_id = f"%{clean_id}%" if clean_id else like
-            params.extend([like, like_id, like, like, like, like, like])
+            params.extend([like, like_id, like, like, like, like, like, like, like])
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 

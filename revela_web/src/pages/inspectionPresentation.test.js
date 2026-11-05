@@ -69,8 +69,12 @@ test("inspection result options follow known result order and include unknown su
   ];
   assert.deepEqual(
     inspectionResultOptions(rows),
-    ["Red", "Green", "Purple", "Other result"],
+    ["Red", "Yellow", "Green", "Orange", "Black", "Purple", "Other result"],
   );
+});
+
+test("dispatch search matches deadline values as well as business and report fields", () => {
+  assert.equal(matchesDispatchSearch({ deadline: "2026-11-14T15:39:00" }, "2026-11-14"), true);
 });
 
 test("copied grid searches initially return the exact board results", () => {

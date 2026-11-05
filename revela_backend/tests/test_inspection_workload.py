@@ -65,17 +65,28 @@ def test_sql_population_pagination_and_duplicate_events():
     connection.create_function("TIMESTAMPDIFF", 3, lambda unit, start, end:
                                int((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() // 86400))
     connection.executescript("""
-        CREATE TABLE inspection_reports (reportID INTEGER, targetID INTEGER,
-          verificationStatus TEXT, deadline TIMESTAMP, irTimestamp TIMESTAMP,
+        CREATE TABLE inspection_reports (reportID INTEGER, targetID INTEGER, userID INTEGER,
+          verificationStatus TEXT, inspectionResult TEXT, deadline TIMESTAMP, irTimestamp TIMESTAMP,
           submissionReceivedAt TIMESTAMP, resolutionTime INTEGER);
-        CREATE TABLE geospatial_logs (logID INTEGER, barangayID INTEGER);
+        CREATE TABLE geospatial_logs (logID INTEGER, barangayID INTEGER, detectedName TEXT);
+        CREATE TABLE barangays (barangayID INTEGER, barangayName TEXT);
+        CREATE TABLE users (userID INTEGER, fullName TEXT);
         CREATE TABLE inspection_lifecycle_events (eventID INTEGER, reportID INTEGER,
           eventType TEXT, eventTimestamp TIMESTAMP);
-        INSERT INTO geospatial_logs VALUES (10,1), (20,1), (30,2);
-        INSERT INTO inspection_reports VALUES (1,10,'Assigned',NULL,'2026-10-01 12:00:00',NULL,NULL),
-          (2,10,'Reassigned','2026-10-26 08:00:00','2026-10-25 12:00:00',NULL,NULL),
-          (3,20,'Submitted',NULL,'2026-10-20 12:00:00','2026-10-27 08:00:00',15),
-          (4,30,'Assigned',NULL,'2026-10-26 12:00:00',NULL,NULL);
+        INSERT INTO geospatial_logs (logID, barangayID, detectedName) VALUES
+          (10,1,'North Market'), (20,1,'South Market'), (30,2,'East Market'),
+          (40,2,'West Market'), (50,2,'Central Market');
+        INSERT INTO barangays VALUES (1,'Barangay One'), (2,'Barangay Two');
+        INSERT INTO users VALUES (7,'Ana Inspector');
+        INSERT INTO inspection_reports
+          (reportID,targetID,userID,verificationStatus,inspectionResult,deadline,irTimestamp,submissionReceivedAt,resolutionTime)
+          VALUES
+          (1,10,7,'Assigned',NULL,NULL,'2026-10-01 12:00:00',NULL,NULL),
+          (2,10,7,'Reassigned','Orange','2026-10-26 08:00:00','2026-10-25 12:00:00',NULL,NULL),
+          (3,20,NULL,'Submitted','Red',NULL,'2026-10-20 12:00:00','2026-10-27 08:00:00',15),
+          (4,30,NULL,'Assigned',NULL,NULL,'2026-10-26 12:00:00',NULL,NULL),
+          (5,40,7,'Verified','Green','2026-10-27 21:00:00','2026-10-26 12:00:00',NULL,NULL),
+          (6,50,NULL,'Verified','Yellow','2026-10-28 09:00:00','2026-10-26 12:00:00',NULL,NULL);
         INSERT INTO inspection_lifecycle_events VALUES (1,2,'dispatched','2026-10-20 12:00:00'),
           (2,2,'reassigned','2026-10-25 12:00:00'),
           (3,2,'submitted','2026-10-26 12:00:00'),
@@ -97,7 +108,7 @@ def test_sql_population_pagination_and_duplicate_events():
             return dict(row) if row else None
     cursor = Cursor()
     rows = current_rows(cursor)
-    assert {r["reportID"] for r in rows} == {2, 3, 4}
+    assert {r["reportID"] for r in rows} == {2, 3, 4, 5, 6}
     assert hidden_open_count(cursor) == 1
     summary = build_summary(rows, AS_OF, hidden=1)
     assert summary["open"] == 2 and summary["overdue"] == 1
@@ -115,6 +126,14 @@ def test_sql_population_pagination_and_duplicate_events():
     assert list_page(cursor, AS_OF, "age_unavailable", 1, 20)[0] == summary["age_unavailable"]
     assert list_page(cursor, AS_OF, "deadline_day", 1, 20, deadline_date=datetime(2026, 10, 26).date())[1] == [2]
     assert list_page(cursor, AS_OF, "oldest", 1, 20)[1] == [2]
+    assert list_page(cursor, AS_OF, "all", 1, 20, barangay_id=1)[1] == [2, 3]
+    assert list_page(cursor, AS_OF, "all", 1, 20, inspection_result="Red")[1] == [3]
+    assert list_page(cursor, AS_OF, "all", 1, 20, deadline_filter="overdue")[1] == [2]
+    assert list_page(cursor, AS_OF, "all", 1, 20, deadline_filter="today")[1] == [5]
+    assert list_page(cursor, AS_OF, "all", 1, 20, deadline_filter="upcoming")[1] == [6]
+    assert list_page(cursor, AS_OF, "all", 1, 20, deadline_filter="missing")[1] == [4, 3]
+    assert list_page(cursor, AS_OF, "all", 1, 20, search="Ana")[1] == [5, 2]
+    assert list_page(cursor, AS_OF, "all", 1, 20, search="Barangay Two")[1] == [6, 5, 4]
     connection.close()
 
 

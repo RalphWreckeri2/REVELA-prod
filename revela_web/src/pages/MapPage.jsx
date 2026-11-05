@@ -2961,6 +2961,27 @@ export default function MapPage() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const startTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
+  const detectionRequestActiveRef = useRef(false);
+  useEffect(() => {
+    const confirmDetectionPageExit = (event) => {
+      if (!detectionRequestActiveRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const cancelDetectionOnPageExit = () => {
+      if (!detectionRequestActiveRef.current) return;
+      detectionRequestActiveRef.current = false;
+      cancelRunDetection(token, { keepalive: true }).catch((err) => {
+        console.error("Failed to cancel detection during page exit:", err);
+      });
+    };
+    window.addEventListener("beforeunload", confirmDetectionPageExit);
+    window.addEventListener("pagehide", cancelDetectionOnPageExit);
+    return () => {
+      window.removeEventListener("beforeunload", confirmDetectionPageExit);
+      window.removeEventListener("pagehide", cancelDetectionOnPageExit);
+    };
+  }, [token]);
   const [opsRankings, setOpsRankings] = useSessionDataset("map", "rankings", []);
 
   useEffect(() => {
@@ -3885,10 +3906,12 @@ export default function MapPage() {
     setActionError("");
     const operationId = createWorkflowOperationId();
     try {
+      detectionRequestActiveRef.current = true;
       const result = await runDetectionRequest(token, runDetectionMode, {
         operationId,
         onResponse: res => { requestId = res.headers.get("X-Request-ID"); httpStatus = res.status; },
       });
+      detectionRequestActiveRef.current = false;
       finishBenchmark(trial, result?.status || "incomplete", {
         request_id: requestId, http_status: httpStatus,
         registry_rows: detectionQuota?.registry_count ?? trial?.registry_rows, map_rows: flags.length,
@@ -4019,6 +4042,7 @@ export default function MapPage() {
         setFilterColor("Red");
       }
     } catch (err) {
+      detectionRequestActiveRef.current = false;
       finishBenchmark(trial, "failed", { request_id: requestId, http_status: httpStatus ?? err.status,
         registry_rows: detectionQuota?.registry_count ?? trial?.registry_rows, notes: err.message });
       console.error("Detection scan error:", err);
@@ -4054,6 +4078,7 @@ export default function MapPage() {
         });
       }
     } finally {
+      detectionRequestActiveRef.current = false;
       setRunDetectionLoading(false);
       setCancellingDetection(false);
       if (timerIntervalRef.current) {

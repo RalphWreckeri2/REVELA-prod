@@ -3,6 +3,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { useAuth } from "../context/authContext";
 import { SkeletonBlock, SkeletonTableRows } from "../components/LoadingSkeleton";
+import { detectedUserRole, filterUsers } from "../components/userManagementFilters";
 import {
   getUsersRequest,
   createUserRequest,
@@ -488,6 +489,7 @@ export default function UserManagementPage() {
   const [userToReset,    setUserToReset]    = useState(null);
   const [search,         setSearch]         = useState("");
   const [roleFilter,     setRoleFilter]     = useState("all");
+  const [manualRoleFilter, setManualRoleFilter] = useState(false);
   const userRequestSequence = useRef(0);
 
   const fetchUsers = useCallback(async (isSilent = false) => {
@@ -529,15 +531,15 @@ export default function UserManagementPage() {
     return { total, active, inspectors, admins, pendingResets };
   }, [users]);
 
+  const activeRoleFilter = useMemo(() => {
+    if (manualRoleFilter) return roleFilter;
+    return detectedUserRole(users, search) || roleFilter;
+  }, [users, search, roleFilter, manualRoleFilter]);
+
   // Filtered users
   const filteredUsers = useMemo(() => {
-    return users.filter(u => {
-      const q = search.toLowerCase();
-      const matchesSearch = !q || u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || (u.phone || "").includes(q);
-      const matchesRole = roleFilter === "all" || u.userRole === roleFilter;
-      return matchesSearch && matchesRole;
-    });
-  }, [users, search, roleFilter]);
+    return filterUsers(users, search, activeRoleFilter);
+  }, [users, search, activeRoleFilter]);
 
   // ── Access control ────────────────────────────────────────────────────────
   if (user?.role !== "SUPER_ADMIN") {
@@ -606,15 +608,22 @@ export default function UserManagementPage() {
               type="text"
               placeholder="Search by name, email, or phone…"
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => {
+                setSearch(e.target.value);
+                setRoleFilter("all");
+                setManualRoleFilter(false);
+              }}
             />
           </div>
           <div className="um-filters">
             {["all", "Admin", "Inspector", "SUPER_ADMIN"].map(r => (
               <button
                 key={r}
-                className={`um-filter-btn ${roleFilter === r ? "um-filter-btn--active" : ""}`}
-                onClick={() => setRoleFilter(r)}
+                className={`um-filter-btn ${activeRoleFilter === r ? "um-filter-btn--active" : ""}`}
+                onClick={() => {
+                  setRoleFilter(r);
+                  setManualRoleFilter(true);
+                }}
               >
                 {r === "all" ? "All Roles" : r === "SUPER_ADMIN" ? "Super Admin" : r}
               </button>

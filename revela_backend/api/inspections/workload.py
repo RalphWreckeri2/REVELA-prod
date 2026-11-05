@@ -15,8 +15,9 @@ VIEWS = ("all", "open", "overdue", "awaiting_verification", "oldest", "resolutio
 
 CURRENT_SELECT = """
         SELECT ir.reportID, ir.targetID AS logID, ir.verificationStatus,
-               ir.deadline, ir.irTimestamp, ir.submissionReceivedAt,
+               ir.inspectionResult, ir.deadline, ir.irTimestamp, ir.submissionReceivedAt,
                ir.resolutionTime, g.barangayID,
+               g.detectedName, b.barangayName, inspector.fullName AS inspectorName,
                (SELECT e.eventTimestamp FROM inspection_lifecycle_events e
                 WHERE e.reportID = ir.reportID
                   AND e.eventType IN ('dispatched', 'reassigned')
@@ -26,6 +27,8 @@ CURRENT_SELECT = """
               FROM inspection_reports GROUP BY targetID) latest
           ON latest.maxReportID = ir.reportID
         JOIN geospatial_logs g ON g.logID = ir.targetID
+        LEFT JOIN barangays b ON b.barangayID = g.barangayID
+        LEFT JOIN users inspector ON inspector.userID = ir.userID
     """
 
 
@@ -36,7 +39,8 @@ def current_rows(cursor):
 
 
 def list_page(cursor, as_of, view, page, limit, barangay_id=None, report_id=None,
-              deadline_date=None, status=None):
+              deadline_date=None, status=None, inspection_result=None,
+              deadline_filter=None, search=None):
     """Database-paginated drill-down using the same current report IDs as summary."""
     where = []
     params = []
@@ -47,6 +51,30 @@ def list_page(cursor, as_of, view, page, limit, barangay_id=None, report_id=None
     if barangay_id is not None: add("assignment.barangayID = %s", barangay_id)
     if report_id is not None: add("assignment.reportID = %s", report_id)
     if status: add("assignment.verificationStatus = %s", status)
+    if inspection_result: add("assignment.inspectionResult = %s", inspection_result)
+    local_now = as_of + timedelta(hours=8)
+    today = local_now.date()
+    today_start = datetime.combine(today, datetime.min.time())
+    tomorrow_start = today_start + timedelta(days=1)
+    if deadline_filter == "missing":
+        add("assignment.deadline IS NULL")
+    elif deadline_filter == "overdue":
+        add("assignment.deadline IS NOT NULL AND assignment.deadline < %s", today_start)
+    elif deadline_filter == "today":
+        add("assignment.deadline >= %s AND assignment.deadline < %s", today_start, tomorrow_start)
+    elif deadline_filter == "upcoming":
+        add("assignment.deadline >= %s", tomorrow_start)
+    if search:
+        like = f"%{search.strip()}%"
+        add(
+            "("
+            "assignment.detectedName LIKE %s OR assignment.barangayName LIKE %s OR "
+            "assignment.inspectorName LIKE %s OR assignment.verificationStatus LIKE %s OR "
+            "assignment.inspectionResult LIKE %s OR CAST(assignment.reportID AS CHAR) LIKE %s OR "
+            "CAST(assignment.logID AS CHAR) LIKE %s OR CAST(assignment.deadline AS CHAR) LIKE %s"
+            ")",
+            *([like] * 8),
+        )
     open_sql = "assignment.verificationStatus IN ('Assigned', 'Reassigned')"
     start_sql = "assignment.cycleStart IS NOT NULL AND assignment.cycleStart <= %s"
     age_sql = "TIMESTAMPDIFF(DAY, assignment.cycleStart, %s)"

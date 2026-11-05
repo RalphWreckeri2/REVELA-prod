@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Papa from "papaparse";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Swal from "sweetalert2";
 import { uploadRegistryFile, syncRegistryFile, cancelRegistryImport } from "../services/api";
 
@@ -145,6 +145,28 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
   const [summary,       setSummary]       = useState(null);
   const [error,         setError]         = useState("");
   const [showColumns,   setShowColumns]   = useState(false);
+  const importRequestActiveRef = useRef(false);
+
+  useEffect(() => {
+    const confirmImportPageExit = (event) => {
+      if (!importRequestActiveRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const cancelImportOnPageExit = () => {
+      if (!importRequestActiveRef.current) return;
+      importRequestActiveRef.current = false;
+      cancelRegistryImport(token, { keepalive: true }).catch((err) => {
+        console.error("Failed to cancel registry import during page exit:", err);
+      });
+    };
+    window.addEventListener("beforeunload", confirmImportPageExit);
+    window.addEventListener("pagehide", cancelImportOnPageExit);
+    return () => {
+      window.removeEventListener("beforeunload", confirmImportPageExit);
+      window.removeEventListener("pagehide", cancelImportOnPageExit);
+    };
+  }, [token]);
 
   // Counter state
   const displayed = useRegistryProgress({
@@ -225,7 +247,9 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
     setError("");
     try {
       const uploadFn = isSync ? syncRegistryFile : uploadRegistryFile;
+      importRequestActiveRef.current = true;
       const result = await uploadFn(file, token);
+      importRequestActiveRef.current = false;
       if (result?.message?.toLowerCase().includes("cancelled by user")) {
         setError(result.message);
         return;
@@ -235,6 +259,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
       if (err.name === "AbortError") return;
       setError(err.message || "Upload failed. Please try again.");
     } finally {
+      importRequestActiveRef.current = false;
       setLoading(false);
       setCancelling(false);
     }
