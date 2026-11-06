@@ -3890,7 +3890,8 @@ export default function MapPage() {
       icon: isFinalScan ? 'warning' : 'question',
       showCancelButton: true,
       confirmButtonColor: '#6366f1',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: '#475569',
+      cancelButtonText: 'Cancel',
       confirmButtonText: isFinalScan ? 'Proceed with Final Scan' : 'Start Detection Scan'
     });
 
