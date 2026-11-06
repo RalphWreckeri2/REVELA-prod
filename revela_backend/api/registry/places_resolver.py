@@ -63,7 +63,10 @@ DEFAULT_CENTER = (
 )
 DEFAULT_BIAS_RADIUS_M = 8000.0
 BIAS_RADIUS_M = float(os.getenv("PLACES_BIAS_RADIUS_M", "8000"))
+# Default score na kailangan para awtomatikong tanggapin ang Places match.
 AUTO_ACCEPT = float(os.getenv("PLACES_AUTO_ACCEPT", "0.80"))
+# Pinakamababang name score para mapasok sa manual review; mas mababa rito
+# ay dini-discard at susubukan ang Geocoding fallback.
 REVIEW_MIN = float(os.getenv("PLACES_REVIEW_MIN", "0.55"))
 TS_MONTHLY_CAP = API_QUOTA_CONFIG.text_search.monthly
 TS_DAILY_CAP = API_QUOTA_CONFIG.text_search.daily
@@ -659,6 +662,8 @@ def resolve_location(name, address, barangay, business_id=None, barangay_id=None
 
         poi_address = p.get("formattedAddress") or ""
         address_score = address_similarity(address or "", poi_address)
+        # Maliit na dagdag-confidence lang ang address: ibinibigay ito kapag
+        # hindi bababa sa 0.60 ang address similarity, at hindi lalampas sa 1.0.
         s = min(1.0, name_score + (0.05 if address_score >= 0.6 else 0.0))
         if name_score < REVIEW_MIN:
             continue

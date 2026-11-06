@@ -142,6 +142,9 @@ def _overlap(ta: list[str], tb: list[str]) -> float:
     matched_weight = 0.0
 
     def weight(token):
+        # Mas mabigat nang kaunti ang mahahabang token dahil mas distinctive
+        # ang mga ito; hanggang 0.25 lang ang dagdag para hindi ma-dominate
+        # ng isang mahabang salita ang buong pangalan.
         return 1.0 + min(max(len(token) - 4, 0) * 0.05, 0.25)
 
     for token in ta:
@@ -157,6 +160,8 @@ def _overlap(ta: list[str], tb: list[str]) -> float:
                                   weight(unmatched.pop(best_index)))
 
     total_weight = sum(weight(token) for token in ta + tb)
+    # Weighted Dice similarity: 0.0 = walang tugma, 1.0 = buong tugma.
+    # Ang 2.0 ay bahagi ng standard Dice formula.
     return (2.0 * matched_weight / total_weight) if total_weight else 0.0
 
 
@@ -189,6 +194,8 @@ def address_similarity(reg_address: str, poi_address: str) -> float:
     left, right = tokens(reg_address), tokens(poi_address)
     if not left or not right:
         return 0.0
+    # Dice similarity ng address: mas mataas kapag mas maraming shared tokens
+    # ang registry address at Google address.
     return 2 * len(left & right) / (len(left) + len(right))
 
 
@@ -232,14 +239,14 @@ def name_match(
     if ga and gb:
         # Category alignment: boost score
         if ga & gb:
+            # Dagdag na confidence kapag tugma ang business category.
             score = min(1.0, base + 0.10)
             return round(score, 4), 'ok'
 
         # Category conflict:
-        # If Google POI is generic retail while registry is a specific trade (e.g. Silva's Pharmacy vs Silva Store),
-        # allow soft conflict cap at 0.60 so it routes to Human Review.
-        # If Google POI has a specific specialty (bakery, lodging, auto, health, etc.) that conflicts with registry,
-        # it is a hard conflict capped at 0.45 (No Match / Rejected).
+        # Kung generic retail ang Google POI at specific ang registry trade
+        # (hal. Silva's Pharmacy vs Silva Store), cap sa 0.60 para sa review.
+        # Kung specific na magkaiba ang category, cap sa 0.45 para no match.
         has_specific_poi_conflict = bool(gb - {'retail'})
         is_soft = ('retail' in gb and not has_specific_poi_conflict)
         cap = 0.60 if is_soft else 0.45
