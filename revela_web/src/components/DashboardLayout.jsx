@@ -30,6 +30,7 @@ import Swal from "sweetalert2";
 import myLogo from "../assets/logo.png";
 import ProfileModal from "../pages/ProfileModal";
 import AboutCreditsModal from "./AboutCreditsModal";
+import EmptyState from "./EmptyState";
 
 import { markMapNavigation } from "../services/responsivenessBenchmark";
 import { useRefreshCoordinator, useRefreshSnapshot } from "./useAppDataRefresh";
@@ -779,12 +780,11 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
                   <p className="notification-page-status" role="status">Loading notifications…</p>
                 )}
                 {isAdmin && !notificationPageLoading && notifications.length === 0 && (
-                  <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", gap: 16 }}>
-                    <img src="/searching.png" alt="No notifications" style={{ height: 100, objectFit: "contain", opacity: 0.9 }} />
-                    <p style={{ margin: 0, color: "var(--color-muted)", fontSize: 13, maxWidth: 220 }}>
-                      No notifications yet. You will be alerted when an inspector submits evidence for review.
-                    </p>
-                  </div>
+                  <EmptyState
+                    compact
+                    title="No notifications yet"
+                    message="You will be alerted when an inspector submits evidence for review."
+                  />
                 )}
                 {isAdmin && !notificationPageLoading &&
                   notifications.map((note) => {
