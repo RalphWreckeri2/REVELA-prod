@@ -9,6 +9,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
 import { UploadModal } from "../components/UploadModal";
 import { SkeletonBlock, SkeletonDetails, SkeletonTableRows } from "../components/LoadingSkeleton";
+import PageEmptyState from "../components/EmptyState";
 import AnimatePresence from "../components/AnimatePresence";
 import { AuthContext } from "../context/authContext";
 import Papa from "papaparse";
@@ -152,15 +153,13 @@ function EmptyState({ hasFilters, onUpload, onClearFilters }) {
     return (
       <tr>
         <td colSpan={REGISTRY_TABLE_COL_COUNT} style={styles.emptyCell}>
-          <div style={styles.emptyContent}>
-            <img src="/searching.png" alt="No businesses found" style={{ height: 100, objectFit: "contain", opacity: 0.9, marginBottom: 16 }} />
-            <span style={{ color: "var(--color-muted)", fontSize: 13 }}>
-              No businesses match your current filters.
-            </span>
-            <button type="button" className="ghost-btn" onClick={onClearFilters}>
-              Clear filters
-            </button>
-          </div>
+          <PageEmptyState
+            compact
+            title="No businesses found"
+            message="No businesses match your current filters."
+            actionLabel="Clear filters"
+            onAction={onClearFilters}
+          />
         </td>
       </tr>
     );
@@ -168,19 +167,13 @@ function EmptyState({ hasFilters, onUpload, onClearFilters }) {
   return (
     <tr>
       <td colSpan={REGISTRY_TABLE_COL_COUNT} style={{ ...styles.emptyCell, paddingTop: 64, paddingBottom: 64 }}>
-        <div style={styles.emptyContent}>
-          <img src="/searching.png" alt="Registry Empty" style={{ height: 120, objectFit: "contain", opacity: 0.9, marginBottom: 20 }} />
-          <p style={{ fontWeight: 700, fontSize: 15, color: "var(--color-ink)", marginBottom: 6 }}>
-            No businesses in the registry yet
-          </p>
-          <p style={{ fontSize: 13, color: "var(--color-muted)", marginBottom: 20, maxWidth: 340 }}>
-            Upload the official BPLO registry CSV or Excel file to get started.
-            The system will geocode each entry automatically.
-          </p>
-          <button className="primary-btn" onClick={onUpload}>
-            <Icon.Upload /> Upload Registry File
-          </button>
-        </div>
+        <PageEmptyState
+          title="No businesses in the registry yet"
+          message="Upload the official BPLO registry CSV or Excel file to get started. The system will geocode each entry automatically."
+          actionLabel="Upload Registry File"
+          actionClassName="primary-btn"
+          onAction={onUpload}
+        />
       </td>
     </tr>
   );
@@ -995,7 +988,6 @@ const styles = {
   tr: { borderBottom: "1px solid rgba(226,232,240,0.4)", transition: "background 0.15s" },
   td: { padding: "13px 16px", color: "var(--color-muted)", whiteSpace: "nowrap" },
   emptyCell: { padding: "48px 16px", textAlign: "center", color: "var(--color-muted)", fontSize: 14 },
-  emptyContent: { display: "flex", flexDirection: "column", alignItems: "center", gap: 4 },
   viewBtn: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12 },
   pagination: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderTop: "1px solid var(--color-border-soft)", flexWrap: "wrap", gap: 12 },
   pageInfo: { fontSize: 12, color: "var(--color-muted)" },

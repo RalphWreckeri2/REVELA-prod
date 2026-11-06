@@ -9,6 +9,7 @@ import {
 } from "recharts";
 import DashboardLayout from "../components/DashboardLayout";
 import { SkeletonBlock } from "../components/LoadingSkeleton";
+import PageEmptyState from "../components/EmptyState";
 import { OverviewMapSkeleton, InspectorOperationsSkeleton, RecommendationsSkeleton } from "../components/AnalyticsLoadingLayouts";
 import { scheduleAnalyticsSkeleton } from "../components/analyticsLoadingPolicy";
 import "../styles/AnalyticsPage.css";
@@ -251,16 +252,7 @@ const AnalyticsMetricValue = ({ value, loading, variant = "standard" }) => (
 
 // ── Empty State ──────────────────────────────────────────────────────────────
 const EmptyState = ({ title = "No Data", message = "", h = 220, icon }) => (
-  <div className="analytics-empty-state" style={{
-    height: h, width: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-    textAlign: "center", gap: 12
-  }}>
-    {icon || <img src="/searching.png" alt="Empty" style={{ height: 80, objectFit: "contain", opacity: 0.9 }} />}
-    <div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--color-ink)", marginBottom: message ? 4 : 0 }}>{title}</div>
-      {message && <div style={{ fontSize: 13, color: "var(--color-muted)", maxWidth: 220, margin: "0 auto", lineHeight: 1.4 }}>{message}</div>}
-    </div>
-  </div>
+  <PageEmptyState title={title} message={message} icon={icon} style={{ height: h }} className="analytics-empty-state" />
 );
 
 const ProfileTable = ({ title, rows, empty = "No data" }) => {

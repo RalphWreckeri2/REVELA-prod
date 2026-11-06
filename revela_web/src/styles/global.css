@@ -1768,6 +1768,53 @@ html.theme-dark td {
   z-index: 999999 !important;
 }
 
+.app-empty-state {
+  box-sizing: border-box;
+  min-height: 220px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 28px 20px;
+  color: var(--color-ink);
+  text-align: center;
+}
+.app-empty-state > img {
+  width: auto;
+  height: 76px;
+  object-fit: contain;
+  opacity: 0.82;
+}
+.app-empty-state__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 360px;
+}
+.app-empty-state strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+.app-empty-state p {
+  max-width: 340px;
+  margin: 5px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.app-empty-state button {
+  margin-top: 14px;
+}
+.app-empty-state--compact {
+  min-height: 150px;
+  padding: 20px 16px;
+}
+.app-empty-state--compact > img {
+  height: 58px;
+}
+
 html.theme-dark .swal2-popup {
   background: var(--color-modal-bg) !important;
   color: var(--color-ink) !important;

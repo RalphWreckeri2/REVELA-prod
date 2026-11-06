@@ -18,6 +18,7 @@ import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRe
 import ResponsiveChart from "../components/ResponsiveChart";
 import WrappedAxisTick from "../components/WrappedAxisTick";
 import GeographicBarChart from "../components/GeographicBarChart";
+import EmptyState from "../components/EmptyState";
 import "../styles/ExportReportsPage.css";
 import { useAuth } from "../context/authContext";
 import {
@@ -282,55 +283,13 @@ function ChartEmptyState({
   showIllustration = true,
 }) {
   return (
-    <div
-      style={{
-        height: "100%",
-        minHeight: 200,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "24px 16px",
-        textAlign: "center",
-        background: "rgba(0, 0, 0, 0.015)",
-        borderRadius: 8,
-        border: "1px dashed rgba(226, 232, 240, 0.9)"
-      }}
-    >
-      {showIllustration ? (
-        <img
-          alt="Empty"
-          src="/searching.png"
-          style={{ height: 80, objectFit: "contain", opacity: 0.8, marginBottom: 10 }}
-        />
-      ) : (
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: "50%",
-            background: "rgba(100, 116, 139, 0.08)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 10,
-            color: "var(--color-muted, #64748b)"
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.75">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-        </div>
-      )}
-      <div style={{ fontSize: 13.5, fontWeight: 700, color: "var(--color-ink, #0f172a)", marginBottom: 3 }}>
-        {title}
-      </div>
-      <div style={{ fontSize: 12, color: "var(--color-muted, #64748b)", maxWidth: 280, lineHeight: 1.4 }}>
-        {message}
-      </div>
-    </div>
+    <EmptyState
+      title={title}
+      message={message}
+      icon={showIllustration ? "/searching.png" : null}
+      compact
+      style={{ minHeight: 200 }}
+    />
   );
 }
 

@@ -3,6 +3,7 @@ import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { useAuth } from "../context/authContext";
 import { SkeletonBlock, SkeletonTableRows } from "../components/LoadingSkeleton";
+import EmptyState from "../components/EmptyState";
 import { detectedUserRole, filterUsers } from "../components/userManagementFilters";
 import {
   getUsersRequest,
@@ -650,8 +651,11 @@ export default function UserManagementPage() {
               ) : filteredUsers.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="um-table-empty">
-                    <img src="/searching.png" alt="No users found" style={{ height: 100, objectFit: "contain", opacity: 0.9, marginBottom: 12 }} />
-                    <span>{search || roleFilter !== "all" ? "No users match your filters." : 'No users found. Click "Create User" to add one.'}</span>
+                    <EmptyState
+                      compact
+                      title={search || roleFilter !== "all" ? "No users found" : "No users yet"}
+                      message={search || roleFilter !== "all" ? "No users match your current filters." : "Create a user to get started."}
+                    />
                   </td>
                 </tr>
               ) : filteredUsers.map((u) => (

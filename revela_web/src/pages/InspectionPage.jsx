@@ -9,6 +9,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { SkeletonBlock, SkeletonKanbanBoard } from "../components/LoadingSkeleton";
+import EmptyState from "../components/EmptyState";
 import Footer from "../components/Footer";
 import { AuthContext } from "../context/authContext";
 import AuthenticatedEvidenceImage from "../components/AuthenticatedEvidenceImage";
@@ -929,7 +930,12 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
             {filteredReports.map(report => <InspectionCard key={report.reportID ?? `log-${report.logID}`} report={report} onViewDetail={onViewDetail} />)}
           </div>
           {filteredReports.length === 0 && (
-            <div className="dispatch-empty"><strong>No matching reports</strong>Change or clear the grid search and current-flag filter.</div>
+            <EmptyState
+              compact
+              title="No matching reports"
+              message="Change or clear the grid search and current-flag filter."
+              className="dispatch-empty"
+            />
           )}
         </div>
     </InspectionDialog>
@@ -994,7 +1000,12 @@ function KanbanColumn({ status, reports, onViewDetail, isCollapsed, onToggleColl
             {hasMore && <button className="dispatch-view-all" type="button" onClick={event => onFocusColumn(status, event.currentTarget)}>View all {reports.length} {status.toLowerCase()} reports</button>}
           </>
         ) : (
-          <div className="dispatch-empty"><strong>{isFiltered ? "No matching reports" : `No ${status.toLowerCase()} reports`}</strong></div>
+          <EmptyState
+            compact
+            title={isFiltered ? "No matching reports" : `No ${status.toLowerCase()} reports`}
+            message={isFiltered ? "Change or clear the active filters." : "There are no reports in this status yet."}
+            className="dispatch-empty"
+          />
         ))}
       </div>
     </section>
@@ -1479,11 +1490,6 @@ const s = {
     padding: "16px", display: "flex", flexDirection: "column", gap: 14,
     minHeight: 120,
   },
-  emptyCol: {
-    textAlign: "center", padding: "32px 0",
-    fontSize: 13, color: "var(--color-muted)", fontWeight: 500
-  },
-
   // Card
   card: {
     background: "var(--color-modal-bg)",
