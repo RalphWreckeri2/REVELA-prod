@@ -41,15 +41,22 @@ def update_fcm_token(user_id, fcm_token):
         cur.close()
 
 
-def clear_fcm_token(user_id):
-    """Clear a device token only for a deliberate in-app logout."""
+def clear_fcm_token(user_id, expected_token=None):
+    """Clear a device token, optionally only if it still matches a failed token."""
     _ensure_fcm_token_column()
     cur = mysql.connection.cursor()
     try:
-        cur.execute(
-            "UPDATE users SET fcm_token = NULL, updatedAt = NOW() WHERE userID = %s",
-            (user_id,),
-        )
+        if expected_token is None:
+            cur.execute(
+                "UPDATE users SET fcm_token = NULL, updatedAt = NOW() WHERE userID = %s",
+                (user_id,),
+            )
+        else:
+            cur.execute(
+                """UPDATE users SET fcm_token = NULL, updatedAt = NOW()
+                   WHERE userID = %s AND fcm_token = %s""",
+                (user_id, expected_token),
+            )
         mysql.connection.commit()
     finally:
         cur.close()
@@ -224,4 +231,3 @@ def get_user_2fa_secret(user_id):
     user = cur.fetchone()
     cur.close()
     return user['two_factor_secret'] if user else None
-

@@ -6,6 +6,21 @@ import {
   inspectionNoticeLabel, inspectionPeriodLabel, inspectionResultOptions, matchesDispatchFilters, matchesDispatchSearch,
   matchesGridSearch, workloadFilterLabel, workloadResultLabel,
 } from "./inspectionPresentation.js";
+import { readFileSync } from "node:fs";
+
+const inspectionPage = readFileSync(new URL("./InspectionPage.jsx", import.meta.url), "utf8");
+const inspectionStyles = readFileSync(new URL("../styles/InspectionPage.css", import.meta.url), "utf8");
+
+test("submitted reports grid provides local search and barangay, result, and deadline filters", () => {
+  assert.match(inspectionPage, /const isSubmittedGrid = status === "Submitted";/);
+  assert.match(inspectionPage, /aria-label="Search submitted reports"/);
+  assert.match(inspectionPage, /aria-label="Filter submitted reports by barangay"/);
+  assert.match(inspectionPage, /aria-label="Filter submitted reports by result"/);
+  assert.match(inspectionPage, /aria-label="Filter submitted reports by deadline"/);
+  assert.match(inspectionPage, /matchesDispatchFilters\(report, \{ barangay: filterBarangay, flag: filterResult, deadline: filterDeadline \}\)/);
+  assert.match(inspectionStyles, /\.dispatch-grid-filter-toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(200px, 1\.35fr\) 42px repeat\(3, minmax\(130px, \.8fr\)\)/);
+  assert.match(inspectionStyles, /\.dispatch-grid-filter-toolbar \{\s*grid-template-columns: minmax\(0, 1fr\);\s*\}/);
+});
 
 for (const count of [0, 1, 5, 6, 12]) {
   test(`column preview preserves the exact five-card threshold for ${count} reports`, () => {

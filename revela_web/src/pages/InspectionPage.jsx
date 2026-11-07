@@ -1138,10 +1138,18 @@ function InspectionEvidenceModal({ url, token, onClose, isClosing, returnFocusRe
 function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [search, setSearch] = useState(initialSearch);
   const [filterResult, setFilterResult] = useState("");
+  const [filterBarangay, setFilterBarangay] = useState("");
+  const [filterDeadline, setFilterDeadline] = useState("");
   const gridSearchRef = useRef(null);
+  const isSubmittedGrid = status === "Submitted";
   const resultOptions = inspectionResultOptions(reports);
-  const filteredReports = reports.filter(report => (!filterResult || report.inspectionResult === filterResult)
-    && matchesGridSearch(report, search, initialSearch));
+  const barangayOptions = [...new Set(reports.map(report => report.barangayName)
+    .filter(name => typeof name === "string" && name.trim()))]
+    .sort((a, b) => a.localeCompare(b));
+  const filteredReports = reports.filter(report => matchesGridSearch(report, search, initialSearch)
+    && (isSubmittedGrid
+      ? matchesDispatchFilters(report, { barangay: filterBarangay, flag: filterResult, deadline: filterDeadline })
+      : (!filterResult || report.inspectionResult === filterResult)));
 
   return (
     <InspectionDialog
@@ -1151,16 +1159,47 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
       <div className="dispatch-grid-controls">
-        <div className="dispatch-grid-search">
-          <label htmlFor="dispatch-grid-search">Search loaded {status.toLowerCase()} reports</label>
-          <div className="dispatch-search-input">
-            <Icon.Search />
-            <input ref={gridSearchRef} id="dispatch-grid-search" type="text" placeholder="Search name, ID, or area..." value={search} onChange={event => setSearch(event.target.value)} />
-            {search && <button className="dispatch-clear-search" type="button" aria-label="Clear grid search" title="Clear grid search" onClick={() => { setSearch(""); gridSearchRef.current.focus(); }}><Icon.X /></button>}
+        {isSubmittedGrid ? (
+          <div className="dispatch-grid-filter-toolbar">
+            <div className="dispatch-search-input">
+              <Icon.Search />
+              <input ref={gridSearchRef} id="dispatch-grid-search" type="text"
+                aria-label="Search submitted reports" placeholder="Search name, ID, or area..."
+                value={search} onChange={event => setSearch(event.target.value)} />
+              {search && <button className="dispatch-clear-search" type="button" aria-label="Clear grid search" title="Clear grid search" onClick={() => { setSearch(""); gridSearchRef.current.focus(); }}><Icon.X /></button>}
+            </div>
+            <span className="dispatch-filter-icon" aria-hidden="true"><Icon.Filter /></span>
+            <select className="filter-select dispatch-filter-select" aria-label="Filter submitted reports by barangay"
+              value={filterBarangay} onChange={event => setFilterBarangay(event.target.value)}>
+              <option value="">All Barangays</option>
+              {barangayOptions.map(barangay => <option key={barangay} value={barangay}>{barangay}</option>)}
+            </select>
+            <select className="filter-select dispatch-filter-select" aria-label="Filter submitted reports by result"
+              value={filterResult} onChange={event => setFilterResult(event.target.value)}>
+              <option value="">All Submitted Results</option>
+              {resultOptions.map(result => <option key={result} value={result}>{getFriendlyFlagLabel(result) ?? result}</option>)}
+            </select>
+            <select className="filter-select dispatch-filter-select" aria-label="Filter submitted reports by deadline"
+              value={filterDeadline} onChange={event => setFilterDeadline(event.target.value)}>
+              <option value="">All Deadlines</option>
+              <option value="overdue">Overdue</option>
+              <option value="today">Due today</option>
+              <option value="upcoming">Upcoming</option>
+              <option value="missing">No deadline</option>
+            </select>
           </div>
-        </div>
-        <p className="dispatch-grid-help">Search starts with the Dispatch query. Edit or clear it here without changing the board. Submitted-result filters apply only here; their counts show the loaded column before search.</p>
-        <div className="dispatch-grid-flags" role="group" aria-label="Filter grid by submitted result">
+        ) : (
+          <>
+            <div className="dispatch-grid-search">
+              <label htmlFor="dispatch-grid-search">Search loaded {status.toLowerCase()} reports</label>
+              <div className="dispatch-search-input">
+                <Icon.Search />
+                <input ref={gridSearchRef} id="dispatch-grid-search" type="text" placeholder="Search name, ID, or area..." value={search} onChange={event => setSearch(event.target.value)} />
+                {search && <button className="dispatch-clear-search" type="button" aria-label="Clear grid search" title="Clear grid search" onClick={() => { setSearch(""); gridSearchRef.current.focus(); }}><Icon.X /></button>}
+              </div>
+            </div>
+            <p className="dispatch-grid-help">Search starts with the Dispatch query. Edit or clear it here without changing the board. Submitted-result filters apply only here; their counts show the loaded column before search.</p>
+            <div className="dispatch-grid-flags" role="group" aria-label="Filter grid by submitted result">
             {["all", ...resultOptions].map(result => {
               const count = result === "all" ? reports.length : reports.filter(report => report.inspectionResult === result).length;
               if (count === 0 && result !== "all") return null;
@@ -1180,8 +1219,9 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
                 </button>
               );
             })}
-          </div>
-        </div>
+            </div>
+          </>
+        )}
 
         <p className="dispatch-grid-count" role="status">Showing {filteredReports.length} of {reports.length} {status.toLowerCase()} reports.</p>
         <div className="dispatch-grid-content">
@@ -1192,11 +1232,12 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
             <EmptyState
               compact
               title="No matching reports"
-              message="Change or clear the grid search and current-flag filter."
+              message="Change or clear the search and filters."
               className="dispatch-empty"
             />
           )}
         </div>
+      </div>
     </InspectionDialog>
   );
 }

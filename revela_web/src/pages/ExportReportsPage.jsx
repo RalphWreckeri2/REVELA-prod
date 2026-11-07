@@ -44,6 +44,8 @@ import {
 } from "../components/businessCompliance";
 import { registryFlagRateLabel } from "../components/wlcPolicy";
 
+const REPORT_LOADING_MESSAGE = "Refreshing report data and preparing export...";
+
 function ReportChartSkeleton({ variant = "bars" }) {
   return <div className={`export-chart-skeleton export-chart-skeleton--${variant}`} role="status" aria-label="Loading report chart" aria-busy="true">
     {variant === "donut" ? <SkeletonBlock className="export-chart-skeleton-ring" /> : variant === "horizontal" ? <div className="export-chart-skeleton-horizontal">
@@ -55,6 +57,48 @@ function ReportChartSkeleton({ variant = "bars" }) {
       {[0, 1, 2, 3].map(index => <SkeletonBlock key={index} />)}
     </div>
   </div>;
+}
+
+function ReportLoadingOverlay() {
+  const [message, setMessage] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+      ? REPORT_LOADING_MESSAGE
+      : "");
+
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return undefined;
+
+    let visibleCharacters = 0;
+    const timer = window.setInterval(() => {
+      visibleCharacters += 1;
+      setMessage(REPORT_LOADING_MESSAGE.slice(0, visibleCharacters));
+      if (visibleCharacters >= REPORT_LOADING_MESSAGE.length) window.clearInterval(timer);
+    }, 32);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <div className="export-report-loading-overlay" role="status" aria-live="polite"
+      aria-label={REPORT_LOADING_MESSAGE} aria-busy="true">
+      <div className="export-report-loading-card">
+        <svg className="export-report-loading-route" viewBox="0 0 240 110"
+          aria-hidden="true" focusable="false">
+          <path className="export-report-loading-roads"
+            d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24 M82 62 C88 42 74 31 91 18 M151 64 C159 79 174 89 194 93 M188 38 C184 25 194 15 207 12" />
+          <path className="export-report-loading-trail-glow"
+            d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24" pathLength="100" />
+          <path className="export-report-loading-trail"
+            d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24" pathLength="100" />
+          <circle className="export-report-loading-node" cx="82" cy="62" r="3" />
+          <circle className="export-report-loading-node" cx="151" cy="64" r="3" />
+        </svg>
+        <p className="export-report-loading-message" aria-hidden="true">
+          {message}<span className="export-report-loading-caret" />
+        </p>
+      </div>
+    </div>
+  );
 }
 
 // ── Color Palettes ─────────────────────────────────────────────────────────────
@@ -299,6 +343,7 @@ export default function ExportReportsPage() {
   const analyticsData = reportSnapshot?.data ?? null;
   const loadedAt = reportSnapshot?.loadedAt ?? null;
   const [loadingAnalytics, setLoadingAnalytics] = useState(() => !hasReport);
+  const [refreshingReports, setRefreshingReports] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const requestRef = useRef({ sequence: 0, controller: null });
   const exportInProgress = useRef(false);
@@ -356,9 +401,14 @@ export default function ExportReportsPage() {
   }, [token, hasReport, setReportSnapshot]);
 
   const refreshView = useAppDataRefresh("reports", async () => {
-    if (exportInProgress.current) await exportFinished.current;
-    const data = await loadData();
-    return { ok: Boolean(data), status: data ? "success" : "failure" };
+    setRefreshingReports(true);
+    try {
+      if (exportInProgress.current) await exportFinished.current;
+      const data = await loadData();
+      return { ok: Boolean(data), status: data ? "success" : "failure" };
+    } finally {
+      setRefreshingReports(false);
+    }
   });
   useEffect(() => {
     const requestState = requestRef.current;
@@ -374,17 +424,21 @@ export default function ExportReportsPage() {
     let finishExport;
     exportFinished.current = new Promise(resolve => { finishExport = resolve; });
     setPreparingExport(true);
+    let failureMessage = "";
     try {
       const snapshot = await loadData({ forExport: true });
       await action(snapshot, demographicView(snapshot));
     } catch (err) {
-      setAnalyticsError(err.message || "Could not refresh the report data.");
-      await Swal.fire({ icon: "error", title: "Report not exported", text: err.message || "Refresh failed. Retry before exporting." });
+      failureMessage = err.message || "Could not refresh the report data.";
+      setAnalyticsError(failureMessage);
     } finally {
       exportInProgress.current = false;
       setPreparingExport(false);
       finishExport();
       exportFinished.current = null;
+    }
+    if (failureMessage) {
+      await Swal.fire({ icon: "error", title: "Report not exported", text: failureMessage });
     }
   };
 
@@ -1156,9 +1210,6 @@ export default function ExportReportsPage() {
               </div>
             )}
 
-            {preparingExport && <p role="status" style={{ padding: "10px 14px", color: "var(--color-ink)" }}>
-              Refreshing report data and preparing export…
-            </p>}
             {isRegistryEmpty && !loadingAnalytics && (
               <div
                 style={{
@@ -1891,6 +1942,7 @@ export default function ExportReportsPage() {
             </p>
           </footer>
         </DashboardLayout>
+        {(refreshingReports || preparingExport) && <ReportLoadingOverlay />}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════

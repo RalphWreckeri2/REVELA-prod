@@ -17,6 +17,15 @@ test("exports separate demographic charts from field reports without the title p
   assert.match(styles, /\.export-report-view-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
 });
 
+test("report loading overlay is limited to refresh and export work and respects reduced motion", () => {
+  assert.match(page, /const REPORT_LOADING_MESSAGE = "Refreshing report data and preparing export\.\.\.";/);
+  assert.match(page, /\(refreshingReports \|\| preparingExport\) && <ReportLoadingOverlay \/>/);
+  assert.match(page, /setRefreshingReports\(true\);[\s\S]*?finally \{\s*setRefreshingReports\(false\);/);
+  assert.match(page, /finally \{\s*exportInProgress\.current = false;\s*setPreparingExport\(false\);/);
+  assert.match(styles, /backdrop-filter:\s*blur\(3px\)/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
+});
+
 test("export page omits the redundant KPI strip without removing figures from downloads", () => {
   assert.doesNotMatch(page, /Quick Census KPI Strip|Active Municipality-wide|Active vs Total Ratio/);
   assert.match(page, /Section: "KPI", Metric: "Total Registered Entities", Value: kpis\?\.total_businesses/);
