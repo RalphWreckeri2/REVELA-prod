@@ -315,7 +315,7 @@ const inspection = (over = {}) => ({
   ...over,
 });
 
-test("Inspection Clear Warning requires a Verified warned business and no open inspection", () => {
+test("Inspection Clear Warning is offered for a Verified Orange report to admins", () => {
   assert.equal(canClearInspectionWarning(inspection(), "Admin"), true);
   assert.equal(
     canClearInspectionWarning(inspection(), "System Administrator"),
@@ -324,12 +324,8 @@ test("Inspection Clear Warning requires a Verified warned business and no open i
   for (const changes of [
     { verificationStatus: "Submitted" },
     { inspectionResult: "Green", flagColor: "Green" },
-    { warningLevel: 0 },
-    { hasNonVerifiedInspection: 1 },
-    { hasNonVerifiedInspection: undefined },
-    { blackLocked: 1 },
-    { applicationStatus: "Revoked" },
     { flagColor: "Black" },
+    { businessID: null, logID: null },
   ]) {
     assert.equal(
       canClearInspectionWarning(inspection(changes), "Admin"),
@@ -339,19 +335,24 @@ test("Inspection Clear Warning requires a Verified warned business and no open i
   assert.equal(canClearInspectionWarning(inspection(), "Inspector"), false);
 });
 
-test("Inspection Clear Warning supports an unregistered pin with an active warning", () => {
+test("Inspection Clear Warning does not depend on possibly stale warning fields", () => {
+  assert.equal(
+    canClearInspectionWarning(
+      inspection({ warningLevel: 0, hasNonVerifiedInspection: 1 }),
+      "Admin",
+    ),
+    true,
+  );
+});
+
+test("Inspection Clear Warning supports an unregistered Orange pin", () => {
   const pin = inspection({
     businessID: null,
     logID: 21,
     warningBaseColor: "Yellow",
   });
   assert.equal(canClearInspectionWarning(pin, "Admin"), true);
-  for (const changes of [
-    { logID: null },
-    { flagColor: "Red" },
-    { warningLevel: 0 },
-    { blackLocked: 1 },
-  ]) {
+  for (const changes of [{ logID: null }, { flagColor: "Red" }]) {
     assert.equal(
       canClearInspectionWarning({ ...pin, ...changes }, "Admin"),
       false,

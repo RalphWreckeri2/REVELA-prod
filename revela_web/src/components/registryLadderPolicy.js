@@ -37,21 +37,16 @@ export function canClearWarning(business, role) {
 }
 
 export function canClearInspectionWarning(report, role) {
+  // The inspections list may carry stale enforcement fields. Let the server
+  // validate current warning, lock, and pending-inspection state on submit.
   if (
     report?.inspectionResult !== "Orange" ||
     report?.verificationStatus !== "Verified" ||
-    Number(report.hasNonVerifiedInspection) !== 0 ||
+    report?.flagColor !== "Orange" ||
     !ADMIN_ROLES.includes(role)
   )
     return false;
-  if (report.businessID != null) return canClearWarning(report, role);
-
-  return (
-    report.logID != null &&
-    report.flagColor === "Orange" &&
-    warningLevel(report) > 0 &&
-    !isBlackLocked(report)
-  );
+  return report.businessID != null || report.logID != null;
 }
 
 /** Refresh the open detail before notifying the Map of the successful change. */
