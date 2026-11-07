@@ -15,7 +15,11 @@
  */
 
 /** Roles that may use the registry page's enforcement actions. */
-export const ADMIN_ROLES = Object.freeze(["Admin", "SUPER_ADMIN"]);
+export const ADMIN_ROLES = Object.freeze([
+  "Admin",
+  "SUPER_ADMIN",
+  "System Administrator",
+]);
 
 /**
  * "Clear Warning" is offered only when the server would accept it.

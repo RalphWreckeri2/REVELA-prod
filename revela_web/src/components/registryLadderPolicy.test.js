@@ -28,6 +28,10 @@ test("Clear Warning is offered to an admin when there is a warning", () => {
     canClearWarning(business({ warningLevel: 3 }), "SUPER_ADMIN"),
     true,
   );
+  assert.equal(
+    canClearWarning(business({ warningLevel: 1 }), "System Administrator"),
+    true,
+  );
 });
 
 test("Clear Warning is hidden at level 0", () => {
@@ -45,10 +49,6 @@ test("Clear Warning is hidden on a Black-locked row even with a warning", () => 
 test("Clear Warning is hidden from non-admins even with a warning", () => {
   assert.equal(
     canClearWarning(business({ warningLevel: 1 }), "Inspector"),
-    false,
-  );
-  assert.equal(
-    canClearWarning(business({ warningLevel: 1 }), "System Administrator"),
     false,
   );
 });
@@ -317,6 +317,10 @@ const inspection = (over = {}) => ({
 
 test("Inspection Clear Warning requires a Verified warned business and no open inspection", () => {
   assert.equal(canClearInspectionWarning(inspection(), "Admin"), true);
+  assert.equal(
+    canClearInspectionWarning(inspection(), "System Administrator"),
+    true,
+  );
   for (const changes of [
     { verificationStatus: "Submitted" },
     { inspectionResult: "Green", flagColor: "Green" },
