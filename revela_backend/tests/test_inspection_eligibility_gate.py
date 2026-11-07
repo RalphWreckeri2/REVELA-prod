@@ -106,6 +106,7 @@ class _AssignBase(unittest.TestCase):
             patch("api.notifications.hub.publish_to_admins"),
         ):
             mock_mysql.connection.cursor.return_value = cursor
+            self.last_connection = mock_mysql.connection
             return inspection_service.assign_inspection(
                 log_id=22, inspector_user_id=9, deadline=None, assigned_by=2,
                 expected_barangay_id=expected_barangay_id)
@@ -135,7 +136,25 @@ class EligibilityGateTests(_AssignBase):
             and "WHERE g.logID = %s" in call.args[0]
         )
         self.assertIn("AND g.barangayID = %s", target_query.args[0])
+        self.assertIn("FOR UPDATE", target_query.args[0])
         self.assertEqual(target_query.args[1], (22, 7))
+
+    def test_target_is_locked_before_existing_assignment_check(self):
+        self._assign("Red", "Expired")
+        queries = [
+            call.args[0] for call in self.last_cursor.execute.call_args_list
+        ]
+        target_query_index = next(
+            index for index, sql in enumerate(queries)
+            if "FROM geospatial_logs g" in sql and "WHERE g.logID = %s" in sql
+        )
+        report_query_index = next(
+            index for index, sql in enumerate(queries)
+            if "FROM inspection_reports" in sql
+            and "WHERE targetID = %s" in sql
+        )
+        self.assertIn("FOR UPDATE", queries[target_query_index])
+        self.assertLess(target_query_index, report_query_index)
 
     def test_allowed_colours_are_assignable(self):
         for colour, status in (("Red", "Expired"), ("Yellow", "Pending"),
@@ -185,6 +204,7 @@ class EligibilityGateTests(_AssignBase):
         self.assertIsInstance(error,
                               inspection_service.InspectionAssignmentConflict)
         self.assertIn("already undergoing inspection", str(error))
+        self.last_connection.rollback.assert_called_once()
 
 
 class EligibilityUsesSharedExpressionTests(unittest.TestCase):

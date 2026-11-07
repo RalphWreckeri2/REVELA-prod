@@ -406,7 +406,8 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
     """
     Create an INSPECTION_REPORTS row linking a geospatial log to an inspector.
     targetType is always 'geospatial_log' since we're dispatching from the flag map.
-    Prevents duplicate open assignments for the same logID.
+    Locks the target row while checking and writing so concurrent dispatches
+    cannot create duplicate open assignments for the same logID.
     """
     try:
         cursor = mysql.connection.cursor()
@@ -428,11 +429,13 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
                    {_effective_flag_color_sql("g", ladder=ladder_columns_available(cursor))} AS effectiveFlagColor
             FROM geospatial_logs g
             WHERE g.logID = %s{barangay_filter}
+            FOR UPDATE
             """,
             flag_params,
         )
         flag = cursor.fetchone()
         if not flag:
+            mysql.connection.rollback()
             cursor.close()
             return None, InspectionTargetNotFound(f"Flag #{log_id} not found")
 
@@ -440,6 +443,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
         effective_color = (flag.get("effectiveFlagColor")
                            or flag.get("flagColor"))
         if effective_color == "Black":
+            mysql.connection.rollback()
             cursor.close()
             return None, BlackInspectionAssignmentConflict(
                 "Black businesses cannot be dispatched for inspection")
@@ -449,6 +453,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
             else:
                 reason = (f"{effective_color or 'Uncoloured'} businesses "
                           f"cannot be inspected")
+            mysql.connection.rollback()
             cursor.close()
             return None, InspectionAssignmentConflict(reason)
 
@@ -460,10 +465,12 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
         )
         inspector = cursor.fetchone()
         if not inspector:
+            mysql.connection.rollback()
             cursor.close()
             return None, InspectionTargetInvalid(
                 f"Inspector userID {inspector_user_id} not found")
         if inspector.get("isActive") in (0, False):
+            mysql.connection.rollback()
             cursor.close()
             return None, InspectionTargetInvalid(
                 f"Inspector userID {inspector_user_id} is inactive")
@@ -479,6 +486,7 @@ def assign_inspection(log_id, inspector_user_id, deadline, assigned_by,
         existing = cursor.fetchone()
 
         if existing and existing["verificationStatus"] in ('Assigned', 'Reassigned', 'In Progress'):
+            mysql.connection.rollback()
             cursor.close()
             return None, InspectionAssignmentConflict(
                 "This business is already undergoing inspection and cannot be double-booked.")
