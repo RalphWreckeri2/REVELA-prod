@@ -47,15 +47,10 @@ void main() {
     );
   });
 
-  test('inspection Street View opens only after its bottom sheet returns', () {
-    final home = source('lib/pages/home_page.dart');
+  test('inspection form does not show the nonworking Street View action', () {
     final inspection = source('lib/component/inspection_modal.dart');
-    expect(home, contains('showModalBottomSheet<LatLng>'));
-    expect(home, contains('if (streetViewPosition != null)'));
-    expect(home, contains('await _openStreetView(streetViewPosition)'));
-    expect(inspection, contains('Navigator.of(context).pop('));
-    expect(inspection, contains('LatLng(latitude, longitude)'));
-    expect(inspection, isNot(contains('addPostFrameCallback')));
+    expect(inspection, isNot(contains('View Street View')));
+    expect(inspection, isNot(contains('onViewStreetView')));
   });
 
   test(

@@ -744,7 +744,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
     if (_isDrawerOpen) return;
     setState(() => _isDrawerOpen = true);
     widget.onDrawerToggled?.call(true);
-    final streetViewPosition = await showModalBottomSheet<LatLng>(
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -752,11 +752,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           InspectionModal(task: task, onSubmitted: () => _fetchTasks()),
     );
     widget.onDrawerToggled?.call(false);
-    if (!mounted) return;
-    setState(() => _isDrawerOpen = false);
-    if (streetViewPosition != null) {
-      await _openStreetView(streetViewPosition);
-    }
+    if (mounted) setState(() => _isDrawerOpen = false);
   }
 
   void _onYellowFlagTap(MyFlag flag) async {

@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'dart:io';
 import '../service/inspection_service.dart';
 import '../service/inspection_benchmark.dart';
@@ -243,7 +242,7 @@ class _InspectionModalState extends State<InspectionModal> {
       }
       final messenger = ScaffoldMessenger.of(context);
       widget.onSubmitted();
-      Navigator.of(context).pop();
+      Navigator.of(context).pop(true);
       final message = switch (result) {
         InspectionSubmissionResult.submitted =>
           'Submitted successfully. Admin can verify it on the web dashboard.',
@@ -448,8 +447,6 @@ class _InspectionModalState extends State<InspectionModal> {
 
   @override
   Widget build(BuildContext context) {
-    final latitude = widget.task.latitude;
-    final longitude = widget.task.longitude;
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
       minChildSize: 0.5,
@@ -640,22 +637,6 @@ class _InspectionModalState extends State<InspectionModal> {
             ),
 
             const Divider(height: 32),
-            if (latitude != null &&
-                latitude.isFinite &&
-                longitude != null &&
-                longitude.isFinite)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () =>
-                        Navigator.of(context).pop(LatLng(latitude, longitude)),
-                    icon: const Icon(Icons.streetview_rounded),
-                    label: const Text('View Street View'),
-                  ),
-                ),
-              ),
 
             // STEP 1: Compliance Result & Notice
             if (_currentStep == 0)

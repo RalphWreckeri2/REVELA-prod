@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
 import { useAuth } from "../context/authContext";
@@ -482,6 +483,7 @@ function ResetPasswordModal({ targetUser, onClose, onSuccess, token }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function UserManagementPage() {
   const { token, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers, hasUsers] = useSessionDataset("users", "list", []);
   const [loading,        setLoading]        = useState(() => !hasUsers);
   const [showCreate,     setShowCreate]     = useState(false);
@@ -492,6 +494,10 @@ export default function UserManagementPage() {
   const [roleFilter,     setRoleFilter]     = useState("all");
   const [manualRoleFilter, setManualRoleFilter] = useState(false);
   const userRequestSequence = useRef(0);
+  const openedResetRequestRef = useRef(null);
+  const resetUserID = searchParams.get("userID");
+  const resetUserName = searchParams.get("userName");
+  const shouldOpenResetRequest = searchParams.get("openReset") === "1";
 
   const fetchUsers = useCallback(async (isSilent = false) => {
     if (!token) return;
@@ -517,6 +523,31 @@ export default function UserManagementPage() {
       if (sequence === userRequestSequence.current) setLoading(false);
     }
   }, [token, hasUsers, setUsers]);
+  useEffect(() => {
+    if (!shouldOpenResetRequest || loading) return;
+    const requestKey = resetUserID || resetUserName;
+    if (!requestKey || openedResetRequestRef.current === requestKey) return;
+    const matchingUsers = users.filter((candidate) => (
+      resetUserID
+        ? String(candidate.userID) === resetUserID
+        : candidate.fullName?.trim().toLowerCase() === resetUserName.trim().toLowerCase()
+    ));
+    if (matchingUsers.length !== 1) return;
+    openedResetRequestRef.current = requestKey;
+    setUserToReset(matchingUsers[0]);
+  }, [loading, resetUserID, resetUserName, shouldOpenResetRequest, users]);
+  const closeResetRequest = () => {
+    setUserToReset(null);
+    if (!shouldOpenResetRequest) return;
+    openedResetRequestRef.current = null;
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.delete("openReset");
+      next.delete("userID");
+      next.delete("userName");
+      return next;
+    }, { replace: true });
+  };
   useAppDataRefresh(user?.role === "SUPER_ADMIN" ? "users" : null, async reason => {
     const ok = await fetchUsers(reason === "scheduled");
     return { ok, status: ok ? "success" : "failure" };
@@ -770,7 +801,7 @@ export default function UserManagementPage() {
         <ResetPasswordModal
           targetUser={userToReset}
           token={token}
-          onClose={() => setUserToReset(null)}
+          onClose={closeResetRequest}
           onSuccess={fetchUsers}
         />
       </AnimatePresence>

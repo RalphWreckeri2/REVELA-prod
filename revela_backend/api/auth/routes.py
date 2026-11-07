@@ -347,7 +347,7 @@ def request_manual_reset():
     user = find_user_by_email(data["email"])
     if user:
         set_reset_requested(user["userID"], True)
-        notify_password_reset_request(user["fullName"])
+        notify_password_reset_request(user["fullName"], user["userID"])
     
     # Always return success to prevent email enumeration
     return jsonify({"message": "If this email is registered, the administrator has been notified."}), 200

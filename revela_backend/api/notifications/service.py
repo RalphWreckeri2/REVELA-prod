@@ -308,6 +308,7 @@ def notify_inspection_assigned(
                 f"You have been assigned to inspect “{biz}”. "
                 f"Open the map to view the site and submit your report (report #{report_id})."
             )
+        link = f"/inspections?reportID={report_id}&openReport=1"
 
         cur.execute(
             """
@@ -320,7 +321,7 @@ def notify_inspection_assigned(
                 "inspection_assigned",
                 title,
                 body,
-                "/home",
+                link,
             ),
         )
         mysql.connection.commit()
@@ -329,7 +330,10 @@ def notify_inspection_assigned(
     except Exception as e:
         print(f"notify_inspection_assigned error: {e}")
 
-def notify_password_reset_request(inspector_name: str) -> None:
+def notify_password_reset_request(
+    inspector_name: str,
+    inspector_user_id: int,
+) -> None:
     """In-app notification for all admins when an inspector requests a manual password reset."""
     try:
         _ensure_tables()
@@ -345,7 +349,9 @@ def notify_password_reset_request(inspector_name: str) -> None:
 
         title = "Password Reset Requested"
         body = f"{inspector_name} has requested a manual password reset. Open User Management to generate a temporary password."
-        link = "/users"
+        link = (
+            f"/users?userID={int(inspector_user_id)}&openReset=1"
+        )
 
         for a in admins:
             aid = int(a["userID"])
@@ -364,6 +370,7 @@ def notify_password_reset_request(inspector_name: str) -> None:
         # Push real-time event to all connected admins
         hub.publish_to_admins({
             "type": "password_reset_requested",
+            "userID": int(inspector_user_id),
             "title": title,
             "body": body,
             "link": link
@@ -525,7 +532,7 @@ def notify_yellow_flag_reported(
             f"{inspector_name} flagged \"{business_name}\" in {barangay_name} "
             f"as a {color_label} business. Open the Map to review (log #{log_id})."
         )
-        link = "/map"
+        link = f"/map?flag={log_id}"
 
         for a in admins:
             aid = int(a["userID"])
