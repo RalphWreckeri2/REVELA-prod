@@ -658,6 +658,13 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
            detail: { localMutation: true, businessID, logID: report.logID },
         })),
       });
+      onClose();
+      await Swal.fire({
+        icon: "success",
+        title: "Warning cleared",
+        text: "The business is now marked as compliant.",
+        confirmButtonColor: "#56ab2f",
+      });
     } catch (err) {
       setClearError(err.message || "Could not clear the warning.");
     } finally {
