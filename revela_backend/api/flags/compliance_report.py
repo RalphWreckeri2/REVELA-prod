@@ -36,10 +36,14 @@ def _warning_cleared_inspection_rows(cursor, *, ladder):
                      ON state.subjectType = 'business'
                     AND state.subjectID = CAST(r.businessID AS CHAR)
                    JOIN enforcement_events cleared
-                     ON cleared.subjectType = 'business'
-                    AND cleared.subjectID = CAST(r.businessID AS CHAR)
-                    AND cleared.eventType = 'warning_cleared'
+                     ON cleared.eventType = 'warning_cleared'
                     AND cleared.actorUserID IS NOT NULL
+                    AND (
+                        (cleared.subjectType = 'business'
+                         AND cleared.subjectID = CAST(r.businessID AS CHAR))
+                        OR (cleared.subjectType = 'geospatial_log'
+                            AND cleared.subjectID = CAST(g.logID AS CHAR))
+                    )
                    JOIN inspection_lifecycle_events verified
                      ON verified.targetLogID = g.logID
                     AND verified.eventType = 'verified'
@@ -60,10 +64,14 @@ def _warning_cleared_inspection_rows(cursor, *, ladder):
                      AND cleared.eventID = (
                          SELECT MAX(latest_clear.eventID)
                          FROM enforcement_events latest_clear
-                         WHERE latest_clear.subjectType = 'business'
-                           AND latest_clear.subjectID = CAST(r.businessID AS CHAR)
-                           AND latest_clear.eventType = 'warning_cleared'
+                         WHERE latest_clear.eventType = 'warning_cleared'
                            AND latest_clear.actorUserID IS NOT NULL
+                           AND (
+                               (latest_clear.subjectType = 'business'
+                                AND latest_clear.subjectID = CAST(r.businessID AS CHAR))
+                               OR (latest_clear.subjectType = 'geospatial_log'
+                                   AND latest_clear.subjectID = CAST(g.logID AS CHAR))
+                           )
                      )
                      AND NOT EXISTS (
                          SELECT 1

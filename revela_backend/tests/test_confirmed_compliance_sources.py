@@ -215,6 +215,34 @@ def test_verified_warning_cleared_for_linked_business_is_in_inspection_complianc
     assert report["data"][0]["verifiedOn"] == "2026-10-16T01:02:05.123456Z"
 
 
+def test_verified_warning_cleared_from_inspection_pin_is_in_compliance_report(db):
+    pin(db, 30, source="detection", linked=True, color="Green")
+    db.db.execute("""INSERT INTO inspection_reports
+        (reportID,targetID,targetType,userID,verificationStatus,inspectionResult)
+        VALUES (31,30,'geospatial_log',9,'Verified','Orange')""")
+    db.db.execute("""INSERT INTO inspection_lifecycle_events
+        (reportID,targetLogID,eventType,inspectionResult,actorUserID,eventTimestamp)
+        VALUES (31,30,'verified','Orange',2,'2026-10-16 01:02:03.123456')""")
+    db.db.execute("""INSERT INTO enforcement_state
+        (subjectType,subjectID,warningLevel,blackLocked,warningClearedAt,warningClearedBy)
+        VALUES ('business','REG-30',0,0,'2026-10-16 01:02:05.123456',2),
+               ('geospatial_log','30',0,0,'2026-10-16 01:02:05.123456',2)""")
+    db.db.execute("""INSERT INTO enforcement_events
+        (subjectType,subjectID,eventType,actorUserID,previousLevel,newLevel,createdAt)
+        VALUES ('geospatial_log','30','warning_cleared',2,1,0,
+                '2026-10-16 01:02:05.123456')""")
+    db.commit()
+
+    report = compliance_report.get_inspection_verified_compliant()
+
+    assert report["total"] == 1
+    assert report["warningClearedTotal"] == 1
+    assert report["data"][0]["detectionReference"] == 30
+    assert report["data"][0]["businessID"] == "REG-30"
+    assert report["data"][0]["complianceBasis"] == "Verified warning cleared by admin"
+    assert report["data"][0]["verifiedOn"] == "2026-10-16T01:02:05.123456Z"
+
+
 def test_warning_clear_report_excludes_rewarned_businesses(db):
     pin(db, 30, source="detection", linked=True, color="Green")
     db.db.execute("""INSERT INTO inspection_reports
