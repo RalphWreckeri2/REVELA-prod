@@ -107,6 +107,10 @@ export function isBlackLocked(business) {
   );
 }
 
+export function hasOpenRegistryInspection(business) {
+  return Number(business?.hasNonVerifiedInspection) > 0;
+}
+
 export function isBlackDispatchUnlocked() {
   return false;
 }

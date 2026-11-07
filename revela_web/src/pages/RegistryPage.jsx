@@ -24,6 +24,7 @@ import {
 } from "../services/api";
 import {
   canClearWarning,
+  hasOpenRegistryInspection,
   isBlackLocked,
 } from "../components/registryLadderPolicy";
 
@@ -193,6 +194,7 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
   const [saving, setSaving] = useState(false);
   const [clearingWarning, setClearingWarning] = useState(false);
   const [formData, setFormData] = useState({});
+  const inspectionInProgress = hasOpenRegistryInspection(business);
 
   useEffect(() => {
     async function fetch() {
@@ -205,7 +207,6 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
           businessType: data.businessType || "",
           lineOfBusiness: data.lineOfBusiness || "",
           businessSize: data.businessSize || "",
-          businessAddress: data.businessAddress || "",
           applicationStatus: data.applicationStatus || "Pending",
         });
       } catch (err) {
@@ -230,6 +231,14 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
       setIsEditing(false);
       const data = await getBusinessByIdRequest(businessId, token);
       setBusiness(data);
+      setFormData({
+        businessName: data.businessName || "",
+        registrationType: data.registrationType || "",
+        businessType: data.businessType || "",
+        lineOfBusiness: data.lineOfBusiness || "",
+        businessSize: data.businessSize || "",
+        applicationStatus: data.applicationStatus || "Pending",
+      });
       if (onSuccess) onSuccess();
       window.dispatchEvent(new CustomEvent("revela:registry-update", { detail: { localMutation: true, timestamp: Date.now() } }));
     } catch (err) {
@@ -322,15 +331,32 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
 
         {business && (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {inspectionInProgress && (
+              <div
+                role="status"
+                style={{
+                  padding: "10px 12px",
+                  border: "1px solid #fcd34d",
+                  borderRadius: 8,
+                  background: "#fffbeb",
+                  color: "#92400e",
+                  fontSize: 12,
+                  lineHeight: 1.5,
+                }}
+              >
+                Editing is disabled while this business has an ongoing inspection.
+                Verify or resolve the inspection first.
+              </div>
+            )}
             {[
               ["Business ID", business.businessID || "—", "readonly"],
               ["Business Name", business.businessName, "title", "businessName"],
+              ["Barangay", business.barangayName || "—", "readonly"],
               ["Registration Type", business.registrationType || "—", "regType", "registrationType"],
               ["Business Type", business.businessType || "—", "plain", "businessType"],
               ["Line of Business", business.lineOfBusiness || "—", "plain", "lineOfBusiness"],
               ["Business size", business.businessSize || "—", "plain", "businessSize"],
-              ["Address", business.businessAddress || "—", "plain", "businessAddress"],
-              ["Barangay", business.barangayName || "—", "readonly"],
+              ["Address", business.businessAddress || "—", "plain"],
               ["Latitude", formatCoord(business.latitude), "readonly"],
               ["Longitude", formatCoord(business.longitude), "readonly"],
               ["Permit status", business.permitStatus || business.applicationStatus, "permit", "applicationStatus"],
@@ -419,7 +445,6 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
                   businessType: business.businessType || "",
                   lineOfBusiness: business.lineOfBusiness || "",
                   businessSize: business.businessSize || "",
-                  businessAddress: business.businessAddress || "",
                   applicationStatus: business.applicationStatus || "Pending",
                 });
                 setError("");
@@ -454,7 +479,8 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
                 <button
                   className="primary-btn"
                   onClick={() => setIsEditing(true)}
-                  disabled={saving || !business}
+                  disabled={saving || !business || inspectionInProgress}
+                  title={inspectionInProgress ? "Resolve the ongoing inspection before editing." : undefined}
                 >
                   <Icon.Edit /> Edit Details
                 </button>

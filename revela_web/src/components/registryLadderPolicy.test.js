@@ -7,6 +7,7 @@ import {
   clearWarningBlockedReason,
   isBlackDispatchAllowed,
   isBlackLocked,
+  hasOpenRegistryInspection,
   warningLevel,
   canClearInspectionWarning,
   clearInspectionWarning,
@@ -20,6 +21,13 @@ const business = (over = {}) => ({
   blackLocked: false,
   blackDispatchUnlocked: false,
   ...over,
+});
+
+test("registry businesses with an open inspection are not editable", () => {
+  assert.equal(hasOpenRegistryInspection(business({ hasNonVerifiedInspection: 1 })), true);
+  assert.equal(hasOpenRegistryInspection(business({ hasNonVerifiedInspection: "1" })), true);
+  assert.equal(hasOpenRegistryInspection(business({ hasNonVerifiedInspection: 0 })), false);
+  assert.equal(hasOpenRegistryInspection(null), false);
 });
 
 test("Clear Warning is offered to an admin when there is a warning", () => {

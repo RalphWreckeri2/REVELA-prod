@@ -222,6 +222,8 @@ class ManualEditRejectsBadStatusTests(unittest.TestCase):
             sql = call.args[0] if call else ""
             if "FROM official_registry" in sql:
                 return dict(self.EXISTING)
+            if "FROM inspection_reports ir" in sql:
+                return None
             return {"logID": 42, "flagColor": "Green",
                     "latitude": 13.96, "longitude": 121.11,
                     "has_verified_orange": 0}

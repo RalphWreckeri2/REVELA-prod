@@ -4109,7 +4109,7 @@ def update_business(business_id, data: dict):
 
         # Check if business exists
         cursor.execute(
-            "SELECT businessID, businessName, barangayID, applicationStatus "
+            "SELECT businessID, businessName, businessAddress, barangayID, applicationStatus "
             "FROM official_registry WHERE businessID = %s", (business_id,))
         row = cursor.fetchone()
         if not row:
@@ -4154,6 +4154,25 @@ def update_business(business_id, data: dict):
                 cursor.close()
                 return False, RegistryValidationError(status_error)
 
+        if ("businessAddress" in data
+                and str(data.get("businessAddress") or "").strip()
+                != str(row.get("businessAddress") or "").strip()):
+            cursor.close()
+            return False, RegistryValidationError(
+                "Business address and barangay cannot be edited from Registry.")
+
+        if "barangayID" in data:
+            raw_barangay_id = data["barangayID"]
+            if (isinstance(raw_barangay_id, bool)
+                    or not str(raw_barangay_id).strip().isdigit()):
+                cursor.close()
+                return False, RegistryValidationError(
+                    "Business address and barangay cannot be edited from Registry.")
+            if int(raw_barangay_id) != int(barangay_id):
+                cursor.close()
+                return False, RegistryValidationError(
+                    "Business address and barangay cannot be edited from Registry.")
+
         # Build dynamic query to only update provided fields
         update_fields = []
         params = []
@@ -4167,10 +4186,6 @@ def update_business(business_id, data: dict):
         if "lineOfBusiness" in data:
             update_fields.append("lineOfBusiness = %s")
             params.append(_clean_upper(data["lineOfBusiness"]))
-        if "businessAddress" in data:
-            update_fields.append("businessAddress = %s")
-            params.append(normalize_business_address(
-                data["businessAddress"]) if data["businessAddress"] else None)
         if "applicationStatus" in data:
             update_fields.append("applicationStatus = %s")
             params.append(new_status)
@@ -4187,7 +4202,6 @@ def update_business(business_id, data: dict):
             params.append(business_id)
             cursor.execute(query, tuple(params))
 
-            # If the business name changed, update geospatial_logs to maintain the linkage
             current_name = old_name
             if "businessName" in data:
                 new_name = _clean_upper(data["businessName"]) or ""

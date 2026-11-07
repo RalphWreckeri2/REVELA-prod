@@ -24,6 +24,7 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
         registry_row = {
             "businessID": "BIZ-1",
             "businessName": "ACME STORE",
+            "businessAddress": "1 MAIN STREET",
             "barangayID": 7,
         }
         pin = {
@@ -104,6 +105,39 @@ class UpdateBusinessPinColourTests(unittest.TestCase):
         self.assertIn("WHERE businessID = %s", sql)
         self.assertEqual(params, (
             "NEW BUSINESS NAME", "BIZ-1", "ACME STORE", 7))
+
+    @patch("api.registry.service.mysql")
+    def test_barangay_change_is_rejected_without_writing(self, mock_mysql):
+        cursor = self._cursor_with_registry_and_pin(mock_mysql)
+
+        ok, error = service.update_business("BIZ-1", {"barangayID": "8"})
+
+        self.assertFalse(ok)
+        self.assertIsInstance(error, service.RegistryValidationError)
+        self.assertIn("cannot be edited", str(error))
+        self.assertFalse(any(
+            "UPDATE official_registry" in call.args[0]
+            or "UPDATE geospatial_logs" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        mock_mysql.connection.commit.assert_not_called()
+
+    @patch("api.registry.service.mysql")
+    def test_address_change_is_rejected_without_writing(self, mock_mysql):
+        cursor = self._cursor_with_registry_and_pin(mock_mysql)
+
+        ok, error = service.update_business(
+            "BIZ-1", {"businessAddress": "2 MAIN STREET, BARANGAY II"})
+
+        self.assertFalse(ok)
+        self.assertIsInstance(error, service.RegistryValidationError)
+        self.assertIn("cannot be edited", str(error))
+        self.assertFalse(any(
+            "UPDATE official_registry" in call.args[0]
+            or "UPDATE geospatial_logs" in call.args[0]
+            for call in cursor.execute.call_args_list
+        ))
+        mock_mysql.connection.commit.assert_not_called()
 
     @patch("api.registry.service.mysql")
     def test_open_inspection_blocks_manual_registry_edits(self, mock_mysql):
