@@ -4,7 +4,7 @@
  * Inspectors only see their own tasks via the same page (role-gated views).
  */
 
-import { useState, useEffect, useCallback, useContext, useRef } from "react";
+import { useState, useEffect, useCallback, useContext, useMemo, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { useAppDataRefresh, useSessionDataset } from "../components/useAppDataRefresh";
@@ -131,6 +131,13 @@ const Icon = {
       <polyline points="21 8 21 21 3 21 3 8" />
       <rect x="1" y="3" width="22" height="5" />
       <line x1="10" y1="12" x2="14" y2="12" />
+    </svg>
+  ),
+  Image: () => (
+    <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="8.5" cy="8.5" r="1.5" />
+      <path d="m21 15-5-5L5 21" />
     </svg>
   ),
   Calendar: () => (
@@ -609,219 +616,219 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared, onAssign, onVerify, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [enlargedImage, setEnlargedImage] = useState(null);
   const [showClearWarning, setShowClearWarning] = useState(false);
+  const [selectedEvidenceIndex, setSelectedEvidenceIndex] = useState(0);
   const photoReturnRef = useRef(null);
   const clearWarningReturnRef = useRef(null);
+  const evidence = useMemo(
+    () => parseInspectionEvidence(report.photoPath),
+    [report.photoPath],
+  );
+  const liveEvidence = evidence.filter(item => !item.isArchived && item.url);
+  const archivedEvidence = evidence.filter(item => item.isArchived);
+  const selectedEvidence = liveEvidence[selectedEvidenceIndex] || liveEvidence[0];
 
   const handleClearWarning = () => setShowClearWarning(true);
-  
-  const flagMeta    = FLAG_COLOR[report.flagColor]   ?? FLAG_COLOR.Red;
-  const resultMeta  = FLAG_COLOR[report.inspectionResult] ?? null;
-  const statusMeta  = STATUS_COLOR[report.verificationStatus] ?? STATUS_COLOR.Assigned;
+
+  useEffect(() => {
+    setSelectedEvidenceIndex(0);
+  }, [report.reportID, report.photoPath]);
+
+  const flagMeta = FLAG_COLOR[report.flagColor] ?? FLAG_COLOR.Red;
+  const resultMeta = FLAG_COLOR[report.inspectionResult] ?? null;
+  const statusMeta = STATUS_COLOR[report.verificationStatus] ?? STATUS_COLOR.Assigned;
 
   return (
     <InspectionDialog
-      title="Inspection Details" onClose={onClose} isClosing={isClosing} panelStyle={{ width: 520 }}
+      title="Inspection Details"
+      className="inspection-detail-dialog"
+      onClose={onClose}
+      isClosing={isClosing}
+      panelStyle={{ width: "min(1240px, calc(100vw - 32px))", height: "min(820px, calc(100dvh - 32px))", maxHeight: "calc(100dvh - 32px)", padding: 0, overflow: "hidden" }}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
-
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-            <h2 style={{ fontSize: 20, fontWeight: 800, color: "var(--color-ink)", margin: 0 }}>{report.detectedName}</h2>
+      <div className="inspection-detail-layout">
+        <div className="inspection-detail-summary">
+          <div className="inspection-detail-location">
+            <h3>{report.detectedName || report.businessName || "Inspection location"}</h3>
+            <p><Icon.MapPin /> {report.barangayName ?? "Unknown barangay"}</p>
+            {(report.reportID != null || report.logID != null) && (
+              <p className="inspection-detail-reference">
+                {[report.reportID != null && `Report #${report.reportID}`, report.logID != null && `Location #${report.logID}`].filter(Boolean).join(" · ")}
+              </p>
+            )}
           </div>
-          <p style={{ fontSize: 13, color: "var(--color-muted)", display: "flex", alignItems: "center", gap: 5, margin: 0 }}>
-            <Icon.MapPin /> {report.barangayName ?? "Unknown barangay"}
-          </p>
-          {(report.reportID != null || report.logID != null) && (
-            <p style={{ fontSize: 11.5, color: "var(--color-muted)", margin: "4px 0 0" }}>
-              {[report.reportID != null && `Report #${report.reportID}`, report.logID != null && `Location #${report.logID}`].filter(Boolean).join(" · ")}
-            </p>
-          )}
-        </div>
 
-        <div style={{ border: "1px solid var(--color-border)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
-          <div style={{ display: "flex" }}>
-            <div style={{ flex: 1, padding: "12px 16px", borderRight: "1px solid var(--color-border)", borderBottom: report.inspectionResult || report.noticeLevel > 0 ? "1px solid var(--color-border)" : "none" }}>
-              <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Current Flag Color</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: flagMeta.text }}>
-                <Icon.Flag size={14} /> {report.flagColor}
-              </span>
+          <div className="inspection-detail-status">
+            <div className="inspection-detail-status-cell">
+              <span>Current Flag Color</span>
+              <strong style={{ color: flagMeta.text }}><Icon.Flag size={14} /> {report.flagColor}</strong>
             </div>
-            <div style={{ flex: 1, padding: "12px 16px", borderBottom: report.inspectionResult || report.noticeLevel > 0 ? "1px solid var(--color-border)" : "none" }}>
-              <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Status</span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: statusMeta.text }}>
-                {report.verificationStatus}
-              </span>
-              {report.wasReassigned === 1 && (
-                <span className="dispatch-history" style={{ marginTop: 6 }}>
-                  <Icon.RefreshCw /> Previously reassigned
-                </span>
-              )}
+            <div className="inspection-detail-status-cell">
+              <span>Status</span>
+              <strong style={{ color: statusMeta.text }}>{report.verificationStatus}</strong>
+              {report.wasReassigned === 1 && <small className="dispatch-history"><Icon.RefreshCw /> Previously reassigned</small>}
             </div>
-          </div>
-          {(report.inspectionResult || report.noticeLevel > 0) && (
-            <div style={{ display: "flex" }}>
-              {report.inspectionResult && (
-                <div style={{ flex: 1, padding: "12px 16px", borderRight: report.noticeLevel > 0 ? "1px solid var(--color-border)" : "none" }}>
-                  <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Submitted Result</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 700, color: resultMeta?.text ?? "var(--color-ink)" }}>
-                    {formatResult(report.inspectionResult)}
-                  </span>
-                </div>
-              )}
-              {report.noticeLevel > 0 && (
-                <div style={{ flex: 1, padding: "12px 16px" }}>
-                  <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Notice Stage</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, fontWeight: 800, color: "#ea580c" }}>
-                    {report.noticeLevel === 1 ? "1st Notice" : report.noticeLevel === 2 ? "2nd Notice" : report.noticeLevel === 3 ? "3rd Notice" : "Escalated"}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div style={{ marginBottom: 24 }}>
-          <h4 style={{ fontSize: 14, fontWeight: 800, color: "var(--color-ink)", marginBottom: 12, marginTop: 0 }}>Assignment Info</h4>
-          <div style={{ border: "1px solid var(--color-border)", borderRadius: 12, overflow: "hidden" }}>
-            <div style={{ padding: "12px 16px", borderBottom: (report.resolutionTime != null || report.deadline) ? "1px solid var(--color-border)" : "none" }}>
-              <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Inspector</span>
-              <span style={{ fontSize: 14, color: "var(--color-ink)", fontWeight: 600 }}>{report.inspectorName ?? "Unassigned"}</span>
-            </div>
-            {(report.resolutionTime != null || report.deadline) && (
-              <div style={{ display: "flex" }}>
-                {report.resolutionTime != null && (
-                  <div style={{ flex: 1, padding: "12px 16px", borderRight: report.deadline ? "1px solid var(--color-border)" : "none" }}>
-                    <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Resolution Time</span>
-                    <span style={{ fontSize: 14, color: "var(--color-ink)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Icon.Clock size={14} /> {formatElapsedMinutes(report.resolutionTime)}</span>
-                  </div>
-                )}
-                {report.deadline && (
-                  <div style={{ flex: 1, padding: "12px 16px" }}>
-                    <span style={{ display: "block", fontSize: 10, color: "var(--color-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Deadline</span>
-                    <span style={{ fontSize: 14, color: "var(--color-danger)", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}><Icon.Clock size={14} /> {new Date(report.deadline).toLocaleString()}</span>
-                  </div>
-                )}
+            {report.inspectionResult && (
+              <div className="inspection-detail-status-cell">
+                <span>Submitted Result</span>
+                <strong style={{ color: resultMeta?.text ?? "var(--color-ink)" }}>{formatResult(report.inspectionResult)}</strong>
+              </div>
+            )}
+            {report.noticeLevel > 0 && (
+              <div className="inspection-detail-status-cell">
+                <span>Notice Stage</span>
+                <strong className="inspection-detail-notice">
+                  {report.noticeLevel === 1 ? "1st Notice" : report.noticeLevel === 2 ? "2nd Notice" : report.noticeLevel === 3 ? "3rd Notice" : "Escalated"}
+                </strong>
               </div>
             )}
           </div>
+
+          <section className="inspection-detail-section">
+            <h4>Assignment Info</h4>
+            <div className="inspection-detail-assignment">
+              <div>
+                <span>Inspector</span>
+                <strong>{report.inspectorName ?? "Unassigned"}</strong>
+              </div>
+              {report.resolutionTime != null && (
+                <div>
+                  <span>Resolution Time</span>
+                  <strong><Icon.Clock size={14} /> {formatElapsedMinutes(report.resolutionTime)}</strong>
+                </div>
+              )}
+              {report.deadline && (
+                <div>
+                  <span>Deadline</span>
+                  <strong className="inspection-detail-deadline"><Icon.Clock size={14} /> {new Date(report.deadline).toLocaleString()}</strong>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="inspection-detail-section">
+            <h4>Inspector Remarks</h4>
+            {report.remarks ? (
+              <p className="inspection-detail-remarks">{report.remarks}</p>
+            ) : (
+              <div className="inspection-detail-empty-remarks">No remarks were submitted with this inspection.</div>
+            )}
+          </section>
+
+          {isAdmin && (
+            <div className="inspection-detail-actions">
+              {canReassignInspection(report, { isAdmin }) && (
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => onAssign(report)}
+                >
+                  Reassign
+                </button>
+              )}
+              {report.verificationStatus === "Submitted" && (
+                <button type="button" className="primary-btn" onClick={() => onVerify(report)}>
+                  <Icon.Check size={16} /> Verify
+                </button>
+              )}
+              {canFollowUpInspection(report, { isAdmin }) && (
+                <button
+                  type="button"
+                  className="primary-btn inspection-detail-follow-up"
+                  onClick={() => onAssign(report)}
+                >
+                  <Icon.Send size={16} /> Follow-up
+                </button>
+              )}
+              {canClearInspectionWarning(report, role) && (
+                <button
+                  ref={clearWarningReturnRef}
+                  type="button"
+                  className="ghost-btn"
+                  onClick={handleClearWarning}
+                >
+                  Clear Warning
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
-        {report.remarks && (
-          <div style={{ marginBottom: 24 }}>
-            <h4 style={{ fontSize: 14, fontWeight: 800, color: "var(--color-ink)", marginBottom: 12, marginTop: 0 }}>Inspector Remarks</h4>
-            <p style={{ fontSize: 14, color: "var(--color-ink)", lineHeight: 1.6, padding: "12px 16px", borderRadius: 12, border: "1px solid var(--color-border)", margin: 0 }}>
-              {report.remarks}
-            </p>
-          </div>
-        )}
-
-        {(() => {
-          const evList = parseInspectionEvidence(report.photoPath);
-          if (!evList || evList.length === 0) return null;
-          const live = evList.filter(e => !e.isArchived && e.url);
-          const arch = evList.filter(e => e.isArchived);
-          return (
-            <div style={{ marginBottom: 16 }}>
-              <h4 style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8, marginTop: 0 }}>
-                Evidence Photo{evList.length > 1 ? "s" : ""}
-              </h4>
-              {live.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
-                  {live.map((item, i) => (
+        <aside className="inspection-detail-evidence">
+          <h4>Evidence Photo{liveEvidence.length === 1 ? "" : "s"}{liveEvidence.length > 1 ? ` (${liveEvidence.length})` : ""}</h4>
+          {selectedEvidence ? (
+            <>
+              <button
+                type="button"
+                className="inspection-detail-evidence-main"
+                aria-label={`Enlarge evidence photo ${selectedEvidenceIndex + 1}`}
+                onClick={event => {
+                  photoReturnRef.current = event.currentTarget;
+                  setEnlargedImage(selectedEvidence.url);
+                }}
+              >
+                <AuthenticatedEvidenceImage
+                  url={selectedEvidence.url}
+                  token={token}
+                  alt={`Inspection evidence ${selectedEvidenceIndex + 1}`}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                />
+              </button>
+              {liveEvidence.length > 1 && (
+                <div className="inspection-detail-evidence-thumbnails" aria-label="Choose evidence photo">
+                  {liveEvidence.map((item, index) => (
                     <button
-                      key={i} type="button" className="dispatch-evidence-button"
-                      aria-label={`Enlarge inspection evidence ${i + 1}`}
-                      onClick={event => { photoReturnRef.current = event.currentTarget; setEnlargedImage(item.url); }}
+                      key={`${item.url}-${index}`}
+                      type="button"
+                      className={`inspection-detail-evidence-thumbnail${index === selectedEvidenceIndex ? " selected" : ""}`}
+                      aria-label={`Show evidence photo ${index + 1}`}
+                      aria-pressed={index === selectedEvidenceIndex}
+                      onClick={() => setSelectedEvidenceIndex(index)}
                     >
                       <AuthenticatedEvidenceImage
-                        url={item.url} token={token} alt={`Evidence ${i + 1}`}
-                        style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 8, border: "1px solid var(--color-border)" }}
+                        url={item.url}
+                        token={token}
+                        alt={`Evidence thumbnail ${index + 1}`}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       />
                     </button>
                   ))}
                 </div>
               )}
-              {arch.length > 0 && (
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 14px",
-                  background: "var(--color-hover)",
-                  borderRadius: 8,
-                  border: "1px dashed var(--color-border)",
-                  fontSize: 12,
-                  color: "var(--color-muted)",
-                }}>
-                  <span style={{ fontSize: 18 }}>📦</span>
-                  <div>
-                    <div style={{ fontWeight: 600, color: "var(--color-ink)" }}>
-                      Photo evidence archived to Municipal PC backup
-                    </div>
-                    <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>
-                      File reference: {arch.map(a => a.filename).join(", ")}
-                    </div>
-                  </div>
-                </div>
-              )}
+            </>
+          ) : (
+            <div className="inspection-detail-empty-evidence" role="status">
+              <span aria-hidden="true"><Icon.Image /></span>
+              <strong>No evidence submitted</strong>
+              <p>This inspection report was submitted without photo evidence.</p>
             </div>
-          );
-        })()}
+          )}
+          {archivedEvidence.length > 0 && (
+            <div className="inspection-detail-archived-evidence">
+              <strong>{archivedEvidence.length} photo{archivedEvidence.length === 1 ? "" : "s"} archived to Municipal PC backup</strong>
+              <span>File reference: {archivedEvidence.map(item => item.filename).join(", ")}</span>
+            </div>
+          )}
+        </aside>
+      </div>
 
-        {isAdmin && (
-          <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
-            {canReassignInspection(report, { isAdmin }) && (
-              <button className="ghost-btn" style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1, border: "1px solid var(--color-border-soft)", background: "transparent", color: "var(--color-ink)" }}
-                onClick={(e) => { e.stopPropagation(); onAssign(report); }}>
-                Reassign
-              </button>
-            )}
-            {report.verificationStatus === "Submitted" && (
-              <>
-                <button
-                  className="primary-btn"
-                  style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1 }}
-                  onClick={(e) => { e.stopPropagation(); onVerify(report); }}
-                >
-                  <Icon.Check size={18} /> Verify
-                </button>
-              </>
-            )}
-            {canFollowUpInspection(report, { isAdmin }) && (
-              <button
-                className="primary-btn"
-                style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1, background: "#e65100", borderColor: "#e65100" }}
-                onClick={(e) => { e.stopPropagation(); onAssign(report); }}
-              >
-                <Icon.Send size={18} /> Follow-up
-              </button>
-            )}
-            {canClearInspectionWarning(report, role) && (
-              <button ref={clearWarningReturnRef} className="ghost-btn" onClick={handleClearWarning}
-                style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1 }}>
-                Clear Warning
-              </button>
-            )}
-          </div>
-        )}
-
-        <AnimatePresence isVisible={!!enlargedImage}>
-          <InspectionEvidenceModal
-            url={enlargedImage} token={token} onClose={() => setEnlargedImage(null)}
-            returnFocusRef={photoReturnRef} fallbackFocusRef={fallbackFocusRef}
-          />
-        </AnimatePresence>
-        <AnimatePresence isVisible={showClearWarning}>
-          <ClearWarningModal
-            report={report}
-            token={token}
-            role={role}
-            onClose={() => setShowClearWarning(false)}
-            onSuccess={onWarningCleared}
-            returnFocusRef={clearWarningReturnRef}
-            fallbackFocusRef={fallbackFocusRef}
-          />
-        </AnimatePresence>
+      <AnimatePresence isVisible={!!enlargedImage}>
+        <InspectionEvidenceModal
+          url={enlargedImage} token={token} onClose={() => setEnlargedImage(null)}
+          returnFocusRef={photoReturnRef} fallbackFocusRef={fallbackFocusRef}
+        />
+      </AnimatePresence>
+      <AnimatePresence isVisible={showClearWarning}>
+        <ClearWarningModal
+          report={report}
+          token={token}
+          role={role}
+          onClose={() => setShowClearWarning(false)}
+          onSuccess={onWarningCleared}
+          returnFocusRef={clearWarningReturnRef}
+          fallbackFocusRef={fallbackFocusRef}
+        />
+      </AnimatePresence>
     </InspectionDialog>
   );
 }
