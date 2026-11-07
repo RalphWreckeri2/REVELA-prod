@@ -2102,7 +2102,7 @@ html.theme-dark .ambient-bg-mesh {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px 24px;
+  padding: 12px 24px;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -2111,14 +2111,14 @@ html.theme-dark .ambient-bg-mesh {
 }
 .registry-business-fields {
   display: grid;
-  gap: 12px;
+  gap: 6px;
 }
 .registry-business-field {
   display: grid;
   grid-template-columns: minmax(180px, 215px) minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
-  min-height: 38px;
+  gap: 14px;
+  min-height: 34px;
 }
 .registry-business-label {
   color: var(--color-muted);
@@ -2137,7 +2137,7 @@ html.theme-dark .ambient-bg-mesh {
 .registry-business-readonly {
   display: flex;
   min-width: 0;
-  min-height: 38px;
+  min-height: 34px;
   align-items: center;
   padding: 0 12px;
   border: 1px solid var(--color-border-soft);
@@ -2150,8 +2150,8 @@ html.theme-dark .ambient-bg-mesh {
 .registry-business-modal .registry-business-field > input,
 .registry-business-modal .registry-business-field > select {
   width: 100%;
-  height: 38px;
-  min-height: 38px;
+  height: 36px;
+  min-height: 36px;
   flex: none !important;
   background-color: var(--color-modal-bg);
 }
@@ -2170,6 +2170,26 @@ html.theme-dark .ambient-bg-mesh {
   font-size: 12px;
   line-height: 1.5;
 }
+.registry-business-skeleton {
+  gap: 6px;
+}
+.registry-business-skeleton .ui-skeleton-details-row {
+  grid-template-columns: minmax(180px, 215px) minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-height: 34px;
+}
+.registry-business-skeleton .ui-skeleton-details-label {
+  width: 68%;
+  min-height: 12px;
+}
+.registry-business-skeleton .ui-skeleton-details-value {
+  width: 100%;
+  height: 34px;
+  min-height: 34px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 7px;
+}
 .registry-business-modal-footer {
   flex: 0 0 auto;
   padding: 12px 24px;
@@ -2186,6 +2206,11 @@ html.theme-dark .ambient-bg-mesh {
   }
   .registry-business-modal-body {
     padding: 16px 18px;
+  }
+  .registry-business-skeleton .ui-skeleton-details-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+    padding-bottom: 4px;
   }
   .registry-business-field {
     grid-template-columns: minmax(0, 1fr);

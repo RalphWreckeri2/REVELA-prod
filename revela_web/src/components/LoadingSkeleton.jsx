@@ -46,9 +46,9 @@ export function SkeletonList({ rows = 4 }) {
   );
 }
 
-export function SkeletonDetails({ rows = 5 }) {
+export function SkeletonDetails({ rows = 5, className = "" }) {
   return (
-    <div className="ui-skeleton-details" role="status" aria-label="Loading details" aria-busy="true">
+    <div className={`ui-skeleton-details ${className}`.trim()} role="status" aria-label="Loading details" aria-busy="true">
       {Array.from({ length: rows }, (_, index) => (
         <div key={index} className="ui-skeleton-details-row">
           <SkeletonBlock className="ui-skeleton-details-label" />

@@ -331,7 +331,7 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
         </div>
 
         <div className="registry-business-modal-body">
-          {loading && <SkeletonDetails rows={5} />}
+          {loading && <SkeletonDetails rows={13} className="registry-business-skeleton" />}
           {error && <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</p>}
 
           {business && (
@@ -410,7 +410,7 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
                       />
                     )
                   ) : isEditing ? (
-                    <span className={kind === "readonly" ? "registry-business-readonly" : "registry-business-value"}>
+                    <span className="registry-business-readonly">
                       {kind === "permit"
                         ? <StatusBadge variant={getPermitVariant(value, business.flagColor)}>{value}</StatusBadge>
                         : kind === "regType" && value !== "—"
