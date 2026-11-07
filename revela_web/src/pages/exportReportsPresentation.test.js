@@ -22,6 +22,10 @@ test("report loading overlay is limited to refresh and export work and respects 
   assert.match(page, /\(refreshingReports \|\| preparingExport\) && <ReportLoadingOverlay \/>/);
   assert.match(page, /setRefreshingReports\(true\);[\s\S]*?finally \{\s*setRefreshingReports\(false\);/);
   assert.match(page, /finally \{\s*exportInProgress\.current = false;\s*setPreparingExport\(false\);/);
+  assert.match(page, /<p className="export-report-loading-message">\{REPORT_LOADING_MESSAGE\}<\/p>/);
+  assert.doesNotMatch(page, /setInterval|loading-caret/);
+  assert.match(styles, /\.export-report-loading-card\s*\{[^}]*padding:\s*22px 24px 20px;[^}]*\}/);
+  assert.doesNotMatch(styles, /\.export-report-loading-card\s*\{[^}]*background:/);
   assert.match(styles, /backdrop-filter:\s*blur\(3px\)/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });

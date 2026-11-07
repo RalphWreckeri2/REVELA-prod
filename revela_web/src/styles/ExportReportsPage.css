@@ -61,10 +61,6 @@ html.theme-dark .export-report-view-nav button.active { color: var(--color-prima
   width: min(390px, 100%);
   box-sizing: border-box;
   padding: 22px 24px 20px;
-  border: 1px solid rgba(38, 112, 78, .16);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, .76);
-  box-shadow: 0 14px 40px rgba(24, 58, 42, .11);
 }
 .export-report-loading-route { display: block; width: min(220px, 78%); height: auto; overflow: visible; }
 .export-report-loading-roads,
@@ -94,32 +90,15 @@ html.theme-dark .export-report-view-nav button.active { color: var(--color-prima
   line-height: 1.5;
   text-align: center;
 }
-.export-report-loading-caret {
-  display: inline-block;
-  width: 1px;
-  height: 1em;
-  margin-left: 2px;
-  background: #24855e;
-  vertical-align: -.15em;
-  animation: export-report-caret-pulse 1s steps(2, start) infinite;
-}
 html.theme-dark .export-report-loading-overlay { background: rgba(12, 21, 17, .45); }
-html.theme-dark .export-report-loading-card {
-  border-color: rgba(143, 205, 171, .18);
-  background: rgba(25, 36, 30, .78);
-}
 html.theme-dark .export-report-loading-message { color: #d3e6da; }
 @keyframes export-report-route-draw {
   from { stroke-dashoffset: 0; }
   to { stroke-dashoffset: -100; }
 }
-@keyframes export-report-caret-pulse {
-  to { opacity: 0; }
-}
 @media (prefers-reduced-motion: reduce) {
   .export-report-loading-trail,
-  .export-report-loading-trail-glow,
-  .export-report-loading-caret { animation: none; }
+  .export-report-loading-trail-glow { animation: none; }
   .export-report-loading-trail,
   .export-report-loading-trail-glow { stroke-dasharray: none; }
 }

@@ -60,24 +60,6 @@ function ReportChartSkeleton({ variant = "bars" }) {
 }
 
 function ReportLoadingOverlay() {
-  const [message, setMessage] = useState(() =>
-    typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-      ? REPORT_LOADING_MESSAGE
-      : "");
-
-  useEffect(() => {
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return undefined;
-
-    let visibleCharacters = 0;
-    const timer = window.setInterval(() => {
-      visibleCharacters += 1;
-      setMessage(REPORT_LOADING_MESSAGE.slice(0, visibleCharacters));
-      if (visibleCharacters >= REPORT_LOADING_MESSAGE.length) window.clearInterval(timer);
-    }, 32);
-
-    return () => window.clearInterval(timer);
-  }, []);
-
   return (
     <div className="export-report-loading-overlay" role="status" aria-live="polite"
       aria-label={REPORT_LOADING_MESSAGE} aria-busy="true">
@@ -93,9 +75,7 @@ function ReportLoadingOverlay() {
           <circle className="export-report-loading-node" cx="82" cy="62" r="3" />
           <circle className="export-report-loading-node" cx="151" cy="64" r="3" />
         </svg>
-        <p className="export-report-loading-message" aria-hidden="true">
-          {message}<span className="export-report-loading-caret" />
-        </p>
+        <p className="export-report-loading-message">{REPORT_LOADING_MESSAGE}</p>
       </div>
     </div>
   );
