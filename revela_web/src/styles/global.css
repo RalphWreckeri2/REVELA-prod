@@ -1756,6 +1756,10 @@ html.theme-dark .filter-select.is-active {
   box-sizing: border-box;
   flex: 0 0 auto;
 }
+.registry-filter-select:focus,
+.registry-filter-select.is-active {
+  border-color: var(--color-primary) !important;
+}
 .registry-filter-select--barangay { width: 240px; }
 .registry-filter-select--status { width: 130px; }
 .registry-filter-select--type { width: 135px; }
