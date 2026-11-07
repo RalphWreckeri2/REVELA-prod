@@ -1429,6 +1429,19 @@ html.theme-dark .map-detection-toggle-action {
   overflow-wrap: anywhere;
 }
 
+.priority-dispatch-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.priority-dispatch-skeleton-item {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-soft);
+  border-radius: 8px;
+  background: var(--color-modal-bg);
+}
+
 /* API Usage modal only. Detection and map controls share this file. */
 .api-usage-modal .api-usage-error {
   margin-bottom: 16px;

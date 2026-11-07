@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline,
+  dashboardUpdatedLabel, filteredWorkloadResultLabel, inferredDispatchBarangayID, inferredDispatchDeadline,
+  inferredDispatchResult, inspectionColumnPreview, inspectionDeadline,
   inspectionNoticeLabel, inspectionPeriodLabel, inspectionResultOptions, matchesDispatchFilters, matchesDispatchSearch,
   matchesGridSearch, workloadFilterLabel, workloadResultLabel,
 } from "./inspectionPresentation.js";
@@ -75,6 +76,50 @@ test("inspection result options follow known result order and include unknown su
 
 test("dispatch search matches deadline values as well as business and report fields", () => {
   assert.equal(matchesDispatchSearch({ deadline: "2026-11-14T15:39:00" }, "2026-11-14"), true);
+});
+
+test("search results move the visible filters to their shared values", () => {
+  const options = [
+    { id: "10", name: "Lumanglipa" },
+    { id: "5", name: "Barangay II" },
+  ];
+  const match = {
+    barangayName: "lumanglipa", inspectionResult: "Green", deadline: "2026-11-21T18:07:00",
+  };
+  const now = new Date("2026-11-07T12:00:00");
+
+  assert.equal(inferredDispatchBarangayID([match], options), "10");
+  assert.equal(inferredDispatchResult([match]), "Green");
+  assert.equal(inferredDispatchDeadline([match], now), "upcoming");
+
+  const sameBarangay = [
+    { barangayName: "Lumanglipa", inspectionResult: "Green", deadline: "2026-11-21T18:07:00" },
+    { barangayName: "Lumanglipa", inspectionResult: "Green", deadline: "2026-11-25T09:00:00" },
+  ];
+  assert.equal(inferredDispatchBarangayID(sameBarangay, options), "10");
+  assert.equal(inferredDispatchResult(sameBarangay), "Green");
+  assert.equal(inferredDispatchDeadline(sameBarangay, now), "upcoming");
+});
+
+test("visible filters stay untouched when matches disagree or the query is empty", () => {
+  const options = [{ id: "10", name: "Lumanglipa" }, { id: "5", name: "Barangay II" }];
+  const rows = [
+    { barangayName: "Lumanglipa", inspectionResult: "Green", deadline: "2026-11-21T18:07:00" },
+    { barangayName: "Barangay II", inspectionResult: "Red", deadline: null },
+  ];
+  const now = new Date("2026-11-07T12:00:00");
+
+  assert.equal(inferredDispatchBarangayID(rows, options), "");
+  assert.equal(inferredDispatchResult(rows), "");
+  assert.equal(inferredDispatchDeadline(rows, now), "");
+  assert.equal(inferredDispatchBarangayID([], options), "");
+  assert.equal(inferredDispatchResult([]), "");
+  assert.equal(inferredDispatchDeadline([], now), "");
+});
+
+test("an explicit barangay ID wins over the name lookup", () => {
+  const rows = [{ barangayID: 3, barangayName: "Lumanglipa" }];
+  assert.equal(inferredDispatchBarangayID(rows, [{ id: "10", name: "Lumanglipa" }]), "3");
 });
 
 test("copied grid searches initially return the exact board results", () => {

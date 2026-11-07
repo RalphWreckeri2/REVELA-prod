@@ -2988,7 +2988,7 @@ export default function MapPage() {
       window.removeEventListener("pagehide", cancelDetectionOnPageExit);
     };
   }, [token]);
-  const [opsRankings, setOpsRankings] = useSessionDataset("map", "rankings", []);
+  const [opsRankings, setOpsRankings, hasOpsRankings] = useSessionDataset("map", "rankings", []);
 
   useEffect(() => {
     const workspace = mapWorkspaceRef.current;
@@ -3723,7 +3723,7 @@ export default function MapPage() {
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: 'var(--swal-cancel-bg, #475569)',
       confirmButtonText: 'Yes, escalate to Black'
     });
     if (!confirmRes.isConfirmed) return;
@@ -4147,7 +4147,7 @@ export default function MapPage() {
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#6366f1',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: 'var(--swal-cancel-bg, #475569)',
       confirmButtonText: 'Run Reconcile',
       customClass: { cancelButton: "workflow-operation-cancel-button" },
     });
@@ -4317,7 +4317,7 @@ export default function MapPage() {
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#059669',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: 'var(--swal-cancel-bg, #475569)',
       confirmButtonText: 'Start Re-verify',
       customClass: { cancelButton: "workflow-operation-cancel-button" },
     });
@@ -4375,6 +4375,7 @@ export default function MapPage() {
       confirmButtonText: isApprove ? "Confirm location" : "Reject candidate",
       confirmButtonColor: isApprove ? "#059669" : "#dc2626",
       cancelButtonText: "Cancel",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
     if (!decision.isConfirmed) return;
 
@@ -4525,7 +4526,7 @@ export default function MapPage() {
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#059669',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: 'var(--swal-cancel-bg, #475569)',
       confirmButtonText: 'Start Snapping',
       customClass: { cancelButton: "workflow-operation-cancel-button" },
     });
@@ -4553,7 +4554,7 @@ export default function MapPage() {
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtonColor: "var(--color-muted)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
       confirmButtonText: 'Yes, cancel it'
     });
 
@@ -4661,7 +4662,7 @@ export default function MapPage() {
           confirmButtonText: "Save and update barangay",
           cancelButtonText: "Cancel",
           confirmButtonColor: "var(--color-primary)",
-          cancelButtonColor: "var(--color-muted)",
+          cancelButtonColor: "var(--swal-cancel-bg, #475569)",
         });
         if (!confirmation.isConfirmed) return;
 
@@ -4714,7 +4715,7 @@ export default function MapPage() {
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtonColor: "var(--color-muted)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
       confirmButtonText: 'Yes, delete it'
     });
 
@@ -5130,7 +5131,16 @@ export default function MapPage() {
           </h4>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {priorityDispatchQueue.length === 0 ? (
+          {loadingFlags && !hasOpsRankings ? (
+            <div className="priority-dispatch-skeleton" role="status" aria-label="Loading priority dispatch queue" aria-busy="true">
+              {[0, 1, 2].map((index) => (
+                <div className="priority-dispatch-skeleton-item" key={index}>
+                  <SkeletonBlock style={{ width: "54%", height: 12, marginBottom: 7 }} />
+                  <SkeletonBlock style={{ width: "82%", height: 9 }} />
+                </div>
+              ))}
+            </div>
+          ) : priorityDispatchQueue.length === 0 ? (
             <p className="priority-dispatch-empty">No barangays with targets eligible for a new inspection dispatch.</p>
           ) : priorityDispatchQueue.map((r) => (
             <div className="priority-dispatch-item" key={r.barangayID} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--color-modal-bg)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--color-border-soft)" }}>
@@ -5715,10 +5725,10 @@ export default function MapPage() {
               { label: "Matching Locations", value: filteredMapMetrics.matchingLocations, color: "var(--color-ink)" },
               { label: "Active Businesses", value: filteredMapMetrics.activeBusinesses, color: isDark ? "#4ade80" : "#22c55e", title: MAP_LOCATION_METRIC_DEFINITIONS.activeBusinesses },
               { label: "1st/2nd Warning / Notice", value: filteredCounts.Orange, color: isDark ? "#fb923c" : "#e65100", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Red flags (expired / unregistered)", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Yellow flags (pending / suspected)", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Expired / Unregistered", value: filteredCounts.Red, color: isDark ? "#f87171" : "#ef4444", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Pending / Suspected", value: filteredCounts.Yellow, color: isDark ? "#fbbf24" : "#f59e0b", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
               { label: "Closed / Abandoned", value: filteredCounts.Purple, color: isDark ? "#c084fc" : "#7c3aed", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
-              { label: "Black flags (revoked / blacklisted)", value: filteredCounts.Black, color: "var(--color-ink)", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
+              { label: "Revoked / Blacklisted", value: filteredCounts.Black, color: "var(--color-ink)", title: MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations },
             ].map(s => (
               <div key={s.label} className="frosted-glass saas-card" style={styles.statCard}
                 title={s.title || MAP_LOCATION_METRIC_DEFINITIONS.matchingLocations}>

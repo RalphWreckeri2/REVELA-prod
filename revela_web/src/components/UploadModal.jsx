@@ -235,7 +235,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: 'var(--color-primary, #6366f1)',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: 'var(--swal-cancel-bg, #475569)',
       confirmButtonText: isSync ? 'Proceed with Sync' : 'Start Upload'
     });
     if (!confirm.isConfirmed) return;
@@ -269,7 +269,7 @@ export function UploadModal({ onClose, onSuccess, token, variant = "upload", isC
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtonColor: 'var(--color-muted, #64748b)',
+      cancelButtonColor: 'var(--swal-cancel-bg, #475569)',
       confirmButtonText: 'Yes, cancel it'
     });
 

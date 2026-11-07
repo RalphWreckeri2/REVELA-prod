@@ -1023,7 +1023,7 @@ export default function MapOverview({ token, filters }) {
           <div className="map-overview-control-group">
             <label className="map-overview-select-label map-overview-select-label--filter">
               <span>Barangay</span>
-              <select aria-label="Choose a barangay" value={selectedBarangayId ?? ""} onChange={selectFromList}>
+              <select aria-label="Choose a barangay" className={`filter-select${selectedBarangayId != null && selectedBarangayId !== "" ? " is-active" : ""}`} value={selectedBarangayId ?? ""} onChange={selectFromList}>
                 <option value="">All barangays</option>
                 {barangayRows.map((row) => (
                   <option key={row.barangayID} value={row.barangayID}>{row.barangayName}</option>
@@ -1034,6 +1034,7 @@ export default function MapOverview({ token, filters }) {
               <span>Sector</span>
               <select
                 aria-label="Filter registered businesses by sector"
+                className={`filter-select${selectedSectorKey ? " is-active" : ""}`}
                 value={selectedSectorKey}
                 onChange={(event) => {
                   const nextSectorKey = event.target.value;
@@ -1065,6 +1066,7 @@ export default function MapOverview({ token, filters }) {
               </span>
               <select
                 aria-label="Filter registered businesses by line of business"
+                className={`filter-select${selectedLineOfBusinessKey ? " is-active" : ""}`}
                 value={selectedLineOfBusinessKey}
                 disabled={loading || lineOfBusinessOptions.length === 0}
                 onChange={(event) => {
@@ -1093,6 +1095,7 @@ export default function MapOverview({ token, filters }) {
             <label className="map-overview-date-label" title="Choose the date range">
               <span>Date range</span>
               <select aria-label="Date range" title="Choose the date range"
+                className={`filter-select${datePreset !== "all" ? " is-active" : ""}`}
                 value={datePreset} onChange={(event) => {
                   clearSelectedCluster();
                   setDatePreset(event.target.value);

@@ -113,6 +113,42 @@ export function inspectionResultOptions(reports = []) {
   ];
 }
 
+const normalizeFilterName = value => String(value ?? "").trim().toLowerCase();
+
+function sharedValue(reports, read) {
+  const values = new Set(
+    reports.map(report => read(report)).filter(value => value !== null && value !== undefined && value !== ""),
+  );
+  return values.size === 1 ? [...values][0] : "";
+}
+
+// Search results drive the visible filters: when every loaded match agrees on a
+// value, the dropdown mirrors it so the toolbar never disagrees with the board.
+export function inferredDispatchBarangayID(reports = [], barangayOptions = []) {
+  if (!reports.length) return "";
+  const directID = sharedValue(reports, report =>
+    report.barangayID != null ? String(report.barangayID) : ""
+  );
+  if (directID) return directID;
+  // Workload rows expose the barangay name, not its ID, so resolve the ID from
+  // the loaded barangay list instead of leaving the filter stuck on "All".
+  const name = sharedValue(reports, report => normalizeFilterName(report.barangayName));
+  if (!name) return "";
+  const match = barangayOptions.find(option => normalizeFilterName(option?.name) === name);
+  return match ? String(match.id) : "";
+}
+
+export function inferredDispatchResult(reports = []) {
+  return sharedValue(reports, report => report.inspectionResult || "");
+}
+
+export function inferredDispatchDeadline(reports = [], now = new Date()) {
+  if (!reports.length) return "";
+  return ["overdue", "today", "upcoming", "missing"].find(deadline =>
+    reports.every(report => matchesDispatchFilters(report, { deadline, now }))
+  ) || "";
+}
+
 export function matchesGridSearch(report, search = "", initialSearch = "") {
   // An unchanged copied query must match the board exactly, including status text.
   if (search.trim().toLowerCase() === initialSearch.trim().toLowerCase()) {

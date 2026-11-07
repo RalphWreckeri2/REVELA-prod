@@ -911,7 +911,7 @@ export default function DashboardLayout({ children, onLogout, className = "", bo
         icon: 'warning',
         showCancelButton: true,
         confirmButtonColor: '#ef4444',
-        cancelButtonColor: "var(--color-muted)",
+        cancelButtonColor: "var(--swal-cancel-bg, #475569)",
         confirmButtonText: 'Yes, log out'
       });
       if (!result.isConfirmed) return;

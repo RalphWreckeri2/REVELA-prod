@@ -11,6 +11,7 @@ export default function FilterDropdown({ label, value, options, onChange, disabl
   const activeOption = useRef(null);
   const selected = Math.max(0, options.findIndex(option => option.value === value));
   const selectedColor = getOptionColor?.(options[selected]);
+  const isActive = options.length > 0 && value !== options[0].value;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -61,7 +62,7 @@ export default function FilterDropdown({ label, value, options, onChange, disabl
   };
 
   return (
-    <div className={`filter-dropdown${open ? " is-open" : ""}`} ref={root}
+    <div className={`filter-dropdown${open ? " is-open" : ""}${isActive ? " is-active" : ""}`} ref={root}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
       <span id={`${id}-label`}>{label}</span>
       <button ref={trigger} type="button" role="combobox" className="filter-dropdown-trigger"

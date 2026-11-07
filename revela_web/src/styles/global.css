@@ -76,6 +76,9 @@
   --color-success-bg: #f0fdf4;
   --color-success-border: #bbf7d0;
 
+  /* SweetAlert2 neutral button: dark enough for its white label */
+  --swal-cancel-bg: #64748b;
+
   /* Flags Light */
   --flag-red-bg: #fee2e2;
   --flag-red-text: #b91c1c;
@@ -1412,6 +1415,8 @@ html.theme-dark {
   --color-error-border: rgba(251, 113, 133, 0.2);
   --color-success-bg: rgba(52, 211, 153, 0.1);
   --color-success-border: rgba(52, 211, 153, 0.2);
+
+  --swal-cancel-bg: #475569;
 }
 html.theme-dark body {
   background: var(--color-page-bg);
@@ -1712,6 +1717,18 @@ html.theme-dark textarea:focus {
 html.theme-dark select:focus {
   border-color: var(--color-primary);
   outline-color: var(--color-primary);
+}
+
+/* One shared "active filter" treatment for every filter dropdown. The
+   !important declarations beat the inline styles some selects still carry so
+   the green state looks identical across pages. */
+.filter-select.is-active {
+  border-color: var(--color-primary) !important;
+  background: var(--color-primary-light) !important;
+  color: var(--color-primary-dark) !important;
+}
+html.theme-dark .filter-select.is-active {
+  color: var(--color-primary) !important;
 }
 
 /* One restrained, visible focus treatment for text fields in both themes. */

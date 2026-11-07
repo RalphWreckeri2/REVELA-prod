@@ -1052,7 +1052,7 @@ export default function AnalyticsPage() {
 
   const fm = filterMeta || {};
   const sel = (value, onChange, options, placeholder, isResult = false) => (
-    <select value={value} onChange={onChange} style={filterInputStyle}>
+    <select className={`filter-select${value ? " is-active" : ""}`} value={value} onChange={onChange} style={filterInputStyle}>
       <option value="">{placeholder}</option>
       {(options || []).map((opt) => (
         <option key={String(opt)} value={String(opt)}>{isResult ? formatResultName(String(opt)) : String(opt)}</option>
@@ -1593,6 +1593,7 @@ export default function AnalyticsPage() {
                     <div>
                       <label style={filterLabelStyle}>Barangay</label>
                       <select
+                        className={`filter-select${draftFilters.barangay_ids[0] ? " is-active" : ""}`}
                         value={draftFilters.barangay_ids[0] || ""}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -1619,6 +1620,7 @@ export default function AnalyticsPage() {
                     <div>
                       <label style={filterLabelStyle}>Registry Status</label>
                       <select
+                        className={`filter-select${draftFilters.application_status ? " is-active" : ""}`}
                         value={draftFilters.application_status}
                         onChange={(e) => setDraftFilters((d) => ({ ...d, application_status: e.target.value }))}
                         style={filterInputStyle}
@@ -1636,6 +1638,7 @@ export default function AnalyticsPage() {
                     <div>
                       <label style={filterLabelStyle}>Flag Status</label>
                       <select
+                        className={`filter-select${draftFilters.flag_color ? " is-active" : ""}`}
                         value={draftFilters.flag_color}
                         onChange={(e) => setDraftFilters((d) => ({ ...d, flag_color: e.target.value }))}
                         style={filterInputStyle}

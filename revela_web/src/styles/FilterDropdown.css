@@ -4,11 +4,15 @@
 .filter-dropdown-trigger > svg { width: 14px; height: 14px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.8; transition: transform .15s; }
 .filter-dropdown.is-open .filter-dropdown-trigger > svg { transform: rotate(180deg); }
 .filter-dropdown-trigger:hover, .filter-dropdown.is-open .filter-dropdown-trigger { border-color: var(--color-primary); }
+.filter-dropdown.is-active .filter-dropdown-trigger { border-color: var(--color-primary); background: var(--color-primary-light); color: var(--color-primary-dark); }
+html.theme-dark .filter-dropdown.is-active .filter-dropdown-trigger { color: var(--color-primary); }
 .filter-dropdown-trigger:focus-visible, .map-location-card:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .filter-dropdown-trigger:disabled { opacity: .6; cursor: not-allowed; }
 .filter-dropdown-menu { position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; right: 0; max-height: 280px; overflow-y: auto; padding: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-modal-bg); box-shadow: 0 12px 28px rgba(15,23,42,.14); }
 .filter-dropdown-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; padding: 8px 10px; border-radius: var(--radius-sm); color: var(--color-ink); font-size: 13px; line-height: 1.5; cursor: pointer; }
 .filter-dropdown-option.active { background: var(--color-hover); }
+.filter-dropdown-option[aria-selected="true"] { background: var(--color-primary-light); color: var(--color-primary-dark); font-weight: 700; }
+html.theme-dark .filter-dropdown-option[aria-selected="true"] { color: var(--color-primary); }
 .filter-dropdown-value { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
 .filter-dropdown-value > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .filter-dropdown-dot { flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-ink) 30%, transparent); }

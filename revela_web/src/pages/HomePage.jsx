@@ -763,7 +763,7 @@ function InspectorReportsModal({ isOpen, onClose, flags, inspectors, navigate })
 
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <select
-              className="saas-input"
+              className={`saas-input filter-select${filterInspector ? " is-active" : ""}`}
               value={filterInspector}
               onChange={e => setFilterInspector(e.target.value)}
               style={{ padding: "8px 14px", minWidth: 160, borderRadius: 8, background: "transparent" }}
@@ -1013,7 +1013,7 @@ export default function HomePage() {
         showCancelButton: true,
         cancelButtonText: "Later",
         confirmButtonColor: "var(--color-primary-dark)",
-        cancelButtonColor: "var(--color-muted)",
+        cancelButtonColor: "var(--swal-cancel-bg, #475569)",
         background: "var(--color-surface)",
         color: "var(--color-ink)",
         customClass: {

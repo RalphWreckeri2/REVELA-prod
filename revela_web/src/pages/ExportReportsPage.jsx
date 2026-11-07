@@ -913,7 +913,8 @@ export default function ExportReportsPage() {
       },
       showCancelButton: true,
       confirmButtonText: "Generate Report",
-      confirmButtonColor: "var(--color-primary, #10b981)"
+      confirmButtonColor: "var(--color-primary, #10b981)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)"
     });
 
     if (!format) return;

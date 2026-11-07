@@ -95,6 +95,7 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
       showCancelButton: true,
       confirmButtonText: "Generate Report",
       confirmButtonColor: "var(--color-primary, #10b981)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
 
     if (!format) return;

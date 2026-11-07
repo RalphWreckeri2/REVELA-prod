@@ -241,7 +241,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
-      cancelButtoncolor: "var(--color-muted)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
       confirmButtonText: 'Yes, delete it'
     });
 
@@ -715,6 +715,7 @@ export default function RegistryPage() {
           <Icon.Filter />
 
           <select
+            className={`filter-select${selectedBarangay !== "All Barangays" ? " is-active" : ""}`}
             style={{ ...styles.select, maxWidth: "100%" }}
             value={selectedBarangay}
             onChange={e => {
@@ -734,6 +735,7 @@ export default function RegistryPage() {
           </select>
 
           <select
+            className={`filter-select${selectedStatus !== "All Status" ? " is-active" : ""}`}
             style={{ ...styles.select, maxWidth: "100%" }}
             value={selectedStatus}
             onChange={e => {
@@ -746,6 +748,7 @@ export default function RegistryPage() {
           </select>
 
           <select
+            className={`filter-select${selectedRegType !== "All Types" ? " is-active" : ""}`}
             style={{ ...styles.select, maxWidth: "100%" }}
             value={selectedRegType}
             onChange={e => {

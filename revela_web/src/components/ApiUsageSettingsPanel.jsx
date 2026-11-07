@@ -465,7 +465,7 @@ export default function ApiUsageSettingsPanel({
         + "extra quota.",
       showCancelButton: true,
       confirmButtonColor: "var(--color-primary)",
-      cancelButtonColor: "var(--color-muted)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
     if (!confirm.isConfirmed) return;
     try {
@@ -510,7 +510,7 @@ export default function ApiUsageSettingsPanel({
         : `This deletes fixtures older than ${retention != null ? `${retention} day(s)` : "the configured retention window"}. Usage counters are not affected.`,
       showCancelButton: true,
       confirmButtonColor: "#ef4444",
-      cancelButtonColor: "var(--color-muted)",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
     if (!confirm.isConfirmed) return;
     try {

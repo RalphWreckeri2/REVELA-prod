@@ -36,7 +36,7 @@ import {
   canReassignInspection,
 } from "../components/dispatchEligibility";
 import { canClearInspectionWarning, clearInspectionWarning } from "../components/registryLadderPolicy";
-import { dashboardUpdatedLabel, filteredWorkloadResultLabel, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, inspectionResultOptions, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
+import { dashboardUpdatedLabel, filteredWorkloadResultLabel, inferredDispatchBarangayID, inferredDispatchDeadline, inferredDispatchResult, inspectionColumnPreview, inspectionDeadline, inspectionPeriodLabel, inspectionResultOptions, matchesDispatchFilters, matchesGridSearch, workloadFilterLabel, workloadResultLabel } from "./inspectionPresentation";
 import { formatElapsedMinutes } from "../utils/formatElapsedMinutes";
 import "../styles/InspectionPage.css";
 
@@ -614,6 +614,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
           inputValidator: (value) => value?.trim() ? undefined : "Business ID is required.",
           showCancelButton: true,
           confirmButtonText: "Review Business ID",
+          cancelButtonColor: "var(--swal-cancel-bg, #475569)",
         });
         if (!idPrompt.isConfirmed) return;
         businessID = idPrompt.value.trim();
@@ -636,6 +637,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
         inputPlaceholder: "Reason or office record reference",
         showCancelButton: true,
         confirmButtonText: "Confirm and mark Green",
+        cancelButtonColor: "var(--swal-cancel-bg, #475569)",
       });
       if (!confirmation.isConfirmed) return;
 
@@ -1164,23 +1166,19 @@ export default function InspectionPage() {
       deadline: filterDeadline,
     }));
   const resultOptions = inspectionResultOptions(reports);
-  const searchMatch = hasReports
+  // Only infer filters from a complete result set: a partial page cannot prove
+  // that every match shares the same barangay, result, or deadline.
+  const searchMatchReports = hasReports
     && !loading
     && Boolean(search.trim())
     && search.trim() === debouncedSearch.trim()
-    && total === 1
-    && reports.length === 1
-    ? reports[0]
-    : null;
-  const inferredBarangayID = searchMatch?.barangayID != null
-    ? String(searchMatch.barangayID)
-    : "";
-  const inferredResult = searchMatch?.inspectionResult || "";
-  const inferredDeadline = searchMatch
-    ? ["overdue", "today", "upcoming", "missing"].find(deadline =>
-      matchesDispatchFilters(searchMatch, { deadline, now: new Date() })
-    ) || ""
-    : "";
+    && reports.length > 0
+    && reports.length === total
+    ? reports
+    : [];
+  const inferredBarangayID = inferredDispatchBarangayID(searchMatchReports, barangayOptions);
+  const inferredResult = inferredDispatchResult(searchMatchReports);
+  const inferredDeadline = inferredDispatchDeadline(searchMatchReports);
   const selectedBarangay = filterBarangay
     || (!autoFilterOverrides.barangay ? inferredBarangayID : "");
   const selectedResult = filterResult
@@ -1280,7 +1278,7 @@ export default function InspectionPage() {
         </div>
         <span className="dispatch-filter-icon" aria-hidden="true"><Icon.Filter /></span>
         <select
-          className="dispatch-filter-select"
+          className={`filter-select dispatch-filter-select${selectedBarangay ? " is-active" : ""}`}
           aria-label="Filter inspections by barangay"
           value={selectedBarangay}
           onChange={event => { setFilterBarangay(event.target.value); setAutoFilterOverrides(current => ({ ...current, barangay: true })); changeParams({ page: 1 }); }}
@@ -1289,13 +1287,13 @@ export default function InspectionPage() {
           {selectedBarangay && !barangayOptions.some(option => option.id === selectedBarangay) && (
             <option value={selectedBarangay}>
               {barangayOptions.find(option => option.id === selectedBarangay)?.name
-                || (selectedBarangay === inferredBarangayID ? searchMatch?.barangayName : selectedBarangay)}
+                || (selectedBarangay === inferredBarangayID ? searchMatchReports[0]?.barangayName : selectedBarangay)}
             </option>
           )}
           {barangayOptions.map(barangay => <option key={barangay.id} value={barangay.id}>{barangay.name}</option>)}
         </select>
         <select
-          className="dispatch-filter-select"
+          className={`filter-select dispatch-filter-select${selectedResult ? " is-active" : ""}`}
           aria-label="Filter inspections by submitted result"
           value={selectedResult}
           onChange={event => { setFilterResult(event.target.value); setAutoFilterOverrides(current => ({ ...current, result: true })); changeParams({ page: 1 }); }}
@@ -1307,7 +1305,7 @@ export default function InspectionPage() {
           {resultOptions.map(result => <option key={result} value={result}>{getFriendlyFlagLabel(result)}</option>)}
         </select>
         <select
-          className="dispatch-filter-select"
+          className={`filter-select dispatch-filter-select${selectedDeadline ? " is-active" : ""}`}
           aria-label="Filter inspections by deadline"
           value={selectedDeadline}
           onChange={event => { setFilterDeadline(event.target.value); setAutoFilterOverrides(current => ({ ...current, deadline: true })); changeParams({ page: 1 }); }}

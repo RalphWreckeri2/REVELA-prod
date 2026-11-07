@@ -715,6 +715,7 @@ export default function SettingsPage() {
       confirmButtonText: "I have backup, Clear Storage",
       cancelButtonText: "Cancel",
       confirmButtonColor: "#d33",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
 
     if (result.isConfirmed) {
@@ -804,6 +805,7 @@ export default function SettingsPage() {
       confirmButtonText: "Save Policy",
       cancelButtonText: "Review Changes",
       confirmButtonColor: "#2563eb",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
     if (!confirmation.isConfirmed) return;
 
@@ -869,6 +871,7 @@ export default function SettingsPage() {
       confirmButtonText: "Reset to Defaults",
       cancelButtonText: "Keep Current Scores",
       confirmButtonColor: "#d33",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
     });
     if (!confirmation.isConfirmed) return;
 
