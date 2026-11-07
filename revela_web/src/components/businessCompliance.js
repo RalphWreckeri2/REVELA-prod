@@ -34,12 +34,13 @@ export const MAP_REGISTRY_LINK_OPTIONS = Object.freeze([
 export const UNLINKED_COMPLIANCE_TEXT = "Inspection-verified compliant · Not yet in imported registry";
 export const COMPLIANCE_REPORT_TITLE = "Inspection-Verified Compliant Businesses";
 export const ADMIN_CONFIRMED_REPORT_TITLE = "Admin-Confirmed Compliant Businesses";
-export const COMPLIANCE_REPORT_DESCRIPTION = "Distinct confirmed registry businesses with effective Green status and current admin-verification evidence. Office-confirmed businesses are counted separately; Green color alone is not sufficient.";
+export const COMPLIANCE_REPORT_DESCRIPTION = "Businesses with current inspection-verified Green status, including verified warning cases subsequently cleared by an administrator. Green color alone is not sufficient.";
 export const ADMIN_CONFIRMED_REPORT_DESCRIPTION = "Distinct registry-linked businesses directly confirmed by an administrator with current verification evidence. Inspector dispatch and field inspection are not required.";
-export const COMPLIANCE_REPORT_SCOPE = "Distinct confirmed registry businesses with effective Green status and current verification evidence. Inspector-assisted verification and direct admin confirmation are reported separately; Green color alone is not sufficient.";
+export const COMPLIANCE_REPORT_SCOPE = "Current inspection-verified compliant businesses. Includes linked Registry businesses with a verified warning later cleared by an administrator; the compliance basis and official Business ID are shown. Green color alone is not sufficient.";
 export const ADMIN_CONFIRMED_REPORT_SCOPE = "Distinct registry-linked businesses directly confirmed by an administrator, with current administrative verification evidence. These records do not require inspector dispatch or field inspection.";
 export const COMPLIANCE_COLUMNS = Object.freeze([
-  "Pin Reference", "Business Name", "Barangay", "Address", "Origin", "Verified On", "Registry Link",
+  "Pin Reference", "Official Business ID", "Business Name", "Barangay", "Address",
+  "Origin", "Compliance Basis", "Verified On", "Registry Link",
 ]);
 export const ADMIN_CONFIRMED_COLUMNS = Object.freeze([
   "Pin Reference", "Business Name", "Barangay", "Address", "Origin",
@@ -168,10 +169,12 @@ export function formatManilaDate(value) {
 export function complianceRow(record, reportType = "inspection") {
   const row = {
     "Pin Reference": String(record.detectionReference),
+    "Official Business ID": record.businessID ?? "",
     "Business Name": record.businessName ?? "",
     Barangay: record.barangayName ?? "",
     Address: record.address ?? "",
     Origin: businessSourceLabel(record.originSource),
+    "Compliance Basis": record.complianceBasis ?? "Inspection-verified Green",
     "Verified On": formatManilaDate(record.verifiedOn),
     "Registry Link": isRegistryLinked(record) ? "Linked to Registry" : "Not in Registry",
   };

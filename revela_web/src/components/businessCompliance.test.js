@@ -187,13 +187,30 @@ test("View List, CSV and PDF share all filtered records, including beyond page o
   assert.equal(pdf.data.rows.at(-1).Origin, "Business Detection");
   assert.equal(pdf.data.count, csv.data.length);
   assert.match(pdf.title, /Inspection-Verified Compliant Businesses/);
-  assert.match(pdf.subtitle, /current verification evidence/);
+  assert.match(pdf.subtitle, /verified warning later cleared/);
   assert.match(pdf.date, /Asia\/Manila/);
   assert.match(pdf.data.filtersLabel, /Barangay I.*Not in Registry/);
   assert.deepEqual(report.columns, [
-    "Pin Reference", "Business Name", "Barangay", "Address", "Origin", "Verified On", "Registry Link",
+    "Pin Reference", "Official Business ID", "Business Name", "Barangay", "Address",
+    "Origin", "Compliance Basis", "Verified On", "Registry Link",
   ]);
-  assert.equal("Official Business ID" in report.rows[0], false);
+  assert.equal(report.rows[0]["Official Business ID"], "");
+});
+
+test("verified warning cleared by an administrator is clearly identified in report exports", () => {
+  const record = {
+    detectionReference: 42, businessID: "OFFICIAL-42", businessName: "Compliant Shop",
+    barangayID: 1, barangayName: "Barangay I", address: "Main Street",
+    originSource: "detection", verifiedOn: "2026-10-16T01:02:03Z", registryLinked: true,
+    complianceBasis: "Verified warning cleared by admin",
+  };
+  const report = buildComplianceReport([record]);
+  assert.equal(report.count, 1);
+  assert.equal(report.rows[0]["Official Business ID"], "OFFICIAL-42");
+  assert.equal(report.rows[0]["Compliance Basis"], "Verified warning cleared by admin");
+  assert.match(complianceCsv(report), /OFFICIAL-42/);
+  assert.equal(compliancePrintReport(report, {}).data.rows[0]["Compliance Basis"],
+    "Verified warning cleared by admin");
 });
 
 test("direct confirmations have their own titled report, method, ID and complete export data", () => {

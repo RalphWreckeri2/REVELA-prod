@@ -4333,6 +4333,62 @@ def delete_business(business_id, actor_role=None):
         return False, str(e)
 
 
+def _effective_permit_status_sql(cursor, alias="r"):
+    """Return the single status shown and filtered on the Registry page."""
+    if not ladder_columns_available(cursor):
+        return f"{alias}.applicationStatus"
+
+    warning_level = f"""(
+        SELECT es.warningLevel
+        FROM enforcement_state es
+        WHERE es.subjectType = 'business'
+          AND es.subjectID = CAST({alias}.businessID AS CHAR)
+        LIMIT 1
+    )"""
+    if _has_enforcement_columns(cursor, ("warningClearedAt",)):
+        warning_cleared = f"""(
+            SELECT es.warningClearedAt
+            FROM enforcement_state es
+            WHERE es.subjectType = 'business'
+              AND es.subjectID = CAST({alias}.businessID AS CHAR)
+            LIMIT 1
+        )"""
+        cleared_arm = (
+            f"WHEN {warning_cleared} IS NOT NULL "
+            f"AND {alias}.applicationStatus = 'Active' "
+            f"AND COALESCE({warning_level}, 0) = 0 THEN 'Clear'"
+        )
+    else:
+        cleared_arm = ""
+
+    return (
+        "CASE "
+        f"WHEN {alias}.applicationStatus IN ('Revoked', 'Blacklisted') "
+        f"THEN {alias}.applicationStatus "
+        f"WHEN COALESCE({warning_level}, 0) > 0 THEN 'Warning' "
+        f"{cleared_arm} "
+        f"ELSE {alias}.applicationStatus END"
+    )
+
+
+def _has_non_verified_inspection_sql(alias="r"):
+    """True when a Registry business has a linked or name-matched open inspection."""
+    return f"""EXISTS (
+        SELECT 1
+        FROM inspection_reports pending
+        JOIN geospatial_logs pending_g ON pending_g.logID = pending.targetID
+        WHERE pending.targetType = 'geospatial_log'
+          AND (pending.verificationStatus IS NULL
+               OR pending.verificationStatus <> 'Verified')
+          AND (
+              pending_g.businessID = {alias}.businessID
+              OR (pending_g.businessID IS NULL
+                  AND pending_g.detectedName = {alias}.businessName
+                  AND pending_g.barangayID = {alias}.barangayID)
+          )
+    )"""
+
+
 def get_all_businesses(barangay_id=None, status=None, registration_type=None, search=None, page=1, per_page=10):
     """Return paginated list of businesses with optional filters."""
     try:
@@ -4343,6 +4399,7 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
         conditions = []
         params = []
         ladder_available = None
+        effective_permit_status = _effective_permit_status_sql(cursor)
 
         if barangay_id:
             conditions.append("r.barangayID = %s")
@@ -4350,23 +4407,16 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
 
         if status:
             normalized_status = status.strip().casefold()
-            if normalized_status == "warning":
+            status_by_key = {
+                **{valid_status.casefold(): valid_status for valid_status in VALID_STATUSES},
+                "warning": "Warning",
+                "clear": "Clear",
+            }
+            effective_status = status_by_key.get(normalized_status)
+            if effective_status:
+                conditions.append(f"{effective_permit_status} = %s")
                 ladder_available = ladder_columns_available(cursor)
-                if ladder_available:
-                    conditions.append(
-                        """EXISTS (
-                            SELECT 1
-                            FROM enforcement_state es_filter
-                            WHERE es_filter.subjectType = 'business'
-                              AND es_filter.subjectID = CAST(r.businessID AS CHAR)
-                              AND COALESCE(es_filter.warningLevel, 0) > 0
-                        )"""
-                    )
-                else:
-                    conditions.append("1 = 0")
-            elif status in VALID_STATUSES:
-                conditions.append("r.applicationStatus = %s")
-                params.append(status)
+                params.append(effective_status)
 
         if registration_type and registration_type.upper() in ("NEW", "RENEWAL"):
             conditions.append("UPPER(r.registrationType) = %s")
@@ -4385,12 +4435,13 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                 "r.businessAddress LIKE %s OR "
                 "r.registrationType LIKE %s OR "
                 "r.applicationStatus LIKE %s OR "
+                f"{effective_permit_status} LIKE %s OR "
                 "b.barangayName LIKE %s"
                 ")"
             )
             like = f"%{clean_search}%"
             like_id = f"%{clean_id}%" if clean_id else like
-            params.extend([like, like_id, like, like, like, like, like, like, like])
+            params.extend([like, like_id, like, like, like, like, like, like, like, like])
 
         where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
@@ -4438,13 +4489,15 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
                 r.matchScore,
                 r.placeID,
                 r.applicationStatus,
+                {effective_permit_status} AS permitStatus,
                 r.lastRenewalDate,
                 b.barangayID,
                 b.barangayName,
                 {_flag_source_sql("g", _OLD_REGISTRY_FLAG_SOURCE, cursor)}
                     AS flagSource,
                 {effective_flag_color} AS flagColor,
-                {ladder_select}
+                {ladder_select},
+                {_has_non_verified_inspection_sql()} AS hasNonVerifiedInspection
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
             {_registry_pin_lateral_sql(cursor)}
@@ -4518,13 +4571,15 @@ def get_business_by_id(business_id):
                 r.matchScore,
                 r.placeID,
                 r.applicationStatus,
+                {_effective_permit_status_sql(cursor)} AS permitStatus,
                 r.lastRenewalDate,
                 b.barangayID,
                 b.barangayName,
                 {_flag_source_sql("g", _OLD_REGISTRY_FLAG_SOURCE, cursor)}
                     AS flagSource,
                 {effective_flag_color} AS flagColor,
-                {ladder_select}
+                {ladder_select},
+                {_has_non_verified_inspection_sql()} AS hasNonVerifiedInspection
             FROM official_registry r
             LEFT JOIN barangays b ON r.barangayID = b.barangayID
             {_registry_pin_lateral_sql(cursor)}

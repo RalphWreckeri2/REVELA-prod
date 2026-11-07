@@ -2268,7 +2268,7 @@ export default function ExportReportsPage() {
             {["inspection-compliant", "admin-confirmed-compliant"].includes(printReport.type) && (
               <div className={`operational-print-body ${printReport.type === "admin-confirmed-compliant" ? "admin-confirmed-print-body" : "inspection-print-body"}`}>
                 <p className="print-operational-note"><strong>Applied filters:</strong> {printReport.data.filtersLabel} · <strong>Record count:</strong> {printReport.data.count}</p>
-                <p className="print-operational-note">Pin Reference is the geospatial logID; Official Business ID is the registry record. Verified On is the verification time in Asia/Manila.</p>
+                <p className="print-operational-note">Pin Reference is the geospatial logID; Official Business ID is the registry record. Verified On is the inspection-verification or warning-clearance time in Asia/Manila. Compliance Basis explains which applies.</p>
                 <table className="print-table">
                   <thead><tr>{printReport.data.columns.map(column => <th key={column}>{column}</th>)}</tr></thead>
                   <tbody>{printReport.data.rows.length === 0 ? <tr><td colSpan={printReport.data.columns.length}>No matching current-compliance records.</td></tr>

@@ -20,8 +20,10 @@ import {
   getBarangaysRequest,
   updateBusinessRequest,
   deleteBusinessRequest,
+  clearWarningRequest,
 } from "../services/api";
 import {
+  canClearWarning,
   isBlackLocked,
 } from "../components/registryLadderPolicy";
 
@@ -105,7 +107,7 @@ const Icon = {
 };
 
 
-const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed", "Warning"];
+const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed", "Warning", "Clear"];
 const REG_TYPE_FILTERS = ["All Types", "NEW", "RENEWAL"];
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 const DEFAULT_PAGE_SIZE = 10;
@@ -116,6 +118,8 @@ function getStatusVariant(status) {
   const s = String(status).toLowerCase();
   if (s === "active") return "green";
   if (s === "expired") return "gold";
+  if (s === "warning") return "orange";
+  if (s === "clear") return "green";
   if (s === "revoked") return "black";
   if (s === "pending") return "default";
   if (s === "closed") return "purple";
@@ -181,12 +185,13 @@ function EmptyState({ hasFilters, onUpload, onClearFilters }) {
 
 
 // ── Business Detail Modal ─────────────────────────────────────────────────────
-function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, isClosing }) {
+function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSuccess, isClosing }) {
   const [business, setBusiness] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [clearingWarning, setClearingWarning] = useState(false);
   const [formData, setFormData] = useState({});
 
   useEffect(() => {
@@ -231,6 +236,49 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
       Swal.fire({ icon: 'error', title: 'Error', text: err.message || 'Failed to update.' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleClearWarning = async () => {
+    const confirmation = await Swal.fire({
+      title: "Clear warning?",
+      text: "This marks the business as compliant and changes its permit status to Active.",
+      input: "text",
+      inputLabel: "Office evidence/reference (optional)",
+      inputPlaceholder: "Reason or office record reference",
+      showCancelButton: true,
+      confirmButtonText: "Confirm and clear",
+      cancelButtonColor: "var(--swal-cancel-bg, #475569)",
+    });
+    if (!confirmation.isConfirmed) return;
+
+    setClearingWarning(true);
+    try {
+      await clearWarningRequest(business.businessID, confirmation.value || null, token);
+      const updatedBusiness = await getBusinessByIdRequest(businessId, token);
+      setBusiness(updatedBusiness);
+      setFormData(current => ({
+        ...current,
+        applicationStatus: updatedBusiness.applicationStatus || "Pending",
+      }));
+      if (onSuccess) onSuccess();
+      window.dispatchEvent(new CustomEvent("revela:registry-update", {
+        detail: { localMutation: true, businessID: business.businessID },
+      }));
+      await Swal.fire({
+        icon: "success",
+        title: "Warning cleared",
+        text: "The business is now marked as compliant.",
+        confirmButtonColor: "#56ab2f",
+      });
+    } catch (err) {
+      Swal.fire({
+        icon: "error",
+        title: "Could not clear warning",
+        text: err.message || "Please refresh and try again.",
+      });
+    } finally {
+      setClearingWarning(false);
     }
   };
 
@@ -285,7 +333,7 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
               ["Barangay", business.barangayName || "—", "readonly"],
               ["Latitude", formatCoord(business.latitude), "readonly"],
               ["Longitude", formatCoord(business.longitude), "readonly"],
-              ["Permit status", business.applicationStatus, "permit", "applicationStatus"],
+              ["Permit status", business.permitStatus || business.applicationStatus, "permit", "applicationStatus"],
               ["Last renewal", business.lastRenewalDate ? business.lastRenewalDate.slice(0, 10) : "—", "readonly"],
               ["Latest geospatial flag", business.flagColor || "—", "flag"],
             ].map(([label, value, kind, field]) => (
@@ -390,6 +438,15 @@ function BusinessDetailModal({ businessId, onClose, token, isAdmin, onSuccess, i
                   disabled={saving || !business}
                 >
                   Delete
+                </button>
+              )}
+              {canClearWarning(business, role) && (
+                <button
+                  className="ghost-btn"
+                  onClick={handleClearWarning}
+                  disabled={saving || clearingWarning}
+                >
+                  {clearingWarning ? "Clearing..." : "Clear Warning"}
                 </button>
               )}
               <button className="ghost-btn" onClick={onClose}>Close</button>
@@ -586,7 +643,7 @@ export default function RegistryPage() {
     : null;
   const inferredStatus = STATUS_FILTERS.find(option =>
     option !== "All Status"
-      && option.toLowerCase() === String(searchMatch?.applicationStatus ?? "").toLowerCase()
+      && option.toLowerCase() === String(searchMatch?.permitStatus ?? searchMatch?.applicationStatus ?? "").toLowerCase()
   );
   const inferredRegType = REG_TYPE_FILTERS.find(option =>
     option !== "All Types"
@@ -601,7 +658,7 @@ export default function RegistryPage() {
     ? status
     : !autoFilterOverrides.status && inferredStatus
       ? inferredStatus
-      : "All Status";
+    : "All Status";
   const selectedRegType = regType !== "All Types"
     ? regType
     : !autoFilterOverrides.regType && inferredRegType
@@ -738,6 +795,7 @@ export default function RegistryPage() {
             className={`filter-select registry-filter-select registry-filter-select--status${selectedStatus !== "All Status" ? " is-active" : ""}`}
             style={styles.select}
             value={selectedStatus}
+            aria-label="Status"
             onChange={e => {
               setStatus(e.target.value);
               setAutoFilterOverrides(current => ({ ...current, status: true }));
@@ -847,8 +905,8 @@ export default function RegistryPage() {
                       {b.lastRenewalDate ? b.lastRenewalDate.slice(0, 10) : "—"}
                     </td>
                     <td style={styles.td}>
-                      <StatusBadge variant={getPermitVariant(b.applicationStatus, b.flagColor)}>
-                        {b.applicationStatus}
+                      <StatusBadge variant={getPermitVariant(b.permitStatus || b.applicationStatus, b.flagColor)}>
+                        {b.permitStatus || b.applicationStatus}
                       </StatusBadge>
                     </td>
                     <td style={styles.td}>
@@ -959,6 +1017,7 @@ export default function RegistryPage() {
         <BusinessDetailModal
           businessId={detailId}
           token={token}
+          role={user?.role}
           isAdmin={isAdmin}
           onSuccess={fetchBusinesses}
           onClose={() => setDetailId(null)}

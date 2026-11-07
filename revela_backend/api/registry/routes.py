@@ -456,7 +456,6 @@ def sync():
 def get_registry():
     """Return all businesses with optional filters."""
     barangay_id = request.args.get("barangayID",  type=int)
-    # Active | Expired | Revoked | Pending | Closed | Warning
     status = request.args.get("status")
     registration_type = request.args.get("registrationType")
     search = request.args.get("search", "").strip()

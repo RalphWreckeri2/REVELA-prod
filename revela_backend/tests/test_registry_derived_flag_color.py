@@ -144,5 +144,59 @@ class RegistryDerivedColourTests(unittest.TestCase):
             self.assertRegex(sql, r"AS flagColor\b")
 
 
+class RegistryFlagFilterTests(unittest.TestCase):
+
+    def _count_sql(self, **filters):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = {"total": 0}
+        cursor.fetchall.return_value = []
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        with patch.object(service, "mysql") as mock_mysql, \
+                patch.object(service, "ladder_columns_available", return_value=True), \
+                patch.object(service, "_has_enforcement_columns", return_value=True):
+            mock_mysql.connection = connection
+            data, error = service.get_all_businesses(**filters)
+        self.assertIsNone(error)
+        self.assertIsNotNone(data)
+        call = cursor.execute.call_args_list[0][0]
+        return call[0], call[1]
+
+    def test_warning_is_the_effective_permit_status_and_filter(self):
+        sql, params = self._count_sql(status="Warning")
+
+        self.assertIn("THEN 'Warning'", sql)
+        self.assertIn("COALESCE(", sql)
+        self.assertLess(
+            sql.index("r.applicationStatus IN ('Revoked', 'Blacklisted')"),
+            sql.index("THEN 'Warning'"),
+        )
+        self.assertEqual(params, ["Warning"])
+
+    def test_clear_is_a_distinct_effective_permit_status(self):
+        sql, params = self._count_sql(status="Clear")
+
+        self.assertIn("warningClearedAt", sql)
+        self.assertIn("r.applicationStatus = 'Active'", sql)
+        self.assertIn("THEN 'Clear'", sql)
+        self.assertEqual(params, ["Clear"])
+
+    def test_free_text_search_includes_the_derived_status(self):
+        sql, params = self._count_sql(search="Warning")
+
+        self.assertIn("THEN 'Warning'", sql)
+        self.assertIn("r.applicationStatus LIKE %s", sql)
+        self.assertEqual(params, [
+            "%Warning%", "%Warning%", "%Warning%", "%Warning%", "%Warning%",
+            "%Warning%", "%Warning%", "%Warning%", "%Warning%", "%Warning%",
+        ])
+
+    def test_registry_list_and_details_include_pending_inspection_state(self):
+        for sql in (RegistryDerivedColourTests()._list_sql(),
+                    RegistryDerivedColourTests()._detail_sql()):
+            self.assertIn("AS hasNonVerifiedInspection", sql)
+            self.assertIn("pending.verificationStatus <> 'Verified'", sql)
+
+
 if __name__ == "__main__":
     unittest.main()

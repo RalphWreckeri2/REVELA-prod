@@ -225,6 +225,19 @@ test("an Active business with no warning shows nothing", () => {
   );
 });
 
+test("a warned business with an unverified inspection cannot clear warning", () => {
+  const row = registryRow({
+    warningLevel: 1,
+    flagColor: "Orange",
+    hasNonVerifiedInspection: 1,
+  });
+  assert.equal(canClearWarning(row, "Admin"), false);
+  assert.equal(
+    clearWarningBlockedReason(row, "Admin"),
+    "An inspection is not yet Verified",
+  );
+});
+
 test("a warned business still shows nothing to a non-admin", () => {
   const row = registryRow({ warningLevel: 2, flagColor: "Orange" });
   assert.equal(canClearWarning(row, "Inspector"), false);

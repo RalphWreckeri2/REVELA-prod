@@ -27,6 +27,7 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
   const [checkedAt, setCheckedAt] = useState(null);
   const [confirmationSummary, setConfirmationSummary] = useState(null);
   const [unlinkedVerifiedPinCount, setUnlinkedVerifiedPinCount] = useState(0);
+  const [warningClearedTotal, setWarningClearedTotal] = useState(0);
   const report = buildComplianceReport(records, filters, checkedAt, { title, reportType, scope });
   const visible = paginateRecords(report.rows, page, 10);
   const barangays = [{ value: "all", label: "All Barangays" }, ...[...new Map(records.map(record =>
@@ -46,6 +47,7 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
       setRecords(reportRecords);
       setConfirmationSummary(snapshot.confirmationSummary || null);
       setUnlinkedVerifiedPinCount(snapshot.unlinkedVerifiedPinCount || 0);
+      setWarningClearedTotal(snapshot.warningClearedTotal || 0);
       setCheckedAt(snapshot.generatedAt);
       return snapshot;
     } catch (err) {
@@ -120,6 +122,7 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
         <details className="operational-report-details">
           <summary>Scope and export notes</summary>
           {confirmationSummary && <small>Office-confirmed: {confirmationSummary.office_confirmed} · Inspection-verified: {confirmationSummary.inspection_verified} · Combined distinct businesses: {confirmationSummary.total_confirmed}. Counts exclude Green businesses without qualifying confirmation history.</small>}
+          <small>Inspection-verified warning cases later cleared by an administrator: {warningClearedTotal}.</small>
           {unlinkedVerifiedPinCount > 0 && <small>{unlinkedVerifiedPinCount} historical inspection-verified unlinked {unlinkedVerifiedPinCount === 1 ? "pin appears" : "pins appear"} in the report list, but not in distinct linked-business counts.</small>}
           <small>{scope}</small>
           <small>Downloads use the View List filters. PDF downloads directly as a file.</small>
@@ -138,7 +141,7 @@ export default function ComplianceReportCard({ token, user, onPrint, reportType 
       <div className="compliance-report-content">
         <p className="compliance-report-note">{isAdminConfirmed
           ? "Business Name is from the official registry; search also checks the detected pin name. Pin Reference is the geospatial log reference; Official Business ID is the linked registry record. Confirmed By is the administrator account on the confirmation event. Dates use Asia/Manila."
-          : "Business Name is from the official registry for linked records; search also checks the detected pin name. Pin Reference is the geospatial log reference, not an official Business ID. Dates use Asia/Manila."}</p>
+          : "Business Name is from the official registry for linked records; search also checks the detected pin name. Pin Reference is the geospatial log reference; Official Business ID is shown separately. Compliance Basis distinguishes a verified Green inspection from a verified warning later cleared by an admin. Verified On is the inspection-verification or warning-clearance time in Asia/Manila."}</p>
         <div className="compliance-report-filters">
           <label className="compliance-report-search">Business name / Pin Reference
             <input type="search" placeholder="Search business name or pin reference" value={filters.search}
