@@ -303,7 +303,6 @@ export default function ExportReportsPage() {
   const analyticsData = reportSnapshot?.data ?? null;
   const loadedAt = reportSnapshot?.loadedAt ?? null;
   const [loadingAnalytics, setLoadingAnalytics] = useState(() => !hasReport);
-  const [refreshingReports, setRefreshingReports] = useState(false);
   const [analyticsError, setAnalyticsError] = useState("");
   const requestRef = useRef({ sequence: 0, controller: null });
   const exportInProgress = useRef(false);
@@ -371,14 +370,9 @@ export default function ExportReportsPage() {
   }, [token, hasReport, setReportSnapshot]);
 
   const refreshView = useAppDataRefresh("reports", async () => {
-    setRefreshingReports(true);
-    try {
-      if (exportInProgress.current) await exportFinished.current;
-      const data = await loadData();
-      return { ok: Boolean(data), status: data ? "success" : "failure" };
-    } finally {
-      setRefreshingReports(false);
-    }
+    if (exportInProgress.current) await exportFinished.current;
+    const data = await loadData();
+    return { ok: Boolean(data), status: data ? "success" : "failure" };
   });
   useEffect(() => {
     const requestState = requestRef.current;
@@ -1935,7 +1929,7 @@ export default function ExportReportsPage() {
             </p>
           </footer>
         </DashboardLayout>
-        {(refreshingReports || preparingExport) && <RevelaLoader message={REPORT_LOADING_MESSAGE} />}
+        {preparingExport && <RevelaLoader message={REPORT_LOADING_MESSAGE} />}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════

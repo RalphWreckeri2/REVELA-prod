@@ -22,8 +22,10 @@ test("exports separate demographic charts from field reports without the title p
 test("report loading overlay is limited to refresh and export work and respects reduced motion", () => {
   assert.match(page, /const REPORT_LOADING_MESSAGE = "Refreshing report data and preparing export\.\.\.";/);
   assert.match(page, /import RevelaLoader from "\.\.\/components\/RevelaLoader";/);
-  assert.match(page, /\(refreshingReports \|\| preparingExport\) && <RevelaLoader message=\{REPORT_LOADING_MESSAGE\} \/>/);
-  assert.match(page, /setRefreshingReports\(true\);[\s\S]*?finally \{\s*setRefreshingReports\(false\);/);
+  assert.match(page, /preparingExport && <RevelaLoader message=\{REPORT_LOADING_MESSAGE\} \/>/);
+  assert.doesNotMatch(page, /\(refreshingReports \|\| preparingExport\) && <RevelaLoader/);
+  assert.match(page, /const refreshView = useAppDataRefresh\("reports", async \(\) => \{\s*if \(exportInProgress\.current\) await exportFinished\.current;/);
+  assert.doesNotMatch(page, /refreshingReports|setRefreshingReports/);
   assert.match(page, /finally \{\s*exportInProgress\.current = false;\s*setPreparingExport\(false\);/);
   assert.match(page, /const showExportNotice = async options => \{\s*flushSync\(\(\) => setPreparingExport\(false\)\);[\s\S]*?return Swal\.fire\(options\);/);
   assert.match(page, /const blob = await new Promise\(\(resolve, reject\) => \{\s*canvas\.toBlob/);
