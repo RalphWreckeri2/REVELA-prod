@@ -26,7 +26,10 @@ test("report loading overlay is limited to refresh and export work and respects 
   assert.doesNotMatch(page, /setInterval|loading-caret/);
   assert.match(styles, /\.export-report-loading-card\s*\{[^}]*padding:\s*22px 24px 20px;[^}]*\}/);
   assert.doesNotMatch(styles, /\.export-report-loading-card\s*\{[^}]*background:/);
-  assert.match(styles, /backdrop-filter:\s*blur\(3px\)/);
+  assert.match(styles, /background:\s*rgba\(10, 22, 16, \.56\)/);
+  assert.match(styles, /backdrop-filter:\s*blur\(5px\)/);
+  assert.match(styles, /width:\s*min\(340px, 94vw\)/);
+  assert.match(page, /<animateMotion dur="3\.4s" repeatCount="indefinite"/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 

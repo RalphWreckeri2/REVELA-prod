@@ -74,6 +74,12 @@ function ReportLoadingOverlay() {
             d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24" pathLength="100" />
           <circle className="export-report-loading-node" cx="82" cy="62" r="3" />
           <circle className="export-report-loading-node" cx="151" cy="64" r="3" />
+          <g className="export-report-loading-traveler">
+            <circle className="export-report-loading-traveler-halo" r="8" />
+            <circle className="export-report-loading-traveler-dot" r="3.5" />
+            <animateMotion dur="3.4s" repeatCount="indefinite" calcMode="paced"
+              path="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24" />
+          </g>
         </svg>
         <p className="export-report-loading-message">{REPORT_LOADING_MESSAGE}</p>
       </div>
