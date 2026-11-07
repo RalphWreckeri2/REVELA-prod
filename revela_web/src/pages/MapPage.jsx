@@ -1062,7 +1062,7 @@ function FlagDetailModal({ flag, onClose, onEscalate, onDispatch, onAdjustLocati
           )}
           {flag.isCentroidPreview && (
             <p role="note" className="flag-location-notice">
-              This approximate marker is for display only. It is not an exact business location and does not affect counts or dispatch eligibility.
+              This approximate marker represents a barangay-level location and is included in location and status counts. It is not an exact business location and is not dispatch eligible.
             </p>
           )}
           {flag.notes && (
@@ -4894,10 +4894,6 @@ export default function MapPage() {
   const scopedFilteredFlags = useMemo(() => hotspotGroup.active
     ? mapFilteredFlags.filter((flag) => matchesHotspotGroup(flag, hotspotGroup))
     : mapFilteredFlags, [hotspotGroup, mapFilteredFlags]);
-  const filteredMapMetrics = useMemo(
-    () => aggregateMapLocationMetrics(scopedFilteredFlags, boundaryFeatures),
-    [boundaryFeatures, scopedFilteredFlags],
-  );
   const barangayLocationMismatches = useMemo(
     () => findStoredBarangayLocationMismatches(
       scopedFilteredFlags,
@@ -4933,6 +4929,21 @@ export default function MapPage() {
       ));
     },
     [allCentroidPreviewFlags, scopedFilteredFlags],
+  );
+  const approximateFlagIds = useMemo(
+    () => new Set(centroidPreviewFlags.map((flag) => String(flag.id))),
+    [centroidPreviewFlags],
+  );
+  const locationMetricFlags = useMemo(
+    () => [
+      ...scopedFilteredFlags.filter((flag) => !approximateFlagIds.has(String(flag.id))),
+      ...centroidPreviewFlags,
+    ],
+    [approximateFlagIds, centroidPreviewFlags, scopedFilteredFlags],
+  );
+  const filteredMapMetrics = useMemo(
+    () => aggregateMapLocationMetrics(locationMetricFlags, boundaryFeatures),
+    [boundaryFeatures, locationMetricFlags],
   );
   const mapDisplayFlags = useMemo(
     () => showCentroidOnlyPins
@@ -5014,7 +5025,11 @@ export default function MapPage() {
       .forEach((key) => params.delete(key));
     navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
   }, [location.pathname, location.search, navigate]);
-  const locations = paginateRecords(visibleFlags, locationsPage, 8);
+  const visibleLocationFlags = useMemo(
+    () => [...visibleFlags, ...centroidPreviewFlags],
+    [centroidPreviewFlags, visibleFlags],
+  );
+  const locations = paginateRecords(visibleLocationFlags, locationsPage, 8);
   const barangayFilterOptions = [
     { value: "all", label: "All Barangays" },
     ...barangays.map(barangay => ({
@@ -5573,7 +5588,7 @@ export default function MapPage() {
                   className="map-centroid-preview-toggle"
                   aria-pressed={showCentroidOnlyPins}
                   aria-label={`${showCentroidOnlyPins ? "Hide" : "Show"} ${centroidPreviewFlags.length} approximate centroid pins`}
-                  title={`${showCentroidOnlyPins ? "Hide" : "Show"} businesses with no exact location at a deterministic approximate point near their stored barangay center. These points are display-only and do not affect counts or dispatch.`}
+                  title={`${showCentroidOnlyPins ? "Hide" : "Show"} businesses with no exact location at an approximate point near their stored barangay center. Approximate locations appear in counts and Flagged Locations, but are not exact or dispatch eligible.`}
                   onClick={() => setShowCentroidOnlyPins((visible) => !visible)}
                   style={{
                     ...styles.layerToggle,
@@ -5788,7 +5803,7 @@ export default function MapPage() {
               <span style={styles.countBadge} aria-live="polite">
                 {loadingFlags
                    ? <SkeletonBlock as="span" statusLabel="Loading location count" style={{ width: 20, height: 13 }} />
-                  : flagsError && !hasFlags ? "—" : visibleFlags.length}
+                  : flagsError && !hasFlags ? "—" : visibleLocationFlags.length}
               </span>
             </div>
             <hr style={{ border: "none", borderTop: "1px solid var(--color-border-soft)", margin: "0 0 12px 0" }} />
@@ -5816,8 +5831,8 @@ export default function MapPage() {
             {loadingFlags && !hasFlags ? <SkeletonList rows={5} /> : flagsError && !hasFlags ? (
               <div role="alert"><p>Locations could not be refreshed. {flagsError}</p>
                 <button type="button" className="ghost-btn" onClick={() => fetchFlags(false)}>Retry</button></div>
-            ) : visibleFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
-              <p className="map-location-count" role="status">{visibleFlags.length} matching {visibleFlags.length === 1 ? "location" : "locations"}</p>
+            ) : visibleLocationFlags.length === 0 ? <p role="status">No locations match these filters.</p> : <>
+              <p className="map-location-count" role="status">{visibleLocationFlags.length} matching {visibleLocationFlags.length === 1 ? "location" : "locations"}</p>
               <div className="map-location-list">
                 {locations.data.map(flag => {
                   const mismatch = barangayLocationMismatchesByFlagId.get(String(flag.id));
@@ -5826,10 +5841,13 @@ export default function MapPage() {
                     Number(item.barangayID) === Number(recordedBarangayID)
                   ));
                   return <button key={flag.id} type="button" className="map-location-card"
-                  onClick={() => handleMarkerClick(flag.id)}>
+                  onClick={() => handleMarkerClick(flag.id, flag)}>
                   <span className="map-location-color" style={{ background: getFlagColor(flag.color).marker }} aria-hidden="true" />
                   <span><strong>{flag.name}</strong><small>{storedBarangay?.barangayName || "Unassigned"} · {getFlagColor(flag.color).label}</small>
                     <small>{businessSourceLabel(flag.source)} · {flag.registryLinked ? "Linked to Registry" : "Not in Registry"}</small></span>
+                    {flag.isCentroidPreview && (
+                      <small className="map-location-review-note">Approximate barangay-level location</small>
+                    )}
                     {mismatch && (
                       <small className="map-location-review-note">
                         {formatBarangayLocationMismatch(

@@ -133,22 +133,24 @@ test("valid map coordinates outside every municipal polygon are counted separate
   assert.equal(metrics.byBarangay[2].outsideBoundaryLocations, 1);
 });
 
-test("centroid-only preview pins are opt-in data and keep their saved coordinates missing", () => {
+test("centroid previews contribute to filtered location and flag counts without becoming exact coordinates", () => {
   const rows = [
-    { id: 1, barangayID: 1, barangayName: "Barangay I", latitude: null, longitude: null, registryLinked: true },
-    { id: 2, barangayID: 10, barangayName: "Barangay Lumanglipa", latitude: null, longitude: null, registryMatched: 1 },
+    { id: 1, barangayID: 1, barangayName: "Barangay I", latitude: null, longitude: null, color: "Green", businessID: "B-1", registryLinked: true },
+    { id: 2, barangayID: 10, barangayName: "Barangay Lumanglipa", latitude: null, longitude: null, color: "Orange", businessID: "B-2", registryMatched: 1 },
     { id: 3, barangayID: null, latitude: null, longitude: null },
     { id: 4, barangayID: 1, latitude: 13.95, longitude: 121.11 },
-    { id: 5, barangayID: 11, barangayName: "Unknown Barangay", latitude: null, longitude: null, originSource: "registry" },
+    { id: 5, barangayID: 11, barangayName: "Unknown Barangay", latitude: null, longitude: null, color: "Yellow", businessID: "B-5", originSource: "registry" },
     { id: 6, barangayID: 1, latitude: null, longitude: null, color: "Red", businessID: "B-6", registryMatched: true },
     { id: 7, barangayID: 1, latitude: null, longitude: null, color: "Red" },
+    { id: 8, barangayID: 1, latitude: null, longitude: null, color: "Purple", businessID: "B-8", registryMatched: true },
+    { id: 9, barangayID: 1, latitude: null, longitude: null, color: "Black", businessID: "B-9", registryLinked: true },
   ];
   const preview = createCentroidPreviewFlags(
     rows,
     getApproximateBarangayDisplayPoint,
   );
 
-  assert.deepEqual(preview.map((flag) => flag.id), [1, 6, 2, 5]);
+  assert.deepEqual(preview.map((flag) => flag.id), [1, 6, 8, 9, 2, 5]);
   assert.notDeepEqual(
     preview[0].mapPreviewPosition,
     getKnownBarangayCentroid("Barangay I"),
@@ -161,10 +163,21 @@ test("centroid-only preview pins are opt-in data and keep their saved coordinate
     getKnownBarangayCentroid("Barangay Lumanglipa"),
     BARANGAY_POINT_DATA.barangays.find((row) => row.barangayID === 10).representativePoint,
   );
-  const metrics = aggregateMapLocationMetrics([...rows, ...preview]);
-  assert.equal(metrics.matchingLocations, 1);
-  assert.equal(metrics.colors.Red, 0);
-  assert.equal(metrics.registeredBusinesses, 1);
+  const previewIDs = new Set(preview.map((flag) => String(flag.id)));
+  const metrics = aggregateMapLocationMetrics([
+    ...rows.filter((flag) => !previewIDs.has(String(flag.id))),
+    ...preview,
+  ]);
+  assert.equal(metrics.matchingLocations, 7);
+  assert.equal(metrics.colors.Green, 1);
+  assert.equal(metrics.colors.Orange, 1);
+  assert.equal(metrics.colors.Red, 1);
+  assert.equal(metrics.colors.Yellow, 1);
+  assert.equal(metrics.colors.Purple, 1);
+  assert.equal(metrics.colors.Black, 1);
+  assert.equal(metrics.registeredBusinesses, 5);
+  assert.equal(metrics.withoutCoordinates, 8);
+  assert.equal(metrics.activeBusinesses, 1);
 });
 
 test("approximate display positions are deterministic and remain inside every recorded barangay", () => {
@@ -461,7 +474,7 @@ test("boundary points matching multiple polygons are reported, not silently attr
   assert.deepEqual(metrics.byMapPositionBarangay, {});
 });
 
-test("map KPIs use exact-location totals and explain the effective Red population", () => {
+test("map KPIs include approximate locations and explain the effective Red population", () => {
   assert.match(
     mapPageSource,
     /label: "Matching Locations", value: filteredMapMetrics\.matchingLocations/,
@@ -472,6 +485,8 @@ test("map KPIs use exact-location totals and explain the effective Red populatio
   );
   assert.match(mapPageSource, /label: "Expired \/ Unregistered"/);
   assert.match(mapPageSource, /Approx\. \(\{centroidPreviewFlags\.length\}\)/);
+  assert.match(mapPageSource, /aggregateMapLocationMetrics\(locationMetricFlags, boundaryFeatures\)/);
+  assert.match(mapPageSource, /visibleLocationFlags\.length/);
   assert.match(mapPageSource, /locationReview\?\.kind === "inferred"/);
   assert.match(
     MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations,

@@ -3,9 +3,9 @@ import { getBarangayIdForGeoJsonName } from "./barangayMapMapping.js";
 const MAP_COLORS = ["Green", "Orange", "Red", "Yellow", "Purple", "Black"];
 
 export const MAP_LOCATION_METRIC_DEFINITIONS = Object.freeze({
-  matchingLocations: "Distinct map records with valid real coordinates after the active filters; approximate previews are excluded.",
+  matchingLocations: "Distinct filtered records with exact coordinates or an eligible approximate barangay-level preview. Approximate locations are not exact business locations and are not dispatch eligible.",
   activeBusinesses: "Distinct official-registry business IDs represented by filtered map rows with effective Green status; grouped by the pin's recorded barangay, may include records without exact coordinates, and can differ from popup totals grouped by official registry barangay.",
-  flagColorLocations: "Distinct map records with valid real coordinates and this effective flag color; approximate previews are excluded. Red includes expired registered businesses and unregistered detections. Red and Yellow are dispatchable; Black is for administrative review.",
+  flagColorLocations: "Distinct filtered records with exact coordinates or an eligible approximate barangay-level preview and this effective flag color. Approximate locations are not exact business locations and are not dispatch eligible. Red includes expired registered businesses and unregistered detections. Red and Yellow are dispatchable; Black is for administrative review.",
 });
 
 export function formatBarangayLocationMismatch(storedName, mapPositionName) {
@@ -239,6 +239,14 @@ export function aggregateMapLocationMetrics(flags, boundaryFeatures = null) {
     if (!hasMapCoordinates(flag)) {
       overall.withoutCoordinates += 1;
       if (recordedScope) recordedScope.withoutCoordinates += 1;
+      if (flag.isCentroidPreview) {
+        overall.matchingLocations += 1;
+        if (recordedScope) recordedScope.matchingLocations += 1;
+        if (color) {
+          overall.colors[color] += 1;
+          if (recordedScope) recordedScope.colors[color] += 1;
+        }
+      }
       continue;
     }
 
