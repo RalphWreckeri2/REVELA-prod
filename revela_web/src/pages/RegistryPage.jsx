@@ -320,121 +320,123 @@ function BusinessDetailModal({ businessId, onClose, token, role, isAdmin, onSucc
 
   return (
     <div className={"modal-backdrop" + (isClosing ? " closing" : "")} style={styles.modalBackdrop} onClick={onClose}>
-      <div className={"modal-panel" + (isClosing ? " closing" : "")} style={{ ...styles.modalCard, width: 560, maxWidth: "calc(100vw - 32px)" }} onClick={e => e.stopPropagation()}>
-        <div style={styles.modalHeader}>
+      <div
+        className={`modal-panel registry-business-modal${isEditing ? " is-editing" : ""}${isClosing ? " closing" : ""}`}
+        style={{ ...styles.modalCard, width: "min(720px, calc(100vw - 32px))", height: "min(720px, calc(100dvh - 48px))", padding: 0, overflow: "hidden" }}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="registry-business-modal-header" style={styles.modalHeader}>
           <h3 style={styles.modalTitle}>Business Details</h3>
           <button style={styles.closeBtn} onClick={onClose}><Icon.X /></button>
         </div>
 
-        {loading && <SkeletonDetails rows={5} />}
-        {error && <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</p>}
+        <div className="registry-business-modal-body">
+          {loading && <SkeletonDetails rows={5} />}
+          {error && <p role="alert" style={{ color: "var(--color-danger)", fontSize: 13 }}>{error}</p>}
 
-        {business && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {inspectionInProgress && (
-              <div
-                role="status"
-                style={{
-                  padding: "10px 12px",
-                  border: "1px solid #fcd34d",
-                  borderRadius: 8,
-                  background: "#fffbeb",
-                  color: "#92400e",
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                }}
-              >
-                Editing is disabled while this business has an ongoing inspection.
-                Verify or resolve the inspection first.
-              </div>
-            )}
-            {[
-              ["Business ID", business.businessID || "—", "readonly"],
-              ["Business Name", business.businessName, "title", "businessName"],
-              ["Barangay", business.barangayName || "—", "readonly"],
-              ["Registration Type", business.registrationType || "—", "regType", "registrationType"],
-              ["Business Type", business.businessType || "—", "plain", "businessType"],
-              ["Line of Business", business.lineOfBusiness || "—", "plain", "lineOfBusiness"],
-              ["Business size", business.businessSize || "—", "plain", "businessSize"],
-              ["Address", business.businessAddress || "—", "plain"],
-              ["Latitude", formatCoord(business.latitude), "readonly"],
-              ["Longitude", formatCoord(business.longitude), "readonly"],
-              ["Permit status", business.permitStatus || business.applicationStatus, "permit", "applicationStatus"],
-              ["Last renewal", business.lastRenewalDate ? business.lastRenewalDate.slice(0, 10) : "—", "readonly"],
-              ["Latest geospatial flag", business.flagColor || "—", "flag"],
-            ].map(([label, value, kind, field]) => (
-              <div key={label} style={{ display: "flex", gap: 12, alignItems: isEditing && field ? "center" : "flex-start", minHeight: isEditing && field ? 36 : "auto" }}>
-                <span style={{ minWidth: 150, fontSize: 12, color: "var(--color-muted)", fontWeight: 500, paddingTop: isEditing && field ? 0 : 3 }}>
-                  {label}
-                  {isEditing && field === "businessName" && <span style={{ color: "var(--color-danger)" }}> *</span>}
-                </span>
-
-                {isEditing && field ? (
-                  field === "applicationStatus" ? (
-                    <select
-                      value={formData[field]}
-                      onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
-                      style={styles.editInput}
-                    >
-                      <option value="Pending">Pending</option>
-                      <option value="Active">Active</option>
-                      <option value="Expired">Expired</option>
-                      <option value="Revoked">Revoked</option>
-                      <option value="Closed">Closed</option>
-                    </select>
-                  ) : field === "registrationType" ? (
-                    <select
-                      value={(formData[field] || "").toUpperCase()}
-                      onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
-                      style={styles.editInput}
-                    >
-                      <option value="">Select type...</option>
-                      <option value="NEW">NEW</option>
-                      <option value="RENEWAL">RENEWAL</option>
-                    </select>
-                  ) : field === "businessSize" ? (
-                    <select
-                      value={(formData[field] || "").toUpperCase()}
-                      onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
-                      style={styles.editInput}
-                    >
-                      <option value="">Select size...</option>
-                      <option value="MICRO">MICRO</option>
-                      <option value="SMALL">SMALL</option>
-                      <option value="MEDIUM">MEDIUM</option>
-                      <option value="LARGE">LARGE</option>
-                    </select>
-                  ) : (
-                    <input
-                      value={formData[field]}
-                      onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
-                      style={styles.editInput}
-                      placeholder={`Enter ${label.toLowerCase()}`}
-                    />
-                  )
-                ) : (
-                  <span style={{
-                    fontSize: 13,
-                    color: "var(--color-ink)",
-                    fontWeight: kind === "title" ? 600 : 400,
-                    wordBreak: kind === "plain" && String(value).length > 48 ? "break-word" : undefined,
-                  }}
-                  >
-                    {kind === "permit"
-                      ? <StatusBadge variant={getPermitVariant(value, business.flagColor)}>{value}</StatusBadge>
-                      : kind === "regType" && value !== "—"
-                        ? <StatusBadge variant={String(value).toLowerCase() === "new" ? "blue" : "purple"}>{value}</StatusBadge>
-                        : kind === "flag" && value !== "—"
-                          ? <StatusBadge variant={getFlagVariant(value)}>{value}</StatusBadge>
-                          : value}
+          {business && (
+            <div className="registry-business-fields">
+              {inspectionInProgress && (
+                <div
+                  className="registry-business-inspection-warning"
+                  role="status"
+                >
+                  Editing is disabled while this business has an ongoing inspection.
+                  Verify or resolve the inspection first.
+                </div>
+              )}
+              {[
+                ["Business ID", business.businessID || "—", "readonly"],
+                ["Business Name", business.businessName, "title", "businessName"],
+                ["Barangay", business.barangayName || "—", "readonly"],
+                ["Registration Type", business.registrationType || "—", "regType", "registrationType"],
+                ["Business Type", business.businessType || "—", "plain", "businessType"],
+                ["Line of Business", business.lineOfBusiness || "—", "plain", "lineOfBusiness"],
+                ["Business size", business.businessSize || "—", "plain", "businessSize"],
+                ["Address", business.businessAddress || "—", "plain"],
+                ["Latitude", formatCoord(business.latitude), "readonly"],
+                ["Longitude", formatCoord(business.longitude), "readonly"],
+                ["Permit status", business.permitStatus || business.applicationStatus, "permit", "applicationStatus"],
+                ["Last renewal", business.lastRenewalDate ? business.lastRenewalDate.slice(0, 10) : "—", "readonly"],
+                ["Latest geospatial flag", business.flagColor || "—", "flag"],
+              ].map(([label, value, kind, field]) => (
+                <div key={label} className="registry-business-field">
+                  <span className="registry-business-label">
+                    {label}
+                    {isEditing && field === "businessName" && <span style={{ color: "var(--color-danger)" }}> *</span>}
                   </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
 
-        <div style={{ ...styles.modalFooter, marginTop: 24 }}>
+                  {isEditing && field ? (
+                    field === "applicationStatus" ? (
+                      <select
+                        value={formData[field]}
+                        onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
+                        style={styles.editInput}
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Active">Active</option>
+                        <option value="Expired">Expired</option>
+                        <option value="Revoked">Revoked</option>
+                        <option value="Closed">Closed</option>
+                      </select>
+                    ) : field === "registrationType" ? (
+                      <select
+                        value={(formData[field] || "").toUpperCase()}
+                        onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
+                        style={styles.editInput}
+                      >
+                        <option value="">Select type...</option>
+                        <option value="NEW">NEW</option>
+                        <option value="RENEWAL">RENEWAL</option>
+                      </select>
+                    ) : field === "businessSize" ? (
+                      <select
+                        value={(formData[field] || "").toUpperCase()}
+                        onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
+                        style={styles.editInput}
+                      >
+                        <option value="">Select size...</option>
+                        <option value="MICRO">MICRO</option>
+                        <option value="SMALL">SMALL</option>
+                        <option value="MEDIUM">MEDIUM</option>
+                        <option value="LARGE">LARGE</option>
+                      </select>
+                    ) : (
+                      <input
+                        value={formData[field]}
+                        onChange={(e) => setFormData({ ...formData, [field]: e.target.value })}
+                        style={styles.editInput}
+                        placeholder={`Enter ${label.toLowerCase()}`}
+                      />
+                    )
+                  ) : isEditing ? (
+                    <span className={kind === "readonly" ? "registry-business-readonly" : "registry-business-value"}>
+                      {kind === "permit"
+                        ? <StatusBadge variant={getPermitVariant(value, business.flagColor)}>{value}</StatusBadge>
+                        : kind === "regType" && value !== "—"
+                          ? <StatusBadge variant={String(value).toLowerCase() === "new" ? "blue" : "purple"}>{value}</StatusBadge>
+                          : kind === "flag" && value !== "—"
+                            ? <StatusBadge variant={getFlagVariant(value)}>{value}</StatusBadge>
+                            : value}
+                    </span>
+                  ) : (
+                    <span className={`registry-business-value${kind === "title" ? " is-title" : ""}`}>
+                      {kind === "permit"
+                        ? <StatusBadge variant={getPermitVariant(value, business.flagColor)}>{value}</StatusBadge>
+                        : kind === "regType" && value !== "—"
+                          ? <StatusBadge variant={String(value).toLowerCase() === "new" ? "blue" : "purple"}>{value}</StatusBadge>
+                          : kind === "flag" && value !== "—"
+                            ? <StatusBadge variant={getFlagVariant(value)}>{value}</StatusBadge>
+                            : value}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="registry-business-modal-footer" style={{ ...styles.modalFooter }}>
           {isEditing ? (
             <>
               <button className="ghost-btn" onClick={() => {
