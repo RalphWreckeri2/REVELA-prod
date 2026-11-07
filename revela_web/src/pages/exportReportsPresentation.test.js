@@ -29,7 +29,10 @@ test("report loading overlay is limited to refresh and export work and respects 
   assert.match(styles, /background:\s*rgba\(10, 22, 16, \.56\)/);
   assert.match(styles, /backdrop-filter:\s*blur\(5px\)/);
   assert.match(styles, /width:\s*min\(340px, 94vw\)/);
-  assert.match(page, /<animateMotion dur="3\.4s" repeatCount="indefinite"/);
+  assert.doesNotMatch(page, /animateMotion/);
+  assert.match(styles, /animation:\s*export-report-route-pulse 2\.2s ease-in-out infinite alternate/);
+  assert.match(styles, /@keyframes export-report-route-pulse\s*\{\s*from \{ opacity: \.16; \}\s*to \{ opacity: 1; \}/);
+  assert.doesNotMatch(styles, /animation:[^;]*stroke-dashoffset/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
