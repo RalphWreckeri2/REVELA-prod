@@ -93,19 +93,12 @@ export default function AuthenticatedEvidenceImage({
   if (!isCurrentRequest || !imageState.imageUrl) {
     return (
       <div
+        className="ui-skeleton authenticated-evidence-image-skeleton"
         role="status"
         aria-label={`Loading ${alt}`}
-        style={{
-          ...style,
-          display: "grid",
-          placeItems: "center",
-          background: "var(--color-card-alt)",
-          color: "var(--color-muted)",
-          fontSize: 12,
-        }}
-      >
-        Loading evidence…
-      </div>
+        aria-busy="true"
+        style={style}
+      />
     );
   }
 

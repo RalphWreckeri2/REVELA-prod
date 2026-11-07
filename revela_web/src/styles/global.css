@@ -158,6 +158,12 @@ body {
   animation: ui-skeleton-shimmer 1.5s ease-in-out infinite;
 }
 
+.authenticated-evidence-image-skeleton {
+  width: min(78vw, 900px);
+  height: min(65vh, 600px);
+  border-radius: 8px;
+}
+
 .ui-sr-only {
   position: absolute;
   width: 1px;

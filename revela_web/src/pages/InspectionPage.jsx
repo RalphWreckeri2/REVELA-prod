@@ -365,11 +365,21 @@ function AssignModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
+  const [selectedEvidenceIndex, setSelectedEvidenceIndex] = useState(0);
+  const [enlargedImage, setEnlargedImage] = useState(null);
   const isGreen = report.inspectionResult === "Green";
   const [businessID, setBusinessID] = useState(report.linkedBusinessID || "");
   const [linkReview, setLinkReview] = useState(null);
   const [registryFields, setRegistryFields] = useState({});
   const submitInFlight = useRef(false);
+  const evidenceReturnRef = useRef(null);
+  const evidence = useMemo(
+    () => parseInspectionEvidence(report.photoPath),
+    [report.photoPath],
+  );
+  const liveEvidence = evidence.filter(item => !item.isArchived && item.url);
+  const archivedEvidence = evidence.filter(item => item.isArchived);
+  const selectedEvidence = liveEvidence[selectedEvidenceIndex] || liveEvidence[0];
   const gpsLat = finiteNumberOrNaN(report.verifiedLatitude);
   const gpsLng = finiteNumberOrNaN(report.verifiedLongitude);
   const pinLat = finiteNumberOrNaN(report.latitude);
@@ -384,6 +394,10 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
     && hasAccuracy
     && accuracy <= 100;
   const [updateLocation, setUpdateLocation] = useState(!isGreen && shouldSuggestLocationUpdate);
+
+  useEffect(() => {
+    setSelectedEvidenceIndex(0);
+  }, [report.reportID, report.photoPath]);
 
   const finishVerification = async () => {
     await Swal.fire({
@@ -442,172 +456,227 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 
   return (
     <InspectionDialog
-      title="Verify Inspection" onClose={onClose} busy={loading} isClosing={isClosing} layer={10001}
-      returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
+      title="Verify Inspection"
+      className="inspection-detail-dialog inspection-verify-dialog"
+      onClose={onClose}
+      busy={loading}
+      isClosing={isClosing}
+      layer={10001}
+      panelStyle={{ width: "min(1080px, calc(100vw - 48px))", height: "min(700px, 85dvh)", maxHeight: "85dvh", padding: 0, overflow: "hidden" }}
+      returnFocusRef={returnFocusRef}
+      fallbackFocusRef={fallbackFocusRef}
     >
-
-        <div style={s.flagPreview}>
-          <span style={{
-            ...s.flagPill,
-            background: FLAG_COLOR[report.inspectionResult]?.bg ?? "#f1f5f9",
-            color: FLAG_COLOR[report.inspectionResult]?.text ?? "var(--color-muted)",
-          }}>{report.inspectionResult ?? "No result"}</span>
-          <div>
-            <p style={{ fontWeight: 700, fontSize: 14, color: "var(--color-ink)", marginBottom: 2 }}>
-              {report.detectedName}
-            </p>
-            <p style={{ fontSize: 12, color: "var(--color-muted)" }}>
-              Inspector: {report.inspectorName}
-            </p>
+      <div className="inspection-detail-layout">
+        <div className="inspection-detail-summary">
+          <div className="inspection-detail-location">
+            <h3>{report.detectedName || report.businessName || "Inspection location"}</h3>
+            <p><Icon.MapPin /> {report.barangayName ?? "Unknown barangay"}</p>
+            {(report.reportID != null || report.logID != null) && (
+              <p className="inspection-detail-reference">
+                {[report.reportID != null && `Report #${report.reportID}`, report.logID != null && `Location #${report.logID}`].filter(Boolean).join(" · ")}
+              </p>
+            )}
           </div>
-        </div>
 
-        {isGreen && (
-          <section style={{ ...s.remarksBox, marginBottom: 16 }} aria-label="Official registry link">
-            <BusinessIDReview businessID={businessID} setBusinessID={setBusinessID}
-              review={linkReview} setReview={setLinkReview}
-              registryFields={registryFields} setRegistryFields={setRegistryFields}
-              busy={loading} setError={setError} initialLinked={Boolean(report.linkedBusinessID)} />
-            {error && <p role="alert" style={{ ...s.errorBanner, marginTop: 12 }}><Icon.AlertCircle /> &nbsp;{error}</p>}
-          </section>
-        )}
-
-        {report.remarks && (
-          <div style={s.remarksBox}>
-            <p style={{ fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 4, textTransform: "uppercase" }}>
-              Inspector Notes
-            </p>
-            <p style={{ fontSize: 13, color: "var(--color-ink)", lineHeight: 1.6 }}>{report.remarks}</p>
+          <div className="inspection-detail-status">
+            <div className="inspection-detail-status-cell">
+              <span>Current Flag Color</span>
+              <strong style={{
+                color: FLAG_COLOR[report.flagColor]?.text ?? "var(--color-ink)",
+              }}><Icon.Flag size={14} /> {report.flagColor || "Unknown"}</strong>
+            </div>
+            <div className="inspection-detail-status-cell">
+              <span>Status</span>
+              <strong style={{ color: STATUS_COLOR[report.verificationStatus]?.text ?? "var(--color-ink)" }}>
+                {report.verificationStatus || "Submitted"}
+              </strong>
+            </div>
+            <div className="inspection-detail-status-cell">
+              <span>Submitted Result</span>
+              <strong style={{
+                color: FLAG_COLOR[report.inspectionResult]?.text ?? "var(--color-ink)",
+              }}>{formatResult(report.inspectionResult) || "No result"}</strong>
+            </div>
+            {report.noticeLevel > 0 && (
+              <div className="inspection-detail-status-cell">
+                <span>Notice Stage</span>
+                <strong className="inspection-detail-notice">
+                  {report.noticeLevel === 1 ? "1st Notice" : report.noticeLevel === 2 ? "2nd Notice" : report.noticeLevel === 3 ? "3rd Notice" : "Escalated"}
+                </strong>
+              </div>
+            )}
           </div>
-        )}
 
-        <div style={{ border: "1px solid var(--color-border)", borderRadius: 8, padding: 12, marginBottom: 14 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: "var(--color-muted)", margin: 0, textTransform: "uppercase" }}>
-              Inspector GPS
-            </p>
-            <span style={{ padding: "4px 8px", borderRadius: 4, fontSize: 11, fontWeight: 700, color: gpsStatus.color, background: gpsStatus.background }}>
-              {gpsStatus.text}
-            </span>
-          </div>
-          {hasGps ? (
-            <>
-              <p style={{ fontSize: 12, color: "var(--color-ink)", margin: "0 0 5px" }}>
-                {gpsLat.toFixed(6)}, {gpsLng.toFixed(6)}
-              </p>
-              <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 5px" }}>
-                Current pin: {hasPin ? `${pinLat.toFixed(6)}, ${pinLng.toFixed(6)}` : "No coordinates"}
-              </p>
-              <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "0 0 10px" }}>
-                {hasAccuracy ? `Device accuracy ±${Math.round(accuracy)} m` : "Device accuracy not reported"}
-                {distanceLabel ? ` · ${distanceLabel} from current pin` : ""}
-              </p>
-              {hasAccuracy && accuracy > 100 && (
-                <p style={{ fontSize: 12, color: "#a16207", margin: "0 0 10px" }}>
-                  GPS accuracy is low; review the position before applying it.
-                </p>
-              )}
-              {!isGreen && <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, lineHeight: 1.5, color: "var(--color-ink)", cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={updateLocation}
-                  onChange={event => setUpdateLocation(event.target.checked)}
-                  style={{ marginTop: 2 }}
-                />
-                Update the map pin and registry location to this GPS position
-              </label>}
-            </>
-          ) : (
-            <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
-              This report has no valid GPS fix. Verification will not change the pin location.
-            </p>
-          )}
-        </div>
-
-        {(() => {
-          const evList = parseInspectionEvidence(report.photoPath);
-          if (!evList || evList.length === 0) return null;
-          const live = evList.filter(e => !e.isArchived && e.url);
-          const arch = evList.filter(e => e.isArchived);
-          return (
-            <div style={{ marginBottom: 14 }}>
-              <p style={{ fontSize: 11, fontWeight: 600, color: "var(--color-muted)", marginBottom: 8, textTransform: "uppercase" }}>
-                Evidence photo{evList.length > 1 ? "s" : ""}
-              </p>
-              {live.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: "10px", paddingBottom: "8px" }}>
-                  {live.map((item, i) => (
-                    <AuthenticatedEvidenceImage
-                      key={i}
-                      url={item.url}
-                      token={token}
-                      alt={`Inspection evidence ${i + 1}`}
-                      style={{
-                        width: "100%",
-                        height: 120,
-                        objectFit: "cover",
-                        borderRadius: "var(--radius-md)",
-                        border: "1px solid var(--color-border)",
-                      }}
-                    />
-                  ))}
+          <section className="inspection-detail-section">
+            <h4>Assignment Info</h4>
+            <div className="inspection-detail-assignment">
+              <div>
+                <span>Inspector</span>
+                <strong>{report.inspectorName || "Unassigned"}</strong>
+              </div>
+              {report.resolutionTime != null && (
+                <div>
+                  <span>Resolution Time</span>
+                  <strong><Icon.Clock size={14} /> {formatElapsedMinutes(report.resolutionTime)}</strong>
                 </div>
               )}
-              {arch.length > 0 && (
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "8px 12px",
-                  background: "var(--color-hover)",
-                  borderRadius: "var(--radius-md)",
-                  border: "1px dashed var(--color-border)",
-                  fontSize: 12,
-                  color: "var(--color-muted)",
-                }}>
-                  <span style={{ fontSize: 15 }}>📦</span>
-                  <div>
-                    <span style={{ fontWeight: 600, color: "var(--color-ink)" }}>
-                      {arch.length} photo{arch.length > 1 ? "s" : ""} archived to Municipal PC
-                    </span>
-                    <span style={{ display: "block", fontSize: 11, opacity: 0.8 }}>
-                      Audit records &amp; notes preserved on server
-                    </span>
-                  </div>
+              {report.deadline && (
+                <div>
+                  <span>Deadline</span>
+                  <strong className="inspection-detail-deadline"><Icon.Clock size={14} /> {new Date(report.deadline).toLocaleString()}</strong>
                 </div>
               )}
             </div>
-          );
-        })()}
+          </section>
 
-        {report.deadline && (
-          <p style={{ fontSize: 12, color: "var(--color-danger)", marginBottom: report.resolutionTime ? 4 : 16, display: "flex", alignItems: "center", gap: 5, fontWeight: 600 }}>
-            <Icon.Clock /> Due: {new Date(report.deadline).toLocaleString()}
+          {report.remarks ? (
+            <section className="inspection-detail-section">
+              <h4>Inspector Remarks</h4>
+              <p className="inspection-detail-remarks">{report.remarks}</p>
+            </section>
+          ) : (
+            <section className="inspection-detail-section">
+              <h4>Inspector Remarks</h4>
+              <div className="inspection-detail-empty-remarks">No remarks were submitted with this inspection.</div>
+            </section>
+          )}
+
+          {isGreen && (
+            <section className="inspection-detail-section inspection-verify-business-id" aria-label="Official registry link">
+              <BusinessIDReview
+                businessID={businessID}
+                setBusinessID={setBusinessID}
+                review={linkReview}
+                setReview={setLinkReview}
+                registryFields={registryFields}
+                setRegistryFields={setRegistryFields}
+                busy={loading}
+                setError={setError}
+                initialLinked={Boolean(report.linkedBusinessID)}
+              />
+            </section>
+          )}
+
+          <section className="inspection-detail-section inspection-verify-gps">
+            <div className="inspection-verify-gps-heading">
+              <h4>Inspector GPS</h4>
+              <span style={{ color: gpsStatus.color, background: gpsStatus.background }}>
+                {gpsStatus.text}
+              </span>
+            </div>
+            {hasGps ? (
+              <>
+                <p>{gpsLat.toFixed(6)}, {gpsLng.toFixed(6)}</p>
+                <p>Current pin: {hasPin ? `${pinLat.toFixed(6)}, ${pinLng.toFixed(6)}` : "No coordinates"}</p>
+                <p>
+                  {hasAccuracy ? `Device accuracy ±${Math.round(accuracy)} m` : "Device accuracy not reported"}
+                  {distanceLabel ? ` · ${distanceLabel} from current pin` : ""}
+                </p>
+                {hasAccuracy && accuracy > 100 && (
+                  <p className="inspection-verify-gps-warning">
+                    GPS accuracy is low; review the position before applying it.
+                  </p>
+                )}
+                {!isGreen && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={updateLocation}
+                      onChange={event => setUpdateLocation(event.target.checked)}
+                    />
+                    Update the map pin and registry location to this GPS position
+                  </label>
+                )}
+              </>
+            ) : (
+              <p>This report has no valid GPS fix. Verification will not change the pin location.</p>
+            )}
+          </section>
+
+          <p className="inspection-verify-guidance">
+            Confirming will update the flag color to <strong>{report.inspectionResult}</strong> on the map.
+            {isGreen
+              ? " The original pin location will be preserved. Existing enforcement protections still apply."
+              : " The location changes only if the GPS update option is selected."}
           </p>
-        )}
 
-        {report.resolutionTime != null && (
-          <p style={{ fontSize: 12, color: "var(--color-muted)", marginBottom: 16, display: "flex", alignItems: "center", gap: 5 }}>
-            <Icon.Clock /> Resolved in {formatElapsedMinutes(report.resolutionTime)}
-          </p>
-        )}
+          {error && <div className="inspection-detail-error" role="alert"><Icon.AlertCircle /> {error}</div>}
 
-        {!isGreen && error && (
-          <div style={s.errorBanner}><Icon.AlertCircle /> &nbsp;{error}</div>
-        )}
-
-        <p style={{ fontSize: 13, color: "var(--color-ink)", marginBottom: 20, lineHeight: 1.6 }}>
-          Review the evidence and notes above. Confirming will update the flag color to&nbsp;
-          <strong>{report.inspectionResult}</strong> on the map.
-          {isGreen ? " The original pin location will be preserved. Existing enforcement protections still apply." : " The location changes only if the GPS update option is selected."}
-        </p>
-
-        <div style={s.modalFooter}>
-          <button className="ghost-btn" onClick={onClose} disabled={loading}>Cancel</button>
-          <button className="primary-btn" onClick={handleVerify} disabled={loading}>
-            {loading ? "Verifying…" : <><Icon.Check /> Confirm &amp; verify</>}
-          </button>
+          <div className="inspection-detail-actions inspection-verify-actions">
+            <button type="button" className="ghost-btn" onClick={onClose} disabled={loading}>Cancel</button>
+            <button type="button" className="primary-btn" onClick={handleVerify} disabled={loading}>
+              <Icon.Check size={16} /> {loading ? "Verifying…" : "Confirm & verify"}
+            </button>
+          </div>
         </div>
+
+        <aside className="inspection-detail-evidence">
+          <h4>Evidence Photo{liveEvidence.length === 1 ? "" : "s"}{liveEvidence.length > 1 ? ` (${liveEvidence.length})` : ""}</h4>
+          {selectedEvidence ? (
+            <>
+              <button
+                type="button"
+                className="inspection-detail-evidence-main"
+                aria-label={`Enlarge evidence photo ${selectedEvidenceIndex + 1}`}
+                onClick={event => {
+                  evidenceReturnRef.current = event.currentTarget;
+                  setEnlargedImage(selectedEvidence.url);
+                }}
+              >
+                <AuthenticatedEvidenceImage
+                  url={selectedEvidence.url}
+                  token={token}
+                  alt={`Inspection evidence ${selectedEvidenceIndex + 1}`}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                />
+              </button>
+              {liveEvidence.length > 1 && (
+                <div className="inspection-detail-evidence-thumbnails" aria-label="Choose evidence photo">
+                  {liveEvidence.map((item, index) => (
+                    <button
+                      key={`${item.url}-${index}`}
+                      type="button"
+                      className={`inspection-detail-evidence-thumbnail${index === selectedEvidenceIndex ? " selected" : ""}`}
+                      aria-label={`Show evidence photo ${index + 1}`}
+                      aria-pressed={index === selectedEvidenceIndex}
+                      onClick={() => setSelectedEvidenceIndex(index)}
+                    >
+                      <AuthenticatedEvidenceImage
+                        url={item.url}
+                        token={token}
+                        alt={`Evidence thumbnail ${index + 1}`}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="inspection-detail-empty-evidence" role="status">
+              <span aria-hidden="true"><Icon.Image /></span>
+              <strong>No evidence submitted</strong>
+              <p>This inspection report was submitted without photo evidence.</p>
+            </div>
+          )}
+          {archivedEvidence.length > 0 && (
+            <div className="inspection-detail-archived-evidence">
+              <strong>{archivedEvidence.length} photo{archivedEvidence.length === 1 ? "" : "s"} archived to Municipal PC backup</strong>
+              <span>File reference: {archivedEvidence.map(item => item.filename).join(", ")}</span>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      <AnimatePresence isVisible={!!enlargedImage}>
+        <InspectionEvidenceModal
+          url={enlargedImage}
+          token={token}
+          onClose={() => setEnlargedImage(null)}
+          returnFocusRef={evidenceReturnRef}
+          fallbackFocusRef={fallbackFocusRef}
+        />
+      </AnimatePresence>
     </InspectionDialog>
   );
 }
