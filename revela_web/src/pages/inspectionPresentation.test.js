@@ -18,6 +18,10 @@ test("submitted reports grid provides local search and barangay, result, and dea
   assert.match(inspectionPage, /aria-label="Filter submitted reports by result"/);
   assert.match(inspectionPage, /aria-label="Filter submitted reports by deadline"/);
   assert.match(inspectionPage, /matchesDispatchFilters\(report, \{ barangay: filterBarangay, flag: filterResult, deadline: filterDeadline \}\)/);
+  assert.match(inspectionPage, /function ColumnFocusModal\(\{ status, reports, barangayOptions,/);
+  assert.match(inspectionPage, /barangayOptions=\{barangayOptions\}/);
+  assert.match(inspectionPage, /barangayOptions\.map\(barangay => <option key=\{barangay\.id\} value=\{barangay\.name\}>\{barangay\.name\}<\/option>\)/);
+  assert.doesNotMatch(inspectionPage, /new Set\(reports\.map\(report => report\.barangayName\)/);
   assert.match(inspectionStyles, /\.dispatch-grid-filter-toolbar\s*\{[^}]*grid-template-columns:\s*minmax\(200px, 1\.35fr\) 42px repeat\(3, minmax\(130px, \.8fr\)\)/);
   assert.match(inspectionStyles, /\.dispatch-grid-filter-toolbar \{\s*grid-template-columns: minmax\(0, 1fr\);\s*\}/);
 });

@@ -34,6 +34,7 @@ import {
   downloadCanvasAsPdf,
   reportPdfFilename,
 } from "../components/reportPdfDownload";
+import RevelaLoader from "../components/RevelaLoader";
 import bpLogo from "../assets/bagongpilipinas.png";
 import sealImg from "../assets/seal.png";
 import ComplianceReportCard from "../components/ComplianceReportCard";
@@ -58,28 +59,6 @@ function ReportChartSkeleton({ variant = "bars" }) {
       {[0, 1, 2, 3].map(index => <SkeletonBlock key={index} />)}
     </div>
   </div>;
-}
-
-function ReportLoadingOverlay() {
-  return (
-    <div className="export-report-loading-overlay" role="status" aria-live="polite"
-      aria-label={REPORT_LOADING_MESSAGE} aria-busy="true">
-      <div className="export-report-loading-card">
-        <svg className="export-report-loading-route" viewBox="0 0 240 110"
-          aria-hidden="true" focusable="false">
-          <path className="export-report-loading-roads"
-            d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24 M82 62 C88 42 74 31 91 18 M151 64 C159 79 174 89 194 93 M188 38 C184 25 194 15 207 12" />
-          <path className="export-report-loading-trail-glow"
-            d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24" pathLength="100" />
-          <path className="export-report-loading-trail"
-            d="M12 82 C44 82 48 59 82 62 C111 64 122 82 151 64 C179 47 190 26 228 24" pathLength="100" />
-          <circle className="export-report-loading-node" cx="82" cy="62" r="3" />
-          <circle className="export-report-loading-node" cx="151" cy="64" r="3" />
-        </svg>
-        <p className="export-report-loading-message">{REPORT_LOADING_MESSAGE}</p>
-      </div>
-    </div>
-  );
 }
 
 // ── Color Palettes ─────────────────────────────────────────────────────────────
@@ -433,7 +412,13 @@ export default function ExportReportsPage() {
     }
   };
 
-  const downloadReportPdf = async (report, filename = reportPdfFilename(report.title)) => {
+  const showExportNotice = async options => {
+    flushSync(() => setPreparingExport(false));
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    return Swal.fire(options);
+  };
+
+  const downloadReportPdf = async (report, filename = reportPdfFilename(report.title), { showSuccess = true } = {}) => {
     if (!report || pdfExportInProgress.current) return;
     pdfExportInProgress.current = true;
     flushSync(() => {
@@ -523,13 +508,15 @@ export default function ExportReportsPage() {
         footerCanvas: cropRegion(reportRegionBounds[".print-footer"]),
         pageBreaks: safePageBreaks,
       });
-      await Swal.fire({
-        icon: "success",
-        title: "PDF Exported!",
-        text: `Saved as ${filename}`,
-        timer: 2500,
-        showConfirmButton: false,
-      });
+      if (showSuccess) {
+        await Swal.fire({
+          icon: "success",
+          title: "PDF Exported!",
+          text: `Saved as ${filename}`,
+          timer: 2500,
+          showConfirmButton: false,
+        });
+      }
     } finally {
       flushSync(() => {
         setPrintReport(null);
@@ -548,7 +535,7 @@ export default function ExportReportsPage() {
   // ── High-Resolution Image (PNG) Export ──────────────────────────────────────
   const exportChartAsImage = async (chartId) => withFreshDemographics(async (_snapshot, view) => {
     if (chartSummary(view, chartId).length === 0) {
-      Swal.fire({
+      await showExportNotice({
         icon: "info",
         title: "No Data to Export",
         text: "There are currently no recorded business establishments in this category."
@@ -594,21 +581,22 @@ export default function ExportReportsPage() {
       const dateStr = new Date().toISOString().slice(0, 10);
       const filename = `Mataasnakahoy_Demographic_${chartId}_${dateStr}.png`;
 
-      canvas.toBlob((blob) => {
-        if (blob) {
-          saveAs(blob, filename);
-          Swal.fire({
-            icon: "success",
-            title: "Chart Exported!",
-            text: `Saved as ${filename}`,
-            timer: 2000,
-            showConfirmButton: false
-          });
-        }
-      }, "image/png");
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(result => result
+          ? resolve(result)
+          : reject(new Error("Could not create the PNG image.")), "image/png");
+      });
+      saveAs(blob, filename);
+      await showExportNotice({
+        icon: "success",
+        title: "Chart Exported!",
+        text: `Saved as ${filename}`,
+        timer: 2000,
+        showConfirmButton: false
+      });
     } catch (err) {
       console.error("Error capturing chart image:", err);
-      Swal.fire({
+      await showExportNotice({
         icon: "error",
         title: "Export Failed",
         text: err.message || "Failed to export chart image."
@@ -622,7 +610,7 @@ export default function ExportReportsPage() {
   const exportChartAsPdf = async (chartId, chartTitle, chartSubtitle) => withFreshDemographics(async (_snapshot, view) => {
     const summaryTable = chartSummary(view, chartId);
     if (summaryTable.length === 0) {
-      Swal.fire({
+      await showExportNotice({
         icon: "info",
         title: "No Data to Export",
         text: "There are currently no recorded business establishments in this category."
@@ -680,10 +668,17 @@ export default function ExportReportsPage() {
         separateSummary: chartId === "sector" || chartId === "barangay",
         summaryTable,
         isLandscape: false
-      }, reportPdfFilename(`Demographic_${chartTitle}`));
+      }, reportPdfFilename(`Demographic_${chartTitle}`), { showSuccess: false });
+      await showExportNotice({
+        icon: "success",
+        title: "PDF Exported!",
+        text: `Saved as ${reportPdfFilename(`Demographic_${chartTitle}`)}`,
+        timer: 2500,
+        showConfirmButton: false,
+      });
     } catch (err) {
       console.error("Error generating chart PDF:", err);
-      Swal.fire({
+      await showExportNotice({
         icon: "error",
         title: "PDF Generation Failed",
         text: err.message || "Failed to prepare printable PDF report."
@@ -760,10 +755,17 @@ export default function ExportReportsPage() {
             "Non-Active Gap": t["Non-Active"]
           }))
         }
-      }, reportPdfFilename("Comprehensive_Municipal_Business_Demographic_Profile"));
+      }, reportPdfFilename("Comprehensive_Municipal_Business_Demographic_Profile"), { showSuccess: false });
+      await showExportNotice({
+        icon: "success",
+        title: "PDF Exported!",
+        text: `Saved as ${reportPdfFilename("Comprehensive_Municipal_Business_Demographic_Profile")}`,
+        timer: 2500,
+        showConfirmButton: false,
+      });
     } catch (err) {
       console.error("Error creating full demographic dossier:", err);
-      Swal.fire({
+      await showExportNotice({
         icon: "error",
         title: "Export Failed",
         text: "Could not compile the complete demographic report."
@@ -926,7 +928,7 @@ export default function ExportReportsPage() {
         `Mataasnakahoy_Demographic_Census_${dateStr}.csv`
       );
 
-      Swal.fire({
+      await showExportNotice({
         icon: "success",
         title: "CSV Exported!",
         text: "Demographic dataset downloaded successfully.",
@@ -935,7 +937,7 @@ export default function ExportReportsPage() {
       });
     } catch (err) {
       console.error("Error generating demographic CSV:", err);
-      Swal.fire({
+      await showExportNotice({
         icon: "error",
         title: "Export Failed",
         text: "Could not export demographic data as CSV."
@@ -1933,7 +1935,7 @@ export default function ExportReportsPage() {
             </p>
           </footer>
         </DashboardLayout>
-        {(refreshingReports || preparingExport) && <ReportLoadingOverlay />}
+        {(refreshingReports || preparingExport) && <RevelaLoader message={REPORT_LOADING_MESSAGE} />}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════

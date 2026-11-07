@@ -1135,7 +1135,7 @@ function InspectionEvidenceModal({ url, token, onClose, isClosing, returnFocusRe
 }
 
 // ── Column Focus Modal (Grid View) ─────────────────────────────────────────────
-function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
+function ColumnFocusModal({ status, reports, barangayOptions, initialSearch = "", onViewDetail, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [search, setSearch] = useState(initialSearch);
   const [filterResult, setFilterResult] = useState("");
   const [filterBarangay, setFilterBarangay] = useState("");
@@ -1143,9 +1143,6 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
   const gridSearchRef = useRef(null);
   const isSubmittedGrid = status === "Submitted";
   const resultOptions = inspectionResultOptions(reports);
-  const barangayOptions = [...new Set(reports.map(report => report.barangayName)
-    .filter(name => typeof name === "string" && name.trim()))]
-    .sort((a, b) => a.localeCompare(b));
   const filteredReports = reports.filter(report => matchesGridSearch(report, search, initialSearch)
     && (isSubmittedGrid
       ? matchesDispatchFilters(report, { barangay: filterBarangay, flag: filterResult, deadline: filterDeadline })
@@ -1172,7 +1169,7 @@ function ColumnFocusModal({ status, reports, initialSearch = "", onViewDetail, o
             <select className="filter-select dispatch-filter-select" aria-label="Filter submitted reports by barangay"
               value={filterBarangay} onChange={event => setFilterBarangay(event.target.value)}>
               <option value="">All Barangays</option>
-              {barangayOptions.map(barangay => <option key={barangay} value={barangay}>{barangay}</option>)}
+              {barangayOptions.map(barangay => <option key={barangay.id} value={barangay.name}>{barangay.name}</option>)}
             </select>
             <select className="filter-select dispatch-filter-select" aria-label="Filter submitted reports by result"
               value={filterResult} onChange={event => setFilterResult(event.target.value)}>
@@ -1760,6 +1757,7 @@ export default function InspectionPage() {
           key={focusColumn?.key}
           status={focusColumn?.status}
           reports={reports.filter(r => r.verificationStatus === focusColumn?.status)}
+          barangayOptions={barangayOptions}
           initialSearch={focusColumn?.initialSearch || ""}
           onViewDetail={openDetail}
           onClose={() => setFocusColumn(null)}

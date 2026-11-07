@@ -5,6 +5,8 @@ import test from "node:test";
 const page = readFileSync(new URL("./ExportReportsPage.jsx", import.meta.url), "utf8");
 const compliance = readFileSync(new URL("../components/ComplianceReportCard.jsx", import.meta.url), "utf8");
 const styles = readFileSync(new URL("../styles/ExportReportsPage.css", import.meta.url), "utf8");
+const loader = readFileSync(new URL("../components/RevelaLoader.jsx", import.meta.url), "utf8");
+const loaderStyles = readFileSync(new URL("../styles/RevelaLoader.css", import.meta.url), "utf8");
 const pdfDownload = readFileSync(new URL("../components/reportPdfDownload.js", import.meta.url), "utf8");
 
 test("exports separate demographic charts from field reports without the title pill", () => {
@@ -19,25 +21,25 @@ test("exports separate demographic charts from field reports without the title p
 
 test("report loading overlay is limited to refresh and export work and respects reduced motion", () => {
   assert.match(page, /const REPORT_LOADING_MESSAGE = "Refreshing report data and preparing export\.\.\.";/);
-  assert.match(page, /\(refreshingReports \|\| preparingExport\) && <ReportLoadingOverlay \/>/);
+  assert.match(page, /import RevelaLoader from "\.\.\/components\/RevelaLoader";/);
+  assert.match(page, /\(refreshingReports \|\| preparingExport\) && <RevelaLoader message=\{REPORT_LOADING_MESSAGE\} \/>/);
   assert.match(page, /setRefreshingReports\(true\);[\s\S]*?finally \{\s*setRefreshingReports\(false\);/);
   assert.match(page, /finally \{\s*exportInProgress\.current = false;\s*setPreparingExport\(false\);/);
-  assert.match(page, /<p className="export-report-loading-message">\{REPORT_LOADING_MESSAGE\}<\/p>/);
-  assert.doesNotMatch(page, /setInterval|loading-caret/);
+  assert.match(page, /const showExportNotice = async options => \{\s*flushSync\(\(\) => setPreparingExport\(false\)\);[\s\S]*?return Swal\.fire\(options\);/);
+  assert.match(page, /const blob = await new Promise\(\(resolve, reject\) => \{\s*canvas\.toBlob/);
+  assert.match(page, /saveAs\(blob, filename\);\s*await showExportNotice\(\{/);
+  assert.match(page, /\}, reportPdfFilename\(`Demographic_\$\{chartTitle\}`\), \{ showSuccess: false \}\);\s*await showExportNotice\(\{/);
+  assert.match(page, /\}, reportPdfFilename\("Comprehensive_Municipal_Business_Demographic_Profile"\), \{ showSuccess: false \}\);\s*await showExportNotice\(\{/);
+  assert.match(page, /saveAs\([\s\S]*?await showExportNotice\(\{\s*icon: "success",\s*title: "CSV Exported!"/);
+  assert.doesNotMatch(page, /ReportLoadingOverlay|export-report-loading-/);
   assert.match(page, /const REPORT_REQUEST_TIMEOUT_MS = 20_000;/);
   assert.match(page, /timedOut = true;\s*controller\.abort\(\);[\s\S]*?REPORT_REQUEST_TIMEOUT_MS/);
   assert.match(page, /const failure = timedOut[\s\S]*?window\.clearTimeout\(timeout\);/);
-  assert.match(styles, /\.export-report-loading-card\s*\{[^}]*padding:\s*22px 24px 20px;[^}]*\}/);
-  assert.doesNotMatch(styles, /\.export-report-loading-card\s*\{[^}]*background:/);
-  assert.match(styles, /background:\s*rgba\(10, 22, 16, \.56\)/);
-  assert.match(styles, /backdrop-filter:\s*blur\(5px\)/);
-  assert.match(styles, /width:\s*min\(340px, 94vw\)/);
+  assert.match(loader, /animateMotion[\s\S]*repeatCount="indefinite" calcMode="paced"/);
+  assert.match(loaderStyles, /animation:\s*revela-loader-trail 3\.2s var\(--loader-phase\) linear infinite/);
+  assert.match(loaderStyles, /stroke-dasharray:\s*7 100/);
+  assert.match(loaderStyles, /@media \(prefers-reduced-motion: reduce\)/);
   assert.doesNotMatch(page, /animateMotion/);
-  assert.match(styles, /\.export-report-loading-trail,\s*\.export-report-loading-trail-glow\s*\{\s*animation:\s*export-report-route-travel 3\.6s linear infinite;\s*animation-direction:\s*alternate;/);
-  assert.match(styles, /stroke-dasharray:\s*11 89/);
-  assert.match(styles, /@keyframes export-report-route-travel\s*\{\s*from \{ stroke-dashoffset: 0; \}\s*to \{ stroke-dashoffset: -89; \}/);
-  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.export-report-loading-trail,\s*\.export-report-loading-trail-glow \{ animation-duration: 6s; \}/);
-  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("export page omits the redundant KPI strip without removing figures from downloads", () => {
