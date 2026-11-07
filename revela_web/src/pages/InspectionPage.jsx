@@ -378,6 +378,18 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
     && accuracy <= 100;
   const [updateLocation, setUpdateLocation] = useState(!isGreen && shouldSuggestLocationUpdate);
 
+  const finishVerification = async () => {
+    await Swal.fire({
+      icon: "success",
+      title: "Verification Successful",
+      text: `Inspection report #${report.reportID} has been verified.`,
+      confirmButtonText: "OK",
+      confirmButtonColor: "#56ab2f",
+    });
+    onSuccess();
+    onClose();
+  };
+
   const distanceLabel = distance == null
     ? null
     : distance < 1000
@@ -406,14 +418,12 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
               businessID: current.businessID, confirmEstablishment: true,
               registryReviewToken: current.reviewToken, registryFields,
             });
-            onSuccess();
-            onClose();
+            await finishVerification();
           },
         });
       } else {
         await verifyInspectionRequest(report.reportID, token, updateLocation);
-        onSuccess();
-        onClose();
+        await finishVerification();
       }
     } catch (err) {
       setError(err.message || "Verification failed.");
@@ -598,79 +608,11 @@ function VerifyModal({ report, token, onClose, onSuccess, isClosing, returnFocus
 // ── Detail Modal ───────────────────────────────────────────────────────────────
 function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared, onAssign, onVerify, onClose, isClosing, returnFocusRef, fallbackFocusRef }) {
   const [enlargedImage, setEnlargedImage] = useState(null);
-  const [clearingWarning, setClearingWarning] = useState(false);
-  const [clearError, setClearError] = useState("");
+  const [showClearWarning, setShowClearWarning] = useState(false);
   const photoReturnRef = useRef(null);
+  const clearWarningReturnRef = useRef(null);
 
-  const handleClearWarning = async () => {
-    try {
-      let businessID = report.businessID;
-      let registryReview = null;
-      if (!businessID) {
-        const idPrompt = await Swal.fire({
-          title: "Business ID required",
-          text: "Enter the official Business ID from the office record before confirming compliance.",
-          input: "text",
-          inputPlaceholder: "Official Business ID",
-          inputValidator: (value) => value?.trim() ? undefined : "Business ID is required.",
-          showCancelButton: true,
-          confirmButtonText: "Review Business ID",
-          cancelButtonColor: "var(--swal-cancel-bg, #475569)",
-        });
-        if (!idPrompt.isConfirmed) return;
-        businessID = idPrompt.value.trim();
-        setClearingWarning(true);
-        setClearError("");
-        registryReview = await previewWarningRegistryLinkRequest(
-          report.reportID, businessID, token,
-        );
-      }
-
-      const establishment = report.detectedName || report.businessName || "this establishment";
-      const reviewSummary = registryReview
-        ? `${registryReview.registryExists ? "Existing registry record" : "New registry record"}: ${registryReview.registry.businessName || establishment}\nBusiness ID: ${registryReview.businessID}\nThis will link the original pin and set the business to Active / Green.`
-        : `Business ID: ${businessID}\nThis will set the permit to Active and clear the warning to Green.`;
-      const confirmation = await Swal.fire({
-        title: "Confirm compliance?",
-        text: reviewSummary,
-        input: "text",
-        inputLabel: "Office evidence/reference (optional)",
-        inputPlaceholder: "Reason or office record reference",
-        showCancelButton: true,
-        confirmButtonText: "Confirm and mark Green",
-        cancelButtonColor: "var(--swal-cancel-bg, #475569)",
-      });
-      if (!confirmation.isConfirmed) return;
-
-      setClearingWarning(true);
-      setClearError("");
-      await clearInspectionWarning({
-        report,
-        role,
-        reason: confirmation.value || null,
-        token,
-        businessID,
-        registryReviewToken: registryReview?.reviewToken,
-        confirmEstablishment: Boolean(registryReview),
-        request: clearWarningRequest,
-        refresh: onWarningCleared,
-        onChanged: () => window.dispatchEvent(new CustomEvent("revela:registry-update", {
-           detail: { localMutation: true, businessID, logID: report.logID },
-        })),
-      });
-      onClose();
-      await Swal.fire({
-        icon: "success",
-        title: "Warning cleared",
-        text: "The business is now marked as compliant.",
-        confirmButtonColor: "#56ab2f",
-      });
-    } catch (err) {
-      setClearError(err.message || "Could not clear the warning.");
-    } finally {
-      setClearingWarning(false);
-    }
-  };
+  const handleClearWarning = () => setShowClearWarning(true);
   
   const flagMeta    = FLAG_COLOR[report.flagColor]   ?? FLAG_COLOR.Red;
   const resultMeta  = FLAG_COLOR[report.inspectionResult] ?? null;
@@ -678,7 +620,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
 
   return (
     <InspectionDialog
-      title="Inspection Details" onClose={onClose} busy={clearingWarning} isClosing={isClosing} panelStyle={{ width: 520 }}
+      title="Inspection Details" onClose={onClose} isClosing={isClosing} panelStyle={{ width: 520 }}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
 
@@ -826,7 +768,6 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
           );
         })()}
 
-        {clearError && <div style={s.errorBanner} role="alert">{clearError}</div>}
         {isAdmin && (
           <div style={{ display: "flex", gap: 12, marginTop: 24, flexWrap: "wrap" }}>
             {canReassignInspection(report, { isAdmin }) && (
@@ -856,9 +797,9 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
               </button>
             )}
             {canClearInspectionWarning(report, role) && (
-              <button className="ghost-btn" disabled={clearingWarning} onClick={handleClearWarning}
+              <button ref={clearWarningReturnRef} className="ghost-btn" onClick={handleClearWarning}
                 style={{ fontSize: 14, fontWeight: 600, padding: "12px 16px", flex: 1 }}>
-                {clearingWarning ? "Clearing…" : "Clear Warning"}
+                Clear Warning
               </button>
             )}
           </div>
@@ -870,6 +811,238 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
             returnFocusRef={photoReturnRef} fallbackFocusRef={fallbackFocusRef}
           />
         </AnimatePresence>
+        <AnimatePresence isVisible={showClearWarning}>
+          <ClearWarningModal
+            report={report}
+            token={token}
+            role={role}
+            onClose={() => setShowClearWarning(false)}
+            onSuccess={onWarningCleared}
+            returnFocusRef={clearWarningReturnRef}
+            fallbackFocusRef={fallbackFocusRef}
+          />
+        </AnimatePresence>
+    </InspectionDialog>
+  );
+}
+
+function ClearWarningModal({ report, token, role, onClose, onSuccess, isClosing, returnFocusRef, fallbackFocusRef }) {
+  const linkedBusiness = report.businessID != null;
+  const [businessID, setBusinessID] = useState(report.businessID || "");
+  const [registryReview, setRegistryReview] = useState(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const reviewBusinessID = async () => {
+    const cleanBusinessID = businessID.trim();
+    if (!cleanBusinessID) {
+      setError("Official Business ID is required.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      const review = await previewWarningRegistryLinkRequest(
+        report.reportID,
+        cleanBusinessID,
+        token,
+      );
+      setRegistryReview(review);
+    } catch (err) {
+      setRegistryReview(null);
+      setError(err.message || "Could not review the Business ID.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitClearWarning = async () => {
+    if (!linkedBusiness && !registryReview) {
+      setError("Review and confirm the official Business ID first.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    try {
+      await clearInspectionWarning({
+        report,
+        role,
+        reason: reason.trim() || null,
+        token,
+        businessID: linkedBusiness ? report.businessID : registryReview.businessID,
+        registryReviewToken: registryReview?.reviewToken,
+        confirmEstablishment: Boolean(registryReview),
+        request: clearWarningRequest,
+        refresh: onSuccess,
+        onChanged: () => window.dispatchEvent(new CustomEvent("revela:registry-update", {
+          detail: {
+            localMutation: true,
+            businessID: linkedBusiness ? report.businessID : registryReview.businessID,
+            logID: report.logID,
+          },
+        })),
+      });
+      onClose();
+    } catch (err) {
+      setError(err.message || "Could not clear the warning.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewedRegistry = registryReview?.registry;
+  const reviewedBarangay = registryReview?.pin?.barangayName
+    || registryReview?.registry?.barangayName
+    || registryReview?.pin?.barangayID
+    || registryReview?.registry?.barangayID;
+
+  return (
+    <InspectionDialog
+      title="Clear Warning"
+      description="Review the official Business ID and add an optional office reference before clearing this warning."
+      onClose={onClose}
+      busy={busy}
+      isClosing={isClosing}
+      layer={10002}
+      panelStyle={{ width: 520 }}
+      returnFocusRef={returnFocusRef}
+      fallbackFocusRef={fallbackFocusRef}
+    >
+      <div style={{ ...s.flagPreview, marginBottom: 16 }}>
+        <span style={{
+          ...s.flagPill,
+          color: FLAG_COLOR.Orange.text,
+          background: FLAG_COLOR.Orange.bg,
+        }}>
+          Orange
+        </span>
+        <div>
+          <p style={{ fontWeight: 700, fontSize: 14, color: "var(--color-ink)", margin: "0 0 2px" }}>
+            {report.detectedName || report.businessName || "Inspection location"}
+          </p>
+          <p style={{ fontSize: 12, color: "var(--color-muted)", margin: 0 }}>
+            Report #{report.reportID}
+          </p>
+        </div>
+      </div>
+
+      {linkedBusiness ? (
+        <div>
+          <span style={s.fieldLabel}>Official Business ID</span>
+          <div
+            id="clear-warning-business-id"
+            style={{
+              ...s.remarksBox,
+              marginBottom: 14,
+              color: "var(--color-ink)",
+              fontWeight: 600,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {report.businessID}
+          </div>
+        </div>
+      ) : (
+        <>
+          <label htmlFor="clear-warning-business-id" style={s.fieldLabel}>Official Business ID</label>
+          <input
+            id="clear-warning-business-id"
+            type="text"
+            autoComplete="off"
+            spellCheck="false"
+            maxLength={50}
+            placeholder="Enter office-issued Business ID"
+            value={businessID}
+            disabled={busy || Boolean(registryReview)}
+            onChange={event => {
+              setBusinessID(event.target.value);
+              setRegistryReview(null);
+              setError("");
+            }}
+            style={{ ...s.fieldSelect, boxSizing: "border-box", cursor: "text", marginBottom: 8 }}
+          />
+          {!registryReview && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={reviewBusinessID}
+              disabled={busy || !businessID.trim()}
+            >
+              {busy ? "Reviewing…" : "Review Business ID"}
+            </button>
+          )}
+        </>
+      )}
+
+      {registryReview && (
+        <div style={{ ...s.remarksBox, marginTop: 12 }} aria-live="polite">
+          <strong>
+            {registryReview.registryExists ? "Existing Registry record" : "New Registry record"}
+          </strong>
+          <p style={{ fontSize: 13, color: "var(--color-ink)", margin: "8px 0 0" }}>
+            Business ID: {registryReview.businessID}
+          </p>
+          <p style={{ fontSize: 13, color: "var(--color-ink)", margin: "4px 0 0" }}>
+            Business name: {reviewedRegistry?.businessName || report.detectedName || "Not recorded"}
+          </p>
+          {reviewedBarangay && (
+            <p style={{ fontSize: 13, color: "var(--color-ink)", margin: "4px 0 0" }}>
+              Barangay: {reviewedBarangay}
+            </p>
+          )}
+          <p style={{ fontSize: 12, color: "var(--color-muted)", margin: "8px 0 0" }}>
+            Confirming will link the pin and set the business to Active / Green.
+          </p>
+          <button
+            type="button"
+            className="ghost-btn"
+            style={{ marginTop: 10 }}
+            onClick={() => setRegistryReview(null)}
+            disabled={busy}
+          >
+            Change Business ID
+          </button>
+        </div>
+      )}
+
+      <label htmlFor="clear-warning-office-notes" style={{ ...s.fieldLabel, marginTop: 16 }}>
+        Office evidence / reference (optional)
+      </label>
+      <textarea
+        id="clear-warning-office-notes"
+        rows={3}
+        maxLength={500}
+        placeholder="Reason or office record reference"
+        value={reason}
+        disabled={busy}
+        onChange={event => setReason(event.target.value)}
+        style={{
+          ...s.fieldSelect,
+          boxSizing: "border-box",
+          cursor: "text",
+          resize: "vertical",
+          minHeight: 82,
+        }}
+      />
+
+      {error && <div style={{ ...s.errorBanner, marginTop: 12 }} role="alert">{error}</div>}
+
+      <div style={s.modalFooter}>
+        <button type="button" className="ghost-btn" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="primary-btn"
+          onClick={submitClearWarning}
+          disabled={busy || (!linkedBusiness && !registryReview)}
+        >
+          {busy ? "Clearing…" : "Confirm and mark Green"}
+        </button>
+      </div>
     </InspectionDialog>
   );
 }
