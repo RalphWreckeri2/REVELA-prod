@@ -643,7 +643,7 @@ function InspectionDetailModal({ report, token, isAdmin, role, onWarningCleared,
       className="inspection-detail-dialog"
       onClose={onClose}
       isClosing={isClosing}
-      panelStyle={{ width: "min(1240px, calc(100vw - 32px))", height: "min(820px, calc(100dvh - 32px))", maxHeight: "calc(100dvh - 32px)", padding: 0, overflow: "hidden" }}
+      panelStyle={{ width: "min(1080px, calc(100vw - 48px))", height: "min(700px, 85dvh)", maxHeight: "85dvh", padding: 0, overflow: "hidden" }}
       returnFocusRef={returnFocusRef} fallbackFocusRef={fallbackFocusRef}
     >
       <div className="inspection-detail-layout">

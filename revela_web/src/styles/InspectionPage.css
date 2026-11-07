@@ -522,7 +522,7 @@
 .inspection-detail-dialog {
   display: flex;
   flex-direction: column;
-  max-height: calc(100dvh - 32px);
+  max-height: 85dvh;
 }
 .inspection-detail-dialog .dispatch-dialog-header {
   flex: 0 0 auto;
