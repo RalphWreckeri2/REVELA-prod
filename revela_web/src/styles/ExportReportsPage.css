@@ -74,13 +74,14 @@ html.theme-dark .export-report-view-nav button.active { color: var(--color-prima
 .export-report-loading-trail,
 .export-report-loading-trail-glow {
   stroke: #37c487;
-  stroke-dasharray: 11 100;
+  stroke-dasharray: 11 89;
   stroke-dashoffset: 0;
 }
 .export-report-loading-trail { stroke-width: 4; }
 .export-report-loading-trail,
 .export-report-loading-trail-glow {
   animation: export-report-route-travel 3.6s linear infinite;
+  animation-direction: alternate;
 }
 .export-report-loading-trail-glow { stroke: rgba(55, 196, 135, .34); stroke-width: 11; }
 .export-report-loading-node { fill: #65e0a7; opacity: 1; }
@@ -97,7 +98,7 @@ html.theme-dark .export-report-view-nav button.active { color: var(--color-prima
 html.theme-dark .export-report-loading-overlay { background: rgba(4, 10, 7, .62); }
 @keyframes export-report-route-travel {
   from { stroke-dashoffset: 0; }
-  to { stroke-dashoffset: -111; }
+  to { stroke-dashoffset: -89; }
 }
 @media (prefers-reduced-motion: reduce) {
   .export-report-loading-trail,
