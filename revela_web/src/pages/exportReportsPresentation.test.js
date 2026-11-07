@@ -24,15 +24,19 @@ test("report loading overlay is limited to refresh and export work and respects 
   assert.match(page, /finally \{\s*exportInProgress\.current = false;\s*setPreparingExport\(false\);/);
   assert.match(page, /<p className="export-report-loading-message">\{REPORT_LOADING_MESSAGE\}<\/p>/);
   assert.doesNotMatch(page, /setInterval|loading-caret/);
+  assert.match(page, /const REPORT_REQUEST_TIMEOUT_MS = 20_000;/);
+  assert.match(page, /timedOut = true;\s*controller\.abort\(\);[\s\S]*?REPORT_REQUEST_TIMEOUT_MS/);
+  assert.match(page, /const failure = timedOut[\s\S]*?window\.clearTimeout\(timeout\);/);
   assert.match(styles, /\.export-report-loading-card\s*\{[^}]*padding:\s*22px 24px 20px;[^}]*\}/);
   assert.doesNotMatch(styles, /\.export-report-loading-card\s*\{[^}]*background:/);
   assert.match(styles, /background:\s*rgba\(10, 22, 16, \.56\)/);
   assert.match(styles, /backdrop-filter:\s*blur\(5px\)/);
   assert.match(styles, /width:\s*min\(340px, 94vw\)/);
   assert.doesNotMatch(page, /animateMotion/);
-  assert.match(styles, /animation:\s*export-report-route-pulse 2\.2s ease-in-out infinite alternate/);
-  assert.match(styles, /@keyframes export-report-route-pulse\s*\{\s*from \{ opacity: \.16; \}\s*to \{ opacity: 1; \}/);
-  assert.doesNotMatch(styles, /animation:[^;]*stroke-dashoffset/);
+  assert.match(styles, /\.export-report-loading-trail,\s*\.export-report-loading-trail-glow\s*\{\s*animation:\s*export-report-route-travel 3\.6s linear infinite/);
+  assert.match(styles, /stroke-dasharray:\s*11 100/);
+  assert.match(styles, /@keyframes export-report-route-travel\s*\{\s*from \{ stroke-dashoffset: 0; \}\s*to \{ stroke-dashoffset: -111; \}/);
+  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.export-report-loading-trail,\s*\.export-report-loading-trail-glow \{ animation-duration: 6s; \}/);
   assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 

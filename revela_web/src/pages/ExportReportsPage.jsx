@@ -45,6 +45,7 @@ import {
 import { registryFlagRateLabel } from "../components/wlcPolicy";
 
 const REPORT_LOADING_MESSAGE = "Refreshing report data and preparing export...";
+const REPORT_REQUEST_TIMEOUT_MS = 20_000;
 
 function ReportChartSkeleton({ variant = "bars" }) {
   return <div className={`export-chart-skeleton export-chart-skeleton--${variant}`} role="status" aria-label="Loading report chart" aria-busy="true">
@@ -361,8 +362,14 @@ export default function ExportReportsPage() {
     requestRef.current.controller = controller;
     setLoadingAnalytics(!hasReport);
     setAnalyticsError("");
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REPORT_REQUEST_TIMEOUT_MS);
     try {
       const data = await getDemographicReportsRequest(token, { signal: controller.signal });
+      if (timedOut) throw new Error("Report data request timed out. Please retry.");
       if (!data?.descriptive) throw new Error("The report API returned no demographic data.");
       if (sequence !== requestRef.current.sequence || controller.signal.aborted) {
         throw new Error("The report data changed while refreshing. Retry the export.");
@@ -371,11 +378,15 @@ export default function ExportReportsPage() {
       else setReportSnapshot({ data, loadedAt: Date.now() });
       return data;
     } catch (err) {
-      if (sequence === requestRef.current.sequence && !controller.signal.aborted) {
-        setAnalyticsError(err.message || "Unable to load official registry report data.");
+      const failure = timedOut
+        ? new Error("Report data request timed out. Please retry.")
+        : err;
+      if (sequence === requestRef.current.sequence && (!controller.signal.aborted || timedOut)) {
+        setAnalyticsError(failure.message || "Unable to load official registry report data.");
       }
-      throw err;
+      throw failure;
     } finally {
+      window.clearTimeout(timeout);
       if (sequence === requestRef.current.sequence) setLoadingAnalytics(false);
     }
   }, [token, hasReport, setReportSnapshot]);
