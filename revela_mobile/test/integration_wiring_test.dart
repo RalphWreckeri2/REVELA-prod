@@ -49,8 +49,10 @@ void main() {
 
   test('inspection form does not show the nonworking Street View action', () {
     final inspection = source('lib/component/inspection_modal.dart');
+    final home = source('lib/pages/home_page.dart');
     expect(inspection, isNot(contains('View Street View')));
     expect(inspection, isNot(contains('onViewStreetView')));
+    expect(home, isNot(contains("label: const Text('View Street View')")));
   });
 
   test(

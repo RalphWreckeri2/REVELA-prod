@@ -802,18 +802,6 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                   ),
                   if (flag.notes != null && flag.notes!.isNotEmpty)
                     _buildDetailRow('Notes', flag.notes!),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        unawaited(_openStreetView(LatLng(flag.lat, flag.lng)));
-                      },
-                      icon: const Icon(Icons.streetview_rounded),
-                      label: const Text('View Street View'),
-                    ),
-                  ),
                   const SizedBox(height: 12),
                   Container(
                     padding: const EdgeInsets.all(12),
