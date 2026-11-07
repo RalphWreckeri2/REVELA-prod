@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback, useContext, useRef } from "react";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
-import FilterDropdown from "../components/FilterDropdown";
 import { UploadModal } from "../components/UploadModal";
 import { SkeletonBlock, SkeletonDetails, SkeletonTableRows } from "../components/LoadingSkeleton";
 import PageEmptyState from "../components/EmptyState";
@@ -108,8 +107,6 @@ const Icon = {
 
 const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed", "Warning"];
 const REG_TYPE_FILTERS = ["All Types", "NEW", "RENEWAL"];
-const STATUS_FILTER_OPTIONS = STATUS_FILTERS.map(value => ({ value, label: value }));
-const REG_TYPE_FILTER_OPTIONS = REG_TYPE_FILTERS.map(value => ({ value, label: value }));
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -674,8 +671,8 @@ export default function RegistryPage() {
       )}
 
       {/* Filters Bar */}
-      <div className="frosted-glass saas-card" style={styles.filtersBar}>
-        <div className="search-bar" style={{ width: 280, maxWidth: "100%", minWidth: 200, flex: "1 1 auto", position: "relative" }}>
+      <div className="frosted-glass saas-card registry-filters-bar" style={styles.filtersBar}>
+        <div className="search-bar registry-search" style={{ position: "relative" }}>
           <Icon.Search />
           <input
             type="text"
@@ -714,57 +711,55 @@ export default function RegistryPage() {
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", marginLeft: "auto" }}>
+        <div className="registry-filters-controls">
           <Icon.Filter />
 
-          <div style={{ flex: "0 1 240px", minWidth: 150, maxWidth: "100%" }}>
-            <FilterDropdown
-              label="Barangay"
-              compact
-              value={selectedBarangay}
-              options={[
-                { value: "All Barangays", label: "All Barangays" },
-                ...barangays.map(b => ({ value: String(b.barangayID), label: b.barangayName })),
-                ...(inferredBarangayID && !barangays.some(b => String(b.barangayID) === inferredBarangayID)
-                  ? [{ value: inferredBarangayID, label: searchMatch.barangayName || inferredBarangayID }]
-                  : []),
-              ]}
-              onChange={value => {
-                setBarangay(value);
-                setAutoFilterOverrides(current => ({ ...current, barangay: true }));
-              }}
-            />
-          </div>
+          <select
+            className={`filter-select registry-filter-select registry-filter-select--barangay${selectedBarangay !== "All Barangays" ? " is-active" : ""}`}
+            style={styles.select}
+            value={selectedBarangay}
+            onChange={e => {
+              setBarangay(e.target.value);
+              setAutoFilterOverrides(current => ({ ...current, barangay: true }));
+            }}
+          >
+            <option value="All Barangays">All Barangays</option>
+            {barangays.map(b => (
+              <option key={b.barangayID} value={b.barangayID}>
+                {b.barangayName}
+              </option>
+            ))}
+            {inferredBarangayID && !barangays.some(b => String(b.barangayID) === inferredBarangayID) && (
+              <option value={inferredBarangayID}>{searchMatch.barangayName || inferredBarangayID}</option>
+            )}
+          </select>
 
-          <div style={{ flex: "0 1 132px", minWidth: 120, maxWidth: "100%" }}>
-            <FilterDropdown
-              label="Status"
-              compact
-              value={selectedStatus}
-              options={STATUS_FILTER_OPTIONS}
-              onChange={value => {
-                setStatus(value);
-                setAutoFilterOverrides(current => ({ ...current, status: true }));
-                setPage(1);
-              }}
-            />
-          </div>
+          <select
+            className={`filter-select registry-filter-select registry-filter-select--status${selectedStatus !== "All Status" ? " is-active" : ""}`}
+            style={styles.select}
+            value={selectedStatus}
+            onChange={e => {
+              setStatus(e.target.value);
+              setAutoFilterOverrides(current => ({ ...current, status: true }));
+              setPage(1);
+            }}
+          >
+            {STATUS_FILTERS.map(s => <option key={s}>{s}</option>)}
+          </select>
 
-          <div style={{ flex: "0 1 136px", minWidth: 120, maxWidth: "100%" }}>
-            <FilterDropdown
-              label="Registration type"
-              compact
-              value={selectedRegType}
-              options={REG_TYPE_FILTER_OPTIONS}
-              onChange={value => {
-                setRegType(value);
-                setAutoFilterOverrides(current => ({ ...current, regType: true }));
-                setPage(1);
-              }}
-            />
-          </div>
+          <select
+            className={`filter-select registry-filter-select registry-filter-select--type${selectedRegType !== "All Types" ? " is-active" : ""}`}
+            style={styles.select}
+            value={selectedRegType}
+            onChange={e => {
+              setRegType(e.target.value);
+              setAutoFilterOverrides(current => ({ ...current, regType: true }));
+              setPage(1);
+            }}
+          >
+            {REG_TYPE_FILTERS.map(t => <option key={t}>{t}</option>)}
+          </select>
 
-          {/* Native page-size select remains separate from the styled filters. */}
           <label style={styles.pageSizeLabel}>
             Rows
             <select
@@ -784,7 +779,6 @@ export default function RegistryPage() {
               : `${total} result${total !== 1 ? "s" : ""}`}
           </span>
         </div>
-
       </div>
 
       {/* Data Table */}
@@ -981,7 +975,7 @@ const styles = {
   summaryCard: { display: "flex", flexDirection: "column", gap: 4, padding: "18px 24px", borderRadius: "var(--radius-lg)", minWidth: 0 },
   summaryValue: { fontSize: 28, fontWeight: 800, lineHeight: 1 },
   summaryLabel: { fontSize: 12, color: "var(--color-muted)", fontWeight: 500 },
-  filtersBar: { display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderRadius: "var(--radius-lg)", flexWrap: "wrap" },
+  filtersBar: { display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", borderRadius: "var(--radius-lg)" },
   select: {
     background: "var(--color-hover)", border: "1px solid var(--color-border)",
     borderRadius: "var(--radius-sm)", padding: "8px 12px", fontSize: 13,

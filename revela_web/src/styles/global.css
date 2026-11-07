@@ -1736,6 +1736,46 @@ html.theme-dark .filter-select.is-active {
   color: var(--color-primary) !important;
 }
 
+.registry-filters-bar {
+  flex-wrap: nowrap;
+}
+.registry-search {
+  width: auto !important;
+  min-width: 200px !important;
+  flex: 1 1 auto !important;
+}
+.registry-filters-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  margin-left: auto;
+}
+.registry-filter-select {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+.registry-filter-select--barangay { width: 240px; }
+.registry-filter-select--status { width: 130px; }
+.registry-filter-select--type { width: 135px; }
+.registry-filters-controls > :is(svg, label, span) {
+  flex: 0 0 auto;
+}
+@media (max-width: 1200px) {
+  .registry-filters-bar {
+    flex-wrap: wrap;
+  }
+  .registry-search {
+    flex: 1 1 100% !important;
+  }
+  .registry-filters-controls {
+    width: 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
+}
+
 /* One restrained, visible focus treatment for text fields in both themes. */
 :is(input:not([type]), input[type="text"], input[type="search"], input[type="email"],
   input[type="password"], input[type="tel"], input[type="url"], input[type="number"],
