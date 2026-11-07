@@ -25,6 +25,7 @@ import {
   deleteNotificationsRequest,
   streamNotificationsRequest,
 } from "../services/api";
+import { notificationNavigationTarget } from "./notificationNavigation";
 import "../styles/global.css";
 import Swal from "sweetalert2";
 import myLogo from "../assets/logo.png";
@@ -632,7 +633,8 @@ function TopNavbar({ user = { initials: "JD", name: "J. Dela Cruz" }, onProfileC
         /* ignore */
       }
     }
-    if (note.link) navigate(note.link);
+    const target = notificationNavigationTarget(note);
+    if (target) navigate(target);
     setShowNotifications(false);
   };
 

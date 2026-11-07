@@ -14,14 +14,12 @@ class InspectionModal extends StatefulWidget {
   final InspectionTask task;
   final VoidCallback onSubmitted;
   final InspectionLocationService? locationService;
-  final ValueChanged<LatLng>? onViewStreetView;
 
   const InspectionModal({
     super.key,
     required this.task,
     required this.onSubmitted,
     this.locationService,
-    this.onViewStreetView,
   });
 
   @override
@@ -245,7 +243,7 @@ class _InspectionModalState extends State<InspectionModal> {
       }
       final messenger = ScaffoldMessenger.of(context);
       widget.onSubmitted();
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop();
       final message = switch (result) {
         InspectionSubmissionResult.submitted =>
           'Submitted successfully. Admin can verify it on the web dashboard.',
@@ -642,8 +640,7 @@ class _InspectionModalState extends State<InspectionModal> {
             ),
 
             const Divider(height: 32),
-            if (widget.onViewStreetView != null &&
-                latitude != null &&
+            if (latitude != null &&
                 latitude.isFinite &&
                 longitude != null &&
                 longitude.isFinite)
@@ -652,13 +649,8 @@ class _InspectionModalState extends State<InspectionModal> {
                 child: SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      final position = LatLng(latitude, longitude);
-                      Navigator.of(context).pop();
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        widget.onViewStreetView?.call(position);
-                      });
-                    },
+                    onPressed: () =>
+                        Navigator.of(context).pop(LatLng(latitude, longitude)),
                     icon: const Icon(Icons.streetview_rounded),
                     label: const Text('View Street View'),
                   ),

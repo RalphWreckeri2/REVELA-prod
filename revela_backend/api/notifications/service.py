@@ -415,7 +415,7 @@ def notify_inspection_submitted(
             f"Recorded result: {inspection_result}.{photo_note} "
             f"Open Inspections to review (report #{report_id})."
         )
-        link = "/inspections"
+        link = f"/inspections?reportID={report_id}&openReport=1"
 
         for a in admins:
             aid = int(a["userID"])

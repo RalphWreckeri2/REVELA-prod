@@ -154,6 +154,7 @@ const Icon = {
 // ── Constants ──────────────────────────────────────────────────────────────────
 const STATUS_COLS = ["Assigned", "Reassigned", "Submitted", "Verified"];
 const WORKLOAD_PAGE_SIZE = 20;
+const EMPTY_REPORTS = Object.freeze([]);
 
 const FLAG_COLOR = {
   Red:    { bg: "var(--flag-red-bg)",    text: "var(--flag-red-text)" },
@@ -1053,6 +1054,8 @@ export default function InspectionPage() {
   const [assignTarget, setAssignTarget] = useState(null);
   const [verifyTarget, setVerifyTarget] = useState(null);
   const [detailTarget, setDetailTarget] = useState(null);
+  const autoOpenedReportIDRef = useRef(null);
+  const shouldOpenLinkedReport = searchParams.get("openReport") === "1";
 
   // Filter state (admin only)
   const filterStatus = searchParams.get("status") || "";
@@ -1100,7 +1103,7 @@ export default function InspectionPage() {
     ? `${view}:${page}:${reportID || ""}:${deadlineDate || ""}:${filterStatus}:${filterBarangay}:${filterResult}:${filterDeadline}:${debouncedSearch}`
     : "tasks"}`;
   const [reportData, setReportData, hasReports] = useSessionDataset(requestKey, "reports", null);
-  const reports = reportData?.data ?? [];
+  const reports = reportData?.data ?? EMPTY_REPORTS;
   const total = reportData?.total ?? 0;
   const [loading, setLoading] = useState(() => !hasReports);
   const currentRequestKey = useRef(requestKey);
@@ -1211,10 +1214,20 @@ export default function InspectionPage() {
       ? [...STATUS_COLS, "In Progress"] : STATUS_COLS)
     : ["Assigned", "Reassigned"];
 
-  const openDetail = (report, trigger) => {
+  const openDetail = useCallback((report, trigger) => {
     detailReturnRef.current = trigger || document.activeElement;
     setDetailTarget(report);
-  };
+  }, []);
+  useEffect(() => {
+    if (!isAdmin || !shouldOpenLinkedReport || !reportID || loading ||
+        autoOpenedReportIDRef.current === reportID) {
+      return;
+    }
+    const report = reports.find(row => String(row.reportID) === reportID);
+    if (!report) return;
+    autoOpenedReportIDRef.current = reportID;
+    openDetail(report);
+  }, [isAdmin, loading, openDetail, reportID, reports, shouldOpenLinkedReport]);
   const openGrid = (status, trigger) => {
     gridReturnRef.current = trigger;
     gridVersionRef.current += 1;
@@ -1433,7 +1446,13 @@ export default function InspectionPage() {
           onWarningCleared={() => fetchReports(true)}
           onAssign={(r) => { actionReturnRef.current = detailReturnRef.current; setDetailTarget(null); setAssignTarget(r); }}
           onVerify={(r) => { actionReturnRef.current = detailReturnRef.current; setDetailTarget(null); setVerifyTarget(r); }}
-          onClose={() => setDetailTarget(null)}
+          onClose={() => {
+            setDetailTarget(null);
+            if (shouldOpenLinkedReport) {
+              autoOpenedReportIDRef.current = null;
+              changeParams({ openReport: null });
+            }
+          }}
           returnFocusRef={detailReturnRef} fallbackFocusRef={searchRef}
         />
       </AnimatePresence>
