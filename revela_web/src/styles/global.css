@@ -1709,6 +1709,11 @@ html.theme-dark input::placeholder,
 html.theme-dark textarea::placeholder {
   color: var(--color-subtle);
 }
+html.theme-dark input[type="date"],
+html.theme-dark input[type="datetime-local"],
+html.theme-dark input[type="time"] {
+  color-scheme: dark;
+}
 html.theme-dark input:focus,
 html.theme-dark textarea:focus {
   border-color: var(--field-focus-border);

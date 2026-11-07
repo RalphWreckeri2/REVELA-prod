@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import "../styles/FilterDropdown.css";
 
 /** The Map's custom combobox design, shared with the operational report. */
-export default function FilterDropdown({ label, value, options, onChange, disabled = false, getOptionColor }) {
+export default function FilterDropdown({ label, value, options, onChange, disabled = false, getOptionColor, compact = false }) {
   const id = useId();
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -64,7 +64,7 @@ export default function FilterDropdown({ label, value, options, onChange, disabl
   return (
     <div className={`filter-dropdown${open ? " is-open" : ""}${isActive ? " is-active" : ""}`} ref={root}
       onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}>
-      <span id={`${id}-label`}>{label}</span>
+      <span id={`${id}-label`} className={compact ? "ui-sr-only" : undefined}>{label}</span>
       <button ref={trigger} type="button" role="combobox" className="filter-dropdown-trigger"
         aria-labelledby={`${id}-label ${id}-value`} aria-haspopup="listbox" aria-expanded={open}
         aria-controls={open ? `${id}-options` : undefined}

@@ -2989,6 +2989,7 @@ export default function MapPage() {
     };
   }, [token]);
   const [opsRankings, setOpsRankings, hasOpsRankings] = useSessionDataset("map", "rankings", []);
+  const [opsRankingsLoading, setOpsRankingsLoading] = useState(() => !hasOpsRankings);
 
   useEffect(() => {
     const workspace = mapWorkspaceRef.current;
@@ -3382,6 +3383,7 @@ export default function MapPage() {
     flagsRequestController.current?.abort();
     const controller = new AbortController();
     flagsRequestController.current = controller;
+    setOpsRankingsLoading(true);
     if (!isSilent) {
       setLoadingFlags(!hasFlags);
     }
@@ -3470,7 +3472,10 @@ export default function MapPage() {
       return false;
     } finally {
       if (flagsRequestController.current === controller) flagsRequestController.current = null;
-      if (sequence === flagsRequestSequence.current) setLoadingFlags(false);
+      if (sequence === flagsRequestSequence.current) {
+        setLoadingFlags(false);
+        setOpsRankingsLoading(false);
+      }
       if (benchmarkFlagsFlightRef.current?.promise === request) {
         benchmarkFlagsFlightRef.current = null;
       }
@@ -3478,7 +3483,7 @@ export default function MapPage() {
     })();
     if (benchmarkRequest) benchmarkFlagsFlightRef.current = { trial: benchmarkRequest, promise: request };
     return request;
-  }, [token, benchmarkTrial, hasFlags, setFlags, setOpsRankings, setBarangayRiskLevels]);
+  }, [token, benchmarkTrial, hasFlags, setFlags, setOpsRankings, setOpsRankingsLoading, setBarangayRiskLevels]);
 
   // Count Red Flags per barangay from the already-loaded flags array.
   // Used when prescriptive rankings omit a barangay (unranked tier on the map).
@@ -5131,8 +5136,8 @@ export default function MapPage() {
           </h4>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {loadingFlags && !hasOpsRankings ? (
-            <div className="priority-dispatch-skeleton" role="status" aria-label="Loading priority dispatch queue" aria-busy="true">
+          {opsRankingsLoading && !hasOpsRankings ? (
+            <div className="priority-dispatch-skeleton" role="status" aria-label="Loading OPS priority scores" aria-busy="true">
               {[0, 1, 2].map((index) => (
                 <div className="priority-dispatch-skeleton-item" key={index}>
                   <SkeletonBlock style={{ width: "54%", height: 12, marginBottom: 7 }} />

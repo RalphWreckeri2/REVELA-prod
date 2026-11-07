@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useContext, useRef } from "react";
 import { useAppDataRefresh, useSessionDataset, refreshResults } from "../components/useAppDataRefresh";
 import DashboardLayout from "../components/DashboardLayout";
 import StatusBadge from "../components/StatusBadge";
+import FilterDropdown from "../components/FilterDropdown";
 import { UploadModal } from "../components/UploadModal";
 import { SkeletonBlock, SkeletonDetails, SkeletonTableRows } from "../components/LoadingSkeleton";
 import PageEmptyState from "../components/EmptyState";
@@ -107,6 +108,8 @@ const Icon = {
 
 const STATUS_FILTERS = ["All Status", "Active", "Expired", "Revoked", "Pending", "Closed", "Warning"];
 const REG_TYPE_FILTERS = ["All Types", "NEW", "RENEWAL"];
+const STATUS_FILTER_OPTIONS = STATUS_FILTERS.map(value => ({ value, label: value }));
+const REG_TYPE_FILTER_OPTIONS = REG_TYPE_FILTERS.map(value => ({ value, label: value }));
 const PAGE_SIZE_OPTIONS = [5, 10, 20, 50];
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -714,52 +717,54 @@ export default function RegistryPage() {
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", maxWidth: "100%", marginLeft: "auto" }}>
           <Icon.Filter />
 
-          <select
-            className={`filter-select${selectedBarangay !== "All Barangays" ? " is-active" : ""}`}
-            style={{ ...styles.select, maxWidth: "100%" }}
-            value={selectedBarangay}
-            onChange={e => {
-              setBarangay(e.target.value);
-              setAutoFilterOverrides(current => ({ ...current, barangay: true }));
-            }}
-          >
-            <option value="All Barangays">All Barangays</option>
-            {barangays.map(b => (
-              <option key={b.barangayID} value={b.barangayID}>
-                {b.barangayName}
-              </option>
-            ))}
-            {inferredBarangayID && !barangays.some(b => String(b.barangayID) === inferredBarangayID) && (
-              <option value={inferredBarangayID}>{searchMatch.barangayName || inferredBarangayID}</option>
-            )}
-          </select>
+          <div style={{ flex: "0 1 240px", minWidth: 150, maxWidth: "100%" }}>
+            <FilterDropdown
+              label="Barangay"
+              compact
+              value={selectedBarangay}
+              options={[
+                { value: "All Barangays", label: "All Barangays" },
+                ...barangays.map(b => ({ value: String(b.barangayID), label: b.barangayName })),
+                ...(inferredBarangayID && !barangays.some(b => String(b.barangayID) === inferredBarangayID)
+                  ? [{ value: inferredBarangayID, label: searchMatch.barangayName || inferredBarangayID }]
+                  : []),
+              ]}
+              onChange={value => {
+                setBarangay(value);
+                setAutoFilterOverrides(current => ({ ...current, barangay: true }));
+              }}
+            />
+          </div>
 
-          <select
-            className={`filter-select${selectedStatus !== "All Status" ? " is-active" : ""}`}
-            style={{ ...styles.select, maxWidth: "100%" }}
-            value={selectedStatus}
-            onChange={e => {
-              setStatus(e.target.value);
-              setAutoFilterOverrides(current => ({ ...current, status: true }));
-              setPage(1);
-            }}
-          >
-            {STATUS_FILTERS.map(s => <option key={s}>{s}</option>)}
-          </select>
+          <div style={{ flex: "0 1 132px", minWidth: 120, maxWidth: "100%" }}>
+            <FilterDropdown
+              label="Status"
+              compact
+              value={selectedStatus}
+              options={STATUS_FILTER_OPTIONS}
+              onChange={value => {
+                setStatus(value);
+                setAutoFilterOverrides(current => ({ ...current, status: true }));
+                setPage(1);
+              }}
+            />
+          </div>
 
-          <select
-            className={`filter-select${selectedRegType !== "All Types" ? " is-active" : ""}`}
-            style={{ ...styles.select, maxWidth: "100%" }}
-            value={selectedRegType}
-            onChange={e => {
-              setRegType(e.target.value);
-              setAutoFilterOverrides(current => ({ ...current, regType: true }));
-              setPage(1);
-            }}
-          >
-            {REG_TYPE_FILTERS.map(t => <option key={t}>{t}</option>)}
-          </select>
+          <div style={{ flex: "0 1 136px", minWidth: 120, maxWidth: "100%" }}>
+            <FilterDropdown
+              label="Registration type"
+              compact
+              value={selectedRegType}
+              options={REG_TYPE_FILTER_OPTIONS}
+              onChange={value => {
+                setRegType(value);
+                setAutoFilterOverrides(current => ({ ...current, regType: true }));
+                setPage(1);
+              }}
+            />
+          </div>
 
+          {/* Native page-size select remains separate from the styled filters. */}
           <label style={styles.pageSizeLabel}>
             Rows
             <select
@@ -779,6 +784,7 @@ export default function RegistryPage() {
               : `${total} result${total !== 1 ? "s" : ""}`}
           </span>
         </div>
+
       </div>
 
       {/* Data Table */}

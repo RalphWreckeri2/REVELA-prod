@@ -470,11 +470,36 @@ test("map KPIs use exact-location totals and explain the effective Red populatio
     mapPageSource,
     /recordedBarangayID: flag\.recordedBarangayID \?\? flag\.barangayID/,
   );
-  assert.match(mapPageSource, /label: "Unregistered \(Red\)"/);
+  assert.match(mapPageSource, /label: "Expired \/ Unregistered"/);
   assert.match(mapPageSource, /Approx\. \(\{centroidPreviewFlags\.length\}\)/);
   assert.match(mapPageSource, /locationReview\?\.kind === "inferred"/);
   assert.match(
     MAP_LOCATION_METRIC_DEFINITIONS.flagColorLocations,
     /Red includes expired registered businesses and unregistered detections/,
   );
+});
+
+test("map flag KPIs show meanings without repeating flag color names", () => {
+  for (const meaning of [
+    "1st/2nd Warning / Notice",
+    "Expired / Unregistered",
+    "Pending / Suspected",
+    "Closed / Abandoned",
+    "Revoked / Blacklisted",
+  ]) {
+    assert.ok(mapPageSource.includes(`label: "${meaning}"`), `Missing KPI meaning: ${meaning}`);
+  }
+  assert.doesNotMatch(
+    mapPageSource,
+    /label: "(?:Red|Yellow|Black) flags \(/,
+  );
+});
+
+test("OPS priority rankings use skeleton cards while loading", () => {
+  assert.match(
+    mapPageSource,
+    /className="priority-dispatch-skeleton" role="status" aria-label="Loading OPS priority scores" aria-busy="true"/,
+  );
+  assert.match(mapPageSource, /className="priority-dispatch-skeleton-item"/);
+  assert.doesNotMatch(mapPageSource, /Loading OPS priority scores\.\.\./);
 });

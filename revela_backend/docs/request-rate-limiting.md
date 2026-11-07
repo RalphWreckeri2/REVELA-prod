@@ -21,7 +21,8 @@ reachable exclusively through a known number of trusted proxies that replace
 the forwarded client-IP header. Incorrect proxy configuration can make clients
 share a proxy IP or allow spoofed addresses.
 
-This in-process limiter is an application safeguard, not DDoS mitigation. It
+This in-process limiter is an application
+ safeguard, not DDoS mitigation. It
 does not share counters across replicas and cannot absorb traffic that already
 exhausts network or hosting capacity. Keep edge/WAF/provider-level rate limits
 and DDoS protection enabled for the deployed service; configure them in the
