@@ -1006,7 +1006,8 @@ export default function HomePage() {
         title: "Happy New Year!",
         html: `<div style="text-align: left; font-size: 13.5px; line-height: 1.6; color: var(--color-ink);">` +
           `Welcome to <b>${rollover.year}</b>!<br/><br/>` +
-          `The system has automatically marked <b>${rollover.count}</b> active business permits from previous years as <span style="color: var(--color-danger); font-weight: 700;">Expired</span> and their map flags as <span style="color: var(--color-danger); font-weight: 700;">Red</span>.<br/><br/>` +
+          `The system has automatically expired <b>${rollover.count}</b> business permit${rollover.count === 1 ? "" : "s"} that failed to renew for <b>${rollover.year}</b>. Their map flags have been updated to <span style="color: var(--color-danger); font-weight: 700;">Red</span>.<br/><br/>` +
+          `<span style="font-size: 12.5px; font-style: italic; color: var(--color-muted);">Note: Businesses with an active warning were excluded and retain their <span style="color: var(--flag-orange-text); font-weight: 700;">Orange</span> flags pending resolution.</span><br/><br/>` +
           `Let's upload/sync the new BPLO registry to update their statuses.</div>`,
         icon: "info",
         confirmButtonText: "Upload Registry Now",
