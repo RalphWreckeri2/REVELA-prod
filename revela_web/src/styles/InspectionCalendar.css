@@ -15,3 +15,27 @@
 .inspection-calendar-day-count-skeleton { width: min(72px, 85%); height: 16px; margin-top: 6px; }
 .inspection-calendar-total-skeleton { width: 44px; height: 22px; }
 .inspection-calendar-activities .ui-skeleton-list { margin-top: 16px; }
+.inspection-calendar-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--color-muted);
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+.inspection-calendar-filter:hover,
+.inspection-calendar-filter[aria-pressed="true"] {
+  border-color: var(--color-border);
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+.inspection-calendar-filter:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

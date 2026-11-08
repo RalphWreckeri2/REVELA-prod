@@ -126,6 +126,18 @@ _analytics_failures: dict = {}
 _ANALYTICS_CACHE_TTL = 60  # seconds
 _ANALYTICS_MAX_STALE_AGE = 15 * 60  # hard limit measured from computed_at
 _ANALYTICS_REFRESH_RETRY = 15
+
+_LATEST_INSPECTION_REPORTS_SQL = """
+    (
+        SELECT current_ir.*
+        FROM inspection_reports current_ir
+        JOIN (
+            SELECT targetID, MAX(reportID) AS reportID
+            FROM inspection_reports
+            GROUP BY targetID
+        ) latest_ir ON latest_ir.reportID = current_ir.reportID
+    )
+"""
 _analytics_cache_lock = threading.Lock()
 # filter key -> (Future, invalidation generation)
 _analytics_refreshes: dict = {}
@@ -2329,8 +2341,10 @@ def _get_all_analytics_inner(F=None):
     ]
 
     # Audit summary
+    # Status summaries describe the current report for each location. Older
+    # report activity remains available in activity metrics and the calendar.
     _execute(cur, "descriptive.audit_summary", f"""
-        SELECT COUNT(*) AS n FROM inspection_reports ir
+        SELECT COUNT(*) AS n FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE 1=1 {insp_ir} {geo_g}
     """, insp_ir_p + geo_g_p)
@@ -2357,7 +2371,7 @@ def _get_all_analytics_inner(F=None):
         FROM barangays b
         LEFT JOIN geospatial_logs g
           ON g.barangayID = b.barangayID {geo_on_g}
-        LEFT JOIN inspection_reports ir
+        LEFT JOIN {_LATEST_INSPECTION_REPORTS_SQL} ir
           ON ir.targetID = g.logID {insp_ir}
         WHERE 1=1 {brgy_b}
         GROUP BY b.barangayID, b.barangayName
@@ -2387,7 +2401,7 @@ def _get_all_analytics_inner(F=None):
         FROM barangays b
         LEFT JOIN geospatial_logs g
           ON g.barangayID = b.barangayID {geo_on_g}
-        LEFT JOIN inspection_reports ir
+        LEFT JOIN {_LATEST_INSPECTION_REPORTS_SQL} ir
           ON ir.targetID = g.logID {insp_ir}
          AND ir.verificationStatus = 'Verified'
          AND ir.inspectionResult IN ('Green', 'Yellow', 'Red')
@@ -2408,7 +2422,7 @@ def _get_all_analytics_inner(F=None):
 
     _execute(cur, "descriptive.verified_reports_without_outcome", f"""
         SELECT COUNT(DISTINCT ir.reportID) AS n
-        FROM inspection_reports ir
+        FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE ir.verificationStatus = 'Verified'
           AND (ir.inspectionResult IS NULL
@@ -2422,7 +2436,7 @@ def _get_all_analytics_inner(F=None):
     # than silently folding in the Operations LEFT JOIN population.
     _execute(cur, "descriptive.unlinked_inspection_reports", f"""
         SELECT COUNT(DISTINCT ir.reportID) AS n
-        FROM inspection_reports ir
+        FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         LEFT JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE g.logID IS NULL {insp_ir}
     """, insp_ir_p)
@@ -2430,7 +2444,7 @@ def _get_all_analytics_inner(F=None):
 
     _execute(cur, "descriptive.inspection_result_breakdown", f"""
         SELECT ir.inspectionResult, COUNT(*) AS count
-        FROM inspection_reports ir
+        FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE ir.inspectionResult IS NOT NULL AND ir.verificationStatus = 'Verified' {insp_ir} {geo_g}
         GROUP BY ir.inspectionResult
@@ -2441,7 +2455,7 @@ def _get_all_analytics_inner(F=None):
     ]
     _execute(cur, "descriptive.submitted_result_breakdown", f"""
         SELECT ir.inspectionResult, COUNT(*) AS count
-        FROM inspection_reports ir
+        FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE ir.inspectionResult IS NOT NULL AND ir.verificationStatus = 'Submitted' {insp_ir} {geo_g}
         GROUP BY ir.inspectionResult
@@ -2454,7 +2468,7 @@ def _get_all_analytics_inner(F=None):
             COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Verified' THEN ir.reportID END) AS verified_reports,
             COUNT(DISTINCT CASE WHEN ir.verificationStatus = 'Submitted' AND ir.inspectionResult = 'Green'
                   THEN ir.reportID END) AS submitted_green
-        FROM inspection_reports ir
+        FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE 1=1 {insp_ir} {geo_g}
     """, insp_ir_p + geo_g_p)
@@ -2879,7 +2893,7 @@ def _get_all_analytics_inner(F=None):
             COUNT(CASE WHEN ir.verificationStatus = 'Submitted' AND g.logID IS NOT NULL THEN ir.reportID END) AS awaiting_review,
             COUNT(CASE WHEN ir.verificationStatus = 'Verified' AND g.logID IS NOT NULL THEN ir.reportID END) AS verified
         FROM users u
-        LEFT JOIN inspection_reports ir ON ir.userID = u.userID{insp_ir}
+        LEFT JOIN {_LATEST_INSPECTION_REPORTS_SQL} ir ON ir.userID = u.userID{insp_ir}
         LEFT JOIN geospatial_logs g ON ir.targetID = g.logID{geo_g}
         WHERE u.userRole = 'Inspector'
         GROUP BY u.userID
@@ -2890,7 +2904,7 @@ def _get_all_analytics_inner(F=None):
     # 2. Inspection Status Breakdown
     _execute(cur, "operations.inspection_status_breakdown", f"""
         SELECT COALESCE(ir.verificationStatus, 'Unassigned') as status, COUNT(ir.reportID) as count
-        FROM inspection_reports ir
+        FROM {_LATEST_INSPECTION_REPORTS_SQL} ir
         LEFT JOIN geospatial_logs g ON ir.targetID = g.logID
         WHERE 1=1 {insp_ir} {geo_g}
         GROUP BY ir.verificationStatus

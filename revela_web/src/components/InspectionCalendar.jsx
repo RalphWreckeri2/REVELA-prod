@@ -245,6 +245,7 @@ export default function InspectionCalendar({ token, initialDate }) {
     return new Date(date.getFullYear(), date.getMonth(), 1);
   });
   const [selectedDate, setSelectedDate] = useState(() => initialDate || manilaToday());
+  const [activityFilter, setActivityFilter] = useState("all");
   const [requestState, setRequestState] = useState(null);
   const refreshVersion = 0;
   const deadlineVersion = 0;
@@ -363,6 +364,12 @@ export default function InspectionCalendar({ token, initialDate }) {
       .filter(([eventType]) => counts.has(eventType))
       .map(([eventType, meta]) => ({ eventType, ...meta, count: counts.get(eventType) }));
   }, [activities]);
+  const filteredActivities = useMemo(
+    () => activityFilter === "all"
+      ? activities
+      : activities.filter(activity => activity.eventType === activityFilter),
+    [activities, activityFilter],
+  );
 
   const selectMonth = (offset) => {
     const next = new Date(
@@ -560,24 +567,48 @@ export default function InspectionCalendar({ token, initialDate }) {
             <div className="inspection-calendar-activities-heading">
               <p className="inspection-calendar-eyebrow">Selected-day activity</p>
               <h2 id="inspection-calendar-selected-label">{formatLongDate(selectedDate)}</h2>
-              <p className="inspection-calendar-activities-description">Recorded lifecycle events, in chronological order. UTC recording dates and times.</p>
+              <p className="inspection-calendar-activities-description">Select an event type below to filter the list. Events are shown in chronological order using recorded UTC times.</p>
             </div>
-            {dayReady && <span className="inspection-calendar-count">{eventCountLabel(activities.length)}</span>}
+            {dayReady && <span className="inspection-calendar-count">
+              {activityFilter === "all"
+                ? eventCountLabel(activities.length)
+                : `${eventCountLabel(filteredActivities.length)} of ${activities.length}`}
+            </span>}
           </header>
 
-          {statusSummary.length > 0 && (
+          {dayReady && (
             <dl className="inspection-calendar-summary">
+              <div className="inspection-calendar-summary-item">
+                <dt>
+                  <button
+                    className="inspection-calendar-filter"
+                    type="button"
+                    aria-pressed={activityFilter === "all"}
+                    onClick={() => setActivityFilter("all")}
+                  >
+                    All events
+                  </button>
+                </dt>
+                <dd>{activities.length}</dd>
+              </div>
               {statusSummary.map(({ eventType, label, status, count }) => {
                 const tone = STATUS_TONE[status];
                 return (
                   <div className="inspection-calendar-summary-item" key={eventType}>
                     <dt>
-                      <span
-                        className="inspection-calendar-summary-dot"
-                        style={{ background: tone.rail }}
-                        aria-hidden="true"
-                      />
-                       {label}
+                      <button
+                        className="inspection-calendar-filter"
+                        type="button"
+                        aria-pressed={activityFilter === eventType}
+                        onClick={() => setActivityFilter(eventType)}
+                      >
+                        <span
+                          className="inspection-calendar-summary-dot"
+                          style={{ background: tone.rail }}
+                          aria-hidden="true"
+                        />
+                        {label}
+                      </button>
                     </dt>
                     <dd>{count}</dd>
                   </div>
@@ -590,9 +621,9 @@ export default function InspectionCalendar({ token, initialDate }) {
              <div role="status" aria-label="Loading selected-day activity" aria-busy="true"><SkeletonList rows={3} /></div>
           ) : error ? (
             <p className="inspection-calendar-state is-error">Activity for this date could not be loaded. Use Retry above to try again.</p>
-          ) : activities.length ? (
+          ) : filteredActivities.length ? (
             <ol className="inspection-calendar-list">
-              {activities.map((activity) => {
+              {filteredActivities.map((activity) => {
                 const meta = EVENT_TYPES[activity.eventType] || { label: activity.eventType || "Recorded event" };
                 const tone = toneFor(activity.eventType);
                 const clock = formatClock(activity.eventTimestamp);
@@ -677,6 +708,16 @@ export default function InspectionCalendar({ token, initialDate }) {
                 );
               })}
             </ol>
+          ) : activities.length ? (
+            <div className="inspection-calendar-empty-state">
+              <div>
+                <p className="inspection-calendar-empty-title">No {EVENT_TYPES[activityFilter]?.label.toLowerCase() || "matching"} activity</p>
+                <p className="inspection-calendar-empty-text">There are no events of this type on the selected date.</p>
+              </div>
+              <button className="ghost-btn" type="button" onClick={() => setActivityFilter("all")}>
+                Show all events
+              </button>
+            </div>
           ) : (
             <div className="inspection-calendar-empty-state">
               <div>
