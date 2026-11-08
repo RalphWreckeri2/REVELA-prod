@@ -864,6 +864,18 @@ export default function RegistryPage() {
                ? <SkeletonBlock as="span" statusLabel="Loading registry results" style={{ width: 88 }} />
               : `${total} result${total !== 1 ? "s" : ""}`}
           </span>
+
+          {hasFilters && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={clearRegistryFilters}
+              title="Clear all filters"
+              style={{ padding: "6px 10px", fontSize: 12, gap: 6 }}
+            >
+              <Icon.X /> Clear filters
+            </button>
+          )}
         </div>
       </div>
 
