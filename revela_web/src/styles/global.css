@@ -1772,7 +1772,7 @@ html.theme-dark .filter-select.is-active {
 .registry-filters-controls > :is(svg, label, span) {
   flex: 0 0 auto;
 }
-@media (max-width: 1200px) {
+@media (max-width: 1400px) {
   .registry-filters-bar {
     flex-wrap: wrap;
   }
