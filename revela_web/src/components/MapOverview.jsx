@@ -6,6 +6,7 @@ import {
   getFlagsRequest,
   getAnalyticsHotspotsRequest,
   getBarangayOverviewRequest,
+  getInspectionWorkloadRequest,
   getRegistryStatusBySizeRequest,
 } from "../services/api";
 import { useGoogleMapsScript } from "../utils/googleMaps";
@@ -104,6 +105,15 @@ const STATUS_COLORS = {
   Red: "#ef4444",
 };
 
+const INSPECTION_BOARD_COLUMNS = [
+  { status: "Assigned", value: "assigned", label: "Assigned", color: "#f97316" },
+  { status: "Reassigned", value: "reassigned", label: "Reassigned", color: "#eab308" },
+  { status: "In Progress", value: "in_progress", label: "In Progress", color: "#8b5cf6" },
+  { status: "Submitted", value: "submitted", label: "Submitted", color: "#3b82f6" },
+  { status: "Verified", value: "verified", label: "Verified", color: "#10b981" },
+];
+const INSPECTION_BOARD_PAGE_SIZE = 20;
+
 function shortBarangay(name = "") {
   return name
     .replace(/^District (.+?)(?: \(Pob\.\))?$/, "Brgy. $1")
@@ -187,6 +197,60 @@ function useBarangayOverview(token, filters, datePreset) {
 
   return {
     overview,
+    loading,
+    error,
+    retry: () => setRetry((previous) => previous + 1),
+  };
+}
+
+function useInspectionBoardPage(token, barangayId) {
+  const [retry, setRetry] = useState(0);
+  const requestKey = `${token}:${barangayId ?? "all"}:${retry}`;
+  const [snapshot, setSnapshot] = useState({
+    key: null,
+    rows: [],
+    total: 0,
+    error: "",
+  });
+  const rows = snapshot.key === requestKey ? snapshot.rows : [];
+  const total = snapshot.key === requestKey ? snapshot.total : 0;
+  const error = snapshot.key === requestKey ? snapshot.error : "";
+  const loading = Boolean(token) && snapshot.key !== requestKey;
+
+  useEffect(() => {
+    if (!token) return undefined;
+    const controller = new AbortController();
+    getInspectionWorkloadRequest({
+      view: "all",
+      page: 1,
+      limit: INSPECTION_BOARD_PAGE_SIZE,
+      ...(barangayId != null ? { barangayID: barangayId } : {}),
+      signal: controller.signal,
+    }, token)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setSnapshot({
+          key: requestKey,
+          rows: Array.isArray(result?.data) ? result.data : [],
+          total: Number(result?.total || 0),
+          error: "",
+        });
+      })
+      .catch((requestError) => {
+        if (controller.signal.aborted || requestError.name === "AbortError") return;
+        setSnapshot({
+          key: requestKey,
+          rows: [],
+          total: 0,
+          error: requestError.message || "The inspections page snapshot could not be loaded.",
+        });
+      });
+    return () => controller.abort();
+  }, [token, barangayId, requestKey]);
+
+  return {
+    rows,
+    total,
     loading,
     error,
     retry: () => setRetry((previous) => previous + 1),
@@ -396,6 +460,12 @@ export default function MapOverview({ token, filters }) {
     overviewFilters,
     datePreset,
   );
+  const boardBarangayId = selectedBarangayId
+    ?? (Array.isArray(overviewFilters?.barangay_ids)
+      && overviewFilters.barangay_ids.length === 1
+      ? overviewFilters.barangay_ids[0]
+      : null);
+  const boardPage = useInspectionBoardPage(token, boardBarangayId);
   const registryStatusFilters = useMemo(() => ({
     ...overviewFilters,
     ...(selectedBarangayId == null
@@ -962,6 +1032,17 @@ export default function MapOverview({ token, filters }) {
     { key: "waiting_for_review", value: "waiting_for_review", label: "Waiting for review", count: Number(panelData?.inspections?.waiting_for_review || 0), color: STATUS_COLORS.waiting_for_review },
     { key: "verified", value: "verified", label: "Verified", count: Number(panelData?.inspections?.verified || 0), color: STATUS_COLORS.verified },
   ].filter((row) => row.count > 0);
+  const boardRows = useMemo(() => {
+    const counts = new Map();
+    for (const report of boardPage.rows) {
+      const status = String(report?.verificationStatus || "").trim();
+      if (!status) continue;
+      counts.set(status, (counts.get(status) || 0) + 1);
+    }
+    return INSPECTION_BOARD_COLUMNS
+      .map((column) => ({ ...column, count: counts.get(column.status) || 0 }))
+      .filter((row) => row.count > 0);
+  }, [boardPage.rows]);
   const outcomeRows = ["Green", "Yellow", "Red"]
     .map((value) => ({
       value,
@@ -1700,6 +1781,7 @@ export default function MapOverview({ token, filters }) {
                   Not yet done combines Assigned, Reassigned, In Progress, and Unassigned reports. Waiting for review includes submitted reports.
                 </AnalyticsInfoTip>
               </div>
+              <p className="map-overview-note">All reports (whole)</p>
               <CountsBar rows={inspectionRows}
                 emptyMessage={selectedRow
                   ? "No inspections in this barangay yet."
@@ -1726,6 +1808,34 @@ export default function MapOverview({ token, filters }) {
                 </ul>
               </>
             )}
+            </div>
+            <div className="map-overview-field-section">
+              <div className="map-overview-card-heading">
+                <h5>
+                  Inspections page · {boardPage.loading
+                    ? "loading"
+                    : `${boardPage.rows.length} of ${boardPage.total} loaded`}
+                </h5>
+                <AnalyticsInfoTip label="About the inspections page snapshot">
+                  Mirrors the first page of the Inspections board, which loads up to {INSPECTION_BOARD_PAGE_SIZE} reports at a time. The board&apos;s column badges count only these loaded reports, so they can be lower than the all-reports totals above.
+                </AnalyticsInfoTip>
+              </div>
+              {boardPage.error ? (
+                <div className="map-overview-error" role="alert">
+                  <p>{boardPage.error}</p>
+                  <button type="button" onClick={boardPage.retry}>Try again</button>
+                </div>
+              ) : boardPage.loading ? (
+                <SkeletonBlock style={{ height: 96 }} />
+              ) : (
+                <CountsBar rows={boardRows}
+                  emptyMessage={selectedRow
+                    ? "No reports on the Inspections page for this barangay."
+                    : "No reports on the Inspections page for these barangays."} />
+              )}
+              <p className="map-overview-note">
+                First page of the Inspections board · up to {INSPECTION_BOARD_PAGE_SIZE} reports, newest first.{datePreset !== "all" ? " The board is not filtered by the chosen date range." : ""}
+              </p>
             </div>
           </section>
             </>
