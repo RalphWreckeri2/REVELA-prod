@@ -173,13 +173,19 @@ class RegistryFlagFilterTests(unittest.TestCase):
         )
         self.assertEqual(params, ["Warning"])
 
-    def test_clear_is_a_distinct_effective_permit_status(self):
-        sql, params = self._count_sql(status="Clear")
+    def test_cleared_warning_keeps_the_active_effective_permit_status(self):
+        sql, params = self._count_sql(status="Active")
 
-        self.assertIn("warningClearedAt", sql)
-        self.assertIn("r.applicationStatus = 'Active'", sql)
-        self.assertIn("THEN 'Clear'", sql)
-        self.assertEqual(params, ["Clear"])
+        self.assertIn("THEN 'Warning'", sql)
+        self.assertIn("ELSE r.applicationStatus END = %s", sql)
+        self.assertNotIn("warningClearedAt", sql)
+        self.assertNotIn("THEN 'Clear'", sql)
+        self.assertEqual(params, ["Active"])
+
+    def test_legacy_clear_filter_is_treated_as_active(self):
+        _, params = self._count_sql(status="Clear")
+
+        self.assertEqual(params, ["Active"])
 
     def test_free_text_search_includes_the_derived_status(self):
         sql, params = self._count_sql(search="Warning")

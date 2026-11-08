@@ -4359,28 +4359,11 @@ def _effective_permit_status_sql(cursor, alias="r"):
           AND es.subjectID = CAST({alias}.businessID AS CHAR)
         LIMIT 1
     )"""
-    if _has_enforcement_columns(cursor, ("warningClearedAt",)):
-        warning_cleared = f"""(
-            SELECT es.warningClearedAt
-            FROM enforcement_state es
-            WHERE es.subjectType = 'business'
-              AND es.subjectID = CAST({alias}.businessID AS CHAR)
-            LIMIT 1
-        )"""
-        cleared_arm = (
-            f"WHEN {warning_cleared} IS NOT NULL "
-            f"AND {alias}.applicationStatus = 'Active' "
-            f"AND COALESCE({warning_level}, 0) = 0 THEN 'Clear'"
-        )
-    else:
-        cleared_arm = ""
-
     return (
         "CASE "
         f"WHEN {alias}.applicationStatus IN ('Revoked', 'Blacklisted') "
         f"THEN {alias}.applicationStatus "
         f"WHEN COALESCE({warning_level}, 0) > 0 THEN 'Warning' "
-        f"{cleared_arm} "
         f"ELSE {alias}.applicationStatus END"
     )
 
@@ -4424,7 +4407,7 @@ def get_all_businesses(barangay_id=None, status=None, registration_type=None, se
             status_by_key = {
                 **{valid_status.casefold(): valid_status for valid_status in VALID_STATUSES},
                 "warning": "Warning",
-                "clear": "Clear",
+                "clear": "Active",
             }
             effective_status = status_by_key.get(normalized_status)
             if effective_status:
