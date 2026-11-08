@@ -4655,8 +4655,15 @@ def get_business_by_id(business_id):
 def check_and_expire_old_permits():
     """
     Check if there are any active business permits from a previous calendar year.
-    If so, mark them as 'Expired' and refresh their map pin colour, preserving
-    current warning levels (or verified history on an unmigrated database).
+    If so, mark them as 'Expired' and refresh their map pin colour.
+
+    Rows under an active warning are left untouched. Orange outranks the permit
+    status on the colour ladder, so expiring them would create a divergent
+    "Expired status + Orange pin" state. They stay Active until the warning
+    workflow clears them to Green (renewed) or to Purple (closed). On an
+    unmigrated database the warning level is unknowable, so the legacy rule
+    (expire the status, preserve verified Orange history) still applies.
+
     Also insert an in-app notification for all admin users and publish SSE.
     """
     try:
@@ -4668,6 +4675,7 @@ def check_and_expire_old_permits():
         # merely Expired.
         registry_state_join = ""
         lock_guard = ""
+        warning_guard = ""
         ladder = ladder_columns_available(cursor)
         if ladder:
             registry_state_join = """
@@ -4676,9 +4684,14 @@ def check_and_expire_old_permits():
                  AND es.subjectID = CAST(r.businessID AS CHAR)
             """
             lock_guard = " AND COALESCE(es.blackLocked, 0) = 0"
+            # Orange warns before the permit status, so an active warning would
+            # survive the expiry as "Expired + Orange". Skip those rows instead:
+            # the warning workflow is what moves them to Green or Purple.
+            warning_guard = " AND COALESCE(es.warningLevel, 0) = 0"
         else:
             # Column absent. The permit status below still needs expiring; only
-            # the pin colour is unknowable, so expire and leave the pin alone.
+            # the warning level and pin colour are unknowable, so expire and
+            # leave the pin alone.
             pass
 
         # Keep the indexed column bare so idx_reg_renewal can use a range scan.
@@ -4692,7 +4705,7 @@ def check_and_expire_old_permits():
                                 FROM official_registry r
                                 {registry_state_join}
                                 WHERE {previous_year_predicate}
-                                    AND r.applicationStatus = 'Active'{lock_guard}"""
+                                    AND r.applicationStatus = 'Active'{lock_guard}{warning_guard}"""
         )
         row = cursor.fetchone()
         cnt = row["cnt"] if row else 0
@@ -4708,7 +4721,7 @@ def check_and_expire_old_permits():
                 FROM official_registry r
                 {registry_state_join}
                 WHERE {previous_year_predicate}
-                  AND r.applicationStatus = 'Active'{lock_guard}
+                  AND r.applicationStatus = 'Active'{lock_guard}{warning_guard}
                 """
             )
             expiring_businesses = cursor.fetchall() or []
@@ -4731,7 +4744,7 @@ def check_and_expire_old_permits():
                     ELSE 'Red'
                 END
                                 WHERE {previous_year_predicate}
-                                    AND r.applicationStatus = 'Active'{lock_guard}
+                                    AND r.applicationStatus = 'Active'{lock_guard}{warning_guard}
                                 """,
             )
 
@@ -4741,7 +4754,7 @@ def check_and_expire_old_permits():
                                         {registry_state_join}
                                         SET r.applicationStatus = 'Expired'
                                         WHERE {previous_year_predicate}
-                                            AND r.applicationStatus = 'Active'{lock_guard}"""
+                                            AND r.applicationStatus = 'Active'{lock_guard}{warning_guard}"""
             )
 
             # Ensure every expiring registry business with coordinates has a
@@ -4777,9 +4790,9 @@ def check_and_expire_old_permits():
             title = "New Year Rollover Detected!"
             body = (
                 f"Welcome to {current_year}! The system has automatically marked {cnt} "
-                "active business permits from previous years as Expired and updated their map flags, "
-                "preserving admin-verified monitoring warnings. "
-                "Please upload the new registry to synchronize their statuses."
+                "active business permits from previous years as Expired and updated their map flags. "
+                "Permits with an active monitoring warning were left unchanged for the "
+                "warning workflow. Please upload the new registry to synchronize their statuses."
             )
             link = "/registry"
 

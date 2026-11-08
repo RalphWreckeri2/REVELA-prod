@@ -316,6 +316,15 @@ class ExpiryGuardTests(GuardHarness):
         """An unmigrated database must still expire permits."""
         self.assertIn('lock_guard = ""', self._source())
 
+    def test_the_rollover_leaves_warned_rows_alone(self):
+        source = self._source()
+        self.assertIn('warning_guard = " AND COALESCE(es.warningLevel, 0) = 0"', source)
+        self.assertEqual(source.count("{warning_guard}"), 4)
+
+    def test_the_warning_guard_is_conditional_on_the_column_existing(self):
+        """Orange cannot survive expiry without a warning level to read."""
+        self.assertIn('warning_guard = ""', self._source())
+
 
 if __name__ == "__main__":
     unittest.main()
