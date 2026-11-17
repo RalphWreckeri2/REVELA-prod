@@ -28,6 +28,10 @@ def schedule_enabled():
     return database_enabled() and os.getenv("DB_BACKUP_SCHEDULE_ENABLED", "0") == "1"
 
 
+def runtime_schedule_enabled(storage):
+    return schedule_enabled() and storage.read_schedule_control() is not False
+
+
 def cleanup_enabled():
     return database_enabled() and os.getenv("DB_BACKUP_CLEANUP_ENABLED", "0") == "1"
 

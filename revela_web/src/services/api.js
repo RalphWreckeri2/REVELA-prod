@@ -1809,6 +1809,25 @@ export async function getDatabaseBackupStatusRequest(token, { signal } = {}) {
   }
 }
 
+/** PUT /api/admin-settings/database-backup/schedule — pause or resume automatic exports. */
+export async function setDatabaseBackupScheduleRequest(token, enabled) {
+  if (!token) throw new Error("Missing authentication token.");
+  if (typeof enabled !== "boolean") throw new Error("Invalid automatic backup schedule setting.");
+  try {
+    const res = await fetch(`${BASE_URL}/admin-settings/database-backup/schedule`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ enabled }),
+    });
+    return await handleResponse(res);
+  } catch (err) {
+    connectionGuard(err);
+  }
+}
+
 /** POST /api/admin-settings/backups/run — start an admin-requested database backup. */
 export async function startDatabaseBackupRequest(token) {
   if (!token) throw new Error("Missing authentication token.");

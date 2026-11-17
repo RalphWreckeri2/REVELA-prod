@@ -86,6 +86,57 @@ class DatabaseStorage:
                 or (self.settings.kms_key and head.get("SSEKMSKeyId") != self.settings.kms_key)):
             raise ValueError("shared_backup_status_verification_failed")
 
+    def read_schedule_control(self):
+        key = self.settings.prefix + "control/schedule.json"
+        try:
+            response = retry(lambda: self.s3.get_object(**self._request(key)))
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("NoSuchKey", "NoSuchVersion", "404"):
+                return None
+            raise
+        body = response["Body"]
+        try:
+            raw = body.read(4097)
+        finally:
+            body.close()
+        if len(raw) > 4096:
+            raise ValueError("invalid_backup_schedule_control")
+        envelope = json.loads(raw)
+        if (envelope.get("feature") != FEATURE
+                or envelope.get("storage_identity") != self.settings.identity
+                or type(envelope.get("automatic_enabled")) is not bool):
+            raise ValueError("invalid_backup_schedule_control")
+        return envelope["automatic_enabled"]
+
+    def write_schedule_control(self, automatic_enabled):
+        if type(automatic_enabled) is not bool:
+            raise ValueError("invalid_backup_schedule_control")
+        key = self.settings.prefix + "control/schedule.json"
+        envelope = {
+            "feature": FEATURE,
+            "storage_identity": self.settings.identity,
+            "automatic_enabled": automatic_enabled,
+        }
+        body = json.dumps(envelope, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        digest = hashlib.sha256(body).hexdigest()
+        encryption = ({"ServerSideEncryption": "aws:kms", "SSEKMSKeyId": self.settings.kms_key}
+                      if self.settings.kms_key else {"ServerSideEncryption": "AES256"})
+        response = retry(lambda: self.s3.put_object(
+            **self._request(key), Body=io.BytesIO(body), ContentLength=len(body),
+            ChecksumSHA256=base64.b64encode(bytes.fromhex(digest)).decode(),
+            Metadata={"feature": FEATURE, "kind": "schedule-control", "sha256": digest},
+            **encryption,
+        ))
+        version = response.get("VersionId")
+        if not version or version == "null":
+            raise ValueError("versioned_backup_storage_required")
+        head = retry(lambda: self.s3.head_object(**self._request(key, version)))
+        if (head.get("ContentLength") != len(body)
+                or head.get("Metadata", {}).get("sha256") != digest
+                or head.get("ServerSideEncryption") != encryption["ServerSideEncryption"]
+                or (self.settings.kms_key and head.get("SSEKMSKeyId") != self.settings.kms_key)):
+            raise ValueError("backup_schedule_control_verification_failed")
+
     def preflight(self):
         request = self._request()
         block = retry(lambda: self.s3.get_public_access_block(**request))["PublicAccessBlockConfiguration"]

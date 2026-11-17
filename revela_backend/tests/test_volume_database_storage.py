@@ -77,6 +77,17 @@ def test_volume_publish_receipt_download_integrity_and_private_permissions(volum
         assert stat.S_IMODE((storage.records_dir / f"{record['id']}.json").stat().st_mode) == 0o600
 
 
+def test_volume_schedule_control_persists_and_rejects_invalid_values(volume_storage):
+    _, storage = volume_storage
+    assert storage.read_schedule_control() is None
+    storage.write_schedule_control(False)
+    assert storage.read_schedule_control() is False
+    storage.write_schedule_control(True)
+    assert storage.read_schedule_control() is True
+    with pytest.raises(ValueError, match="invalid_backup_schedule_control"):
+        storage.write_schedule_control(1)
+
+
 def test_manual_export_filename_uses_receipt_timestamp_after_dump(volume_storage, monkeypatch):
     settings, storage = volume_storage
     before_export = datetime(2026, 10, 26, 4, 30, tzinfo=timezone.utc)

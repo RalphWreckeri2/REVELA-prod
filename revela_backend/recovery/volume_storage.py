@@ -103,6 +103,33 @@ class VolumeDatabaseStorage:
             "feature": FEATURE, "storage_identity": self.settings.identity, "state": state,
         })
 
+    def read_schedule_control(self):
+        path = self._path("control/schedule.json")
+        try:
+            descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(descriptor, "rb") as stream:
+                raw = stream.read(4097)
+        except FileNotFoundError:
+            return None
+        if len(raw) > 4096:
+            raise ValueError("invalid_backup_schedule_control")
+        envelope = json.loads(raw)
+        if (envelope.get("feature") != FEATURE
+                or envelope.get("storage_identity") != self.settings.identity
+                or type(envelope.get("automatic_enabled")) is not bool):
+            raise ValueError("invalid_backup_schedule_control")
+        return envelope["automatic_enabled"]
+
+    def write_schedule_control(self, automatic_enabled):
+        if type(automatic_enabled) is not bool:
+            raise ValueError("invalid_backup_schedule_control")
+        self._ensure_private_directory(self.control)
+        self._atomic_json(self.control / "schedule.json", {
+            "feature": FEATURE,
+            "storage_identity": self.settings.identity,
+            "automatic_enabled": automatic_enabled,
+        })
+
     def _file_digest(self, path):
         digest = hashlib.sha256()
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))

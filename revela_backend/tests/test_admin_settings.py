@@ -8,7 +8,10 @@ fixture replay must not touch the usage ledger, while a live request must.
 """
 
 import unittest
+import tempfile
 from unittest.mock import MagicMock, patch
+from pathlib import Path
+from types import SimpleNamespace
 
 from flask import Flask
 
@@ -16,6 +19,7 @@ from api.admin_settings import routes as admin_routes
 from api.middleware import decorators
 from api.utils import quota_settings, quota_ceilings, test_mode
 from api.utils.quota_ceilings import CloudMethodQuota
+from recovery import settings as backup_settings
 
 
 def make_client(case, role="Admin", authenticated=True):
@@ -355,6 +359,7 @@ class AuthenticationTests(unittest.TestCase):
 
     #: Quota edits/resets, Test Mode config/resets, fixture purge.
     SUPER_ADMIN_ONLY_ROUTES = (
+        ("put", "/api/admin-settings/database-backup/schedule"),
         ("get", "/api/admin-settings/quota"),
         ("put", "/api/admin-settings/quota"),
         ("post", "/api/admin-settings/quota/reset"),
@@ -564,6 +569,7 @@ class AuthenticationTests(unittest.TestCase):
 
 class DatabaseBackupStatusTests(unittest.TestCase):
     PATH = "/api/admin-settings/database-backup/status"
+    SCHEDULE_PATH = "/api/admin-settings/database-backup/schedule"
 
     def test_completed_history_exposes_admin_verification_metadata(self):
         record = {
@@ -670,6 +676,60 @@ class DatabaseBackupStatusTests(unittest.TestCase):
             response = client.get(self.PATH)
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("status", response.get_json())
+
+    def test_super_admin_can_pause_and_resume_automatic_backups(self):
+        client = make_client(self, role="SUPER_ADMIN")
+        storage = MagicMock()
+        with tempfile.TemporaryDirectory() as directory:
+            settings = SimpleNamespace(state=Path(directory))
+            with patch.object(backup_settings, "database_enabled", return_value=True), \
+                 patch.object(backup_settings, "schedule_enabled", return_value=True), \
+                 patch.object(backup_settings, "configuration_issues", return_value=[]), \
+                 patch.object(backup_settings.DatabaseSettings, "from_env", return_value=settings), \
+                 patch("recovery.github_schedule.configured", return_value=True), \
+                 patch("recovery.github_schedule.set_enabled") as set_workflow, \
+                 patch("recovery.db_storage.DatabaseStorage", return_value=storage):
+                paused = client.put(self.SCHEDULE_PATH, json={"enabled": False})
+                resumed = client.put(self.SCHEDULE_PATH, json={"enabled": True})
+
+        self.assertEqual(paused.status_code, 200)
+        self.assertEqual(paused.get_json(), {"enabled": False})
+        self.assertEqual(paused.headers["Cache-Control"], "private, no-store")
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(resumed.get_json(), {"enabled": True})
+        self.assertEqual(
+            [call.args[0] for call in storage.write_schedule_control.call_args_list],
+            [False, True],
+        )
+        self.assertEqual(
+            [call.args[0] for call in set_workflow.call_args_list],
+            [False, True],
+        )
+
+    def test_schedule_pause_stays_blocked_if_github_cannot_be_disabled(self):
+        client = make_client(self, role="SUPER_ADMIN")
+        storage = MagicMock()
+        with tempfile.TemporaryDirectory() as directory:
+            settings = SimpleNamespace(state=Path(directory))
+            with patch.object(backup_settings, "database_enabled", return_value=True), \
+                 patch.object(backup_settings, "schedule_enabled", return_value=True), \
+                 patch.object(backup_settings, "configuration_issues", return_value=[]), \
+                 patch.object(backup_settings.DatabaseSettings, "from_env", return_value=settings), \
+                 patch("recovery.github_schedule.configured", return_value=True), \
+                 patch("recovery.github_schedule.set_enabled", side_effect=RuntimeError("workflow update failed")), \
+                 patch("recovery.db_storage.DatabaseStorage", return_value=storage):
+                response = client.put(self.SCHEDULE_PATH, json={"enabled": False})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("remain blocked", response.get_json()["error"])
+        storage.write_schedule_control.assert_called_once_with(False)
+
+    def test_schedule_toggle_requires_a_boolean(self):
+        client = make_client(self, role="SUPER_ADMIN")
+        for value in (None, "false", 0):
+            with self.subTest(value=value):
+                response = client.put(self.SCHEDULE_PATH, json={"enabled": value})
+                self.assertEqual(response.status_code, 400)
 
 
 class SettingsPersistenceTests(unittest.TestCase):

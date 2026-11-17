@@ -2,8 +2,8 @@ import { formatBackupDate, formatBackupSize } from "./backupStatusView";
 import { SkeletonBlock, SkeletonTableRows } from "./LoadingSkeleton";
 
 export default function BackupStatusPanel({
-  data, loading, error, actionError, actionLoading, notice,
-  onRefresh, onBackupNow, onDownload,
+  data, loading, error, actionError, actionLoading, actionKind, notice,
+  onRefresh, onBackupNow, onScheduleToggle, onDownload,
 }) {
   const lastBackup = data?.lastSuccessfulBackup;
   const automaticBackupStatus = loading ? "Loading…" : !data ? "Unavailable"
@@ -14,7 +14,9 @@ export default function BackupStatusPanel({
   const automaticBackupReason = !data?.configured
     ? "Complete the setup requirements below."
     : !data?.schedule?.enabled
-      ? "Automatic scheduling is disabled in the backend configuration."
+      ? data?.schedule?.canToggle
+        ? "Automatic backups are paused. Resume them here when you are ready."
+        : "Automatic scheduling is disabled in the backend configuration."
       : data?.automaticExecutionReason
         || "Automatic backup readiness is pending runtime, restore, retention, and cost verification. A scheduled run may still be attempted if the GitHub Actions workflow is enabled.";
   const actionReason = loading ? "Checking backend status. Backup actions are unavailable while status is loading."
@@ -125,12 +127,27 @@ export default function BackupStatusPanel({
             <button type="button" className="ghost-btn" onClick={onRefresh} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
             <button
               type="button"
+              className="ghost-btn"
+              onClick={() => onScheduleToggle?.(!data?.schedule?.enabled)}
+              disabled={loading || actionLoading || !data?.schedule?.canToggle || data?.status === "running" || typeof onScheduleToggle !== "function"}
+              aria-describedby={!data?.schedule?.canToggle ? "database-backup-schedule-reason" : undefined}
+            >{actionLoading && actionKind === "schedule" ? "Saving…" : data?.schedule?.enabled ? "Pause Automatic Backups" : "Resume Automatic Backups"}</button>
+            <button
+              type="button"
               className="primary-btn"
               onClick={onBackupNow}
               disabled={loading || actionLoading || !data?.canManualBackup || data?.status === "running" || typeof onBackupNow !== "function"}
               aria-describedby={!data?.canManualBackup ? "database-backup-action-reason" : undefined}
-            >{actionLoading ? "Starting…" : data?.status === "running" ? "Backup Running…" : "Back Up Now"}</button>
+            >{actionLoading && actionKind === "manual" ? "Starting…" : data?.status === "running" ? "Backup Running…" : "Back Up Now"}</button>
           </div>
+          {!data?.schedule?.canToggle && (
+            <p id="database-backup-schedule-reason" className="database-backup-note">
+              Automatic backup controls require Super Admin access and a configured GitHub Actions token with Actions write permission in Railway.
+            </p>
+          )}
+          {data?.status === "running" && (
+            <p className="database-backup-note">A running backup must finish before automatic backups can be paused.</p>
+          )}
         </div>
       </div>
     </div>

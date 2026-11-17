@@ -23,7 +23,8 @@ from recovery.mysqltools import source_config, check_dump_client
 from recovery.storage import retry
 from recovery.settings import (DatabaseSettings, database_enabled, configuration_issues,
                                database_state_directory, pc_managed, scheduler_mode,
-                               backup_role, schedule_enabled, cleanup_enabled)
+                               backup_role, schedule_enabled, runtime_schedule_enabled,
+                               cleanup_enabled)
 
 log = logging.getLogger("revela.recovery")
 _manual_reservation = threading.Lock()
@@ -91,6 +92,8 @@ def _perform_locked(settings, config, storage, scheduled=False, scheduled_for=No
     """One job holds a local OS lock and a source-server advisory lock."""
     with lock("job", directory=settings.state, timeout=0):
         state = storage.read_shared_status() or status.load(settings.state)
+        if scheduled and not runtime_schedule_enabled(storage):
+            raise DatabaseBackupDisabled("automatic_database_backups_disabled")
         identifier = job_id or uuid.uuid4().hex
         trigger_job = state.get("trigger_job")
         if trigger_job and trigger_job.get("id") == identifier:
@@ -201,6 +204,8 @@ def run(scheduled=False, scheduled_for=None, actor=None, job_id=None):
         raise RuntimeError("cloud_backup_disabled_pc_mode")
     settings = DatabaseSettings.from_env()
     storage = DatabaseStorage(settings)
+    if scheduled and not runtime_schedule_enabled(storage):
+        raise DatabaseBackupDisabled("automatic_database_backups_disabled")
     try:
         config = source_config()
     except Exception as exc:
@@ -244,6 +249,8 @@ def start_scheduled(app, scheduled_for, idempotency_key):
         raise ValueError("invalid_backup_trigger_idempotency_key")
     settings = DatabaseSettings.from_env()
     storage = DatabaseStorage(settings)
+    if not runtime_schedule_enabled(storage):
+        raise DatabaseBackupDisabled("automatic_database_backups_disabled")
     key_digest = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
     previous = status.load(settings.state).get("trigger_job") or {}
     if previous.get("request_key_sha256") == key_digest:
@@ -253,6 +260,8 @@ def start_scheduled(app, scheduled_for, idempotency_key):
 
     try:
         with lock("job", directory=settings.state, timeout=0):
+            if not runtime_schedule_enabled(storage):
+                raise DatabaseBackupDisabled("automatic_database_backups_disabled")
             state = status.load(settings.state)
             current = state.get("trigger_job") or {}
             if current.get("request_key_sha256") == key_digest:
@@ -358,6 +367,9 @@ def start_manual(app, actor):
 
 
 def check_missed(settings, storage=None, deliver=failure_delivery):
+    storage = storage or DatabaseStorage(settings)
+    if not runtime_schedule_enabled(storage):
+        return
     with lock("job", directory=settings.state, timeout=0):
         state = status.load(settings.state)
         # Check both slots in the past 24 hours, including outages/restarts. A
@@ -381,6 +393,8 @@ def start_scheduler(app):
     if pc_managed() or backup_role() == "worker":
         return  # Windows PC or one-shot worker owns exports, not this API process.
     if scheduler_mode() in ("railway_cron", "external_api"):
+        if scheduler_mode() == "external_api":
+            _sync_paused_github_workflow()
         return
     if not schedule_enabled():
         return
@@ -412,13 +426,15 @@ def start_scheduler(app):
         with app.app_context():
             try:
                 run(scheduled=True, scheduled_for=status.latest_due().isoformat())
+            except DatabaseBackupDisabled:
+                return
             except Exception:
                 log.error("Scheduled database export failed; admin alert/status records the failure")
 
     def watchdog():
         with app.app_context():
             try:
-                check_missed(settings)
+                check_missed(settings, storage=DatabaseStorage(settings))
             except LockBusy:
                 pass  # In-progress job owns the ledger; retry on the next check.
 
@@ -466,3 +482,16 @@ def start_scheduler(app):
     scheduler.add_job(bootstrap, "date", id="database_backup_preflight")
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown(wait=False) if scheduler.running else None)
+
+
+def _sync_paused_github_workflow():
+    if not database_enabled() or not schedule_enabled() or configuration_issues():
+        return
+    try:
+        settings = DatabaseSettings.from_env()
+        storage = DatabaseStorage(settings)
+        if storage.read_schedule_control() is False:
+            from recovery import github_schedule
+            github_schedule.set_enabled(False)
+    except Exception as exc:
+        log.error("Could not reconcile paused backup workflow with GitHub (%s)", type(exc).__name__)

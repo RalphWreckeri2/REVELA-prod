@@ -114,6 +114,32 @@ def test_retention_keeps_four_weekly_and_three_monthly_and_separates_manual(setu
     body.close()
 
 
+def test_schedule_control_is_private_versioned_and_fails_closed(setup):
+    _, store = setup
+    assert store.read_schedule_control() is None
+    store.write_schedule_control(False)
+    assert store.read_schedule_control() is False
+    store.write_schedule_control(True)
+    assert store.read_schedule_control() is True
+    entry = store.s3._entry(store.settings.prefix + "control/schedule.json")
+    assert entry["ServerSideEncryption"] == "AES256"
+    assert entry["Metadata"]["kind"] == "schedule-control"
+    with pytest.raises(ValueError, match="invalid_backup_schedule_control"):
+        store.write_schedule_control("false")
+
+
+def test_external_scheduled_trigger_rejects_a_paused_schedule(setup, monkeypatch):
+    cfg, store = setup
+    monkeypatch.setenv("DB_BACKUP_EXTERNAL_TRIGGER_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_TRIGGER_TOKEN", "t" * 40)
+    store.write_schedule_control(False)
+    monkeypatch.setattr(runner.DatabaseSettings, "from_env", classmethod(lambda _cls: cfg))
+    monkeypatch.setattr(runner, "DatabaseStorage", lambda _: store)
+    with pytest.raises(runner.DatabaseBackupDisabled, match="automatic_database_backups_disabled"):
+        runner.start_scheduled(Flask(__name__), "2026-10-30T11:00:00+00:00", "paused-run")
+    assert not runner._manual_reservation.locked()
+
+
 def test_last_success_is_preserved_even_when_older_than_retention(setup, monkeypatch):
     cfg, store = setup
     only = publish_at(cfg, store, "a" * 32, status.now() - timedelta(days=40), monkeypatch)
@@ -449,6 +475,7 @@ def test_external_trigger_catches_up_until_the_next_weekly_slot(
     monkeypatch.setattr(status, "now", lambda: datetime.fromisoformat(instant))
     monkeypatch.setattr(backup_settings, "configuration_issues", lambda: [])
     monkeypatch.setattr(backup_settings, "schedule_enabled", lambda: True)
+    monkeypatch.setattr(backup_settings, "runtime_schedule_enabled", lambda _storage: True)
     queued = []
     monkeypatch.setattr(
         runner, "start_scheduled",
@@ -472,6 +499,33 @@ def test_external_trigger_catches_up_until_the_next_weekly_slot(
     assert code == 202
     assert response.get_json()["scheduled_for"] == expected_slot
     assert queued == [expected_slot]
+
+
+def test_external_trigger_marks_a_paused_schedule_as_a_skip(monkeypatch):
+    from api.admin_settings import routes
+    from recovery import settings as backup_settings
+
+    monkeypatch.setenv("DB_BACKUP_EXTERNAL_TRIGGER_ENABLED", "1")
+    monkeypatch.setenv("DB_BACKUP_TRIGGER_TOKEN", "t" * 40)
+    monkeypatch.setattr(backup_settings, "configuration_issues", lambda: [])
+    monkeypatch.setattr(backup_settings, "schedule_enabled", lambda: True)
+    monkeypatch.setattr(
+        runner, "start_scheduled",
+        MagicMock(side_effect=runner.DatabaseBackupDisabled("automatic_database_backups_disabled")),
+    )
+    app = Flask(__name__)
+    with app.test_request_context(
+        "/api/admin-settings/database-backup/trigger",
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + "t" * 40,
+            "Idempotency-Key": "gha-paused-run",
+        },
+    ):
+        response, code = routes.database_backup_trigger_route()
+
+    assert code == 409
+    assert response.get_json()["status"] == "paused"
 
 
 def test_scheduled_cli_runs_only_for_worker_during_slot_grace(setup, monkeypatch, capsys):
@@ -758,6 +812,16 @@ def test_external_scheduled_trigger_is_durable_idempotent_and_releases_reservati
     same_slot_retry = runner.start_scheduled(app, scheduled_for, "gh-run-124-1")
     assert same_slot_retry["id"] == job["id"]
     assert len(started) == 1
+
+
+def test_backup_status_reflects_paused_schedule_and_keeps_manual_runs_enabled(setup, monkeypatch):
+    _, store = setup
+    monkeypatch.setenv("DB_BACKUP_GITHUB_TOKEN", "synthetic-github-token")
+    store.write_schedule_control(False)
+    report = status.report()
+    assert report["schedule_enabled"] is False
+    assert report["schedule_can_toggle"] is True
+    assert report["can_backup"] is True
 
 
 def test_external_scheduled_trigger_stays_disabled_without_all_gates(setup, monkeypatch):
@@ -1121,6 +1185,21 @@ def test_manual_execution_switch_does_not_enable_automatic_schedule(setup, monke
     runner.start_scheduler(app)
     scheduler_factory.assert_not_called()
     assert "database_backup_scheduler" not in app.extensions
+
+
+def test_existing_paused_state_disables_github_workflow_after_deploy(setup, monkeypatch):
+    cfg, store = setup
+    store.write_schedule_control(False)
+    monkeypatch.setenv("DB_BACKUP_GITHUB_TOKEN", "synthetic-github-token")
+    monkeypatch.setenv("DB_BACKUP_SCHEDULER_MODE", "external_api")
+    monkeypatch.setattr(runner, "DatabaseSettings", SimpleNamespace(from_env=lambda: cfg))
+    monkeypatch.setattr(runner, "DatabaseStorage", lambda _settings: store)
+    disable_workflow = MagicMock()
+    monkeypatch.setattr("recovery.github_schedule.set_enabled", disable_workflow)
+
+    runner.start_scheduler(Flask(__name__))
+
+    disable_workflow.assert_called_once_with(False)
 
 
 def test_scheduled_run_is_blocked_when_manual_only_switch_is_enabled(setup, monkeypatch):

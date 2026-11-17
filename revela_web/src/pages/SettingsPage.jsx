@@ -30,6 +30,7 @@ import {
   downloadEvidenceArchiveRequest,
   cleanupEvidenceStorageRequest,
   getDatabaseBackupStatusRequest,
+  setDatabaseBackupScheduleRequest,
   startDatabaseBackupRequest,
   downloadDatabaseBackupRequest,
   API_ORIGIN
@@ -471,6 +472,7 @@ export default function SettingsPage() {
   const [backupError, setBackupError] = useState("");
   const [backupActionError, setBackupActionError] = useState("");
   const [backupActionLoading, setBackupActionLoading] = useState(false);
+  const [backupActionKind, setBackupActionKind] = useState("");
   const [backupNotice, setBackupNotice] = useState("");
   const backupRequest = useRef(null);
   const fetchBackupStatus = useCallback(() => {
@@ -503,6 +505,7 @@ export default function SettingsPage() {
   }, [token, canEditPolicy]);
   const handleDatabaseBackup = useCallback(async () => {
     setBackupActionLoading(true);
+    setBackupActionKind("manual");
     setBackupActionError("");
     setBackupNotice("");
     try {
@@ -513,6 +516,26 @@ export default function SettingsPage() {
       setBackupActionError(err.message || "Could not start the database backup.");
     } finally {
       setBackupActionLoading(false);
+      setBackupActionKind("");
+    }
+  }, [token, fetchBackupStatus]);
+  const handleDatabaseBackupSchedule = useCallback(async enabled => {
+    setBackupActionLoading(true);
+    setBackupActionKind("schedule");
+    setBackupActionError("");
+    setBackupNotice("");
+    try {
+      await setDatabaseBackupScheduleRequest(token, enabled);
+      setBackupNotice(enabled
+        ? "Automatic database backups resumed."
+        : "Automatic database backups paused. Any backup already running will finish.");
+      await fetchBackupStatus();
+    } catch (err) {
+      setBackupActionError(err.message || "Could not update the automatic backup schedule.");
+      await fetchBackupStatus();
+    } finally {
+      setBackupActionLoading(false);
+      setBackupActionKind("");
     }
   }, [token, fetchBackupStatus]);
   const handleDatabaseBackupDownload = useCallback(async identifier => {
@@ -1618,9 +1641,11 @@ export default function SettingsPage() {
             error={backupError}
             actionError={backupActionError}
             actionLoading={backupActionLoading}
+            actionKind={backupActionKind}
             notice={backupNotice}
             onRefresh={fetchBackupStatus}
             onBackupNow={handleDatabaseBackup}
+            onScheduleToggle={handleDatabaseBackupSchedule}
             onDownload={handleDatabaseBackupDownload}
           />
         </SettingsSection>}

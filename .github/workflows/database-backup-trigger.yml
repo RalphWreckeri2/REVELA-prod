@@ -31,18 +31,35 @@ jobs:
             echo "::error::Database backup trigger secrets are not configured."
             exit 1
           fi
+          set +e
           response="$(curl --silent --show-error --fail-with-body \
             --connect-timeout 15 --max-time 45 --retry 4 --retry-delay 5 \
             --retry-max-time 90 \
             -X POST "$TRIGGER_URL" \
             -H "Authorization: Bearer $TRIGGER_TOKEN" \
             -H "Idempotency-Key: $IDEMPOTENCY_KEY" \
-            -H "Accept: application/json")"
+            -H "Accept: application/json" \
+            -w '\n%{http_code}')"
+          curl_status=$?
+          set -e
+          http_status="${response##*$'\n'}"
+          response="${response%$'\n'*}"
+          if [[ ( "$curl_status" -eq 0 || "$curl_status" -eq 22 ) && "$http_status" == "409" \
+                && "$(jq -r '.status // empty' <<<"$response")" == "paused" ]]; then
+            echo "Automatic database backups are paused; skipping this scheduled run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$curl_status" -ne 0 || ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+            echo "::error::Database backup trigger failed with HTTP $http_status."
+            exit 1
+          fi
           job_id="$(jq -er '.job_id | select(test("^[0-9a-f]{32}$"))' <<<"$response")"
           status_url="$(jq -er '.status_url | select(startswith("/api/admin-settings/database-backup/trigger/"))' <<<"$response")"
           printf 'job_id=%s\nstatus_url=%s\n' "$job_id" "$status_url" >> "$GITHUB_OUTPUT"
 
       - name: Poll the durable job status for at most 60 minutes
+        if: steps.trigger.outputs.skip != 'true'
         env:
           TRIGGER_URL: ${{ secrets.DB_BACKUP_TRIGGER_URL }}
           TRIGGER_TOKEN: ${{ secrets.DB_BACKUP_TRIGGER_TOKEN }}

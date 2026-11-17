@@ -12,6 +12,7 @@ export function validateBackupStatus(data) {
     || (data.status === "ready" && !data.configured)
     || typeof data.schedule?.configured !== "boolean"
     || typeof data.schedule?.enabled !== "boolean"
+    || typeof data.schedule?.canToggle !== "boolean"
     || typeof data.retention?.configured !== "boolean"
     || !(data.lastSuccessfulBackup === null || isBackupRecord(data.lastSuccessfulBackup, true))
     || !(data.history === null || (Array.isArray(data.history) && data.history.every(row => isBackupRecord(row))))) {

@@ -4,7 +4,7 @@ import { backupStatusPresentation, formatBackupDate, formatBackupSize, validateB
 
 const unconfigured = () => ({
   status: "not_configured", configured: false, lastSuccessfulBackup: null, history: null,
-  schedule: { configured: false, enabled: false, nextRunAt: null, summary: null },
+  schedule: { configured: false, enabled: false, canToggle: false, nextRunAt: null, summary: null },
   retention: { configured: false, summary: null },
 });
 
@@ -18,6 +18,7 @@ test("unconfigured backend is not interpreted as a successful or empty backup le
 test("unconfirmed, unknown, and inconsistent readiness fail closed", () => {
   for (const data of [null, {}, { ...unconfigured(), status: "success" },
     { ...unconfigured(), status: "ready" }, { ...unconfigured(), history: [{}] },
+    { ...unconfigured(), schedule: { configured: false, enabled: false } },
     { ...unconfigured(), lastSuccessfulBackup: { id: "fake", trigger: "manual", status: "running" } }]) {
     assert.throws(() => validateBackupStatus(data), /incomplete database backup status/);
   }

@@ -46,6 +46,17 @@ the original integration, not the current production deployment state.
   Enabling `DB_BACKUP_ENABLED` alone for a manual export does not start the
   weekly scheduler. Both flags default to off in local development; production
   is configured separately as recorded below.
+- Super Admins can pause and resume automatic exports from Settings. The
+  setting is stored in the configured backup storage and survives deploys; a
+  paused schedule rejects external triggers and skips scheduled exports. The
+  Settings control also disables the weekly GitHub Actions workflow, preventing
+  scheduled Railway wake-up requests; Resume re-enables it. Configure
+  `DB_BACKUP_GITHUB_TOKEN` in Railway as a fine-grained token with Actions write
+  permission for `DB_BACKUP_GITHUB_REPOSITORY` (default
+  `RalphWreckeri2/REVELA-prod`). The workflow defaults to
+  `DB_BACKUP_GITHUB_WORKFLOW=database-backup-trigger.yml`.
+  On deployment, an already-paused stored setting also disables the workflow.
+  Backups already running finish normally, and **Back Up Now** remains available.
 - The external workflow in
   `.github/workflows/database-backup-trigger.yml` runs Fridays at 11:00 UTC
   (7:00 PM Asia/Manila), POSTs to the protected API trigger, then polls the

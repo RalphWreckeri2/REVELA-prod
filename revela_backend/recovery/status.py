@@ -10,7 +10,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from recovery.settings import (database_enabled, database_state_directory, cleanup_enabled,
                                configuration_issues, DatabaseSettings, pc_managed,
-                               schedule_enabled)
+                               runtime_schedule_enabled, schedule_enabled)
 
 UTC = timezone.utc
 MANILA = ZoneInfo("Asia/Manila")
@@ -92,11 +92,13 @@ def report():
     identity = settings.identity if settings else None
     state = {}
     records = []
+    automatic_schedule_enabled = False
     if identity:
         from recovery.db_storage import DatabaseStorage
         storage = DatabaseStorage(settings)
         state = storage.read_shared_status() or {}
         records = storage.records()
+        automatic_schedule_enabled = runtime_schedule_enabled(storage)
         state["files"] = records
         state["last_success"] = records[0] if records else None
         scheduled_records = [row for row in records if row.get("scheduled")]
@@ -118,7 +120,9 @@ def report():
         os.getenv("DB_BACKUP_EXTERNAL_TRIGGER_ENABLED") == "1"
         and re.fullmatch(r"[A-Za-z0-9_-]{32,256}", os.getenv("DB_BACKUP_TRIGGER_TOKEN", ""))
     )
-    scheduler_configured = bool(schedule_enabled() and running and not issues)
+    scheduler_configured = bool(automatic_schedule_enabled and running and not issues)
+    from recovery import github_schedule
+    schedule_control_configured = github_schedule.configured()
     monitoring_started_at = state.get("monitoring_started_at")
     current_deployment_success = bool(
         scheduled and (
@@ -141,14 +145,14 @@ def report():
                            and timedelta(minutes=-5) <= age < timedelta(days=90))
     except (TypeError, KeyError, ValueError):
         pass
-    operational = bool(schedule_enabled() and external_trigger_configured and storage_verified and scheduled
+    operational = bool(automatic_schedule_enabled and external_trigger_configured and storage_verified and scheduled
                        and current_deployment_success
                        and not missed and drill_valid and not state.get("retention_warning")
                        and state.get("phase") == "succeeded")
     blockers = []
     if not database_enabled():
         blockers.append("Database backup execution is disabled.")
-    if not schedule_enabled():
+    if not automatic_schedule_enabled:
         blockers.append("Automatic scheduling is disabled.")
     if issues:
         blockers.append("Backup runtime configuration is incomplete.")
@@ -171,7 +175,12 @@ def report():
     next_run = triggers()["database_exports"].get_next_fire_time(None, now()).isoformat()
     return {
         "enabled": database_enabled(), "operational": operational,
-        "schedule_enabled": schedule_enabled(),
+        "schedule_enabled": automatic_schedule_enabled,
+        "schedule_can_toggle": bool(
+            database_enabled() and schedule_enabled() and not issues and identity
+            and schedule_control_configured
+        ),
+        "schedule_control_configured": schedule_control_configured,
         "external_trigger_configured": external_trigger_configured,
         "automatic_execution_ready": operational,
         "automatic_execution_reason": (
@@ -217,6 +226,6 @@ def report():
             "manual backups are a separate category proposed for 30 days. "
             f"Automatic cleanup is {'enabled' if cleanup_enabled() else 'disabled'}."
         ),
-        "note": NOTE, "missed_schedule": bool(schedule_enabled() and missed),
+        "note": NOTE, "missed_schedule": bool(automatic_schedule_enabled and missed),
         "can_backup": bool(database_enabled() and not issues),
     }

@@ -154,6 +154,7 @@ def database_backup_status_route():
         "schedule": {
             "configured": configured,
             "enabled": schedule_enabled,
+            "canToggle": bool(result.get("schedule_can_toggle")),
             "nextRunAt": result.get("next_schedule") if automatic_enabled else None,
             "summary": schedule_summary if configured else None,
             "executionReady": automatic_enabled,
@@ -185,6 +186,55 @@ def database_backup_status_route():
         "externalTriggerConfigured": result.get("external_trigger_configured", False),
     }
     response = jsonify(payload)
+    response.headers["Cache-Control"] = "private, no-store"
+    return response, 200
+
+
+@admin_settings_bp.route("/database-backup/schedule", methods=["PUT"])
+@super_admin_required()
+def update_database_backup_schedule_route():
+    """Persist the Super Admin's automatic backup pause/resume setting."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or type(data.get("enabled")) is not bool:
+        return jsonify({"error": "A boolean enabled value is required."}), 400
+
+    from recovery.locking import LockBusy, lock
+    from recovery import github_schedule
+    from recovery.settings import (DatabaseSettings, configuration_issues,
+                                   database_enabled, schedule_enabled)
+    if not database_enabled() or not schedule_enabled():
+        return jsonify({"error": "Automatic database backups are disabled by the runtime configuration."}), 409
+    issues = configuration_issues()
+    if issues:
+        return jsonify({"error": "Database backup runtime configuration is incomplete."}), 503
+    if not github_schedule.configured():
+        return jsonify({
+            "error": "GitHub workflow control is not configured. Add DB_BACKUP_GITHUB_TOKEN to Railway.",
+        }), 503
+
+    try:
+        settings = DatabaseSettings.from_env()
+        from recovery.db_storage import DatabaseStorage
+        storage = DatabaseStorage(settings)
+        with lock("job", directory=settings.state, timeout=0):
+            if data["enabled"]:
+                github_schedule.set_enabled(True)
+                storage.write_schedule_control(True)
+            else:
+                storage.write_schedule_control(False)
+                github_schedule.set_enabled(False)
+    except LockBusy:
+        return jsonify({"error": "A database backup is running. Retry after it finishes."}), 409
+    except Exception as exc:
+        current_app.logger.error("Could not update automatic backup schedule (%s)", type(exc).__name__)
+        return jsonify({
+            "error": (
+                "The schedule state could not be fully synchronized with GitHub. "
+                "Automatic backups remain blocked if you were pausing; check GitHub access and retry."
+            ),
+        }), 503
+
+    response = jsonify({"enabled": data["enabled"]})
     response.headers["Cache-Control"] = "private, no-store"
     return response, 200
 
@@ -230,6 +280,11 @@ def database_backup_trigger_route():
             "backup_id": exc.backup_id,
         }), 409
     except DatabaseBackupDisabled:
+        if schedule_enabled():
+            return jsonify({
+                "error": "Automatic database backups are paused.",
+                "status": "paused",
+            }), 409
         return jsonify({"error": "Automatic database backups are disabled."}), 409
     except ValueError:
         return jsonify({"error": "The external backup trigger request is invalid."}), 400
